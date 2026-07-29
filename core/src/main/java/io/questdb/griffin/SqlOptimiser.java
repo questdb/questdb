@@ -5484,7 +5484,7 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    private boolean materializeLateralCountCarrier(IQueryModel sourceModel, IQueryModel carrierModel) throws SqlException {
+    private boolean materializeLateralCountCarrier(IQueryModel sourceModel, IQueryModel carrierModel, ExpressionNode guard) throws SqlException {
         if (lateralCountTemplateMap.size() == 0) {
             return false;
         }
@@ -5496,6 +5496,21 @@ public class SqlOptimiser implements Mutable {
             ExpressionNode ast = template != null
                     ? template
                     : expressionNodePool.next().of(LITERAL, sourceColumn.getAlias(), 0, 0);
+            if (template != null && guard != null) {
+                // The lateral body carried a LIMIT whose value is only known per execution
+                // (a bind variable), so whether the aggregate row survived it cannot be
+                // folded at compile time - a cached plan may be re-executed with a different
+                // value. Emit the decision as SQL instead:
+                //   case when <guard> then <compensated template> else <source column> end
+                // guard false means the LIMIT dropped the row, and the uncompensated
+                // source column (NULL for the missing group) is then correct.
+                ExpressionNode caseNode = expressionNodePool.next().of(FUNCTION, "case", 0, template.position);
+                caseNode.paramCount = 3;
+                caseNode.args.add(expressionNodePool.next().of(LITERAL, sourceColumn.getAlias(), 0, 0));
+                caseNode.args.add(template);
+                caseNode.args.add(ExpressionNode.deepClone(expressionNodePool, guard));
+                ast = caseNode;
+            }
             QueryColumn carrierColumn = queryColumnPool.next().of(
                     sourceColumn.getAlias(),
                     ast,
@@ -8524,12 +8539,14 @@ public class SqlOptimiser implements Mutable {
                 // lateral count carrier columns remain visible
                 if (wrapperModel.isLateralCountCoalesceRequired()) {
                     model.setLateralCountCoalesceRequired(true);
+                    model.setLateralCountCoalesceGuard(wrapperModel.getLateralCountCoalesceGuard());
                     ObjList<QueryColumn> lateralCountTemplates = wrapperModel.getLateralCountTemplates();
                     for (int i = 0, n = lateralCountTemplates.size(); i < n; i++) {
                         model.addLateralCountTemplate(lateralCountTemplates.getQuick(i));
                     }
                     lateralCountTemplates.clear();
                     wrapperModel.setLateralCountCoalesceRequired(false);
+                    wrapperModel.setLateralCountCoalesceGuard(null);
                 }
                 return result;
             }
@@ -10892,7 +10909,8 @@ public class SqlOptimiser implements Mutable {
             hoistLateralCountWhereClause(baseModel, activeTranslatingModel, innerVirtualModel, lateralCountModel);
             hasLateralCountCarrier = materializeLateralCountCarrier(
                     activeTranslatingModel,
-                    lateralCountModel
+                    lateralCountModel,
+                    model.getLateralCountCoalesceGuard()
             );
             isLateralCountCarrierOnTranslatingModel = activeTranslatingModel == translatingModel
                     && hasLateralCountCarrier;
@@ -11890,7 +11908,10 @@ public class SqlOptimiser implements Mutable {
                 }
             } catch (NonLiteralException ignore) {
                 allPushed = false;
-                LOG.debug().$("skipping filter push-down into set operation branch: column resolves to expression, not literal [filter=").$(node).$(", branch=").$(branch.getTableName()).I$();
+                // evaluate before acquiring the log ring slot: a throwing argument would
+                // unwind past I$() and leak the slot, wedging the ring for all producers
+                final CharSequence branchTableName = branch.getTableName();
+                LOG.debug().$("skipping filter push-down into set operation branch: column resolves to expression, not literal [filter=").$(node).$(", branch=").$(branchTableName).I$();
             }
             branch = branch.getUnionModel();
         }
@@ -12677,6 +12698,9 @@ public class SqlOptimiser implements Mutable {
             }
             if (oldModel.isLateralCountCoalesceRequired()) {
                 newModel.setLateralCountCoalesceRequired(true);
+                // the guard must travel with the flag, otherwise a run-time LIMIT would
+                // silently fall back to unconditional compensation
+                newModel.setLateralCountCoalesceGuard(oldModel.getLateralCountCoalesceGuard());
                 ObjList<QueryColumn> templates = oldModel.getLateralCountTemplates();
                 if (templates != newModel.getLateralCountTemplates()) {
                     for (int i = 0, n = templates.size(); i < n; i++) {
@@ -12685,6 +12709,7 @@ public class SqlOptimiser implements Mutable {
                 }
                 if (oldModel.isOptimisable()) {
                     oldModel.setLateralCountCoalesceRequired(false);
+                    oldModel.setLateralCountCoalesceGuard(null);
                     templates.clear();
                 }
             }

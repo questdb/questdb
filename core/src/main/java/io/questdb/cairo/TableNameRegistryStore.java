@@ -393,10 +393,16 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             if (existingTableToken != null) {
                                 // One of the tables can be in pending drop state.
                                 if (!resolveTableNameConflict(tableNameToTableTokenMap, dirNameToTableTokenMap, token, existingTableToken, ff, path, plimit)) {
+                                    // evaluate before acquiring the log ring slot: conflict resolution may have
+                                    // removed the mapping, and a throwing argument would leak the slot
+                                    TableToken conflictingToken = tableNameToTableTokenMap.get(tableName);
+                                    if (conflictingToken == null) {
+                                        conflictingToken = existingTableToken;
+                                    }
                                     LOG.critical().$("duplicate table name found, table will not be available [dirName=").$(dirNameSink)
                                             .$(", name=").$safe(tableName)
                                             .$(", existingTableDir=")
-                                            .$(tableNameToTableTokenMap.get(tableName).getDirNameUtf8())
+                                            .$(conflictingToken.getDirNameUtf8())
                                             .I$();
                                 }
                                 continue;

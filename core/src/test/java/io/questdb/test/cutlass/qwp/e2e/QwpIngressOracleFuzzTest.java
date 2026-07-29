@@ -1444,10 +1444,10 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * Pick a per-test {@code sf_max_segment_bytes} value from a fixed pool.
-     * Smaller segments force frequent rotation (stresses purge bookkeeping);
-     * larger segments resemble the production default (4 MiB). The chosen
-     * value is threaded into every Sender config string for the test and into
+     * Pick a per-test {@code sf_max_segment_bytes} value from a fixed pool. Smaller
+     * segments force frequent rotation (stresses purge bookkeeping); larger
+     * segments resemble the production default (4 MiB). The chosen value is
+     * threaded into every Sender config string for the test and into
      * {@link #slotCapFor} so the post-close assertion scales accordingly.
      */
     private static long pickSfMaxSegmentBytes(Rnd rnd) {
@@ -1509,9 +1509,9 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
 
     /**
      * Per-slot residue bound after a clean close. The active segment file may
-     * still exist (sized up to {@code sf_max_segment_bytes}) plus a few small
-     * control files (lock, manifest). The 256 KiB slack covers control files
-     * even when the segment itself is tiny.
+     * still exist (sized up to {@code sf_max_segment_bytes}) plus a few small control
+     * files (lock, manifest). The 256 KiB slack covers control files even
+     * when the segment itself is tiny.
      */
     private static long slotCapFor(long sfMaxSegmentBytes) {
         return sfMaxSegmentBytes + 256L * 1024;

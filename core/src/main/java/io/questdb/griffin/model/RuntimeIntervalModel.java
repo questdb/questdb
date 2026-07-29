@@ -360,7 +360,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                                 return;
                             } else {
                                 // or full set
-                                negatedNothing(outIntervals, divider);
+                                negatedNothing(outIntervals, divider, firstFuncApplied);
                                 continue;
                             }
                         }
@@ -372,7 +372,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                                 outIntervals.clear();
                                 return;
                             } else {
-                                negatedNothing(outIntervals, divider);
+                                negatedNothing(outIntervals, divider, firstFuncApplied);
                                 continue;
                             }
                         }
@@ -424,7 +424,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                                 // This is a subtraction
                                 if (tryParseInterval(outIntervals, strInterval, configuration)) {
                                     // full set
-                                    negatedNothing(outIntervals, divider);
+                                    negatedNothing(outIntervals, divider, firstFuncApplied);
                                     continue;
                                 }
                                 IntervalUtils.invert(outIntervals, divider);
@@ -539,9 +539,15 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         }
     }
 
-    private void negatedNothing(LongList outIntervals, int divider) {
+    private void negatedNothing(LongList outIntervals, int divider, boolean firstFuncApplied) {
         outIntervals.setPos(divider);
-        if (divider == 0) {
+        // divider == 0 is ambiguous on its own: it means either "nothing has been applied yet"
+        // (this negated term is the anchor, so subtracting nothing leaves the full domain) or
+        // "a previous expression already evaluated to the empty set" (an all-NULL union run, or
+        // an intersection that produced no overlap). Only the former may seed the full domain;
+        // in the latter case the accumulator is an established empty set and must stay empty,
+        // because the residual predicate has already been removed from the filter.
+        if (divider == 0 && !firstFuncApplied) {
             outIntervals.extendAndSet(1, Long.MAX_VALUE);
             outIntervals.extendAndSet(0, Long.MIN_VALUE);
         }

@@ -848,6 +848,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getLateralCountCoalesceGuard() {
+        return delegate.getLateralCountCoalesceGuard();
+    }
+
+    @Override
     public boolean isLateralCountCoalesceRequired() {
         return delegate.isLateralCountCoalesceRequired();
     }
@@ -1124,6 +1129,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setJoinType(int joinType) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setLateralCountCoalesceGuard(ExpressionNode guard) {
         throw new UnsupportedOperationException();
     }
 
