@@ -73,9 +73,9 @@ public final class PGConnectionFiberTask extends FiberTask {
     private static final int NO_DISCONNECT = -1;
     private static final long STAGED_EVENT_OFFSET = Unsafe.getFieldOffset(PGConnectionFiberTask.class, "stagedEvent");
     private final PGConnectionContext context;
-    private int disconnectReason = NO_DISCONNECT;
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
+    private int disconnectReason = NO_DISCONNECT;
     private int nextOperation = IOOperation.READ;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long stagedEvent;
@@ -91,7 +91,8 @@ public final class PGConnectionFiberTask extends FiberTask {
         final int eventAction = switch (operation) {
             case IOOperation.READ -> EVENT_READ;
             case IOOperation.WRITE -> EVENT_WRITE;
-            default -> throw new IllegalArgumentException("unsupported PG fiber operation [operation=" + operation + ']');
+            default ->
+                    throw new IllegalArgumentException("unsupported PG fiber operation [operation=" + operation + ']');
         };
         return launchEvent(runtime, null, getIncarnation(), eventAction);
     }
@@ -101,7 +102,8 @@ public final class PGConnectionFiberTask extends FiberTask {
         final int eventAction = switch (operation) {
             case IOOperation.READ -> EVENT_READ;
             case IOOperation.WRITE -> EVENT_WRITE;
-            default -> throw new IllegalArgumentException("unsupported PG fiber operation [operation=" + operation + ']');
+            default ->
+                    throw new IllegalArgumentException("unsupported PG fiber operation [operation=" + operation + ']');
         };
         return launchEvent(runtime, fiber, getIncarnation(), eventAction);
     }
@@ -112,65 +114,6 @@ public final class PGConnectionFiberTask extends FiberTask {
             throw new IllegalArgumentException("PG task incarnation is out of range [incarnation=" + incarnation + ']');
         }
         stagedEvent = (incarnation << EVENT_SHIFT) | EVENT_READ | EVENT_READY;
-    }
-
-    @Override
-    protected void onAbandoned() {
-        stagedEvent = 0;
-        disconnectReason = DISCONNECT_REASON_SERVER_SHUTDOWN;
-    }
-
-    @Override
-    protected void onDone() {
-        stagedEvent = 0;
-        if (disconnectReason != NO_DISCONNECT) {
-            dispatcher.disconnect(context, disconnectReason);
-        }
-    }
-
-    @Override
-    protected void onError(Throwable th) {
-        LOG.critical().$("internal error [ex=").$(th).$(']').$();
-        metrics.healthMetrics().incrementUnhandledErrors();
-        disconnectReason = DISCONNECT_REASON_SERVER_ERROR;
-    }
-
-    @Override
-    protected void onParked() {
-        dispatcher.registerChannel(context, nextOperation);
-    }
-
-    @Override
-    protected boolean runStep() {
-        final int eventAction = takeEvent();
-        final int operation = eventAction == EVENT_READ ? IOOperation.READ : IOOperation.WRITE;
-        disconnectReason = NO_DISCONNECT;
-        try {
-            context.handleClientOperation(operation);
-            nextOperation = IOOperation.READ;
-            return false;
-        } catch (PeerIsSlowToWriteException e) {
-            nextOperation = IOOperation.READ;
-            return false;
-        } catch (PeerIsSlowToReadException e) {
-            nextOperation = IOOperation.WRITE;
-            return false;
-        } catch (PeerDisconnectedException e) {
-            disconnectReason = operation == IOOperation.READ
-                    ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
-                    : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND;
-            return true;
-        } catch (PGMessageProcessingException e) {
-            LOG.error().$("protocol issue [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
-            disconnectReason = DISCONNECT_REASON_PROTOCOL_VIOLATION;
-            return true;
-        } catch (Exception e) {
-            // mirrors the direct dispatch path's terminal catch
-            LOG.critical().$("internal error [ex=").$(e).$(']').$();
-            metrics.healthMetrics().incrementUnhandledErrors();
-            disconnectReason = DISCONNECT_REASON_SERVER_ERROR;
-            return true;
-        }
     }
 
     private LaunchResult launchEvent(
@@ -306,6 +249,65 @@ public final class PGConnectionFiberTask extends FiberTask {
             if (Unsafe.cas(this, STAGED_EVENT_OFFSET, event, 0L)) {
                 return (int) (event & EVENT_ACTION_MASK);
             }
+        }
+    }
+
+    @Override
+    protected void onAbandoned() {
+        stagedEvent = 0;
+        disconnectReason = DISCONNECT_REASON_SERVER_SHUTDOWN;
+    }
+
+    @Override
+    protected void onDone() {
+        stagedEvent = 0;
+        if (disconnectReason != NO_DISCONNECT) {
+            dispatcher.disconnect(context, disconnectReason);
+        }
+    }
+
+    @Override
+    protected void onError(Throwable th) {
+        LOG.critical().$("internal error [ex=").$(th).$(']').$();
+        metrics.healthMetrics().incrementUnhandledErrors();
+        disconnectReason = DISCONNECT_REASON_SERVER_ERROR;
+    }
+
+    @Override
+    protected void onParked() {
+        dispatcher.registerChannel(context, nextOperation);
+    }
+
+    @Override
+    protected boolean runStep() {
+        final int eventAction = takeEvent();
+        final int operation = eventAction == EVENT_READ ? IOOperation.READ : IOOperation.WRITE;
+        disconnectReason = NO_DISCONNECT;
+        try {
+            context.handleClientOperation(operation);
+            nextOperation = IOOperation.READ;
+            return false;
+        } catch (PeerIsSlowToWriteException e) {
+            nextOperation = IOOperation.READ;
+            return false;
+        } catch (PeerIsSlowToReadException e) {
+            nextOperation = IOOperation.WRITE;
+            return false;
+        } catch (PeerDisconnectedException e) {
+            disconnectReason = operation == IOOperation.READ
+                    ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
+                    : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND;
+            return true;
+        } catch (PGMessageProcessingException e) {
+            LOG.error().$("protocol issue [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
+            disconnectReason = DISCONNECT_REASON_PROTOCOL_VIOLATION;
+            return true;
+        } catch (Exception e) {
+            // mirrors the direct dispatch path's terminal catch
+            LOG.critical().$("internal error [ex=").$(e).$(']').$();
+            metrics.healthMetrics().incrementUnhandledErrors();
+            disconnectReason = DISCONNECT_REASON_SERVER_ERROR;
+            return true;
         }
     }
 }

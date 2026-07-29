@@ -349,9 +349,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewMaxRefreshStepUs;
     private final boolean matViewParallelExecutionEnabled;
     private final LowerCaseCharSequenceHashSet matViewRefreshBlockList = new LowerCaseCharSequenceHashSet();
+    private final int matViewRefreshBusyRetryLimit;
     private final long matViewRefreshBusyRetryTimeout;
     private final long matViewRefreshIntervalsUpdatePeriod;
-    private final int matViewRefreshBusyRetryLimit;
     private final int matViewRefreshMaxClusters;
     private final long matViewRefreshMemoryLimitBytes;
     private final boolean matViewRefreshMissingWalFilesFatal;
@@ -704,8 +704,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int[] lineTcpIOWorkerAffinity;
     private int lineTcpIOWorkerCount;
     private long lineTcpIOWorkerNapThreshold;
-    private WorkerPoolMode lineTcpIOWorkerPoolMode = WorkerPoolMode.LEGACY;
     private boolean lineTcpIOWorkerPoolHaltOnError;
+    private WorkerPoolMode lineTcpIOWorkerPoolMode = WorkerPoolMode.LEGACY;
     private long lineTcpIOWorkerSleepThreshold;
     private long lineTcpIOWorkerYieldThreshold;
     private long lineTcpMaintenanceInterval;
@@ -726,8 +726,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int[] lineTcpWriterWorkerAffinity;
     private int lineTcpWriterWorkerCount;
     private long lineTcpWriterWorkerNapThreshold;
-    private WorkerPoolMode lineTcpWriterWorkerPoolMode = WorkerPoolMode.LEGACY;
     private boolean lineTcpWriterWorkerPoolHaltOnError;
+    private WorkerPoolMode lineTcpWriterWorkerPoolMode = WorkerPoolMode.LEGACY;
     private long lineTcpWriterWorkerSleepThreshold;
     private long lineTcpWriterWorkerYieldThreshold;
     private int lineUdpBindIPV4Address;
@@ -2250,12 +2250,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                             || (httpServerEnabled && httpWorkerCount < 1 && httpFiberEnabled);
             final boolean isSharedWriteFiberHost = !isReadOnlyInstance
                     && ((lineTcpEnabled
-                            && lineTcpWriterWorkerCount < 1
-                            && lineTcpWriterWorkerPoolMode == WorkerPoolMode.FIBER_HOST)
-                            || (walSupported
-                                && walApplyEnabled
-                                && walApplyWorkerCount < 1
-                                && walApplyWorkerPoolMode == WorkerPoolMode.FIBER_HOST));
+                    && lineTcpWriterWorkerCount < 1
+                    && lineTcpWriterWorkerPoolMode == WorkerPoolMode.FIBER_HOST)
+                    || (walSupported
+                    && walApplyEnabled
+                    && walApplyWorkerCount < 1
+                    && walApplyWorkerPoolMode == WorkerPoolMode.FIBER_HOST));
             sharedWorkerPoolNetworkConfiguration.workerPoolMode = readWorkerPoolMode(
                     properties,
                     env,
@@ -2525,6 +2525,37 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.factoryProvider = factoryProvider;
     }
 
+    private static void configureFiberPool(
+            PropFiberWorkerPoolConfiguration configuration,
+            int maxLiveCount,
+            int mountBudget,
+            int retainedCount
+    ) throws ServerConfigurationException {
+        configuration.configureFiber(maxLiveCount, mountBudget, retainedCount);
+        if (configuration.getFiberRetainedCount() > configuration.getFiberMaxLiveCount()) {
+            throw new ServerConfigurationException(
+                    PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath()
+                            + " must not exceed "
+                            + PropertyKey.WORKER_FIBER_MAX_LIVE.getPropertyPath()
+                            + " [pool=" + configuration.getPoolName()
+                            + ", retained=" + configuration.getFiberRetainedCount()
+                            + ", maxLive=" + configuration.getFiberMaxLiveCount()
+                            + ']'
+            );
+        }
+    }
+
+    private static long pagesToBytesSaturating(long pageSize, int maxPages) {
+        final long bytes = pageSize * (long) maxPages;
+        // An absurdly large explicit page size combined with a high deprecated
+        // *_MAX_PAGES value can overflow a signed long; saturate so the derived
+        // byte cap never wraps negative.
+        if (pageSize != 0 && bytes / pageSize != maxPages) {
+            return Long.MAX_VALUE;
+        }
+        return bytes;
+    }
+
     private static @NotNull String stripTrailingSlash(@NotNull String httpContextWebConsole) {
         int n = 0;
         for (int j = httpContextWebConsole.length() - 1; j > -1; j--) {
@@ -2568,26 +2599,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             throw ServerConfigurationException.forInvalidKey(
                     key.getPropertyPath(),
                     "page size " + pageSize + " is below the minimum of " + minPageSize + " bytes"
-            );
-        }
-    }
-
-    private static void configureFiberPool(
-            PropFiberWorkerPoolConfiguration configuration,
-            int maxLiveCount,
-            int mountBudget,
-            int retainedCount
-    ) throws ServerConfigurationException {
-        configuration.configureFiber(maxLiveCount, mountBudget, retainedCount);
-        if (configuration.getFiberRetainedCount() > configuration.getFiberMaxLiveCount()) {
-            throw new ServerConfigurationException(
-                    PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath()
-                            + " must not exceed "
-                            + PropertyKey.WORKER_FIBER_MAX_LIVE.getPropertyPath()
-                            + " [pool=" + configuration.getPoolName()
-                            + ", retained=" + configuration.getFiberRetainedCount()
-                            + ", maxLive=" + configuration.getFiberMaxLiveCount()
-                            + ']'
             );
         }
     }
@@ -2704,17 +2715,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             return pagesToBytesSaturating(pageSize, aliasMaxPages);
         }
         return Long.MAX_VALUE;
-    }
-
-    private static long pagesToBytesSaturating(long pageSize, int maxPages) {
-        final long bytes = pageSize * (long) maxPages;
-        // An absurdly large explicit page size combined with a high deprecated
-        // *_MAX_PAGES value can overflow a signed long; saturate so the derived
-        // byte cap never wraps negative.
-        if (pageSize != 0 && bytes / pageSize != maxPages) {
-            return Long.MAX_VALUE;
-        }
-        return bytes;
     }
 
     private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
@@ -2860,6 +2860,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         return properties.getProperty(key.getPropertyPath()) != null;
     }
 
+    private void parseMatViewRefreshBlockList(String value) {
+        matViewRefreshBlockList.clear();
+        if (value == null) {
+            return;
+        }
+        for (String name : value.split(",")) {
+            final String trimmed = name.trim();
+            if (!trimmed.isEmpty()) {
+                matViewRefreshBlockList.add(trimmed);
+            }
+        }
+        if (matViewRefreshBlockList.size() > 0) {
+            log.advisory().$("materialized view refresh block list configured [count=").$(matViewRefreshBlockList.size())
+                    .I$();
+        }
+    }
+
     private boolean pathEquals(String p1, String p2) {
         try {
             if (p1 == null || p2 == null) {
@@ -2873,6 +2890,17 @@ public class PropServerConfiguration implements ServerConfiguration {
                     .$(", value=").$(p2).I$();
             return false;
         }
+    }
+
+    private WorkerPoolMode readWorkerPoolMode(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey key,
+            boolean isFiberHostByDefault
+    ) {
+        return getBoolean(properties, env, key, isFiberHostByDefault)
+                ? WorkerPoolMode.FIBER_HOST
+                : WorkerPoolMode.LEGACY;
     }
 
     private void validateHttpConnectionLimits(
@@ -2911,17 +2939,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                             + ((httpExportConnectionLimit > 0) ? PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath() + "=" + httpExportConnectionLimit + ", " : "")
                             + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
         }
-    }
-
-    private WorkerPoolMode readWorkerPoolMode(
-            Properties properties,
-            @Nullable Map<String, String> env,
-            ConfigPropertyKey key,
-            boolean isFiberHostByDefault
-    ) {
-        return getBoolean(properties, env, key, isFiberHostByDefault)
-                ? WorkerPoolMode.FIBER_HOST
-                : WorkerPoolMode.LEGACY;
     }
 
     private void validateProperties(Properties properties, boolean configValidationStrict) throws ServerConfigurationException {
@@ -3179,23 +3196,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, dynamic));
         }
         return result;
-    }
-
-    private void parseMatViewRefreshBlockList(String value) {
-        matViewRefreshBlockList.clear();
-        if (value == null) {
-            return;
-        }
-        for (String name : value.split(",")) {
-            final String trimmed = name.trim();
-            if (!trimmed.isEmpty()) {
-                matViewRefreshBlockList.add(trimmed);
-            }
-        }
-        if (matViewRefreshBlockList.size() > 0) {
-            log.advisory().$("materialized view refresh block list configured [count=").$(matViewRefreshBlockList.size())
-                    .I$();
-        }
     }
 
     protected void getUrls(
@@ -5275,11 +5275,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isWalApplySuspendedWriteDenied() {
-            return walApplySuspendedWriteDenied;
-        }
-
-        @Override
         public long getWalApplyTableTimeQuota() {
             return walApplyTableTimeQuota;
         }
@@ -5610,6 +5605,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isWalApplyParallelSqlEnabled() {
             return walParallelExecutionEnabled;
+        }
+
+        @Override
+        public boolean isWalApplySuspendedWriteDenied() {
+            return walApplySuspendedWriteDenied;
         }
 
         @Override

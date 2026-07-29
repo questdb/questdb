@@ -65,26 +65,26 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private static final long RETIREMENT_STATE_OFFSET = Unsafe.getFieldOffset(Fiber.class, "retirementState");
     private static final ContinuationScope SCOPE = new ContinuationScope("questdb-fiber");
     private static final long WAIT_ADMISSION_OFFSET = Unsafe.getFieldOffset(Fiber.class, "waitAdmission");
-    private FiberTask assignedTask;
     private final Continuation continuation;
-    @SuppressWarnings("FieldMayBeFinal")
-    private volatile long executionState = packExecutionState(0, EXECUTION_FREE);
     private final Rnd fiberAsyncRandom;
     private final Rnd fiberRandom;
+    private final Outcome outcomeScratch = new Outcome();
+    private final FiberPool pool;
+    private final FiberWaitCoordinator waitCoordinator;
+    private FiberTask assignedTask;
+    @SuppressWarnings("FieldMayBeFinal")
+    private volatile long executionState = packExecutionState(0, EXECUTION_FREE);
     @SuppressWarnings("FieldMayBeFinal")
     private volatile int notificationState = NOTIFICATION_IDLE;
     private Throwable outcomeError;
-    private final Outcome outcomeScratch = new Outcome();
     private FiberTask outcomeTask;
     private int outcomeType;
-    private final FiberPool pool;
     private int registryIndex = -1;
     @SuppressWarnings("unused")
     private volatile int retirementState;
     private volatile boolean shutdown;
     @SuppressWarnings("unused")
     private volatile int waitAdmission;
-    private final FiberWaitCoordinator waitCoordinator;
     private int yieldReason = YIELD_WAIT;
 
     Fiber(FiberPool pool, @Nullable Runnable beforeWaitFireForTesting) {
@@ -365,8 +365,8 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         final FiberTask task = assignedTask != null
                 ? assignedTask
                 : outcomeTask != null
-                ? outcomeTask
-                : mountedOutcome.task;
+                  ? outcomeTask
+                  : mountedOutcome.task;
         assignedTask = null;
         outcomeError = null;
         outcomeTask = null;

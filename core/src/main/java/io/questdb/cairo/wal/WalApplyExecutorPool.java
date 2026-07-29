@@ -34,12 +34,12 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 final class WalApplyExecutorPool implements Closeable {
-    private int createdCount;
     private final CairoEngine engine;
     private final ObjList<ApplyWal2TableJob> freeList;
-    private boolean isClosed;
     private final int maxLiveCount;
     private final int sharedQueryWorkerCount;
+    private int createdCount;
+    private boolean isClosed;
 
     WalApplyExecutorPool(CairoEngine engine, int sharedQueryWorkerCount, int maxLiveCount) {
         if (maxLiveCount < 1) {
@@ -62,11 +62,11 @@ final class WalApplyExecutorPool implements Closeable {
             Throwable cleanupFailure = freeList.size() == createdCount
                     ? null
                     : new IllegalStateException(
-                            "WAL apply executor pool closed with leased executors [created="
-                                    + createdCount
-                                    + ", free=" + freeList.size()
-                                    + ']'
-                    );
+                    "WAL apply executor pool closed with leased executors [created="
+                    + createdCount
+                    + ", free=" + freeList.size()
+                    + ']'
+            );
             cleanupFailure = Misc.freeObjListIfCloseableBestEffort(cleanupFailure, freeList);
             freeList.clear();
             failure = cleanupFailure;

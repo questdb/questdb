@@ -81,10 +81,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private SCSequence collectSubSeq;
     private int collectedFrameIndex = -1;
     private int dispatchStartFrameIndex;
-    private int frameCount;
     private PageFrameAddressCache frameAddressCache;
+    private int frameCount;
     private PageFrameCursor frameCursor;
     private long id;
+    private boolean isClosing;
     private PageFrameMemoryRecord localRecord;
     // Local reduce task used when there is no slots in the queue to dispatch tasks.
     private PageFrameReduceTask localTask;
@@ -93,7 +94,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     // this off the task via task.getFrameSequence().getMemoryTracker() to charge
     // their allocations to the active workload.
     private MemoryTracker memoryTracker;
-    private boolean isClosing;
     private boolean readyToDispatch;
     private RingQueue<PageFrameReduceTask> reduceQueue;
     private int shard;
@@ -169,12 +169,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 nothingProcessed = dispatcher != null
                         ? dispatcher.consumeOrdered(-1, reduceQueue, pageFrameReduceSubSeq, this)
                         : PageFrameReduceJob.consumeQueue(
-                                reduceQueue,
-                                pageFrameReduceSubSeq,
-                                localRecord,
-                                workStealCircuitBreaker,
-                                this
-                        );
+                        reduceQueue,
+                        pageFrameReduceSubSeq,
+                        localRecord,
+                        workStealCircuitBreaker,
+                        this
+                );
             } catch (Throwable th) {
                 LOG.error()
                         .$("await error [id=").$(id)

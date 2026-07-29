@@ -33,9 +33,9 @@ import io.questdb.std.QuietCloseable;
 final class PageFrameFiberTaskPool implements QuietCloseable {
     private final ObjList<PageFrameFiberTask> allTasks = new ObjList<>();
     private final int capacity;
-    private int createdCount;
     private final CairoEngine engine;
     private final ObjList<PageFrameFiberTask> freeTasks = new ObjList<>();
+    private int createdCount;
     private boolean isClosed;
 
     PageFrameFiberTaskPool(CairoEngine engine, int capacity) {
@@ -57,11 +57,11 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
             Throwable cleanupFailure = freeTasks.size() == createdCount
                     ? null
                     : new IllegalStateException(
-                            "page frame fiber task pool closed with leased tasks [created="
-                                    + createdCount
-                                    + ", free=" + freeTasks.size()
-                                    + ']'
-                    );
+                    "page frame fiber task pool closed with leased tasks [created="
+                    + createdCount
+                    + ", free=" + freeTasks.size()
+                    + ']'
+            );
             cleanupFailure = Misc.freeObjListIfCloseableBestEffort(cleanupFailure, allTasks);
             allTasks.clear();
             freeTasks.clear();

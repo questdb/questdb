@@ -193,9 +193,9 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
         final int cbState = frameSequence.isUninterruptible()
                 ? SqlExecutionCircuitBreaker.STATE_OK
                 : circuitBreaker.getState(
-                        frameSequence.getStartTime(),
-                        frameSequence.getCircuitBreaker().getFd()
-                );
+                frameSequence.getStartTime(),
+                frameSequence.getCircuitBreaker().getFd()
+        );
         if (cbState == SqlExecutionCircuitBreaker.STATE_OK) {
             record.of(frameSequence.getSymbolTableSource());
             frameSequence.getReduceStartedCounter().incrementAndGet();

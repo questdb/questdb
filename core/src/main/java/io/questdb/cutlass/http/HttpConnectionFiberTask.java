@@ -78,15 +78,15 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
     private static final long STAGED_EVENT_OFFSET = Unsafe.getFieldOffset(HttpConnectionFiberTask.class, "stagedEvent");
     private final @Nullable Runnable beforeLaunchFailureSignalForTesting;
     private final HttpConnectionContext context;
-    private int disconnectReason = IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
     private final IODispatcher<HttpConnectionContext> dispatcher;
+    private final WaitProcessor rescheduleContext;
+    private final HttpServer.HttpRequestProcessorSelectorFactory selectorFactory;
+    private int disconnectReason = IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
     private boolean isDisconnectPending;
     private boolean isRescheduleNextAttempt;
     private boolean isReschedulePending;
     private int nextAction = ACTION_NONE;
     private long preparedRescheduleCursor = -1;
-    private final WaitProcessor rescheduleContext;
-    private final HttpServer.HttpRequestProcessorSelectorFactory selectorFactory;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long stagedEvent;
 
@@ -150,142 +150,6 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
     public void reschedule(Retry retry) {
         assert retry == context : "foreign retry staged on connection task";
         isReschedulePending = true;
-    }
-
-    LaunchResult launch(FiberRuntime runtime, int operation) {
-        tryReopen();
-        final int eventAction = switch (operation) {
-            case IOOperation.READ -> EVENT_READ;
-            case IOOperation.WRITE -> EVENT_WRITE;
-            default -> throw new IllegalArgumentException("unsupported HTTP fiber operation [operation=" + operation + ']');
-        };
-        return launchEvent(runtime, null, getIncarnation(), eventAction);
-    }
-
-    LaunchResult launchRerun(FiberRuntime runtime, long taskIncarnation) {
-        return launchEvent(runtime, null, taskIncarnation, EVENT_RERUN);
-    }
-
-    LaunchResult launchRerunReserved(FiberRuntime runtime, Fiber fiber, long taskIncarnation) {
-        return launchEvent(runtime, fiber, taskIncarnation, EVENT_RERUN);
-    }
-
-    LaunchResult launchReserved(FiberRuntime runtime, Fiber fiber, int operation) {
-        tryReopen();
-        final int eventAction = switch (operation) {
-            case IOOperation.READ -> EVENT_READ;
-            case IOOperation.WRITE -> EVENT_WRITE;
-            default -> throw new IllegalArgumentException("unsupported HTTP fiber operation [operation=" + operation + ']');
-        };
-        return launchEvent(runtime, fiber, getIncarnation(), eventAction);
-    }
-
-    @Override
-    protected void onAbandoned() {
-        abortPreparedReschedule();
-        stagedEvent = 0;
-        if (!isDisconnectPending) {
-            disconnectReason = IODispatcher.DISCONNECT_REASON_SERVER_SHUTDOWN;
-        }
-        isDisconnectPending = true;
-    }
-
-    @Override
-    protected void onDone() {
-        stagedEvent = 0;
-        if (isDisconnectPending) {
-            isDisconnectPending = false;
-            dispatcher.disconnect(context, disconnectReason);
-        }
-    }
-
-    @Override
-    protected void onError(Throwable th) {
-        abortPreparedReschedule();
-        LOG.critical().$("internal error [ex=").$(th).$(']').$();
-        disconnectReason = IODispatcher.DISCONNECT_REASON_SERVER_ERROR;
-        isDisconnectPending = true;
-    }
-
-    @Override
-    protected void onParked() {
-        if (preparedRescheduleCursor > -1) {
-            final long cursor = preparedRescheduleCursor;
-            preparedRescheduleCursor = -1;
-            isRescheduleNextAttempt = false;
-            isReschedulePending = false;
-            rescheduleContext.publishReschedule(cursor);
-            return;
-        }
-        if (isDisconnectPending) {
-            if (!signalAxisA(SIGNAL_DISCONNECT)) {
-                throw new IllegalStateException("HTTP task is not arming");
-            }
-            return;
-        }
-        switch (nextAction) {
-            case ACTION_READ -> dispatcher.registerChannel(context, IOOperation.READ);
-            case ACTION_WRITE -> dispatcher.registerChannel(context, IOOperation.WRITE);
-            case ACTION_HEARTBEAT -> dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
-            default -> {
-            }
-        }
-    }
-
-    @Override
-    protected void onParkPrepare() {
-        if (isReschedulePending) {
-            try {
-                preparedRescheduleCursor = isRescheduleNextAttempt
-                        ? rescheduleContext.prepareRescheduleNextAttempt(context, getIncarnation())
-                        : rescheduleContext.prepareReschedule(context, getIncarnation());
-            } catch (RetryFailedOperationException e) {
-                isRescheduleNextAttempt = false;
-                isReschedulePending = false;
-                failRetry(e);
-            }
-        }
-    }
-
-    @Override
-    protected boolean runStep() {
-        final int eventAction = takeEvent();
-        assert preparedRescheduleCursor == -1;
-        disconnectReason = IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
-        isDisconnectPending = false;
-        isRescheduleNextAttempt = false;
-        isReschedulePending = false;
-        nextAction = ACTION_NONE;
-        final HttpServer.HttpRequestProcessorSelectorImpl selector = selectorFactory.acquire();
-        try {
-            if (eventAction == EVENT_RERUN) {
-                if (!context.tryRerun(selector, this)) {
-                    isReschedulePending = true;
-                    isRescheduleNextAttempt = true;
-                }
-                nextAction = ACTION_NONE;
-                return false;
-            }
-            final int operation = eventAction == EVENT_READ ? IOOperation.READ : IOOperation.WRITE;
-            context.handleClientOperation(operation, selector, this);
-            nextAction = ACTION_NONE;
-            return false;
-        } catch (HeartBeatException e) {
-            nextAction = ACTION_HEARTBEAT;
-            return false;
-        } catch (PeerIsSlowToReadException e) {
-            nextAction = ACTION_WRITE;
-            return false;
-        } catch (PeerIsSlowToWriteException e) {
-            nextAction = ACTION_READ;
-            return false;
-        } catch (ServerDisconnectException e) {
-            disconnectReason = context.getDisconnectReason();
-            isDisconnectPending = true;
-            return true;
-        } finally {
-            selectorFactory.release(selector);
-        }
     }
 
     private void abortPreparedReschedule() {
@@ -450,6 +314,144 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
             if (Unsafe.cas(this, STAGED_EVENT_OFFSET, event, 0L)) {
                 return (int) (event & EVENT_ACTION_MASK);
             }
+        }
+    }
+
+    LaunchResult launch(FiberRuntime runtime, int operation) {
+        tryReopen();
+        final int eventAction = switch (operation) {
+            case IOOperation.READ -> EVENT_READ;
+            case IOOperation.WRITE -> EVENT_WRITE;
+            default ->
+                    throw new IllegalArgumentException("unsupported HTTP fiber operation [operation=" + operation + ']');
+        };
+        return launchEvent(runtime, null, getIncarnation(), eventAction);
+    }
+
+    LaunchResult launchRerun(FiberRuntime runtime, long taskIncarnation) {
+        return launchEvent(runtime, null, taskIncarnation, EVENT_RERUN);
+    }
+
+    LaunchResult launchRerunReserved(FiberRuntime runtime, Fiber fiber, long taskIncarnation) {
+        return launchEvent(runtime, fiber, taskIncarnation, EVENT_RERUN);
+    }
+
+    LaunchResult launchReserved(FiberRuntime runtime, Fiber fiber, int operation) {
+        tryReopen();
+        final int eventAction = switch (operation) {
+            case IOOperation.READ -> EVENT_READ;
+            case IOOperation.WRITE -> EVENT_WRITE;
+            default ->
+                    throw new IllegalArgumentException("unsupported HTTP fiber operation [operation=" + operation + ']');
+        };
+        return launchEvent(runtime, fiber, getIncarnation(), eventAction);
+    }
+
+    @Override
+    protected void onAbandoned() {
+        abortPreparedReschedule();
+        stagedEvent = 0;
+        if (!isDisconnectPending) {
+            disconnectReason = IODispatcher.DISCONNECT_REASON_SERVER_SHUTDOWN;
+        }
+        isDisconnectPending = true;
+    }
+
+    @Override
+    protected void onDone() {
+        stagedEvent = 0;
+        if (isDisconnectPending) {
+            isDisconnectPending = false;
+            dispatcher.disconnect(context, disconnectReason);
+        }
+    }
+
+    @Override
+    protected void onError(Throwable th) {
+        abortPreparedReschedule();
+        LOG.critical().$("internal error [ex=").$(th).$(']').$();
+        disconnectReason = IODispatcher.DISCONNECT_REASON_SERVER_ERROR;
+        isDisconnectPending = true;
+    }
+
+    @Override
+    protected void onParkPrepare() {
+        if (isReschedulePending) {
+            try {
+                preparedRescheduleCursor = isRescheduleNextAttempt
+                        ? rescheduleContext.prepareRescheduleNextAttempt(context, getIncarnation())
+                        : rescheduleContext.prepareReschedule(context, getIncarnation());
+            } catch (RetryFailedOperationException e) {
+                isRescheduleNextAttempt = false;
+                isReschedulePending = false;
+                failRetry(e);
+            }
+        }
+    }
+
+    @Override
+    protected void onParked() {
+        if (preparedRescheduleCursor > -1) {
+            final long cursor = preparedRescheduleCursor;
+            preparedRescheduleCursor = -1;
+            isRescheduleNextAttempt = false;
+            isReschedulePending = false;
+            rescheduleContext.publishReschedule(cursor);
+            return;
+        }
+        if (isDisconnectPending) {
+            if (!signalAxisA(SIGNAL_DISCONNECT)) {
+                throw new IllegalStateException("HTTP task is not arming");
+            }
+            return;
+        }
+        switch (nextAction) {
+            case ACTION_READ -> dispatcher.registerChannel(context, IOOperation.READ);
+            case ACTION_WRITE -> dispatcher.registerChannel(context, IOOperation.WRITE);
+            case ACTION_HEARTBEAT -> dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
+            default -> {
+            }
+        }
+    }
+
+    @Override
+    protected boolean runStep() {
+        final int eventAction = takeEvent();
+        assert preparedRescheduleCursor == -1;
+        disconnectReason = IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
+        isDisconnectPending = false;
+        isRescheduleNextAttempt = false;
+        isReschedulePending = false;
+        nextAction = ACTION_NONE;
+        final HttpServer.HttpRequestProcessorSelectorImpl selector = selectorFactory.acquire();
+        try {
+            if (eventAction == EVENT_RERUN) {
+                if (!context.tryRerun(selector, this)) {
+                    isReschedulePending = true;
+                    isRescheduleNextAttempt = true;
+                }
+                nextAction = ACTION_NONE;
+                return false;
+            }
+            final int operation = eventAction == EVENT_READ ? IOOperation.READ : IOOperation.WRITE;
+            context.handleClientOperation(operation, selector, this);
+            nextAction = ACTION_NONE;
+            return false;
+        } catch (HeartBeatException e) {
+            nextAction = ACTION_HEARTBEAT;
+            return false;
+        } catch (PeerIsSlowToReadException e) {
+            nextAction = ACTION_WRITE;
+            return false;
+        } catch (PeerIsSlowToWriteException e) {
+            nextAction = ACTION_READ;
+            return false;
+        } catch (ServerDisconnectException e) {
+            disconnectReason = context.getDisconnectReason();
+            isDisconnectPending = true;
+            return true;
+        } finally {
+            selectorFactory.release(selector);
         }
     }
 }

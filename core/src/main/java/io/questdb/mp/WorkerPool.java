@@ -47,17 +47,11 @@ public class WorkerPool implements Closeable {
     // Callers that want a tighter, shared budget across several pools pass an explicit timeout to halt(long).
     public static final long DEFAULT_HALT_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(30);
     private static final Log LOG = LogFactory.getLog(WorkerPool.class);
-    @TestOnly
-    private volatile Runnable afterClosedSignalForTesting;
     // Every Job instance the pool mints through assign() (the blueprint and its
     // per-worker clones). halt() closeInstance()s each one. closeInstance() is
     // a no-op default on caller-owned singletons, so the pool needs no
     // blueprint-vs-clone bookkeeping to free them.
     private final ObjList<Job> assignedJobs = new ObjList<>();
-    @TestOnly
-    private volatile Runnable beforeStartedSignalForTesting;
-    @TestOnly
-    private volatile Runnable beforeWorkerAddedForTesting;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final boolean daemons;
     private final int fiberMaxLiveCount;
@@ -65,11 +59,9 @@ public class WorkerPool implements Closeable {
     private final int fiberRetainedCount;
     private final FiberRuntime fiberRuntime;
     private final ObjList<Object> freeOnExit = new ObjList<>();
-    private final SOCountDownLatch halted;
     private final Object haltLock = new Object();
     private final boolean haltOnError;
-    private boolean isHaltComplete;
-    private volatile boolean isStartAttempted;
+    private final SOCountDownLatch halted;
     private final Metrics metrics;
     private final WorkerPoolMode mode;
     private final long napThreshold;
@@ -93,6 +85,14 @@ public class WorkerPool implements Closeable {
     // observe an empty-or-complete-and-consistent list, never torn.
     private final Object workersLock = new Object();
     private final long yieldThreshold;
+    @TestOnly
+    private volatile Runnable afterClosedSignalForTesting;
+    @TestOnly
+    private volatile Runnable beforeStartedSignalForTesting;
+    @TestOnly
+    private volatile Runnable beforeWorkerAddedForTesting;
+    private boolean isHaltComplete;
+    private volatile boolean isStartAttempted;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
         this.workerCount = configuration.getWorkerCount();
@@ -135,9 +135,9 @@ public class WorkerPool implements Closeable {
 
         this.fiberRuntime = isFiberHost
                 ? new FiberRuntime(
-                        fiberRetainedCount,
-                        fiberMaxLiveCount
-                )
+                fiberRetainedCount,
+                fiberMaxLiveCount
+        )
                 : null;
         if (fiberRuntime != null) {
             metrics.fiberMetrics().register(poolName, fiberRuntime);

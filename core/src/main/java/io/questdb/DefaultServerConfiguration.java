@@ -172,7 +172,8 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         return walApplyPoolConfiguration;
     }
 
-    private record DefaultWorkerPoolConfiguration(String name, WorkerPoolMode workerPoolMode) implements WorkerPoolConfiguration {
+    private record DefaultWorkerPoolConfiguration(String name,
+                                                  WorkerPoolMode workerPoolMode) implements WorkerPoolConfiguration {
 
         @Override
         public String getPoolName() {
