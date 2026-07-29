@@ -75,6 +75,18 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // no CLOSE frame). 10s is a stall guard for the live-client path, not a
     // guaranteed deadline.
     public static final long ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS = 10_000_000;
+    // Budget for the post-CLOSE read-drain (gracefulCloseAndDrain in
+    // QwpIngressUpgradeProcessor): after a server-initiated fatal CLOSE + FIN the
+    // connection lingers, discarding inbound bytes, until the peer closes or this
+    // deadline expires. Closing the fd under in-flight client frames would RST the
+    // connection and destroy the final ACK/durable-ACK + CLOSE still queued in the
+    // peer's receive buffer (Windows purges the rx queue on RST) -- the client
+    // would replay batches the server already owns. Like the upload grace above,
+    // the deadline is measured in MicrosecondClock ticks but enforced only on
+    // inbound events: a conformant client reads the CLOSE and closes within
+    // milliseconds (FIN exit); a live writer that never reads is cut off here; a
+    // fully silent peer is reaped by the transport idle timeout.
+    public static final long CLOSE_DRAIN_TIMEOUT_MICROS = 5_000_000;
     static final int SEND_STATE_RESUME_ACK = 1;
     static final int SEND_STATE_RESUME_ACK_THEN_CLOSE = 7;
     static final int SEND_STATE_RESUME_ACK_THEN_ERROR = 3;
@@ -109,6 +121,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private long bufferAddress;
     private int bufferPosition;
     private int bufferSize;
+    // Deadline (MicrosecondClock ticks) for the post-CLOSE read-drain, or -1 when
+    // no drain is in progress. Armed by gracefulCloseAndDrain after the fatal
+    // CLOSE frame and FIN went out; while set, inbound frames are discarded
+    // without touching the engine and the fd stays open so the peer can finish
+    // reading the goodbye. Survives per-message clear(); reset on onDisconnected.
+    private long closeDrainDeadline = -1;
     private Status currentStatus = Status.OK;
     private int deferredCloseCode = -1;
     private long deferredErrorSequence = -1;
@@ -482,6 +500,38 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Arms the post-CLOSE read-drain: the fatal CLOSE frame and FIN are on the
+     * wire, and from here until the peer closes (or the
+     * {@link #CLOSE_DRAIN_TIMEOUT_MICROS} budget runs out) the connection only
+     * consumes and discards inbound bytes. Idempotent so a late re-entry cannot
+     * extend the deadline.
+     */
+    public void beginCloseDrain() {
+        if (closeDrainDeadline == -1) {
+            closeDrainDeadline = configuration.getMicrosecondClock().getTicks()
+                    + CLOSE_DRAIN_TIMEOUT_MICROS;
+        }
+    }
+
+    /**
+     * True while the connection lingers in the post-CLOSE read-drain awaiting
+     * the peer's close (or the drain deadline).
+     */
+    public boolean isCloseDraining() {
+        return closeDrainDeadline != -1;
+    }
+
+    /**
+     * True when the post-CLOSE read-drain has exhausted its budget and the
+     * connection must disconnect even though the peer has not closed. Always
+     * false when no drain is in progress.
+     */
+    public boolean isCloseDrainExpired() {
+        return closeDrainDeadline != -1
+                && configuration.getMicrosecondClock().getTicks() >= closeDrainDeadline;
+    }
+
+    /**
      * True when every seqTxn this connection has committed but not yet durably
      * acked is covered by the registry's durable-upload watermark -- i.e. a
      * durable ack flushed right now would advance the client's replay watermark
@@ -642,6 +692,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         sendState = SEND_STATE_READY;
         clearDeferredError();
         clearDeferredClose();
+        closeDrainDeadline = -1;
         roleChangeCloseDeferredDeadline = -1;
         roleChangeCloseReason.clear();
         firstUnresolvedSequence = -1;

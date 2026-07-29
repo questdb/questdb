@@ -52,9 +52,20 @@ import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstDecimalGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.FirstGeoHashGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullCharGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullDateGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.FirstNotNullDecimalGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullDoubleGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullFloatGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.FirstNotNullGeoHashGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.FirstNotNullIPv4GroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullIntGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullLongGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullStrGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullSymbolGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullTimestampGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullUuidGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullVarcharGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.LastGeoHashGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.LastNotNullCharGroupByFunctionFactory;
@@ -83,6 +94,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -222,6 +234,36 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstNotNullCharMergeKeepsNonNullOverNullDest() throws Exception {
+        CharArg arg = new CharArg();
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullCharGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set('a')
+        );
+    }
+
+    @Test
+    public void testFirstNotNullDateMergeKeepsNonNullOverNullDest() throws Exception {
+        DateArg arg = new DateArg();
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullDateGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
+    public void testFirstNotNullDecimal128MergeKeepsNonNullOverNullDest() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL128, 30, 5));
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullDecimalGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
     public void testFirstNotNullDecimal128SkipsNullsAndPicksMinNonNullRowId() throws Exception {
         DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL128, 30, 5));
         // nulls at the lowest rowIds (indices 3, 4 -> rowIds 40, 20); min non-null rowId is 60.
@@ -236,6 +278,16 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
                     }
                 },
                 60
+        );
+    }
+
+    @Test
+    public void testFirstNotNullDecimal16MergeKeepsNonNullOverNullDest() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL16, 4, 1));
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullDecimalGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
         );
     }
 
@@ -258,6 +310,16 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstNotNullDecimal256MergeKeepsNonNullOverNullDest() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL256, 50, 5));
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullDecimalGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
     public void testFirstNotNullDecimal256SkipsNullsAndPicksMinNonNullRowId() throws Exception {
         DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL256, 50, 5));
         // nulls at indices 0 and 2 (rowIds 100, 60); non-null at 80, 40, 20; min non-null is 20.
@@ -272,6 +334,16 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
                     }
                 },
                 20
+        );
+    }
+
+    @Test
+    public void testFirstNotNullDecimal32MergeKeepsNonNullOverNullDest() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL32, 9, 2));
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullDecimalGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
         );
     }
 
@@ -294,6 +366,16 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstNotNullDecimal64MergeKeepsNonNullOverNullDest() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL64, 18, 3));
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullDecimalGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
     public void testFirstNotNullDecimal64SkipsNullsAndPicksMinNonNullRowId() throws Exception {
         DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL64, 18, 3));
         // nulls at indices 0 and 2 (rowIds 100, 60); non-null at 80, 40, 20; min non-null is 20.
@@ -308,6 +390,16 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
                     }
                 },
                 20
+        );
+    }
+
+    @Test
+    public void testFirstNotNullDecimal8MergeKeepsNonNullOverNullDest() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL8, 2, 0));
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullDecimalGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
         );
     }
 
@@ -330,6 +422,36 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstNotNullDoubleMergeKeepsNonNullOverNullDest() throws Exception {
+        DoubleArg arg = new DoubleArg();
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullDoubleGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(1.5)
+        );
+    }
+
+    @Test
+    public void testFirstNotNullFloatMergeKeepsNonNullOverNullDest() throws Exception {
+        FloatArg arg = new FloatArg();
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullFloatGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(1.5f)
+        );
+    }
+
+    @Test
+    public void testFirstNotNullGeoByteMergeKeepsNonNullOverNullDest() throws Exception {
+        GeoByteArg arg = new GeoByteArg(ColumnType.getGeoHashTypeWithBits(5));
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullGeoHashGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set((byte) 1)
+        );
+    }
+
+    @Test
     public void testFirstNotNullGeoByteSkipsNullsAndPicksMinNonNullRowId() throws Exception {
         GeoByteArg arg = new GeoByteArg(ColumnType.getGeoHashTypeWithBits(5));
         // nulls at indices 0 and 2 (rowIds 100, 60); non-null at 80, 40, 20; min non-null is 20.
@@ -344,6 +466,16 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
                     }
                 },
                 20
+        );
+    }
+
+    @Test
+    public void testFirstNotNullGeoIntMergeKeepsNonNullOverNullDest() throws Exception {
+        GeoIntArg arg = new GeoIntArg(ColumnType.getGeoHashTypeWithBits(20));
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullGeoHashGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(1)
         );
     }
 
@@ -366,6 +498,16 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstNotNullGeoLongMergeKeepsNonNullOverNullDest() throws Exception {
+        GeoLongArg arg = new GeoLongArg(ColumnType.getGeoHashTypeWithBits(40));
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullGeoHashGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
     public void testFirstNotNullGeoLongSkipsNullsAndPicksMinNonNullRowId() throws Exception {
         GeoLongArg arg = new GeoLongArg(ColumnType.getGeoHashTypeWithBits(40));
         // nulls at indices 0 and 2 (rowIds 100, 60); non-null at 80, 40, 20; min non-null is 20.
@@ -380,6 +522,16 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
                     }
                 },
                 20
+        );
+    }
+
+    @Test
+    public void testFirstNotNullGeoShortMergeKeepsNonNullOverNullDest() throws Exception {
+        GeoShortArg arg = new GeoShortArg(ColumnType.getGeoHashTypeWithBits(10));
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullGeoHashGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set((short) 1)
         );
     }
 
@@ -402,6 +554,16 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstNotNullIPv4MergeKeepsNonNullOverNullDest() throws Exception {
+        IPv4Arg arg = new IPv4Arg();
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullIPv4GroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(0x0A000001)
+        );
+    }
+
+    @Test
     public void testFirstNotNullIPv4SkipsNullsAndPicksMinNonNullRowId() throws Exception {
         IPv4Arg arg = new IPv4Arg();
         // nulls at indices 0 and 2 (rowIds 100, 60); non-null at 80, 40, 20; min non-null is 20.
@@ -416,6 +578,76 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
                     }
                 },
                 20
+        );
+    }
+
+    @Test
+    public void testFirstNotNullIntMergeKeepsNonNullOverNullDest() throws Exception {
+        IntArg arg = new IntArg();
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullIntGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42)
+        );
+    }
+
+    @Test
+    public void testFirstNotNullLongMergeKeepsNonNullOverNullDest() throws Exception {
+        LongArg arg = new LongArg();
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullLongGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
+    public void testFirstNotNullStrMergeKeepsNonNullOverNullDest() throws Exception {
+        StrArg arg = new StrArg();
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullStrGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set("abc")
+        );
+    }
+
+    @Test
+    public void testFirstNotNullSymbolMergeKeepsNonNullOverNullDest() throws Exception {
+        SymbolArg arg = new SymbolArg();
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullSymbolGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(5)
+        );
+    }
+
+    @Test
+    public void testFirstNotNullTimestampMergeKeepsNonNullOverNullDest() throws Exception {
+        TimestampArg arg = new TimestampArg(ColumnType.TIMESTAMP);
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullTimestampGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
+    public void testFirstNotNullUuidMergeKeepsNonNullOverNullDest() throws Exception {
+        UuidArg arg = new UuidArg();
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullUuidGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
+    public void testFirstNotNullVarcharMergeKeepsNonNullOverNullDest() throws Exception {
+        VarcharArg arg = new VarcharArg();
+        assertFirstNotNullMergeKeepsNonNull(
+                build(new FirstNotNullVarcharGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set("abc")
         );
     }
 
@@ -947,6 +1179,85 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
         );
     }
 
+    private static void assertFunctionValueEquals(GroupByFunction func, Record expected, Record actual) {
+        switch (ColumnType.tagOf(func.getType())) {
+            case ColumnType.CHAR -> Assert.assertEquals(func.getChar(expected), func.getChar(actual));
+            case ColumnType.DATE -> Assert.assertEquals(func.getDate(expected), func.getDate(actual));
+            case ColumnType.DECIMAL8 -> Assert.assertEquals(func.getDecimal8(expected), func.getDecimal8(actual));
+            case ColumnType.DECIMAL16 -> Assert.assertEquals(func.getDecimal16(expected), func.getDecimal16(actual));
+            case ColumnType.DECIMAL32 -> Assert.assertEquals(func.getDecimal32(expected), func.getDecimal32(actual));
+            case ColumnType.DECIMAL64 -> Assert.assertEquals(func.getDecimal64(expected), func.getDecimal64(actual));
+            case ColumnType.DECIMAL128 -> {
+                final Decimal128 expectedValue = new Decimal128();
+                final Decimal128 actualValue = new Decimal128();
+                func.getDecimal128(expected, expectedValue);
+                func.getDecimal128(actual, actualValue);
+                Assert.assertEquals(expectedValue, actualValue);
+            }
+            case ColumnType.DECIMAL256 -> {
+                final Decimal256 expectedValue = new Decimal256();
+                final Decimal256 actualValue = new Decimal256();
+                func.getDecimal256(expected, expectedValue);
+                func.getDecimal256(actual, actualValue);
+                Assert.assertEquals(expectedValue, actualValue);
+            }
+            case ColumnType.DOUBLE -> Assert.assertEquals(func.getDouble(expected), func.getDouble(actual), 0.0);
+            case ColumnType.FLOAT -> Assert.assertEquals(func.getFloat(expected), func.getFloat(actual), 0.0f);
+            case ColumnType.GEOBYTE -> Assert.assertEquals(func.getGeoByte(expected), func.getGeoByte(actual));
+            case ColumnType.GEOSHORT -> Assert.assertEquals(func.getGeoShort(expected), func.getGeoShort(actual));
+            case ColumnType.GEOINT -> Assert.assertEquals(func.getGeoInt(expected), func.getGeoInt(actual));
+            case ColumnType.GEOLONG -> Assert.assertEquals(func.getGeoLong(expected), func.getGeoLong(actual));
+            case ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL ->
+                    Assert.assertEquals(func.getInt(expected), func.getInt(actual));
+            case ColumnType.LONG -> Assert.assertEquals(func.getLong(expected), func.getLong(actual));
+            case ColumnType.STRING -> {
+                final String expectedValue = func.getStrA(expected).toString();
+                TestUtils.assertEquals(expectedValue, func.getStrA(actual));
+            }
+            case ColumnType.TIMESTAMP -> Assert.assertEquals(func.getTimestamp(expected), func.getTimestamp(actual));
+            case ColumnType.UUID -> {
+                Assert.assertEquals(func.getLong128Hi(expected), func.getLong128Hi(actual));
+                Assert.assertEquals(func.getLong128Lo(expected), func.getLong128Lo(actual));
+            }
+            case ColumnType.VARCHAR -> {
+                final Utf8String expectedValue = Utf8String.newInstance(func.getVarcharA(expected));
+                TestUtils.assertEquals(expectedValue, func.getVarcharA(actual));
+            }
+            default -> Assert.fail("unsupported aggregate payload type: " + ColumnType.nameOf(func.getType()));
+        }
+    }
+
+    private void assertFirstNotNullMergeKeepsNonNull(GroupByFunction func, Runnable setNull, Runnable setNonNull) throws Exception {
+        assertMemoryLeak(() -> {
+            final ArrayColumnTypes types = new ArrayColumnTypes();
+            func.initValueTypes(types);
+            func.initValueIndex(0);
+            try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                 SimpleMapValue dest = new SimpleMapValue(types.getColumnCount());
+                 SimpleMapValue src = new SimpleMapValue(types.getColumnCount())) {
+                // Str/Varchar store the value via the allocator; for inline types setAllocator is a no-op.
+                func.setAllocator(allocator);
+                // dest: a group whose only seen row is NULL, committed at the LOWER rowId. The mirror of
+                // the last_not_null case below: here the rowId comparison alone keeps the NULL, because
+                // the dest already holds the smaller rowId a first() wants.
+                func.setEmpty(dest);
+                setNull.run();
+                func.computeFirst(dest, null, 20);
+                // src: the only non-null value in the whole group, at the higher rowId.
+                func.setEmpty(src);
+                setNonNull.run();
+                func.computeFirst(src, null, 100);
+                func.merge(dest, src);
+                Assert.assertEquals(
+                        "first_not_null merge dropped the only non-null value because the dest slot held an all-null group with a lower rowId",
+                        100,
+                        dest.getLong(func.getValueIndex())
+                );
+                assertFunctionValueEquals(func, src, dest);
+            }
+        });
+    }
+
     private void assertLastNotNullMergeKeepsNonNull(GroupByFunction func, Runnable setNull, Runnable setNonNull) throws Exception {
         assertMemoryLeak(() -> {
             final ArrayColumnTypes types = new ArrayColumnTypes();
@@ -971,6 +1282,7 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
                         20,
                         dest.getLong(func.getValueIndex())
                 );
+                assertFunctionValueEquals(func, src, dest);
             }
         });
     }
