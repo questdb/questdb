@@ -32,11 +32,14 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -223,6 +226,57 @@ public class LiveViewCheckpointRepairStateTest extends AbstractCairoTest {
                 Assert.assertEquals(2, state.getOwnedSegmentIdCount());
                 Assert.assertEquals(11, state.getOwnedSegmentId(0));
                 Assert.assertEquals(12, state.getOwnedSegmentId(1));
+            }
+        });
+    }
+
+    @Test
+    public void testRewritesTheDescriptorWhenRenameRejectsAnExistingTarget() throws Exception {
+        // Windows MoveFileW refuses an existing destination (errno 183) where
+        // POSIX rename replaces it atomically. begin() creates the descriptor and
+        // every later update republishes over that same name, so on Windows the
+        // first addOwnedSegmentId() aborts the repair.
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            private boolean renameRejected;
+
+            @Override
+            public int errno() {
+                return renameRejected ? CairoException.ERRNO_ALREADY_EXISTS_WIN : super.errno();
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (exists(to)) {
+                    renameRejected = true;
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                renameRejected = false;
+                return super.rename(from, to);
+            }
+        }, () -> {
+            try (
+                    LiveViewCheckpointRepairState state = new LiveViewCheckpointRepairState(configuration);
+                    Path dir = new Path()
+            ) {
+                checkpointsDir(dir);
+                state.begin(dir, REPAIR_ID, 7, 0, 3, 11, 10, 100, 50, 80, 200, HighBoundTag.FINITE);
+                // Throwing updates: these abort the repair rather than degrade it.
+                state.addOwnedSegmentId(5);
+                state.addOwnedSegmentId(6);
+                // Best-effort updates: these disable the descriptor on failure.
+                state.recordStage(RepairPublicationStage.LV_WAL_REPLACEMENT_COMMITTED);
+                state.recordProgress(1_000, 9);
+                Assert.assertTrue(state.isOpen());
+            }
+            try (
+                    LiveViewCheckpointRepairState state = new LiveViewCheckpointRepairState(configuration);
+                    Path dir = new Path()
+            ) {
+                Assert.assertTrue(state.load(checkpointsDir(dir), REPAIR_ID));
+                Assert.assertEquals(RepairPublicationStage.LV_WAL_REPLACEMENT_COMMITTED, state.getStage());
+                Assert.assertEquals(1_000, state.getLastCompletedTimestampGroup());
+                Assert.assertEquals(9, state.getNextCheckpointId());
+                Assert.assertEquals(2, state.getOwnedSegmentIdCount());
             }
         });
     }

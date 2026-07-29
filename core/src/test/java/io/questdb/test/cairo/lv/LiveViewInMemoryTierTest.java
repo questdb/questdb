@@ -35,6 +35,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
+import io.questdb.cairo.lv.LiveViewSymbolCache;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -582,6 +583,94 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                 second.putLong(0, 0, 22L);
                 second.setRowCount(1);
                 tier.publishSwap(writeIdx);
+            }
+        });
+    }
+
+    @Test
+    public void testStampFailureStillReleasesTheWriterSentinel() throws Exception {
+        // The symbol-horizon stamp runs before the sentinel-release CAS. If it
+        // throws and the sentinel survives, nothing ever clears it: the recovery
+        // path is releaseWriteWithoutPublish itself, which re-enters the same
+        // stamp. Every reader then spins on the -1 forever, so the release has to
+        // happen even when the stamp cannot finish.
+        assertMemoryLeak(() -> {
+            IntList types = singleLongCol();
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                // The fast path appends in place on the PUBLISHED slot, so a
+                // stranded sentinel there is the one every reader meets.
+                final int published = tier.getPublishedIdx();
+                LiveViewInMemoryBuffer slot = tier.tryAcquireWrite(published);
+                Assert.assertNotNull(slot);
+                slot.putLong(0, 0, 11L);
+                slot.setRowCount(1);
+
+                final RuntimeException injected = new RuntimeException("reverse-index prune failed");
+                tier.setFailNextSymbolHorizonStamp(injected);
+                try {
+                    tier.releaseWriteWithoutPublish(published);
+                    Assert.fail("expected the stamp failure to propagate");
+                } catch (RuntimeException e) {
+                    Assert.assertSame(injected, e);
+                }
+
+                // Re-acquirable means the sentinel is gone. Asserting it this way
+                // rather than through acquireRead keeps a regression a failure
+                // instead of a hang.
+                LiveViewInMemoryBuffer reacquired = tier.tryAcquireWrite(published);
+                Assert.assertNotNull("the sentinel must drop even when the stamp throws", reacquired);
+                tier.releaseWriteWithoutPublish(published);
+
+                final int pin = tier.acquireRead();
+                Assert.assertEquals(published, pin);
+                Assert.assertEquals(1L, tier.getSlot(pin).rowCount());
+                Assert.assertEquals(11L, tier.getSlot(pin).getLong(0, 0));
+                tier.releaseRead(pin);
+            }
+        });
+    }
+
+    @Test
+    public void testStampFailureStillLeavesEverySymbolHorizonComplete() throws Exception {
+        // The stamp writes every horizon before it prunes anything, so a prune that
+        // throws still leaves the slot fully stamped. That is what makes the release
+        // CAS safe to publish afterwards: a half-stamped horizon would under-report
+        // the new symbol ids and readers would resolve them as NULL.
+        assertMemoryLeak(() -> {
+            IntList types = new IntList(3);
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            types.add(ColumnType.SYMBOL);
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                final LiveViewSymbolCache symbolCache = tier.getSymbolCache();
+                Assert.assertEquals("the schema must carry both symbol columns", 2, symbolCache.symbolColumnCount());
+
+                final int published = tier.getPublishedIdx();
+                // Seed a sentinel so an unstamped column is distinguishable from one
+                // the stamp wrote. With two columns, a stamp that pruned between
+                // stores would leave the second sentinel behind.
+                for (int i = 0, n = symbolCache.symbolColumnCount(); i < n; i++) {
+                    tier.getSlot(published).setNewSymbolMaxId(symbolCache.symbolColumnIndexAt(i), -1);
+                }
+                Assert.assertNotNull(tier.tryAcquireWrite(published));
+                final RuntimeException injected = new RuntimeException("reverse-index prune failed");
+                tier.setFailNextSymbolHorizonStamp(injected);
+                try {
+                    tier.releaseWriteWithoutPublish(published);
+                    Assert.fail("expected the stamp failure to propagate");
+                } catch (RuntimeException e) {
+                    Assert.assertSame(injected, e);
+                }
+
+                final LiveViewInMemoryBuffer slot = tier.getSlot(published);
+                for (int i = 0, n = symbolCache.symbolColumnCount(); i < n; i++) {
+                    final int col = symbolCache.symbolColumnIndexAt(i);
+                    Assert.assertEquals(
+                            "every horizon must be stamped before the prune that threw",
+                            symbolCache.newSymbolMaxIdExclusive(col),
+                            slot.newSymbolMaxId(col)
+                    );
+                }
             }
         });
     }

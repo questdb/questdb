@@ -24,17 +24,24 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Direct coverage for the durable prefix-preservation repair marker: its
@@ -75,12 +82,109 @@ public class LiveViewCheckpointRepairMarkerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFailedRewriteLeavesThePreviousMarkerReadable() throws Exception {
+        // A rename that fails for any reason other than an existing destination
+        // must leave the record already published under the final name alone.
+        final AtomicBoolean rejectRename = new AtomicBoolean();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return rejectRename.get() ? CairoException.ERRNO_EACCES_LINUX : super.errno();
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                return rejectRename.get() ? Files.FILES_RENAME_ERR_OTHER : super.rename(from, to);
+            }
+        }, () -> {
+            try (Path dir = new Path()) {
+                checkpointsDir(dir);
+                LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 8, 1_700_000_000L);
+                Assert.assertEquals(8, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+
+                rejectRename.set(true);
+                try {
+                    LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 20, 1_700_000_000L);
+                    Assert.fail("expected the marker publication to fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not publish live view checkpoint repair marker");
+                }
+                rejectRename.set(false);
+                Assert.assertTrue(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+                Assert.assertEquals(8, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+            }
+        });
+    }
+
+    @Test
     public void testMissingMarkerReadsNull() throws Exception {
         assertMemoryLeak(() -> {
             try (Path dir = new Path()) {
                 checkpointsDir(dir);
                 Assert.assertFalse(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
                 Assert.assertEquals(Numbers.LONG_NULL, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+            }
+        });
+    }
+
+    @Test
+    public void testRewriteReplacesRecordWhenRenameRejectsAnExistingTarget() throws Exception {
+        // Windows MoveFileW refuses an existing destination and reports
+        // ERROR_ALREADY_EXISTS, where POSIX rename replaces it atomically. This
+        // facade holds every platform to the Windows contract, so the
+        // publication has to unlink and retry.
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            private boolean renameRejected;
+
+            @Override
+            public int errno() {
+                return renameRejected ? CairoException.ERRNO_ALREADY_EXISTS_WIN : super.errno();
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (exists(to)) {
+                    renameRejected = true;
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                renameRejected = false;
+                return super.rename(from, to);
+            }
+        }, () -> {
+            try (Path dir = new Path()) {
+                checkpointsDir(dir);
+                LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 8, 1_700_000_000L);
+                Assert.assertEquals(8, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+                // A second repair rewrites the fixed-name marker in place.
+                LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 20, 1_700_000_000L);
+                Assert.assertEquals(20, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+            }
+        });
+    }
+
+    @Test
+    public void testStagedSiblingAloneStillReadsAsALiveMarker() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path dir = new Path(); Path path = new Path()) {
+                checkpointsDir(dir);
+                LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 8, 1_700_000_000L);
+                // The shape a crash inside the Windows rewrite leaves: the previous
+                // record already unlinked, the replacement not yet renamed over it.
+                LiveViewCheckpointLayout.repairingMarkerPath(path, dir);
+                path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+                Assert.assertTrue(ff.touch(path.$()));
+                LiveViewCheckpointLayout.repairingMarkerPath(path, dir);
+                Assert.assertTrue(ff.removeQuiet(path.$()));
+
+                // Losing the final name must not read as "no repair in flight":
+                // LONG_NULL is what forces the conservative rebuild.
+                Assert.assertTrue(LiveViewCheckpointRepairMarker.exists(ff, dir));
+                Assert.assertEquals(Numbers.LONG_NULL, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+
+                // And it costs one rebuild, not one per restart: clear removes both.
+                LiveViewCheckpointRepairMarker.clear(ff, dir);
+                Assert.assertFalse(LiveViewCheckpointRepairMarker.exists(ff, dir));
             }
         });
     }

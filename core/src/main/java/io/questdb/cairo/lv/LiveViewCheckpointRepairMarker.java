@@ -67,7 +67,13 @@ import org.jetbrains.annotations.NotNull;
  * <p>
  * The file is a single fixed-size, CRC-checked record staged through a
  * {@code .tmp} sibling and renamed into place, so a crash mid-write leaves only
- * an orphan {@code .tmp}. This type is stateless; every method is static.
+ * an orphan {@code .tmp}. Rewriting an existing marker is atomic on POSIX; on
+ * Windows it briefly unlinks the previous record first, so a crash inside that
+ * window loses the older record rather than preserving it - see
+ * {@link LiveViewCheckpointLayout#publishOverwrite}. The <em>signal</em>
+ * survives either way: {@link #exists} reads the staged {@code .tmp} as a marker
+ * too, so the window still forces the conservative rebuild. This type is
+ * stateless; every method is static.
  */
 public final class LiveViewCheckpointRepairMarker {
 
@@ -108,12 +114,28 @@ public final class LiveViewCheckpointRepairMarker {
     }
 
     /**
-     * @return true when the marker file is present, regardless of whether its
-     * contents validate
+     * A staged {@code .tmp} with no final name counts as present. Two states
+     * reach that shape, and both must force the conservative rebuild: a crash
+     * during the very first write, before any truncate published; and a crash
+     * inside the unlink the Windows rewrite needs (see
+     * {@link LiveViewCheckpointLayout#publishOverwrite}), where the previous
+     * record is already gone and the replacement not yet in place. Treating the
+     * sibling as evidence keeps the marker a one-way signal on both platforms.
+     * {@link #readBaseGeneration} reports {@link Numbers#LONG_NULL} for either,
+     * which the restart already reads as "not stale" and so rebuilds.
+     * {@link #clear} and the timeline retire remove both names, so a leftover
+     * {@code .tmp} costs one rebuild rather than forcing one forever.
+     *
+     * @return true when the marker file or its staged sibling is present,
+     * regardless of whether the contents validate
      */
     public static boolean exists(@NotNull FilesFacade ff, @Transient @NotNull Path checkpointsDir) {
         try (Path path = new Path()) {
             LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
+            if (ff.exists(path.$())) {
+                return true;
+            }
+            path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
             return ff.exists(path.$());
         }
     }
@@ -192,7 +214,9 @@ public final class LiveViewCheckpointRepairMarker {
                 // file, and POSIX would leave a stale mapping to the old inode.
                 mem.close(false);
             }
-            if (ff.rename(tmpPath.$(), finalPath.$()) != Files.FILES_RENAME_OK) {
+            // A second repair rewrites the fixed-name marker, so the destination
+            // can already exist.
+            if (LiveViewCheckpointLayout.publishOverwrite(ff, tmpPath.$(), finalPath.$()) != Files.FILES_RENAME_OK) {
                 ff.removeQuiet(tmpPath.$());
                 throw CairoException.critical(ff.errno())
                         .put("could not publish live view checkpoint repair marker");

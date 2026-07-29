@@ -83,6 +83,10 @@ public class LiveViewInMemoryTier implements QuietCloseable {
     private static final int CLOSED_BIT = 1 << 31;
     private static final long REFCOUNTS_BYTES = 2L * Long.BYTES;
     private static final long RC_WRITER_SENTINEL = -1L;
+    // Matches LiveViewInstance.LATCH_SPINS_BEFORE_SLEEP: long enough to absorb a
+    // fast-path append without a context switch, short enough that a slow-path
+    // swap does not burn a core.
+    private static final int SENTINEL_SPINS_BEFORE_SLEEP = 64;
     private final LiveViewInMemoryBuffer[] slots;
     // Eager-interning symbol cache for the un-flushed lead, shared across both
     // slots (symbol ids live in one LV-table id space, slot-independent). Holds
@@ -113,6 +117,13 @@ public class LiveViewInMemoryTier implements QuietCloseable {
     // on, so the injection exercises the recovery path end-to-end.
     @TestOnly
     private volatile RuntimeException failNextPublishSwap;
+    // Test-only failure injection for {@link #stampSymbolHorizon}, fired after
+    // every horizon is stamped and before the reverse-index prune - the only
+    // point that method can throw in production. Production code never sets it.
+    // It exists because the sentinel-release paths must survive a stamp failure,
+    // and nothing else can drive that branch deterministically.
+    @TestOnly
+    private volatile RuntimeException failNextSymbolHorizonStamp;
     private volatile int publishedIdx;
     private long refCountsAddr;
 
@@ -164,6 +175,7 @@ public class LiveViewInMemoryTier implements QuietCloseable {
         if (!tryIncrementPinCount()) {
             return -1;
         }
+        int spins = 0;
         while (true) {
             int idx = publishedIdx;
             long addr = refCountsAddr + ((long) idx) * Long.BYTES;
@@ -176,9 +188,21 @@ public class LiveViewInMemoryTier implements QuietCloseable {
                 if (hook != null) {
                     hook.run();
                 }
-                Os.pause();
+                if (spins < SENTINEL_SPINS_BEFORE_SLEEP) {
+                    // Stops incrementing at the threshold so a long wait cannot
+                    // overflow back into the spin branch.
+                    spins++;
+                    Os.pause();
+                    continue;
+                }
+                // A refresh turn can hold the sentinel for as long as its copy
+                // takes, and this runs at cursor-open, before the query has a
+                // circuit breaker to poll - so a bare pause loop would pin a core
+                // for that whole time, once per reader.
+                Os.sleep(1);
                 continue;
             }
+            spins = 0;
             if (Os.compareAndSwap(addr, current, current + 1) == current) {
                 // Re-check publishedIdx: a swap may have moved away from this slot
                 // between the publishedIdx read and the CAS. If so, release the
@@ -312,16 +336,13 @@ public class LiveViewInMemoryTier implements QuietCloseable {
         // reader-visible. The sentinel-release CAS below is the happens-before edge
         // a reader's acquireRead CAS pairs with, so the stamped horizon (and the
         // backing arrays it bounds) publish to the reader safely.
+        // No finally here, unlike releaseWriteWithoutPublish: a stamp that throws
+        // must leave publishedIdx alone (the slot never becomes visible) and the
+        // sentinel held, because the caller's catch releases it through that
+        // method - which now drops the sentinel whatever the stamp does.
         stampSymbolHorizon(newPublishedIdx);
         publishedIdx = newPublishedIdx;
-        long addr = refCountsAddr + ((long) newPublishedIdx) * Long.BYTES;
-        long observed = Os.compareAndSwap(addr, RC_WRITER_SENTINEL, 0L);
-        if (observed != RC_WRITER_SENTINEL) {
-            throw new IllegalStateException(
-                    "publishSwap: writer sentinel not held [slot=" + newPublishedIdx
-                            + ", observed=" + observed + "]"
-            );
-        }
+        releaseWriterSentinel(newPublishedIdx, "publishSwap");
     }
 
     /**
@@ -374,14 +395,16 @@ public class LiveViewInMemoryTier implements QuietCloseable {
         // branches release a slot no reader will see. Stamping the symbol horizon
         // before the release CAS covers the visible case and is a harmless no-op
         // for the others (the slot is not published, or its rows are unchanged).
-        stampSymbolHorizon(slotIdx);
-        long addr = refCountsAddr + ((long) slotIdx) * Long.BYTES;
-        long observed = Os.compareAndSwap(addr, RC_WRITER_SENTINEL, 0L);
-        if (observed != RC_WRITER_SENTINEL) {
-            throw new IllegalStateException(
-                    "releaseWriteWithoutPublish: writer sentinel not held [slot=" + slotIdx
-                            + ", observed=" + observed + "]"
-            );
+        //
+        // The release is in a finally because this is the recovery path: it is what
+        // publishToInMemoryTier's catch calls after publishSwap threw. If a stamp
+        // failure escaped here the sentinel would stay set forever, and every
+        // reader of this view would then spin on it - so the sentinel drops even
+        // when the stamp cannot complete, and the failure propagates on its own.
+        try {
+            stampSymbolHorizon(slotIdx);
+        } finally {
+            releaseWriterSentinel(slotIdx, "releaseWriteWithoutPublish");
         }
     }
 
@@ -407,6 +430,16 @@ public class LiveViewInMemoryTier implements QuietCloseable {
     @TestOnly
     public void setFailNextPublishSwap(RuntimeException failure) {
         this.failNextPublishSwap = failure;
+    }
+
+    /**
+     * Test-only hook: makes the next {@link #stampSymbolHorizon} throw
+     * {@code failure} once every horizon is stamped and before the reverse-index
+     * prune, standing in for a prune that fails. Production code never sets it.
+     */
+    @TestOnly
+    public void setFailNextSymbolHorizonStamp(RuntimeException failure) {
+        this.failNextSymbolHorizonStamp = failure;
     }
 
     /**
@@ -469,27 +502,70 @@ public class LiveViewInMemoryTier implements QuietCloseable {
     }
 
     /**
+     * Drops the writer sentinel on {@code slotIdx}, restoring it to idle. This CAS
+     * is the release edge a reader's {@link #acquireRead()} CAS pairs with, so
+     * everything the writer wrote to the slot publishes to readers here.
+     */
+    private void releaseWriterSentinel(int slotIdx, CharSequence caller) {
+        final long addr = refCountsAddr + ((long) slotIdx) * Long.BYTES;
+        final long observed = Os.compareAndSwap(addr, RC_WRITER_SENTINEL, 0L);
+        if (observed != RC_WRITER_SENTINEL) {
+            throw new IllegalStateException(
+                    caller + ": writer sentinel not held [slot=" + slotIdx
+                            + ", observed=" + observed + "]"
+            );
+        }
+    }
+
+    /**
      * Stamps every SYMBOL output column's current lead horizon
-     * ({@link LiveViewSymbolCache#newSymbolMaxIdExclusive}) onto {@code slotIdx}.
+     * ({@link LiveViewSymbolCache#newSymbolMaxIdExclusive}) onto {@code slotIdx},
+     * then reclaims the reverse-index band both slots have moved past.
      * Runs on the writer thread under the slot's writer sentinel, just before the
      * sentinel-release / publish CAS, so the snapshot is exact (the sole interner
      * is not growing the lists at this instant) and a reader that pins the slot
      * sees a stable, in-bounds horizon. A non-SYMBOL schema makes this a no-op.
      * <p>
-     * Prunes the cache's reverse index in the same pass. Once both slots carry a
-     * horizon, the lower of the two is the oldest id band any reader can still ask
-     * for - a reader only ever resolves against the slot it pinned - so everything
-     * the chains hold below it, bar one node per value, is dead. Both reads are on
-     * the writer thread, the only thread that stamps them.
+     * Once both slots carry a horizon, the lower of the two is the oldest id band
+     * any reader can still ask for - a reader only ever resolves against the slot
+     * it pinned - so everything the chains hold below it, bar one node per value,
+     * is dead. Both reads are on the writer thread, the only thread that stamps
+     * them.
+     * <p>
+     * The two passes are ordered, not merged: stamping is a plain array store
+     * that cannot fail, while {@code pruneReverseIndex} walks and allocates and
+     * so can. Doing every stamp first means a prune that throws still leaves the
+     * horizon complete, so the release CAS that follows can publish the slot
+     * without a reader ever resolving symbols against a half-stamped horizon.
+     * Interleaving them would make a mid-loop failure expose exactly that. The
+     * per-column prune argument is unchanged by the split: {@code pruneReverseIndex}
+     * touches only {@code col}'s own state, so no column's horizon can influence
+     * another's reclaimed band.
      */
     private void stampSymbolHorizon(int slotIdx) {
         final LiveViewInMemoryBuffer slot = slots[slotIdx];
         final LiveViewInMemoryBuffer other = slots[1 - slotIdx];
-        for (int i = 0, n = symbolCache.symbolColumnCount(); i < n; i++) {
+        // Every close path takes the refresh latch first, which the refresh worker
+        // holds across the turn that writes the tier, so a slot cannot be nulled
+        // while its writer sentinel is held. Assert rather than tolerate it: with
+        // refCountsAddr already zeroed, skipping the stamp would only defer the
+        // failure to the release CAS below, at address 0.
+        assert slot != null && other != null;
+        final int n = symbolCache.symbolColumnCount();
+        for (int i = 0; i < n; i++) {
             final int col = symbolCache.symbolColumnIndexAt(i);
-            final int horizon = symbolCache.newSymbolMaxIdExclusive(col);
-            slot.setNewSymbolMaxId(col, horizon);
-            symbolCache.pruneReverseIndex(col, Math.min(horizon, other.newSymbolMaxId(col)));
+            slot.setNewSymbolMaxId(col, symbolCache.newSymbolMaxIdExclusive(col));
+        }
+        final RuntimeException injected = failNextSymbolHorizonStamp;
+        if (injected != null) {
+            // Single-shot, and deliberately fired between the passes: it stands in
+            // for a prune failure, the only way this method throws in production.
+            failNextSymbolHorizonStamp = null;
+            throw injected;
+        }
+        for (int i = 0; i < n; i++) {
+            final int col = symbolCache.symbolColumnIndexAt(i);
+            symbolCache.pruneReverseIndex(col, Math.min(slot.newSymbolMaxId(col), other.newSymbolMaxId(col)));
         }
     }
 

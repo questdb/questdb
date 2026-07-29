@@ -262,6 +262,44 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     @Test
+    public void testLoneStagedMarkerForcesOneRebuildAndIsThenRemoved() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                // The shape a crash inside the Windows marker rewrite leaves: the
+                // previous record unlinked, the replacement staged but not renamed
+                // over it. It has to read as a live repair, not as "none in flight".
+                writeRepairMarker(instance, generation(instance));
+                try (Path dir = checkpointsDir(instance); Path path = new Path()) {
+                    LiveViewCheckpointLayout.repairingMarkerPath(path, dir);
+                    path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+                    Assert.assertTrue(configuration.getFilesFacade().touch(path.$()));
+                    LiveViewCheckpointLayout.repairingMarkerPath(path, dir);
+                    Assert.assertTrue(configuration.getFilesFacade().removeQuiet(path.$()));
+                }
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(resumed);
+            }
+
+            final LiveViewInstance restored = viewInstance();
+            Assert.assertEquals("a staged-only marker forces a rebuild", 1, generation(restored));
+            // The rebuild must clear the sibling too, or every later restart rebuilds.
+            try (Path dir = checkpointsDir(restored)) {
+                Assert.assertFalse(
+                        "the rebuild must remove the staged marker sibling",
+                        LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir)
+                );
+            }
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
     public void testRestartReconstructsCorruptNewestRoot() throws Exception {
         assertMemoryLeak(() -> {
             createView();

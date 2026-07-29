@@ -8022,6 +8022,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", error=").$(t).I$();
             return;
         }
+        // KNOWN GAP: applyWalDirect returns without applying on memory-pressure
+        // backoff, on EntryUnavailableException, and after handleWalApplyFailure
+        // suspended the table - all silently. readLiveViewAppliedMaxBaseSeqTxn then
+        // reports the last COMMITTED block, so when a crash left _lv.s trailing AND
+        // the re-apply above fails, the clamp advances the floor over rows that are
+        // not on disk. The view then under-reports and can no longer re-derive
+        // incrementally (base data itself survives - the base table applied those
+        // rows before the base WAL became purgeable).
+        // Bounding the scan at the LV table's applied seqTxn is the fix - it makes
+        // readLiveViewAppliedMaxBaseSeqTxn return the last APPLIED block, matching
+        // its name - rather than skipping the clamp here: a skip is permanent
+        // (isCheckpointRestoreAttempted is single-shot), and after a transient
+        // no-op that later applies, a permanently trailing _lv.s re-derives and
+        // re-appends the same rows with no dedup to collapse them.
         final long appliedMaxBaseSeqTxn = engine.readLiveViewAppliedMaxBaseSeqTxn(token);
         if (appliedMaxBaseSeqTxn >= 0
                 && appliedMaxBaseSeqTxn != instance.getStateReader().getLastProcessedSeqTxn()) {

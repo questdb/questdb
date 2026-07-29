@@ -356,13 +356,17 @@ public class WalUtils {
     }
 
     /**
-     * Recovers the in-band {@code maxBaseSeqTxn} of a live view's last applied
+     * Recovers the in-band {@code maxBaseSeqTxn} of a live view's last <em>committed</em>
      * {@code LIVE_VIEW_DATA} block by scanning its own sequencer transaction log
-     * backward and reading the first (latest) such block's WAL-e event. This is the
+     * backward and reading the first (latest) such block's WAL-e event. The log records
+     * commits, not applies, so a caller that moves a purge floor on the result must
+     * first establish that nothing committed is still unapplied. This is the
      * "forward-scan recovery from the LV WAL" that closes the durable-floor gap left
      * when a crash lands between the inline apply and the trailing {@code _lv.s}
-     * persist: the block's {@code maxBaseSeqTxn} is the base seqTxn the LV table has
-     * actually materialised, which the stale {@code _lv.s} may not record.
+     * persist: the block's {@code maxBaseSeqTxn} is the base seqTxn the LV table
+     * committed, which the stale {@code _lv.s} may not record. It equals what the
+     * view materialised only once that block has applied, which the scan does not
+     * check - bounding it at the LV table's applied seqTxn would.
      * <p>
      * The caller owns {@code txnLogMemory} and {@code walEventReader}. Returns the
      * {@code maxBaseSeqTxn} of the latest {@code LIVE_VIEW_DATA} block, or {@code -1}

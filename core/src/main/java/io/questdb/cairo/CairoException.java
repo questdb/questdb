@@ -38,12 +38,21 @@ import org.jetbrains.annotations.Nullable;
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
 
     public static final int ERRNO_ACCESS_DENIED_WIN = 5;
+    // MoveFileW reports this when it refuses an existing destination, where POSIX
+    // rename would have replaced it. A destination that is merely delete-pending
+    // reports ERRNO_ACCESS_DENIED_WIN instead, which is indistinguishable from a
+    // real permission failure and so is not treated as a collision.
+    public static final int ERRNO_ALREADY_EXISTS_WIN = 183;
     public static final int ERRNO_EACCES_LINUX = 13;
     public static final int ERRNO_EACCES_MACOS = 13;
     public static final int ERRNO_EPERM_LINUX = 1;
     public static final int ERRNO_EPERM_MACOS = 1;
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
     public static final int ERRNO_FILE_DOES_NOT_EXIST_WIN = 3;
+    // Not reachable from MoveFileW today - CreateFile and CopyFile raise it - but
+    // cheap to accept alongside ERRNO_ALREADY_EXISTS_WIN, and no POSIX rename can
+    // produce either value.
+    public static final int ERRNO_FILE_EXISTS_WIN = 80;
     // psync_cvcontinue sets two bits in the error code to indicate whether the wait timed out (0x100) or there were no waiters (0x200).
     // Error #316 (0x13C) is the timed out bit bitwise OR'd with ETIMEDOUT (60).
     public static final int ERRNO_FILE_READ_TIMEOUT_MACOS = 316;

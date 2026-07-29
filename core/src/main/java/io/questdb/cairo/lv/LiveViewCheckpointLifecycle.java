@@ -250,8 +250,15 @@ public final class LiveViewCheckpointLifecycle {
             }
             // The prefix-preservation repair marker is void once the timeline it
             // guarded is gone: a stale marker left behind would force every restart
-            // to rebuild against the fresh timeline this retire precedes.
+            // to rebuild against the fresh timeline this retire precedes. The
+            // staged sibling counts as a marker too, so it has to go with it.
             LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
+            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+                success = false;
+                logRemoveFailure(ff, path);
+            }
+            LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
+            path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
             if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
                 success = false;
                 logRemoveFailure(ff, path);

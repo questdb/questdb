@@ -89,7 +89,10 @@ import java.io.Closeable;
  * A fixed header, then the owned-segment id array, then a CRC32 over the whole
  * record. Every write stages the complete record as {@code r.<repairId>.tmp} and
  * renames it into place, so a reader observes either the previous record or the
- * new one, and a crash mid-write leaves only a {@code .tmp} orphan.
+ * new one, and a crash mid-write leaves only a {@code .tmp} orphan. That holds
+ * on POSIX; on Windows a rewrite unlinks the previous record before renaming, so
+ * a reader can instead observe no descriptor at all - see
+ * {@link LiveViewCheckpointLayout#publishOverwrite}.
  * <p>
  * Callers serialize descriptor writes with {@link #sweep} the same way they
  * serialize timeline publication with reconciliation - in the live-view
@@ -692,6 +695,9 @@ public final class LiveViewCheckpointRepairState implements Closeable {
     /**
      * Stages the whole record as {@code r.<repairId>.tmp} and renames it over the
      * current descriptor, so a reader sees either the previous record or this one.
+     * On Windows the rewrite unlinks the previous record first, so a reader can
+     * instead observe no descriptor at all for the length of that window. See
+     * {@link LiveViewCheckpointLayout#publishOverwrite}.
      */
     private void persist() {
         ensureOpen();
@@ -741,7 +747,9 @@ public final class LiveViewCheckpointRepairState implements Closeable {
             mem.close(true, Vm.TRUNCATE_TO_POINTER);
         }
         LiveViewCheckpointLayout.repairDescriptorPath(finalPath, checkpointsDir, repairId);
-        final int renameResult = ff.rename(tmpPath.$(), finalPath.$());
+        // begin() publishes the descriptor and every later update republishes over
+        // that same name, so the destination normally already exists.
+        final int renameResult = LiveViewCheckpointLayout.publishOverwrite(ff, tmpPath.$(), finalPath.$());
         if (renameResult != Files.FILES_RENAME_OK) {
             throw CairoException.critical(ff.errno())
                     .put("could not rename a live view checkpoint repair descriptor, repairId=")
@@ -755,6 +763,12 @@ public final class LiveViewCheckpointRepairState implements Closeable {
      * {@link #persist()} for the in-flight updates: a failure disables the
      * descriptor rather than unwinding a replay that is otherwise healthy. The
      * stale record it leaves behind is removed by the next {@link #sweep}.
+     * <p>
+     * On Windows a rewrite that fails after its unlink leaves no record at all
+     * rather than a stale one, so that repair's temporary segments outlive the
+     * sweep - which reads the descriptor to learn what to reclaim. The generic
+     * orphan pass collects them instead, so reclamation is delayed rather than
+     * lost.
      */
     private void persistQuiet() {
         try {

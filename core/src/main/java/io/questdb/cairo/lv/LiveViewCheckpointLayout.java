@@ -25,7 +25,10 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Transient;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
@@ -224,6 +227,57 @@ public final class LiveViewCheckpointLayout {
         metaSegmentPath(dst, checkpointsDir, segmentId);
         dst.put(TMP_SUFFIX);
         return dst;
+    }
+
+    /**
+     * Publishes a staged {@code .tmp} file over a final name that may already
+     * hold a previous version of the same record, and returns the
+     * {@link Files} rename result.
+     * <p>
+     * POSIX {@code rename} replaces the destination atomically, so the first
+     * attempt succeeds and this never takes a second step. Windows
+     * {@code MoveFileW} instead refuses an existing destination, so on a
+     * collision errno - and only on one of those - the destination is unlinked
+     * and the rename retried once.
+     * <p>
+     * The retry is not atomic: a Windows reader can observe the final name
+     * missing between the unlink and the rename. That state is <em>not</em> the
+     * one a crash between staging and publication leaves - a crash there keeps
+     * the previous record and adds a {@code .tmp} sibling, whereas this window
+     * has no record at all - so a caller that distinguishes "record absent" from
+     * "record present" must tolerate the former appearing spuriously on Windows.
+     * Restoring atomicity needs a replace-capable native rename
+     * ({@code MoveFileExW} with {@code MOVEFILE_REPLACE_EXISTING}); until then
+     * this is the closest behaviour that keeps the caller working at all, since
+     * today every such re-publication simply fails on Windows.
+     * <p>
+     * Gating on the errno rather than on the destination existing matters: a
+     * rename that failed for any other reason leaves the previously published
+     * record in place, exactly as it did before this method existed. Closing the
+     * mapping before publishing is the caller's job on both platforms.
+     * <p>
+     * Only for names a caller deliberately rewrites: the repair marker and the
+     * repair descriptor. Published metadata and data segments never reach an
+     * existing final name - their ids are allocated past every published one -
+     * so those paths rename directly and rely on that invariant rather than on
+     * replace semantics.
+     */
+    public static int publishOverwrite(@NotNull FilesFacade ff, @NotNull LPSZ tmpPath, @NotNull LPSZ finalPath) {
+        final int result = ff.rename(tmpPath, finalPath);
+        if (result == Files.FILES_RENAME_OK) {
+            return result;
+        }
+        // Read the errno before anything else can overwrite it: the caller builds
+        // its exception from ff.errno() once this returns.
+        final int errno = ff.errno();
+        if (errno != CairoException.ERRNO_ALREADY_EXISTS_WIN && errno != CairoException.ERRNO_FILE_EXISTS_WIN) {
+            return result;
+        }
+        // Retry even when the unlink reports failure: the rename is the operation
+        // whose errno the caller reports, and an unlink that could not clear the
+        // way simply makes it fail again with the reason that actually matters.
+        ff.removeQuiet(finalPath);
+        return ff.rename(tmpPath, finalPath);
     }
 
     /**
