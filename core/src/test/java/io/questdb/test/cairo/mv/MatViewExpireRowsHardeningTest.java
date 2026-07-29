@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
@@ -37,6 +38,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -127,6 +129,45 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClearCacheKeepsExpiryGateOpenUntilRehydration() throws Exception {
+        // clearCache() empties the expiry-policy snapshot AND resets fullyHydrated, so the global and
+        // per-table expiry gates fall back to their conservative "open while not fully hydrated" answer
+        // until the cache re-hydrates. Regression guard: were the fullyHydrated reset dropped, an
+        // already-hydrated cache would keep fullyHydrated == true while the snapshot is empty, so
+        // mayHaveExpiryPolicy() would read !true || 0 > 0 == false -- every read would then skip the
+        // expiry filter and expose expired rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2");
+            drainWalAndMatViewQueues();
+
+            // Fully hydrate so the policy is in the snapshot and fullyHydrated latches true.
+            engine.getMetadataCache().hydrateAllTables();
+            final TableToken token = engine.verifyTableName("mv");
+            Assert.assertTrue(engine.getMetadataCache().mayHaveExpiryPolicy());
+            Assert.assertTrue(engine.getMetadataCache().mayTableHaveExpiryPolicy(token));
+
+            // Clear the cache WITHOUT re-hydrating: the snapshot is now empty, but the gates must stay open
+            // because the cache is no longer fully hydrated.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+            Assert.assertTrue("cleared cache must not close the global expiry gate",
+                    engine.getMetadataCache().mayHaveExpiryPolicy());
+            Assert.assertTrue("cleared cache must not close the per-table expiry gate",
+                    engine.getMetadataCache().mayTableHaveExpiryPolicy(token));
+
+            // The read filter still hides the expired row (v = 1 < 2 -> A gone; B kept).
+            assertQuery("SELECT sym, v FROM mv ORDER BY sym").noLeakCheck().returns("sym\tv\nB\t2.0\n");
+        });
+    }
+
+    @Test
     public void testClockFreeValuePredicateReclaims() throws Exception {
         // Positive control for the monotonicity gate: a CLOCK-FREE value predicate is monotonic (mat-view
         // rows are immutable, so the predicate's per-row value never changes), so cleanup reclaims a
@@ -167,13 +208,59 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
             assertQuery("WITH x AS (SELECT sym FROM mv) SELECT * FROM x UNION ALL SELECT * FROM x ORDER BY sym")
                     .noLeakCheck().returns("sym\nB\nB\nC\nC\n");
-            assertQuery("""
-                    SELECT sym FROM (SELECT * FROM mv) WHERE sym IN
-                    (SELECT sym FROM mv WHERE v IS NULL) ORDER BY sym""")
-                    .noLeakCheck().returns("sym\nC\n");
-            assertQuery("SELECT sym FROM mv WHERE v = 2 UNION ALL SELECT sym FROM mv WHERE v IS NULL ORDER BY sym")
+            // Every reference to mv -- outer and inner -- must apply the read filter. Without it, the inner
+            // subquery readmits the expired row A into the IN set and the result becomes A,B,C.
+            assertQuery("SELECT sym FROM mv WHERE sym IN (SELECT sym FROM mv) ORDER BY sym")
+                    .noLeakCheck().returns("sym\nB\nC\n");
+            // Both UNION arms must filter: without the filter, v < 5 exposes A (v = 1) alongside B.
+            assertQuery("SELECT sym FROM mv WHERE v < 5 UNION ALL SELECT sym FROM mv WHERE v IS NULL ORDER BY sym")
                     .noLeakCheck().returns("sym\nB\nC\n");
 
+        });
+    }
+
+    @Test
+    public void testExpiryTimestampThresholdMicrosAcceptsOnlyDropOldShapes() throws Exception {
+        // expiryTimestampThresholdMicros feeds the partition-bounds fast path, which drops whole partitions
+        // below T. It must return a threshold ONLY for "expire everything below T" shapes (ts < T, T > ts)
+        // and LONG_NULL for the opposite "keep old, expire recent" shapes (ts > T, T < ts) -- otherwise the
+        // fast path would drop the KEPT partitions (data loss). It also requires a typed TIMESTAMP threshold:
+        // a bare string literal is not a timestamp constant, so it takes the (always-correct) survivor scan.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final TableToken token = engine.verifyTableName("x");
+            final long day2 = 86_400_000_000L; // 1970-01-02T00:00:00.000000Z
+            try (
+                    TableMetadata metadata = engine.getTableMetadata(token);
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                // Drop-old shapes: threshold accepted (micros of T).
+                Assert.assertEquals(day2, compiler.expiryTimestampThresholdMicros(
+                        sqlExecutionContext, metadata, "ts < '1970-01-02T00:00:00.000000Z'::timestamp", "ts"));
+                Assert.assertEquals(day2, compiler.expiryTimestampThresholdMicros(
+                        sqlExecutionContext, metadata, "ts <= '1970-01-02T00:00:00.000000Z'::timestamp", "ts"));
+                Assert.assertEquals(day2, compiler.expiryTimestampThresholdMicros(
+                        sqlExecutionContext, metadata, "'1970-01-02T00:00:00.000000Z'::timestamp > ts", "ts"));
+                Assert.assertEquals(day2, compiler.expiryTimestampThresholdMicros(
+                        sqlExecutionContext, metadata, "'1970-01-02T00:00:00.000000Z'::timestamp >= ts", "ts"));
+
+                // Keep-old shapes: MUST be rejected (LONG_NULL). Accepting these would make the bounds fast
+                // path drop the partitions below T, which are exactly the rows the policy keeps.
+                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThresholdMicros(
+                        sqlExecutionContext, metadata, "ts > '1970-01-02T00:00:00.000000Z'::timestamp", "ts"));
+                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThresholdMicros(
+                        sqlExecutionContext, metadata, "ts >= '1970-01-02T00:00:00.000000Z'::timestamp", "ts"));
+                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThresholdMicros(
+                        sqlExecutionContext, metadata, "'1970-01-02T00:00:00.000000Z'::timestamp < ts", "ts"));
+
+                // A bare (untyped) string literal is not a TIMESTAMP constant: no fast path, survivor scan.
+                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThresholdMicros(
+                        sqlExecutionContext, metadata, "ts < '1970-01-02T00:00:00.000000Z'", "ts"));
+
+                // A threshold that references a column is not a constant bound.
+                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThresholdMicros(
+                        sqlExecutionContext, metadata, "ts < ts", "ts"));
+            }
         });
     }
 

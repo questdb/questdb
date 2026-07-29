@@ -815,8 +815,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     private boolean isPassthrough(FunctionFactoryCache functionFactoryCache, IQueryModel queryModel) {
         // A non-aggregating projection over a single table (e.g. SELECT * FROM base [WHERE ...]).
-        // The caller has already established there is no SAMPLE BY / timestamp_floor(). Reject
-        // GROUP BY / DISTINCT / window (isNotPlainSelectModel), JOINs, and any aggregate in a column.
+        // The caller has already established there is no SAMPLE BY / timestamp_floor(). Reject anything
+        // whose rows are not 1:1 with the base: a top-level table name / GROUP BY / top-level JOIN / LATEST
+        // ON / UNION here (isNotPlainSelectModel), then the same features on nested models in the walk
+        // below, and any aggregate in a column. (isNotPlainSelectModel does NOT catch DISTINCT or window
+        // functions - the nested-chain walk is what rejects DISTINCT.)
         if (SqlUtil.isNotPlainSelectModel(queryModel)) {
             return false;
         }
@@ -826,13 +829,20 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // LATEST ON / UNION / GROUP BY / DISTINCT lower onto a NESTED model, which the top-level
         // isNotPlainSelectModel() check above does not see. Walk the whole nested chain so a DERIVED view
         // (e.g. SELECT * FROM base LATEST ON ts PARTITION BY k) is NOT misclassified as passthrough: its
-        // rows are not 1:1 with the base, so EXPIRE ROWS physical cleanup must never run on it.
+        // rows are not 1:1 with the base, so EXPIRE ROWS physical cleanup must never run on it. DISTINCT
+        // has three shapes to catch: a SELECT_MODEL_DISTINCT model, the isDistinct() flag, and - once
+        // isSqlDistinctGroupByRewriteEnabled() has rewritten DISTINCT to an implicit group-by - a
+        // SELECT_MODEL_GROUP_BY model whose explicit getGroupBy() list is empty. Rejecting every
+        // SELECT_MODEL_GROUP_BY covers that last shape and every other aggregating model; a genuine
+        // aggregating view never reaches here (intervalExpr would be set).
         for (IQueryModel m = queryModel; m != null; m = m.getNestedModel()) {
             if (m.getLatestByType() != IQueryModel.LATEST_BY_NONE
                     || m.getUnionModel() != null
                     || m.getGroupBy().size() > 0
                     || m.getJoinModels().size() > 1
-                    || m.getSelectModelType() == IQueryModel.SELECT_MODEL_DISTINCT) {
+                    || m.isDistinct()
+                    || m.getSelectModelType() == IQueryModel.SELECT_MODEL_DISTINCT
+                    || m.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
                 return false;
             }
         }

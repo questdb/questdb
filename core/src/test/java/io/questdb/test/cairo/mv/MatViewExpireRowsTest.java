@@ -1064,6 +1064,60 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateDistinctViewWithExpireRejected() throws Exception {
+        // A DISTINCT defining query deduplicates base rows, so it is NOT a 1:1 passthrough and must not carry
+        // EXPIRE ROWS (physical cleanup could delete a row the view still needs). isPassthrough rejects it
+        // via the group-by model that DISTINCT lowers to, before EXPIRE is evaluated.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mvds as (select distinct sym, v, ts from base) EXPIRE ROWS WHEN v < 2.0",
+                    34,
+                    "TIMESTAMP column is not present in select list"
+            );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mvds"));
+        });
+    }
+
+    @Test
+    public void testCreateDistinctViewWithTimestampWrapperRejected() throws Exception {
+        // Regression: a DISTINCT sub-query wrapped so a timestamp(ts) designation survives to the top must
+        // still be rejected. isSqlDistinctGroupByRewriteEnabled() rewrites DISTINCT into an implicit
+        // SELECT_MODEL_GROUP_BY whose getGroupBy() list is empty and whose isDistinct() flag is cleared, so
+        // isPassthrough must reject the group-by MODEL, not just an explicit GROUP BY clause. Before the fix
+        // this DISTINCT-derived (non-1:1) view was created as a passthrough and would receive EXPIRE ROWS
+        // physical cleanup.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mvdw as (select * from (select distinct sym, v, ts from base) timestamp(ts)) EXPIRE ROWS WHEN v < 2.0",
+                    34,
+                    "TIMESTAMP column is not present in select list"
+            );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mvdw"));
+        });
+    }
+
+    @Test
+    public void testCreateGroupByViewWithExpireRejected() throws Exception {
+        // A GROUP BY nested under the defining query collapses base rows, so it is NOT a 1:1 passthrough. The
+        // nested-chain passthrough check must reject it: the top-level isNotPlainSelectModel() check does not
+        // see a GROUP BY that lowered onto a nested model, so without the nested-chain GROUP BY arm the view
+        // would be created as a passthrough and EXPIRE ROWS physical cleanup would run on a derived view. The
+        // outer timestamp(ts) keeps a designated timestamp so the earlier "requires designated timestamp"
+        // check does not mask the passthrough classification. Regression guard for the nested GROUP BY arm.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mvgb as (select * from (select sym, v, ts from base group by sym, v, ts) timestamp(ts)) EXPIRE ROWS WHEN v < 2.0",
+                    34,
+                    "TIMESTAMP column is not present in select list"
+            );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mvgb"));
+        });
+    }
+
+    @Test
     public void testCreateLatestOnViewWithExpireRejected() throws Exception {
         // A LATEST ON defining query is NOT a 1:1 passthrough -- its rows are a per-key reduction of the base
         // -- so it must not be classified as a passthrough mat view, otherwise EXPIRE ROWS' physical cleanup
@@ -1078,6 +1132,25 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     "TIMESTAMP column is not present in select list"
             );
             org.junit.Assert.assertNull(engine.getTableTokenIfExists("mvlo"));
+        });
+    }
+
+    @Test
+    public void testCreateUnionViewWithExpireRejected() throws Exception {
+        // A UNION nested under the defining query is NOT a 1:1 passthrough (it can multiply rows). The
+        // nested-chain passthrough check must reject it: the top-level isNotPlainSelectModel() check does not
+        // see a UNION that lowered onto a nested model, so without the nested-chain UNION arm the view would
+        // be created as a passthrough and EXPIRE ROWS physical cleanup would run on a derived view. The outer
+        // timestamp(ts) keeps a designated timestamp so the earlier "requires designated timestamp" check does
+        // not mask the passthrough classification. Regression guard for the nested UNION arm of isPassthrough.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mvun as (select * from (select * from base union all select * from base) timestamp(ts)) EXPIRE ROWS WHEN v < 2.0",
+                    34,
+                    "TIMESTAMP column is not present in select list"
+            );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mvun"));
         });
     }
 

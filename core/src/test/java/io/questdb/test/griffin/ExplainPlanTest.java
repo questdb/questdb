@@ -4966,6 +4966,32 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlanContaining("LatestBy light");
     }
 
+    // Negative: a LIMIT in the sub-query bounds the rows LATEST ON sees. Hoisting the table read up would
+    // drop the LIMIT and compute latest-by over the whole table (wrong results), so the rewrite must not fire.
+    @Test
+    public void testLatestOnLimitSubqueryStaysLight() throws Exception {
+        assertQuery("select * from (select * from a limit 1) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("LatestBy light");
+    }
+
+    // Negative: an ORDER BY layer between LATEST ON and the table read must not be hoisted away.
+    @Test
+    public void testLatestOnOrderBySubqueryStaysLight() throws Exception {
+        assertQuery("select * from (select * from a order by ts desc) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("LatestBy light");
+    }
+
+    // Negative: a UNION sub-query is not a plain table read; the rewrite must not fire. A wrongful hoist to
+    // the indexed fast path would drop the UNION, so its survival in the plan proves the rewrite stayed off.
+    @Test
+    public void testLatestOnUnionSubqueryStaysUnhoisted() throws Exception {
+        assertQuery("select * from (select * from a union all select * from a) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("Union All");
+    }
+
     @Test
     public void testLatestOn3() throws Exception {
         assertQuery("select * from a latest on ts partition by s")
