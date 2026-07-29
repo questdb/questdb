@@ -207,6 +207,61 @@ public class LiveViewCheckpointMetaStoreTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFallbackSlotCanPublishOverTheCorruptSlot() throws Exception {
+        // A fallback must not wedge publication. select() derives its generation gate
+        // from every CRC-valid slot, so after selectFallbackSlot() steps down over a
+        // slot whose roots failed validation, the gate still names that corrupt slot.
+        // The next seal advances by exactly one from the SURVIVING slot, which lands
+        // right back on the corrupt generation, and publish() refuses it - forever,
+        // since no publication can then succeed to move the gate.
+        //
+        // The floor has to measure the slot the publication leaves standing. That slot
+        // is the fallback one here, because publish() always targets the non-selected
+        // slot - which is the corrupt slot itself, about to be replaced.
+        assertMemoryLeak(() -> {
+            final LiveViewCheckpointPageRef corruptRoot;
+            // One Harness across both stores: a fresh one restarts nextSegmentId at 0
+            // and the second publication would write over the surviving generation's
+            // segments.
+            try (Harness h = new Harness()) {
+                try (LiveViewCheckpointMetaStore store = openStore()) {
+                    h.append(10, 1);
+                    h.publish(store, 1);
+                    h.append(20, 2);
+                    corruptRoot = copy(h.timelineRoot);
+                    h.publish(store, 2);
+                }
+                corruptPageKind(corruptRoot);
+
+                try (LiveViewCheckpointMetaStore store = openStore()) {
+                    final LiveViewCheckpointSuperblock sb = store.getSuperblock();
+                    Assert.assertEquals("bounded validation must fall back to the older slot",
+                            1, sb.generation);
+                    // Resume from the root that survived, not the corrupt one.
+                    h.timelineRoot.of(
+                            sb.timelineRootRef.getSegmentId(),
+                            sb.timelineRootRef.getOffset(),
+                            sb.timelineRootRef.getLength()
+                    );
+                    h.append(30, 3);
+                    h.publish(store, 2);
+                    // The corrupt slot is the one that was replaced, and the fallback
+                    // slot survived intact - so this is a genuine A/B publication, not a
+                    // rewrite of the good slot that would merely look right.
+                    Assert.assertEquals("the corrupt slot must be the one overwritten",
+                            1, sb.getSelectedSlot());
+                    Assert.assertEquals("the fallback slot must survive untouched",
+                            1, sb.getOldestValidGeneration());
+                    // Unwedged, not merely unstuck once.
+                    h.append(40, 4);
+                    h.publish(store, 3);
+                }
+            }
+            assertSelectedGeneration(3);
+        });
+    }
+
+    @Test
     public void testNewestRowPositionRootCorruptionFallsBackBeforePin() throws Exception {
         assertMemoryLeak(() -> {
             final LiveViewCheckpointPageRef corruptRoot;

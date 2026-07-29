@@ -256,6 +256,11 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
         if (segmentReaders[slot] == null) {
             segmentReaders[slot] = new LiveViewCheckpointMetaSegmentReader(configuration);
         }
+        // Invalidate the slot BEFORE the open. of() closes and resets the reader up front and can
+        // then throw, which would otherwise leave the slot still advertising the previous, healthy
+        // segment id against a closed reader - so one corrupt segment poisons a healthy one, and a
+        // later lookup can escalate that into "no usable root".
+        segmentIds[slot] = -1;
         segmentReaders[slot].of(checkpointsDir, segmentId);
         segmentIds[slot] = segmentId;
         return segmentReaders[slot];

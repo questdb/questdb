@@ -607,6 +607,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Records that the compiled factory's window accumulators no longer agree with the
+     * view's durable output, both for this turn and - on {@code instance} - for later
+     * ones. The per-turn field alone is not enough: {@link #refreshInstance} re-seeds it
+     * at every turn entry, so before this fix a rebuild that itself failed lost the fact
+     * that a rebuild was still owed, and the next turn drained forward over a wiped or
+     * half-advanced runtime.
+     */
+    private void markWindowStateDirty(LiveViewInstance instance) {
+        windowStateDirty = true;
+        instance.setWindowStateDirty(true);
+    }
+
+    /**
      * Runs one physical compaction pass over the instance's checkpoint timeline when
      * the {@code cairo.live.view.checkpoint.compaction.interval} cadence is reached.
      * Disabled by default (interval zero); when set, it repacks the still-live pages
@@ -799,7 +812,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // handleRefreshFailure rebuilds it instead of letting the next drain continue over
             // half-restored accumulators. Mirrors settleRepairRuntime's handling on the
             // settled path.
-            windowStateDirty = true;
+            markWindowStateDirty(instance);
         }
     }
 
@@ -1444,7 +1457,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // inline apply below makes the rows durable in the LV's on-disk
                 // table; only then do we advance lvConsumedSeqTxn so base WAL
                 // retention releases.
-                fencedLiveViewCommit(() -> walWriter.commitLiveView(drainResult.advanceTo));
+                fencedLiveViewCommit(instance, () -> walWriter.commitLiveView(drainResult.advanceTo));
             }
         }
 
@@ -1874,7 +1887,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             }
                         }
                         if (appendedRows > 0) {
-                            fencedLiveViewCommit(() -> walWriter.commitLiveView(effectiveSeqTxn));
+                            fencedLiveViewCommit(instance, () -> walWriter.commitLiveView(effectiveSeqTxn));
                         }
                     }
                 }
@@ -2466,7 +2479,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // observer are retained (uncontended, harmless) so the seam stays a single choke point for every LV
     // commit family -- flushLead, the in-WAL-order and applied-base drains, the o3Replay REPLACE_RANGE
     // corrections, and the seed sweep -- pending the Phase 5 cleanup that folds it away entirely.
-    private void fencedLiveViewCommit(Runnable commit) {
+    private void fencedLiveViewCommit(LiveViewInstance instance, Runnable commit) {
         final Lock lock = engine.getRoleSwitchReadLock();
         lock.lock();
         try {
@@ -2474,7 +2487,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             commit.run();
             // Rows are durable now, so the accumulators no longer lead durable state;
             // a later failure must not trigger a rebuild over the committed block.
+            // This is also the single point that resolves a carried-over wipe: the
+            // runtime that produced the committed rows is by definition consistent
+            // with them.
             windowStateDirty = false;
+            instance.setWindowStateDirty(false);
         } finally {
             lock.unlock();
         }
@@ -2678,7 +2695,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 row.append();
                 flushedMaxTs = ts;
             }
-            fencedLiveViewCommit(() -> walWriter.commitLiveView(advanceTo));
+            fencedLiveViewCommit(instance, () -> walWriter.commitLiveView(advanceTo));
         } finally {
             // The overlays reference symbolReader, now closed; drop them so a later
             // flush of a non-SYMBOL view cannot reuse a stale resolver.
@@ -3078,6 +3095,55 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         try (MetadataCacheReader metaRO = engine.getMetadataCache().readLock()) {
             final CairoTable baseTable = metaRO.getTable(baseToken);
             return baseTable != null && baseTable.hasDedup();
+        }
+    }
+
+    /**
+     * Reports whether the live view's table holds every block its own WAL has already
+     * committed, from disk truth: the sequencer log's last committed seqTxn against the
+     * applied seqTxn the LV table records in its {@code _txn}.
+     * <p>
+     * Deliberately does not consult the {@link SeqTxnTracker}. That tracker is memory-only
+     * and both of its txns default to {@code UNINITIALIZED_TXN}, so on a restart path -
+     * where nothing has initialised it yet - a tracker comparison answers "fully applied"
+     * for a view that has applied nothing, which is the wrong way to be wrong here.
+     * <p>
+     * Fails closed: any read failure reports {@code false}. The caller clamps a base-WAL
+     * purge floor on the answer, so "cannot tell" has to mean "do not release".
+     */
+    private boolean isLiveViewWalFullyApplied(LiveViewInstance instance) {
+        final TableToken token = instance.getLiveViewToken();
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+        if (tracker.isInitialised()) {
+            // An initialised tracker already holds both numbers - the apply job feeds it
+            // writerTxn from the LV writer and seqTxn from the sequencer - so answer from
+            // memory. Only a cold tracker needs the disk read below, which matters because
+            // a deferred reconcile is re-entered on every base commit until the block
+            // lands, and paying a sequencer read lock plus a reader open per commit for an
+            // answer already in memory would be pure waste.
+            return tracker.getWriterTxn() >= tracker.getSeqTxn();
+        }
+        try {
+            final long committedSeqTxn = engine.getTableSequencerAPI().lastTxn(token);
+            final long appliedSeqTxn;
+            try (TableReader lvReader = engine.getReader(token)) {
+                appliedSeqTxn = lvReader.getSeqTxn();
+            }
+            if (appliedSeqTxn >= committedSeqTxn) {
+                return true;
+            }
+            // Debug, not info: the caller re-enters per base commit while the block is
+            // outstanding, and scanForLaggingViews already reports the same condition.
+            LOG.debug().$("live view has committed but unapplied WAL, deferring restart floor reconcile [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", appliedSeqTxn=").$(appliedSeqTxn)
+                    .$(", committedSeqTxn=").$(committedSeqTxn).I$();
+            return false;
+        } catch (Throwable t) {
+            LOG.error().$("could not read live view apply state on restart [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+            return false;
         }
     }
 
@@ -3869,6 +3935,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     m.clear();
                                 }
                             }
+                            // Wiped, and restoreAnchorRoot below can fail or come back
+                            // empty, so the runtime is inconsistent until the replay
+                            // commits.
+                            markWindowStateDirty(instance);
                             anchorLvRowPosition = restoreAnchorRoot(
                                     instance,
                                     windowFactory,
@@ -3942,7 +4012,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // restored anchor state IS the warm-up, so every row read is a row
                     // emitted - but the commit takes R to keep the two roles distinct.
                     final long replaceLowTs = plan.getOutputLowTs();
-                    fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(committedSeqTxn, replaceLowTs, Long.MAX_VALUE));
+                    fencedLiveViewCommit(instance, () -> walWriter.commitLiveViewWithReplaceRange(committedSeqTxn, replaceLowTs, Long.MAX_VALUE));
                 }
             }
         } finally {
@@ -4412,6 +4482,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // the prior turn built, and the overlay already holds what the repair
                     // took aside.
                     clearWindowState(windowFactory, anchorWindow);
+                    if (!finiteHighBound) {
+                        // The runtime is now identity while the durable tier still holds
+                        // the full history, and everything that rebuilds it can throw.
+                        // Mark before the scan, not after, so an unwind leaves the view
+                        // knowing it must rebuild before a later turn drains over these
+                        // accumulators.
+                        //
+                        // The predicate is "no overlay was captured", which finiteHighBound
+                        // decides: the capture just above runs under it, so when it holds
+                        // the session's close() puts the pre-repair runtime back as the
+                        // turn unwinds and marking here would escalate a recoverable fault
+                        // into a full recompute that also discards the checkpoint timeline.
+                        // It is NOT the same as "unlocalized" - a localized repair whose
+                        // plan keeps an EOF high bound has finiteHighBound false, captures
+                        // nothing, and does need the mark. A restore that itself fails
+                        // raises the flag through endRepairSession and settleRepairRuntime.
+                        markWindowStateDirty(instance);
+                    }
                 }
 
                 // Opened once per repair, not once per turn: the rows emitted so far sit
@@ -4619,7 +4707,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             final long replaceHighTs = finiteHighBound
                                     ? plan.getHighTsExclusive()
                                     : Long.MAX_VALUE;
-                            fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(
+                            fencedLiveViewCommit(instance, () -> walWriter.commitLiveViewWithReplaceRange(
                                     effectiveSeqTxn,
                                     replaceLowTs,
                                     replaceHighTs
@@ -4655,9 +4743,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // and the pre-O3 accumulator state must survive.
                 final long deleteLowTs = fullRebuild ? viewLowerBoundTimestamp : triggerLowTs;
                 clearWindowState(windowFactory, anchorWindow);
+                markWindowStateDirty(instance);
                 repairPublication.candidateReady(runtimeDisposition(overlayCaptured));
                 try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
-                    fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(
+                    fencedLiveViewCommit(instance, () -> walWriter.commitLiveViewWithReplaceRange(
                             effectiveSeqTxn,
                             deleteLowTs,
                             Long.MAX_VALUE
@@ -4807,7 +4896,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // generation that describes the state the primary is about to hold is
             // already published, so a crash from here on restores that generation
             // rather than a runtime nothing recorded.
-            settleRepairRuntime(session, windowFactory, anchorWindow);
+            settleRepairRuntime(instance, session, windowFactory, anchorWindow);
             if (!replacementReconciled) {
                 // The replacement is in the live view's WAL but not in its table. No
                 // watermark may walk past output the table does not hold, so this turn
@@ -4913,7 +5002,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // worse than either. A settle that fails here has already marked the
                 // window state for rebuild, so let the original failure propagate.
                 try {
-                    settleRepairRuntime(session, windowFactory, anchorWindow);
+                    settleRepairRuntime(instance, session, windowFactory, anchorWindow);
                 } catch (Throwable t) {
                     LOG.critical().$("could not settle live view repair runtime [view=")
                             .$(viewName)
@@ -5081,6 +5170,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * handler recomputes it from the applied base rather than continuing over it.
      */
     private void settleRepairRuntime(
+            LiveViewInstance instance,
             @Nullable LiveViewCheckpointRepairSession session,
             WindowRecordCursorFactory windowFactory,
             LiveViewWindow anchorWindow
@@ -5094,7 +5184,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             try {
                 session.getOverlay().restore(windowFactory.getWindowFunctions(), anchorWindow);
             } catch (Throwable t) {
-                windowStateDirty = true;
+                markWindowStateDirty(instance);
                 throw t;
             }
         }
@@ -5409,7 +5499,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         dataOffset += (filter != null ? filteringCursor.getBaseRowsConsumed() : processedThisTurn);
                     }
                     if (appendedThisTurn > 0) {
-                        fencedLiveViewCommit(() -> walWriter.commitLiveView(sweepSeqTxn));
+                        fencedLiveViewCommit(instance, () -> walWriter.commitLiveView(sweepSeqTxn));
                     }
                 }
             }
@@ -8008,34 +8098,49 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * nothing pending and the clamp is a no-op because {@code _lv.s} already matches
      * disk. When the WAL-e cannot be read the recovery no-ops, leaving the prior
      * (worst-case duplicating, never lossy) behaviour.
+     * <p>
+     * Returns {@code false} when the LV table still trails its own WAL, i.e. the
+     * re-apply above did not land every committed block. {@code applyWalDirect}
+     * reports nothing: it returns without applying under memory pressure, on a busy
+     * writer ({@code EntryUnavailableException}), and after {@code handleWalApplyFailure}
+     * suspended the table. The caller must then leave the whole restore for a later
+     * turn rather than clamp, because {@code readLiveViewAppliedMaxBaseSeqTxn} reports
+     * the last COMMITTED block: clamping onto it would release the base-WAL purge floor
+     * ({@code lvConsumedSeqTxn}, see {@code WalPurgeJob}) and hand
+     * {@link #tryRestoreFromTimeline} an {@code appliedWatermark} that names rows the
+     * LV table does not hold, while it reads that same table's row count and frontier.
+     * Blocking rather than clamping-low is what keeps this idempotent - the deferred
+     * block lands exactly once when the fault clears, where re-deriving its base range
+     * would duplicate it (a forward-append commit carries no dedup). Same rule, and the
+     * same reasoning, as the pending-replacement gate in {@link #refreshInstance}.
      */
-    private void reconcileAppliedFloorAfterRestart(LiveViewInstance instance) {
+    private boolean reconcileAppliedFloorAfterRestart(LiveViewInstance instance) {
         if (instance.getStateReader().getSeedState() != LiveViewState.SEED_STATE_ACTIVE) {
-            return;
+            return true;
         }
         final TableToken token = instance.getLiveViewToken();
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+        if (tracker.isSuspended() || !tracker.getMemPressureControl().isReadyToProcess()) {
+            // Same exclusions hasPendingLiveViewApply carries, and for the same reason:
+            // a retry cannot make progress from either state, so re-driving the apply
+            // only burns a writer open and - on a suspended table, whose applyWal has no
+            // suspension gate of its own - another markDistressed plus a CRITICAL
+            // stacktrace on every idle pass. Defer cheaply instead. An operator RESUME
+            // WAL clears the suspension and the memory-pressure gate eases on its own.
+            return false;
+        }
         try {
             applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
         } catch (Throwable t) {
+            // applyWal2Table suspends the table and returns rather than throwing, so this
+            // guards a future path that does raise. The apply check below decides either way.
             LOG.error().$("could not apply pending live view WAL on restart [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
-            return;
         }
-        // KNOWN GAP: applyWalDirect returns without applying on memory-pressure
-        // backoff, on EntryUnavailableException, and after handleWalApplyFailure
-        // suspended the table - all silently. readLiveViewAppliedMaxBaseSeqTxn then
-        // reports the last COMMITTED block, so when a crash left _lv.s trailing AND
-        // the re-apply above fails, the clamp advances the floor over rows that are
-        // not on disk. The view then under-reports and can no longer re-derive
-        // incrementally (base data itself survives - the base table applied those
-        // rows before the base WAL became purgeable).
-        // Bounding the scan at the LV table's applied seqTxn is the fix - it makes
-        // readLiveViewAppliedMaxBaseSeqTxn return the last APPLIED block, matching
-        // its name - rather than skipping the clamp here: a skip is permanent
-        // (isCheckpointRestoreAttempted is single-shot), and after a transient
-        // no-op that later applies, a permanently trailing _lv.s re-derives and
-        // re-appends the same rows with no dedup to collapse them.
+        if (!isLiveViewWalFullyApplied(instance)) {
+            return false;
+        }
         final long appliedMaxBaseSeqTxn = engine.readLiveViewAppliedMaxBaseSeqTxn(token);
         if (appliedMaxBaseSeqTxn >= 0
                 && appliedMaxBaseSeqTxn != instance.getStateReader().getLastProcessedSeqTxn()) {
@@ -8055,6 +8160,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", error=").$safe(e.getFlyweightMessage()).I$();
             }
         }
+        return true;
     }
 
     /**
@@ -8205,8 +8311,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // incrementalRefresh; the budget snapshot resets per turn.
         turnStartUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         turnCommitsProcessed = 0;
-        // No rows fed yet, so the accumulators match the last durable commit.
-        windowStateDirty = false;
+        // No rows fed yet, so the accumulators match the last durable commit - unless a
+        // previous turn left them wiped or half-advanced and could not rebuild them, in
+        // which case the debt carries on the instance. The gate below reads the instance
+        // flag directly and is what settles the debt; seeding the per-turn field here is
+        // defence-in-depth, so a reader added ABOVE the gate cannot inherit the very
+        // defect this fixes. Note the gate itself then clears the per-turn field while
+        // leaving the instance debt standing, so the two are not equal at every point -
+        // read the instance flag when the question is "does this view owe a rebuild".
+        windowStateDirty = instance.isWindowStateDirty();
         // Bind the view so the shared context's getMemoryTracker() resolves to THIS view's
         // tracker; the window cursor reads it at open() to charge the functions' partition
         // maps. The finally clears it, so the worker's next view cannot charge this one.
@@ -8294,11 +8407,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Single-shot per LV lifetime - the flag flips true whether the
                 // restore succeeded, missed, or failed.
                 if (!instance.isCheckpointRestoreAttempted()) {
-                    instance.setCheckpointRestoreAttempted();
                     // Reconcile a durable floor left behind by a crash between the
                     // inline apply and the trailing _lv.s persist, before timeline
                     // selection reconciles its generation coordinates.
-                    reconcileAppliedFloorAfterRestart(instance);
+                    if (!reconcileAppliedFloorAfterRestart(instance)) {
+                        // The view's own WAL holds a block its table has not applied, so
+                        // every coordinate the restore below derives - the floor it clamps,
+                        // the row count and frontier tryRestoreFromTimeline reads - would
+                        // describe rows that are not there. Report no work and leave the
+                        // flag unset so the whole restore retries once the block lands;
+                        // burning it here would make the miss permanent for this view's
+                        // lifetime. A suspended view waits for an operator RESUME WAL,
+                        // serving disk-only meanwhile.
+                        return false;
+                    }
+                    instance.setCheckpointRestoreAttempted();
                     if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
                         // Baseline observability: time bounded generation selection,
                         // root restore, and the (B,F] replay. Recorded once
@@ -8340,6 +8463,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     runSeedSweep(instance);
                     instance.recordRefreshSuccess();
                     return attempted;
+                }
+                // A previous turn wiped or half-advanced the accumulators and its own
+                // rebuild failed, so the runtime still disagrees with the durable tier.
+                // Draining forward from here would commit cumulative output derived from
+                // that runtime and then call recordRefreshSuccess(), which resets the
+                // flush-retry budget - so the view would serve wrong totals and never
+                // invalidate itself out of them. Rebuild from the applied base first. A
+                // rebuild that fails again charges the budget through handleRefreshFailure
+                // until it exhausts and the view invalidates honestly, so this terminates
+                // either way; a rebuild that succeeds commits, which clears the debt.
+                if (instance.isWindowStateDirty()) {
+                    attempted = true;
+                    final Throwable rebuildErr = rebuildWindowStateAfterMidDrainFailure(instance);
+                    if (rebuildErr != null) {
+                        // Already rebuilt-and-failed here, so stop handleRefreshFailure
+                        // repeating it for this turn; the debt stays on the instance.
+                        windowStateDirty = false;
+                        invalidationReason = handleRefreshFailure(instance, rebuildErr);
+                        break refreshBody;
+                    }
+                    windowStateDirty = instance.isWindowStateDirty();
                 }
                 // Decide the cadence. A lead-eligible LV decouples refresh (drain
                 // into the in-mem tier as the un-flushed lead, every tick with new
@@ -8595,6 +8739,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (rebuildErr == null) {
                 return null;
             }
+            // The rebuild replay itself failed, so the runtime is still wiped or
+            // half-advanced. Carry the debt onto the instance: this turn's field is about
+            // to go out of scope and the next turn's entry would read a clean slate,
+            // which is what lets a drain start over durable output with cold accumulators.
+            instance.setWindowStateDirty(true);
             // The rebuild replay itself failed; account for THAT error below.
             t = rebuildErr;
             if (t instanceof CairoException rebuildCancelled && rebuildCancelled.isCancellation()) {

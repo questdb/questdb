@@ -582,6 +582,15 @@ public class LiveViewInstance implements QuietCloseable {
     // suffices - the latch's acquire/release supplies the happens-before edge,
     // same discipline as flushRetryCount.
     private boolean tierStale;
+    // Set while the compiled factory's window accumulators do not match the view's
+    // durable output - wiped by a clearWindowState the replay never got to rebuild,
+    // or advanced past the last commit by a turn that then failed. The refresh job
+    // carries a per-turn mirror that it re-seeds from this field at every turn entry;
+    // only this one survives the turn, which is what lets a rebuild that itself failed
+    // be retried by a LATER turn, with no turn draining forward until it succeeds.
+    // Cleared by the commit that makes the runtime durable again. Same threading
+    // discipline as tierStale - refresh-worker only, under the refresh latch.
+    private boolean windowStateDirty;
     // Non-null only for a minimal stub registered by the catalogue load path when
     // the on-disk _lv / _lv.s could not be loaded (a too-new format version, or a
     // torn / corrupt file with no recoverable state). Such an instance has a null
@@ -1421,6 +1430,17 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Whether the compiled factory's window accumulators disagree with the view's
+     * durable output. A turn that observes this must rebuild from the applied base
+     * before it drains: draining forward would commit cumulative output derived from
+     * a runtime the durable tier does not match, and that commit would also reset the
+     * flush-retry budget, so the view could never invalidate itself out of it.
+     */
+    public boolean isWindowStateDirty() {
+        return windowStateDirty;
+    }
+
+    /**
      * Writes invalidation fields into the in-memory state mirror. The caller is responsible
      * for rewriting {@code _lv.s} via {@link io.questdb.cairo.lv.LiveViewState#append} —
      * this method only updates the in-memory side.
@@ -2018,6 +2038,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setWarnedBelowLowerBoundDrop() {
         this.hasWarnedBelowLowerBoundDrop = true;
+    }
+
+    public void setWindowStateDirty(boolean windowStateDirty) {
+        this.windowStateDirty = windowStateDirty;
     }
 
     public void setWriterStallStartUs(long writerStallStartUs) {

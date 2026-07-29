@@ -172,10 +172,8 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     private final FilesFacade ff;
     private final MemoryMARW mem;
     private final Path path = new Path();
-    private long coveredLvSeqTxnCeiling = -1;
-    private long generationFloor = Long.MIN_VALUE;
-    private long normalizedBaseSeqTxnCeiling = -1;
     private boolean isOpen;
+    private long newestValidGeneration = Long.MIN_VALUE;
     private long oldestValidGeneration = Long.MAX_VALUE;
     private int selectedSlot = NO_SLOT;
     private long walPurgeFloor = -1;
@@ -235,9 +233,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         // file to zero and destroy both slots.
         mem.close(false);
         Misc.free(path);
-        generationFloor = Long.MIN_VALUE;
-        normalizedBaseSeqTxnCeiling = -1;
-        coveredLvSeqTxnCeiling = -1;
+        newestValidGeneration = Long.MIN_VALUE;
         oldestValidGeneration = Long.MAX_VALUE;
         walPurgeFloor = -1;
         isOpen = false;
@@ -341,21 +337,55 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      */
     public void publish() {
         ensureOpen();
-        if (generation < 0 || generation <= generationFloor) {
+        // Gate on every valid slot that OUTLIVES this publication, read fresh, rather
+        // than on the newest valid slot overall. The two differ only after
+        // selectFallbackSlot() stepped down over a slot whose referenced roots failed
+        // validation: that corrupt slot is the publication target, so it is about to be
+        // replaced and must not gate the value replacing it. Gating on the global
+        // maximum there wedges the view permanently - generations advance by exactly one
+        // per successful publication, so the seal computes fallbackGeneration + 1, which
+        // is exactly the corrupt slot's generation and is refused, and no later
+        // publication can ever get past it. The head, its baseSeqTxn and the timeline
+        // WAL purge floor then freeze, and the BASE table's WAL is retained while it
+        // keeps ingesting.
+        //
+        // With no slot selected nothing was validated, so the target is excluded from
+        // nothing: keep gating on both slots exactly as before. That is what stops a
+        // file whose every slot failed validation from being quietly restarted at a
+        // lower generation, and it is what testBothRootCorruptGenerationsAreRejected
+        // pins - independently of which slot happens to hold the newest generation.
+        final int target = selectedSlot == 0 ? 1 : 0;
+        final boolean hasSelection = selectedSlot != NO_SLOT;
+        long gateGeneration = Long.MIN_VALUE;
+        long gateBaseSeqTxn = -1;
+        long gateLvSeqTxn = -1;
+        for (int slot = 0; slot < 2; slot++) {
+            if (hasSelection && slot == target) {
+                continue;
+            }
+            final long base = (long) slot * SLOT_SIZE;
+            if (!isSlotValid(base)) {
+                continue;
+            }
+            gateGeneration = Math.max(gateGeneration, mem.getLong(base + SLOT_GENERATION_OFFSET));
+            gateBaseSeqTxn = Math.max(gateBaseSeqTxn, mem.getLong(base + SLOT_NORMALIZED_BASE_SEQTXN_OFFSET));
+            gateLvSeqTxn = Math.max(gateLvSeqTxn, mem.getLong(base + SLOT_COVERED_LV_SEQTXN_OFFSET));
+        }
+        if (generation < 0 || generation <= gateGeneration) {
             throw CairoException.critical(0)
                     .put("live view checkpoint generation must advance [current=")
-                    .put(generationFloor == Long.MIN_VALUE ? -1 : generationFloor)
+                    .put(gateGeneration == Long.MIN_VALUE ? -1 : gateGeneration)
                     .put(", next=").put(generation).put(']');
         }
         if (normalizedBaseSeqTxn < 0
                 || coveredLvSeqTxn < 0
-                || normalizedBaseSeqTxn < normalizedBaseSeqTxnCeiling
-                || coveredLvSeqTxn < coveredLvSeqTxnCeiling) {
+                || normalizedBaseSeqTxn < gateBaseSeqTxn
+                || coveredLvSeqTxn < gateLvSeqTxn) {
             throw CairoException.critical(0)
                     .put("live view checkpoint generation watermarks must not move backwards")
-                    .put(" [storedBase=").put(normalizedBaseSeqTxnCeiling)
+                    .put(" [storedBase=").put(gateBaseSeqTxn)
                     .put(", nextBase=").put(normalizedBaseSeqTxn)
-                    .put(", storedLv=").put(coveredLvSeqTxnCeiling)
+                    .put(", storedLv=").put(gateLvSeqTxn)
                     .put(", nextLv=").put(coveredLvSeqTxn).put(']');
         }
         if (seedCursorOffset < 0 && seedCursorOffset != Numbers.LONG_NULL) {
@@ -364,7 +394,6 @@ public class LiveViewCheckpointSuperblock implements Closeable {
                     .put(seedCursorOffset);
         }
 
-        final int target = selectedSlot == 0 ? 1 : 0;
         storeSlot((long) target * SLOT_SIZE);
         if (commitMode != CommitMode.NOSYNC) {
             mem.sync(commitMode == CommitMode.ASYNC);
@@ -379,13 +408,15 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * durable one, since validation never opens a data segment and a later open
      * can select the newer slot again.
      * <p>
-     * {@link #select()} derives {@code generationFloor} from every valid slot and
+     * {@link #select()} derives {@code newestValidGeneration} from every valid slot and
      * the fallback deliberately leaves it alone, so this is exact rather than a
-     * proxy for it.
+     * proxy for it. It is deliberately NOT what {@link #publish()} gates on - a
+     * publication has to advance past the slot it leaves standing, which after a
+     * fallback is the older one.
      */
     boolean isSelectedSlotNewest() {
         ensureOpen();
-        return generation == generationFloor;
+        return generation == newestValidGeneration;
     }
 
     /**
@@ -491,9 +522,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     private int select() {
         int best = NO_SLOT;
         long bestGeneration = Long.MIN_VALUE;
-        generationFloor = Long.MIN_VALUE;
-        normalizedBaseSeqTxnCeiling = -1;
-        coveredLvSeqTxnCeiling = -1;
+        newestValidGeneration = Long.MIN_VALUE;
         oldestValidGeneration = Long.MAX_VALUE;
         walPurgeFloor = -1;
         for (int slot = 0; slot < 2; slot++) {
@@ -504,12 +533,10 @@ public class LiveViewCheckpointSuperblock implements Closeable {
                     best = slot;
                     bestGeneration = gen;
                 }
-                generationFloor = Math.max(generationFloor, gen);
+                newestValidGeneration = Math.max(newestValidGeneration, gen);
                 oldestValidGeneration = Math.min(oldestValidGeneration, gen);
                 final long normalizedBaseSeqTxn = mem.getLong(base + SLOT_NORMALIZED_BASE_SEQTXN_OFFSET);
                 final long coveredLvSeqTxn = mem.getLong(base + SLOT_COVERED_LV_SEQTXN_OFFSET);
-                normalizedBaseSeqTxnCeiling = Math.max(normalizedBaseSeqTxnCeiling, normalizedBaseSeqTxn);
-                coveredLvSeqTxnCeiling = Math.max(coveredLvSeqTxnCeiling, coveredLvSeqTxn);
                 walPurgeFloor = walPurgeFloor < 0
                         ? normalizedBaseSeqTxn
                         : Math.min(walPurgeFloor, normalizedBaseSeqTxn);

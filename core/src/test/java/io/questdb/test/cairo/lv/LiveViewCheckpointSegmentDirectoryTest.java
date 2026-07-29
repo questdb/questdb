@@ -70,6 +70,98 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAFailedSegmentOpenDoesNotPoisonTheReaderCache() throws Exception {
+        assertMemoryLeak(() -> {
+            // The reader memoises open metadata segments in a small clock-replaced
+            // cache. LiveViewCheckpointMetaSegmentReader.of() closes and resets the
+            // reader up front and can then throw - a missing or corrupt segment - which
+            // leaves the slot still advertising the id it held before against a reader
+            // that is now closed. The next lookup wanting that id is answered from the
+            // closed reader, so one damaged segment takes a healthy one down with it.
+            // Inside restoreLatestCompatible's predecessor walk, which retries within a
+            // single binding, that turns a recoverable root into "no usable root".
+            //
+            // Span more segments than the cache holds, so the failing open lands on an
+            // occupied slot rather than a free one.
+            final int segmentCount = 12;
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            for (int i = 0; i < segmentCount; i++) {
+                try (LiveViewCheckpointSegmentDirectoryWriter writer = openWriter(2, 2)) {
+                    writer.begin(root);
+                    writer.addSegment(1_000 + i, 4_096 + i, 1);
+                    writer.publish(i + 1, root);
+                }
+            }
+
+            // Remove a metadata segment the surviving tree still references. Copy-on-write
+            // orphans most of them - a page is only live if no later publication copied
+            // it - so rather than predict which, walk candidates until one costs some
+            // keys but not all. Removing an orphaned segment is a no-op by construction.
+            final LongList resolvableWithColdCache = new LongList();
+            int removedSegmentId = -1;
+            for (int candidate = 1; candidate < segmentCount && removedSegmentId < 0; candidate++) {
+                try (Path dir = new Path(); Path seg = new Path()) {
+                    LiveViewCheckpointLayout.metaSegmentPath(seg, checkpointsDir(dir), candidate);
+                    // removeQuiet reports success for an absent file, so ask first.
+                    if (!configuration.getFilesFacade().exists(seg.$())) {
+                        continue;
+                    }
+                    Assert.assertTrue(configuration.getFilesFacade().removeQuiet(seg.$()));
+                }
+                // Oracle: what a reader with a cold cache can still answer. Each key gets
+                // a fresh binding, so no failure can carry into the next lookup.
+                resolvableWithColdCache.clear();
+                for (int i = 0; i < segmentCount; i++) {
+                    try (LiveViewCheckpointSegmentDirectoryReader cold = openReader(root)) {
+                        try {
+                            cold.getFileLength(1_000 + i);
+                            resolvableWithColdCache.add(1_000 + i);
+                        } catch (CairoException damaged) {
+                            // This key genuinely needed the removed segment.
+                        }
+                    }
+                }
+                if (resolvableWithColdCache.size() > 0 && resolvableWithColdCache.size() < segmentCount) {
+                    removedSegmentId = candidate;
+                }
+            }
+            Assert.assertTrue(
+                    "no removable segment cost some keys but not all, so the test proves nothing",
+                    removedSegmentId > 0
+            );
+            // The damaged segment has to sit on a descent that also traverses healthy
+            // ones, or a poisoned slot would have nothing to take down with it and this
+            // would pass on a broken build.
+            Assert.assertTrue(
+                    "too few surviving keys to expose a poisoned cache",
+                    resolvableWithColdCache.size() >= 2
+            );
+
+            // The same questions against one long-lived binding, which is how
+            // restoreLatestCompatible asks them. Two passes: the first fills and then
+            // poisons the cache, the second observes what the poisoning cost.
+            final LongList resolvableWithWarmCache = new LongList();
+            try (LiveViewCheckpointSegmentDirectoryReader warm = openReader(root)) {
+                for (int pass = 0; pass < 2; pass++) {
+                    resolvableWithWarmCache.clear();
+                    for (int i = 0; i < segmentCount; i++) {
+                        try {
+                            warm.getFileLength(1_000 + i);
+                            resolvableWithWarmCache.add(1_000 + i);
+                        } catch (CairoException damaged) {
+                            // Either genuinely damaged, or poisoned by a previous failure.
+                        }
+                    }
+                }
+            }
+
+            // A cache is a memo, not a fault amplifier: reusing one binding must answer
+            // exactly what a cold one does.
+            TestUtils.assertEquals(resolvableWithColdCache, resolvableWithWarmCache);
+        });
+    }
+
+    @Test
     public void testAppendCostIsFlatAsTheCatalogueGrows() throws Exception {
         assertMemoryLeak(() -> {
             // The reason this structure replaced the flat page: a publication must

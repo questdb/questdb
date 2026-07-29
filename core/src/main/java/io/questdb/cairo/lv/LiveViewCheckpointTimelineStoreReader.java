@@ -447,6 +447,11 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         if (dataReaders[slot] == null) {
             dataReaders[slot] = new LiveViewCheckpointDataSegmentReader(configuration);
         }
+        // Invalidate the slot BEFORE the open. of() closes and resets the reader up front and can
+        // then throw, which would otherwise leave the slot still advertising the previous, healthy
+        // segment id against a closed reader - so one corrupt segment poisons a healthy one, and a
+        // later lookup can escalate that into "no usable root".
+        dataSegmentIds[slot] = -1;
         dataReaders[slot].of(checkpointsDir, segmentId, fileLength);
         dataSegmentIds[slot] = segmentId;
         return dataReaders[slot];

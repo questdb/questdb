@@ -41,6 +41,8 @@ import io.questdb.cairo.wal.seq.TableSequencerImpl;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -122,6 +124,7 @@ public class WalUtils {
     public static long WAL_DEFAULT_BASE_TABLE_TXN = Long.MIN_VALUE;
     public static long WAL_DEFAULT_LAST_PERIOD_HI = Long.MIN_VALUE;
     public static long WAL_DEFAULT_LAST_REFRESH_TIMESTAMP = Long.MIN_VALUE;
+    private static final Log LOG = LogFactory.getLog(WalUtils.class);
     // Sentinel returned by liveViewMaxBaseSeqTxnFromRecord for a record that is not a
     // LIVE_VIEW_DATA block, so the backward scan keeps looking. Distinct from a real
     // maxBaseSeqTxn (>= 0) and from the not-found / unreadable result (-1).
@@ -359,14 +362,22 @@ public class WalUtils {
      * Recovers the in-band {@code maxBaseSeqTxn} of a live view's last <em>committed</em>
      * {@code LIVE_VIEW_DATA} block by scanning its own sequencer transaction log
      * backward and reading the first (latest) such block's WAL-e event. The log records
-     * commits, not applies, so a caller that moves a purge floor on the result must
-     * first establish that nothing committed is still unapplied. This is the
+     * commits, not applies, so a caller that also derives coordinates from the LV
+     * <em>table</em> - a row count, a materialization frontier - must first establish
+     * that nothing committed is still unapplied, or those coordinates and this one
+     * describe different states. This is the
      * "forward-scan recovery from the LV WAL" that closes the durable-floor gap left
      * when a crash lands between the inline apply and the trailing {@code _lv.s}
      * persist: the block's {@code maxBaseSeqTxn} is the base seqTxn the LV table
      * committed, which the stale {@code _lv.s} may not record. It equals what the
-     * view materialised only once that block has applied, which the scan does not
-     * check - bounding it at the LV table's applied seqTxn would.
+     * view materialised only once that block has applied, which this scan does not
+     * check - {@code LiveViewRefreshJob.reconcileAppliedFloorAfterRestart} compares
+     * the LV table's applied seqTxn against its sequencer's committed one and defers
+     * rather than clamp when they differ. Committed is the right answer for a caller
+     * that only needs a resume floor, because the block's derived rows are already
+     * durable in the view's own WAL: {@code CairoEngine.buildViewGraphs} rebuilds a
+     * torn {@code _lv.s} from it, and clamping lower there would re-derive the range
+     * the pending block also carries.
      * <p>
      * The caller owns {@code txnLogMemory} and {@code walEventReader}. Returns the
      * {@code maxBaseSeqTxn} of the latest {@code LIVE_VIEW_DATA} block, or {@code -1}
@@ -380,52 +391,23 @@ public class WalUtils {
             WalEventReader walEventReader
     ) {
         final int tablePathLen = tablePath.size();
-        txnLogMemory.smallFile(configuration.getFilesFacade(), tablePath.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_TX_LOG);
-        if (txnLogMemory.size() < TableTransactionLogFile.HEADER_SIZE) {
+        try {
+            return liveViewMaxBaseSeqTxn0(tablePath, tablePathLen, configuration, txnLogMemory, walEventReader);
+        } catch (Exception e) {
+            // Honour the -1 contract on every path, not just the per-record one. Three
+            // sites throw: the _txnlog open (a concurrent DROP loses the file between the
+            // caller's isDropped() check and here), a V2 part open (the part was purged),
+            // and the unsupported-format-version guard. Each means the same thing the
+            // contract already names - the log cannot be read - and each caller handles
+            // -1 far better than a throw: the restart reconcile no-ops instead of burning
+            // retry budget, and buildViewGraphs surfaces a droppable state_unreadable stub.
+            // Exception, not Throwable: an OOM or a linkage failure here is not an
+            // unreadable log, and folding it into a safe-abort return would hide it.
+            LOG.error().$("could not read live view max base seqTxn, reporting no floor [path=")
+                    .$(tablePath)
+                    .$(", error=").$(e).I$();
             return -1;
         }
-        final int formatVersion = txnLogMemory.getInt(TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET);
-        if (formatVersion == WAL_SEQUENCER_FORMAT_VERSION_V1) {
-            final long txnCount = txnLogMemory.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
-            if (txnCount > 0 && txnLogMemory.size() >= TableTransactionLogFile.HEADER_SIZE + txnCount * TableTransactionLogV1.RECORD_SIZE) {
-                for (long txn = txnCount - 1; txn >= 0; txn--) {
-                    final long offset = TableTransactionLogFile.HEADER_SIZE + txn * TableTransactionLogV1.RECORD_SIZE;
-                    final long result = liveViewMaxBaseSeqTxnFromRecord(txnLogMemory, offset, tablePath, tablePathLen, walEventReader);
-                    if (result != LV_SCAN_CONTINUE) {
-                        return result;
-                    }
-                }
-            }
-        } else if (formatVersion == WAL_SEQUENCER_FORMAT_VERSION_V2) {
-            final long txnCount = txnLogMemory.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
-            final long partSize = txnLogMemory.getInt(TableTransactionLogFile.HEADER_SEQ_PART_SIZE_32);
-            if (txnCount > 0 && partSize > 0) {
-                final long partCount = (txnCount + partSize - 1) / partSize;
-                try (MemoryCMR partMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())) {
-                    for (long part = partCount - 1; part >= 0; part--) {
-                        tablePath.trimTo(tablePathLen).concat(SEQ_DIR).concat(TXNLOG_PARTS_DIR).slash().put(part);
-                        partMem.smallFile(configuration.getFilesFacade(), tablePath.$(), MemoryTag.MMAP_TX_LOG);
-                        final long partTxnCount = Math.min(partSize, txnCount - part * partSize);
-                        // Mirror the V1 size guard: never read a record past the mapped
-                        // part file. A truncated or corrupt part means the log cannot be
-                        // trusted, so bail with "no info" rather than reading out of bounds.
-                        if (partMem.size() < partTxnCount * TableTransactionLogV2.RECORD_SIZE) {
-                            return -1;
-                        }
-                        for (long txn = partTxnCount - 1; txn >= 0; txn--) {
-                            final long offset = txn * TableTransactionLogV2.RECORD_SIZE;
-                            final long result = liveViewMaxBaseSeqTxnFromRecord(partMem, offset, tablePath, tablePathLen, walEventReader);
-                            if (result != LV_SCAN_CONTINUE) {
-                                return result;
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
-        }
-        return -1;
     }
 
     /**
@@ -568,6 +550,66 @@ public class WalUtils {
             }
         }
         return false;
+    }
+
+    /**
+     * Runs {@link #readLiveViewMaxBaseSeqTxn}'s backward scan. Split out so the caller
+     * can convert every failure into that method's documented {@code -1}; this one is
+     * free to let the sequencer-log reads throw.
+     */
+    private static long liveViewMaxBaseSeqTxn0(
+            Path tablePath,
+            int tablePathLen,
+            CairoConfiguration configuration,
+            MemoryCMR txnLogMemory,
+            WalEventReader walEventReader
+    ) {
+        txnLogMemory.smallFile(configuration.getFilesFacade(), tablePath.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_TX_LOG);
+        if (txnLogMemory.size() < TableTransactionLogFile.HEADER_SIZE) {
+            return -1;
+        }
+        final int formatVersion = txnLogMemory.getInt(TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET);
+        if (formatVersion == WAL_SEQUENCER_FORMAT_VERSION_V1) {
+            final long txnCount = txnLogMemory.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+            if (txnCount > 0 && txnLogMemory.size() >= TableTransactionLogFile.HEADER_SIZE + txnCount * TableTransactionLogV1.RECORD_SIZE) {
+                for (long txn = txnCount - 1; txn >= 0; txn--) {
+                    final long offset = TableTransactionLogFile.HEADER_SIZE + txn * TableTransactionLogV1.RECORD_SIZE;
+                    final long result = liveViewMaxBaseSeqTxnFromRecord(txnLogMemory, offset, tablePath, tablePathLen, walEventReader);
+                    if (result != LV_SCAN_CONTINUE) {
+                        return result;
+                    }
+                }
+            }
+        } else if (formatVersion == WAL_SEQUENCER_FORMAT_VERSION_V2) {
+            final long txnCount = txnLogMemory.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+            final long partSize = txnLogMemory.getInt(TableTransactionLogFile.HEADER_SEQ_PART_SIZE_32);
+            if (txnCount > 0 && partSize > 0) {
+                final long partCount = (txnCount + partSize - 1) / partSize;
+                try (MemoryCMR partMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())) {
+                    for (long part = partCount - 1; part >= 0; part--) {
+                        tablePath.trimTo(tablePathLen).concat(SEQ_DIR).concat(TXNLOG_PARTS_DIR).slash().put(part);
+                        partMem.smallFile(configuration.getFilesFacade(), tablePath.$(), MemoryTag.MMAP_TX_LOG);
+                        final long partTxnCount = Math.min(partSize, txnCount - part * partSize);
+                        // Mirror the V1 size guard: never read a record past the mapped
+                        // part file. A truncated or corrupt part means the log cannot be
+                        // trusted, so bail with "no info" rather than reading out of bounds.
+                        if (partMem.size() < partTxnCount * TableTransactionLogV2.RECORD_SIZE) {
+                            return -1;
+                        }
+                        for (long txn = partTxnCount - 1; txn >= 0; txn--) {
+                            final long offset = txn * TableTransactionLogV2.RECORD_SIZE;
+                            final long result = liveViewMaxBaseSeqTxnFromRecord(partMem, offset, tablePath, tablePathLen, walEventReader);
+                            if (result != LV_SCAN_CONTINUE) {
+                                return result;
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
+        }
+        return -1;
     }
 
     /**

@@ -250,6 +250,11 @@ public class LiveViewCheckpointRowPositionDeltaReader implements Closeable {
         if (segReaders[slot] == null) {
             segReaders[slot] = new LiveViewCheckpointMetaSegmentReader(configuration);
         }
+        // Invalidate the slot BEFORE the open. of() closes and resets the reader up front and can
+        // then throw, which would otherwise leave the slot still advertising the previous, healthy
+        // segment id against a closed reader - so one corrupt segment poisons a healthy one, and a
+        // later lookup can escalate that into "no usable root".
+        segReaderSegId[slot] = -1;
         segReaders[slot].of(checkpointsDir, segmentId);
         segReaderSegId[slot] = segmentId;
         return segReaders[slot];

@@ -5767,6 +5767,146 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCrashFloorReconcileSkipsUnappliedLvWal() throws Exception {
+        // The restart floor reconcile may only release watermarks for rows the live
+        // view's own table actually holds. reconcileAppliedFloorAfterRestart re-drives
+        // applyWalDirect precisely so every committed LV WAL block is applied before it
+        // clamps - but applyWal2Table returns silently WITHOUT applying under memory
+        // pressure, on a busy writer, and after a failure suspends the table. This test
+        // pins that broken precondition: the LV block is committed and not applied, so
+        // the clamp must not move lastProcessedSeqTxn / appliedWatermark /
+        // lvConsumedSeqTxn onto it. lvConsumedSeqTxn is the base table's WAL purge
+        // floor in WalPurgeJob, and appliedWatermark is what tryRestoreFromTimeline
+        // reads as durableBaseSeqTxn while reading the row count and frontier off a
+        // table that does not hold the block's output.
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failStatePersist = new AtomicBoolean(false);
+        final AtomicBoolean failApply = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failStatePersist.get() && Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)) {
+                    return -1;
+                }
+                // Sticky, unlike the self-clearing fault in
+                // LiveViewTest#testSuspendedLiveViewCanBeResumed: the re-apply the
+                // reconcile drives on restart has to fail too.
+                if (failApply.get()
+                        && lvDir[0] != null
+                        && Utf8s.endsWithAscii(name, "x.d")
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "2026-04-02")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+
+            final long baselineFloor;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Baseline: row 1 flushes, applies and reaches _lv.s cleanly.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                baselineFloor = engine.getLiveViewRegistry().getViewInstance("lv")
+                        .getStateReader().getLastProcessedSeqTxn();
+                Assert.assertTrue("the baseline flush must have advanced the durable floor", baselineFloor > 0);
+
+                // Commit a second block that neither applies (its day-2 LV partition
+                // create fails, which suspends the view) nor reaches _lv.s (the state
+                // write fails), so the durable floor stays at the baseline while the
+                // LV's own WAL runs ahead of it - the crash shape the reconcile exists
+                // for, with the re-apply broken.
+                setCurrentMicros(2_000_000L);
+                failApply.set(true);
+                failStatePersist.set(true);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-02T00:00:00.000000Z', 2)");
+                drainWalQueue();
+                drainJob(job);
+                failStatePersist.set(false);
+                Assert.assertTrue("the failed inline apply must suspend the live view",
+                        engine.getTableSequencerAPI().isSuspended(lvToken));
+            }
+
+            // Restart: rebuild the registry from the on-disk _lv + the stale _lv.s,
+            // the path startup takes.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertEquals("restart must reload the stale durable floor",
+                    baselineFloor, instance.getStateReader().getLastProcessedSeqTxn());
+
+            // The preconditions the reconcile then faces: the LV table trails its own
+            // sequencer, and the committed-block scan reports a floor past the baseline
+            // - which is exactly the value an unguarded clamp takes.
+            final long committedLvSeqTxn = engine.getTableSequencerAPI().lastTxn(lvToken);
+            final long appliedLvSeqTxn;
+            try (TableReader lvReader = engine.getReader(lvToken)) {
+                appliedLvSeqTxn = lvReader.getSeqTxn();
+            }
+            Assert.assertTrue("precondition: the LV block must be committed but unapplied",
+                    appliedLvSeqTxn < committedLvSeqTxn);
+            Assert.assertTrue("precondition: the committed scan must report a floor past the baseline",
+                    engine.readLiveViewAppliedMaxBaseSeqTxn(lvToken) > baselineFloor);
+
+            // Clear the fault and the suspension, then hold the live view's own table
+            // writer. The reconcile's re-driven apply now returns
+            // EntryUnavailableException, which is the failure mode that does NOT suspend
+            // - and therefore the one only isLiveViewWalFullyApplied can catch. A file
+            // fault suspends instead and is caught by the cheap tracker gate above it, so
+            // it would leave the applied check unexercised. This is also the shape a real
+            // restart hits: suspension lives only in SeqTxnTracker, which a fresh process
+            // starts cold.
+            failApply.set(false);
+            execute("ALTER LIVE VIEW lv RESUME WAL");
+            Assert.assertFalse("the reconcile must face an unsuspended tracker",
+                    engine.getTableSequencerAPI().isSuspended(lvToken));
+
+            try (
+                    LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+                    TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)
+            ) {
+                // No new base rows, so the restart reconcile is the only thing that can
+                // move the floor.
+                setCurrentMicros(4_000_000L);
+                drainJob(job);
+            }
+            Assert.assertFalse("a busy writer must not suspend the view",
+                    engine.getTableSequencerAPI().isSuspended(lvToken));
+
+            Assert.assertEquals("the restart reconcile must not clamp the floor onto an unapplied block",
+                    baselineFloor, instance.getStateReader().getLastProcessedSeqTxn());
+            Assert.assertEquals("the applied watermark must not run ahead of the LV table",
+                    baselineFloor, instance.getStateReader().getAppliedWatermark());
+            Assert.assertEquals("the base WAL purge floor must not run ahead of the LV table",
+                    baselineFloor, instance.getStateReader().getLvConsumedSeqTxn());
+
+            // The block still lands exactly once once the writer frees up, so deferring
+            // the clamp costs the view nothing but the delay.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                            "2026-04-02T00:00:00.000000Z\t2\t2\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testCrashMidHeadCheckpointWriteFallsBackToPriorHead() throws Exception {
         // A crash mid seal (or a seal that simply fails) must not corrupt the view
         // or block recovery. The row data is durable in the LV table via its own
@@ -10424,6 +10564,123 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testMidDrainRebuildFailureDoesNotDrainOverWipedWindowState() throws Exception {
+        // The sibling test above covers a mid-drain fault whose rebuild SUCCEEDS. This
+        // one covers the rebuild itself failing, which is where the accumulators are
+        // left wiped: o3HeadMissReplay calls clearWindowState and then throws on the
+        // applied-base scan, so the runtime sits at identity while the durable tier
+        // still holds the full history.
+        //
+        // Two things then conspire. refreshInstance assigns windowStateDirty = false at
+        // every turn entry, so the dirtiness handleRefreshFailure recorded cannot
+        // survive to the turn that would act on it; and the next turn drains forward
+        // from the unchanged lastProcessedSeqTxn over those identity accumulators, then
+        // calls recordRefreshSuccess(), which resets the flush-retry budget. The view
+        // therefore commits a running sum that restarts mid-view and can never
+        // invalidate itself out of it.
+        //
+        // Both faults self-clear, so the retry has clean files: any wrong output is the
+        // stale runtime's doing, not a lingering fault.
+        final String[] baseDir = new String[1];
+        // -1 disarmed; >= 0 skip this many base WAL ts.d opens, then fail the next and
+        // disarm. Armed with 2 it fails the seqTxn-4 commit's segment read once the
+        // seqTxn-3 row is already fed - the same mid-drain shape as the sibling test.
+        final AtomicInteger armBaseTsRead = new AtomicInteger(-1);
+        // Armed by the mid-drain fault above. The rebuild it triggers scans the APPLIED
+        // base table rather than the WAL, so this fails one of that scan's column opens
+        // and lands strictly after clearWindowState.
+        final AtomicBoolean failRebuildScan = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armBaseTsRead.get() >= 0
+                        && baseDir[0] != null
+                        && Utf8s.endsWithAscii(name, "ts.d")
+                        && Utf8s.containsAscii(name, baseDir[0])
+                        && Utf8s.containsAscii(name, "wal")) {
+                    if (armBaseTsRead.get() == 0) {
+                        armBaseTsRead.set(-1);
+                        failRebuildScan.set(true);
+                        return -1;
+                    }
+                    armBaseTsRead.decrementAndGet();
+                }
+                if (failRebuildScan.get()
+                        && baseDir[0] != null
+                        && Utf8s.endsWithAscii(name, "x.d")
+                        && Utf8s.containsAscii(name, baseDir[0])
+                        && !Utf8s.containsAscii(name, "wal")) {
+                    failRebuildScan.set(false);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+            baseDir[0] = engine.verifyTableName("base").getDirName();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Clean baseline (seqTxn 1), so the faulting cycle is not the
+                // first-cycle applied-base rederive and routes through
+                // handleRefreshFailure. All rows sit in one day, so the daily-anchored
+                // running sum equals the plain PARTITION BY sym recompute the oracle uses.
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'a', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:01.000000Z', 'a', 2)");
+                drainWalQueue();
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 'a', 3)");
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:03.000000Z', 'a', 4)");
+                drainWalQueue();
+
+                armBaseTsRead.set(2);
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals("the mid-drain segment read must have been failed exactly once",
+                        -1, armBaseTsRead.get());
+                Assert.assertFalse("the rebuild scan must have been failed exactly once",
+                        failRebuildScan.get());
+
+                // A later clean turn. With the accumulators wiped and unmarked, this is
+                // the turn that commits the corrupt running sum and resets the budget.
+                setCurrentMicros(4_000_000L);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // The decisive check: the view's running sum must equal a from-scratch
+            // recompute over the base. Draining over wiped accumulators restarts the
+            // sum mid-view, which this catches.
+            assertRunningSumLvMatchesRecompute();
+
+            // The recovering commit must also settle the debt. If it did not, the output
+            // would still be correct - the gate would just rebuild the whole view on every
+            // turn, forever, and report work each time so the worker never idles.
+            final LiveViewInstance recovered = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(recovered);
+            Assert.assertFalse(
+                    "the rebuild's commit must clear the window-state debt",
+                    recovered.isWindowStateDirty()
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testMidDrainRefreshFailureOnDedupBaseRecoversWindowState() throws Exception {
         // Resilience test (it passes both before and after the windowStateDirty
         // fix in drainAppliedBase - see below), covering a drain path that had no
@@ -14319,6 +14576,72 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             assertQuery("SELECT view_name, view_status, o3_rejected_count, below_lower_bound_count FROM live_views() WHERE view_name = 'lv'")
                     .noLeakCheck().noRandomAccess().returns("view_name\tview_status\to3_rejected_count\tbelow_lower_bound_count\n" +
                             "lv\tactive\t0\t3\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testUnreadableLvTxnLogReportsNoFloorRatherThanThrowing() throws Exception {
+        // readLiveViewMaxBaseSeqTxn documents that it returns -1 when the backing log
+        // cannot be read, so a caller can safely no-op instead of clamping to a guess.
+        // Its narrowed catch(Exception) sits only inside liveViewMaxBaseSeqTxnFromRecord
+        // though, so the _txnlog open itself escapes that contract - as does the V2 part
+        // open and the unsupported-format-version throw. A concurrent DROP is the
+        // realistic way to lose the log between the caller's isDropped() check and the
+        // open, and the throw then reaches the restart reconcile, which burns retry
+        // budget and can invalidate a view where the contract calls for a clean no-op.
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failTxnLog = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                return isTxnLogOpenFaulted(name) ? -1 : super.openRO(name);
+            }
+
+            @Override
+            public long openRONoCache(LPSZ name) {
+                // Which of the two the scan uses depends on cairo.wal.bypass.fd.cache,
+                // so fault both and keep the test independent of that setting.
+                return isTxnLogOpenFaulted(name) ? -1 : super.openRONoCache(name);
+            }
+
+            private boolean isTxnLogOpenFaulted(LPSZ name) {
+                return failTxnLog.get()
+                        && lvDir[0] != null
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.endsWithAscii(name, WalUtils.TXNLOG_FILE_NAME);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // With the log readable the scan finds the committed block, so the -1 below
+            // is the fault's doing and not an empty log.
+            Assert.assertTrue("a readable sequencer log must report a real floor",
+                    engine.readLiveViewAppliedMaxBaseSeqTxn(lvToken) >= 0);
+
+            failTxnLog.set(true);
+            Assert.assertEquals("an unreadable sequencer log must report no floor, not throw",
+                    -1, engine.readLiveViewAppliedMaxBaseSeqTxn(lvToken));
+            failTxnLog.set(false);
+
+            // The contract is a no-op, not a latch: the floor comes back once the log does.
+            Assert.assertTrue("the floor must return once the log is readable again",
+                    engine.readLiveViewAppliedMaxBaseSeqTxn(lvToken) >= 0);
 
             execute("DROP LIVE VIEW lv");
         });
