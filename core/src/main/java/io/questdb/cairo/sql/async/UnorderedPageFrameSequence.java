@@ -72,13 +72,11 @@ import java.util.concurrent.atomic.AtomicLong;
 public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
-    private T atom;
     private final AtomicInteger cancelReason = new AtomicInteger(SqlExecutionCircuitBreaker.STATE_OK);
     private final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
     private final MillisecondClock clock;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final StringSink errorMsg = new StringSink();
-    private PageFrameAddressCache frameAddressCache;
     private final LongList frameRowCounts = new LongList();
     private final AtomicBoolean isValid = new AtomicBoolean(true);
     private final MessageBus messageBus;
@@ -88,9 +86,11 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private final MCSequence reduceSubSeq;
     private final UnorderedPageFrameReducer reducer;
     private final WorkStealingStrategy workStealingStrategy;
+    private T atom;
     private int errno = CairoException.NON_CRITICAL;
     private byte errorKind = AsyncQueryErrorKind.KIND_NONE;
     private int errorMessagePosition;
+    private PageFrameAddressCache frameAddressCache;
     private int frameCount;
     private PageFrameCursor frameCursor;
     private long id;
@@ -594,11 +594,11 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         return !(dispatcher != null
                 ? dispatcher.consumeUnordered(-1, reduceQueue, reduceSubSeq, this)
                 : UnorderedPageFrameReduceJob.consumeQueue(
-                        reduceQueue,
-                        reduceSubSeq,
-                        localRecord,
-                        workStealCircuitBreaker,
-                        this
-                ));
+                reduceQueue,
+                reduceSubSeq,
+                localRecord,
+                workStealCircuitBreaker,
+                this
+        ));
     }
 }

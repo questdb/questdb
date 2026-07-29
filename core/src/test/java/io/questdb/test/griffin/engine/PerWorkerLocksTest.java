@@ -309,6 +309,38 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testContentionSpinsOnNullScope() {
+        // A thread that never entered a suspension scope (an embedded caller) falls back to the
+        // legacy spin loop instead of failing the query.
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, 1);
+        final int heldSlot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        final SuspensionScope.Mode previousMode = SuspensionScope.enter(null);
+        try {
+            final AtomicBooleanCircuitBreaker sqlCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+            sqlCircuitBreaker.cancel();
+            try {
+                locks.acquireSlot(0, sqlCircuitBreaker);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+            }
+            try {
+                locks.acquireSlot(0, (ExecutionCircuitBreaker) sqlCircuitBreaker);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "query aborted");
+            }
+            locks.releaseSlot(heldSlot);
+            final int slot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            Assert.assertEquals(heldSlot, slot);
+            locks.releaseSlot(slot);
+        } finally {
+            SuspensionScope.restore(previousMode);
+        }
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+    }
+
+    @Test
     public void testReleaseIgnoresNoSlot() {
         // Reducers pass the id they got from maybeAcquire back to release unconditionally, and the
         // owner thread gets -1 (it uses its private state and takes no slot).

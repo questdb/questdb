@@ -84,6 +84,7 @@ public class HttpQueryTestBuilder {
     private int forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
     private int forceSendFragmentationChunkSize = Integer.MAX_VALUE;
     private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
+    private HttpServer httpServer;
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private long maxWriterWaitTimeout = 30_000L;
@@ -98,6 +99,10 @@ public class HttpQueryTestBuilder {
     private boolean telemetry;
     private String temp;
     private int workerCount = 1;
+
+    public HttpServer getHttpServer() {
+        return httpServer;
+    }
 
     public int getWorkerCount() {
         return this.workerCount;
@@ -207,6 +212,7 @@ public class HttpQueryTestBuilder {
                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
         ) {
+            this.httpServer = httpServer;
             TelemetryJob telemetryJob = null;
             if (telemetry) {
                 telemetryJob = new TelemetryJob(engine);
@@ -337,6 +343,8 @@ public class HttpQueryTestBuilder {
                     Misc.free(telemetryJob);
                 }
             }
+        } finally {
+            this.httpServer = null;
         }
     }
 

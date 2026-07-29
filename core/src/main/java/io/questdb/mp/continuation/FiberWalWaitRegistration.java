@@ -26,17 +26,14 @@ package io.questdb.mp.continuation;
 
 import io.questdb.std.Unsafe;
 
-public final class FiberWalWaitRegistration {
+public final class FiberWalWaitRegistration extends FiberWaitRegistrationNode<FiberWalWaitRegistration> {
     private static final int STATE_FIRING = 3;
     private static final int STATE_FREE = 0;
     private static final int STATE_NEW = 1;
     private static final long STATE_OFFSET = Unsafe.getFieldOffset(FiberWalWaitRegistration.class, "state");
     private static final int STATE_QUEUED = 2;
-    FiberWalWaitRegistration nextActive;
     FiberWalWaitRegistration nextFire;
-    FiberWalWaitRegistration nextFree;
     FiberWalWaitRegistration nextList;
-    FiberWalWaitRegistration prevActive;
     FiberWalWaitRegistration prevList;
     FiberWalWaitQueue queue;
     private final FiberWaitCoordinator coordinator;
@@ -49,6 +46,7 @@ public final class FiberWalWaitRegistration {
         this.coordinator = coordinator;
     }
 
+    @Override
     public boolean cancel() {
         if (state == STATE_NEW) {
             return releaseNew();

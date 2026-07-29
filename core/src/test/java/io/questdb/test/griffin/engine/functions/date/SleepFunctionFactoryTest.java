@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -72,6 +73,24 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
                 } catch (io.questdb.cairo.CairoException e) {
                     Assert.assertTrue(e.getMessage(), e.getMessage().contains("sleep duration must be"));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testNullSuspensionScopeFallsBackToBlockingSleep() throws Exception {
+        assertMemoryLeak(() -> {
+            // An embedded caller's thread never enters a suspension scope; sleep() must
+            // block the thread like the legacy path instead of failing the query.
+            final SuspensionScope.Mode previousMode = SuspensionScope.enter(null);
+            try (RecordCursorFactory factory = select("sleep(0.05)")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue(cursor.getRecord().getTimestamp(0) > 0);
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            } finally {
+                SuspensionScope.restore(previousMode);
             }
         });
     }

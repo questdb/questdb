@@ -37,8 +37,6 @@ import io.questdb.griffin.SqlExecutionSuspension;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
-import io.questdb.mp.continuation.FiberCancellationWaitRegistration;
-import io.questdb.mp.continuation.FiberTimerWaitRegistration;
 import io.questdb.mp.continuation.FiberWaitCoordinator;
 import io.questdb.mp.continuation.FiberWalWaitRegistration;
 import io.questdb.mp.continuation.SourceRegistrationResult;
@@ -148,6 +146,13 @@ class WaitWalFunction extends BooleanFunction implements Function {
         sink.val(')');
     }
 
+    private CairoException abortedException() {
+        return CairoException.nonCritical()
+                .put("wait_wal_table aborted, connection closing [tableName=")
+                .put(tableName)
+                .put(']');
+    }
+
     private void throwIfTerminated() {
         if (seqTxnTracker.isSuspended()) {
             throw CairoException.nonCritical().put("table is suspended [tableName=").put(tableName).put("]");
@@ -175,64 +180,25 @@ class WaitWalFunction extends BooleanFunction implements Function {
             throwIfTerminated();
 
             long token = fiber.beginWaitBuild(cancellationSignal == null ? 2 : 3);
-            FiberCancellationWaitRegistration cancellationRegistration = null;
-            FiberWalWaitRegistration walRegistration = null;
-            FiberTimerWaitRegistration timerRegistration = null;
             try {
-                if (cancellationSignal != null) {
-                    cancellationRegistration = coordinator.acquireCancellation(token, cancellationSignal);
-                    if (cancellationRegistration.register() != SourceRegistrationResult.ACCEPTED
-                            || !coordinator.tryAcceptSource(token)) {
-                        throw CairoException.nonCritical()
-                                .put("wait_wal_table aborted, connection closing [tableName=")
-                                .put(tableName)
-                                .put(']');
-                    }
+                if (cancellationSignal != null && !coordinator.armCancellation(token, cancellationSignal)) {
+                    throw abortedException();
                 }
-                walRegistration = coordinator.acquireWal(token, seqTxn);
-                timerRegistration = coordinator.acquireTimer(
-                        token,
-                        timerShards,
-                        clock,
-                        wakeIntervalMillis
-                );
+                final FiberWalWaitRegistration walRegistration = coordinator.acquireWal(token, seqTxn);
                 if (seqTxnTracker.registerWaiter(walRegistration) != SourceRegistrationResult.ACCEPTED
                         || !coordinator.tryAcceptSource(token)
-                        || timerRegistration.register() != SourceRegistrationResult.ACCEPTED
-                        || !coordinator.tryAcceptSource(token)) {
-                    throw CairoException.nonCritical()
-                            .put("wait_wal_table aborted, connection closing [tableName=")
-                            .put(tableName)
-                            .put(']');
+                        || !coordinator.armTimer(token, timerShards, clock, wakeIntervalMillis)) {
+                    throw abortedException();
                 }
                 int reason = fiber.suspendWait(token);
-                if (cancellationRegistration != null) {
-                    cancellationRegistration.cancel();
-                }
-                walRegistration.cancel();
-                timerRegistration.cancel();
                 if (reason == FiberWaitCoordinator.REASON_ABORTED) {
                     throw new IllegalStateException("fiber refused wait_wal_table suspension");
                 }
                 if (reason == FiberWaitCoordinator.REASON_SHUTDOWN) {
-                    throw CairoException.nonCritical()
-                            .put("wait_wal_table aborted, connection closing [tableName=")
-                            .put(tableName)
-                            .put(']');
+                    throw abortedException();
                 }
-            } catch (Throwable th) {
-                if (cancellationRegistration != null) {
-                    cancellationRegistration.cancel();
-                }
-                if (walRegistration != null) {
-                    walRegistration.cancel();
-                }
-                if (timerRegistration != null) {
-                    timerRegistration.cancel();
-                }
-                coordinator.abort(token);
-                coordinator.consume(token);
-                throw th;
+            } finally {
+                coordinator.teardownWait(token);
             }
         }
         throwIfTerminated();

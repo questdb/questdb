@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpConnectionFiberTask;
@@ -55,7 +56,6 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
@@ -80,16 +80,18 @@ public class HttpFiberTest extends AbstractTest {
 
     @Test
     public void testBusyWriterRetryLaunchesRerunOnFiber() throws Exception {
-        TestUtils.assertMemoryLeak(() -> new HttpQueryTestBuilder()
+        final HttpQueryTestBuilder builder = new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withFiberEnabled(true))
-                .withTelemetry(false)
+                .withTelemetry(false);
+        TestUtils.assertMemoryLeak(() -> builder
                 .run((engine, sqlExecutionContext) -> {
                     final int insertCount = 4;
                     try (TestHttpClient testHttpClient = new TestHttpClient()) {
                         testHttpClient.assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (x LONG)");
 
+                        final WaitProcessor waitProcessor = builder.getHttpServer().getWaitProcessor();
                         final SOCountDownLatch inserted = new SOCountDownLatch(insertCount);
                         final AtomicReference<Throwable> insertError = new AtomicReference<>();
                         final ObjList<Thread> threads = new ObjList<>();
@@ -98,6 +100,7 @@ public class HttpFiberTest extends AbstractTest {
                             // the dispatch job parks it in the WaitProcessor, and each due
                             // rerun launches the connection's task on a pooled fiber,
                             // re-parking with growing backoff while the writer stays busy
+                            final long parkedBaseline = waitProcessor.getRescheduleCount();
                             for (int i = 0; i < insertCount; i++) {
                                 final int value = i;
                                 Thread thread = new Thread(() -> {
@@ -112,8 +115,10 @@ public class HttpFiberTest extends AbstractTest {
                                 thread.start();
                                 threads.add(thread);
                             }
-                            // several backoff cycles pass; no insert can complete
-                            Os.sleep(300);
+                            // every insert parks at least once; none can complete
+                            TestUtils.assertEventually(() -> Assert.assertTrue(
+                                    waitProcessor.getRescheduleCount() >= parkedBaseline + insertCount
+                            ));
                             Assert.assertEquals(insertCount, inserted.getCount());
                         }
                         Assert.assertTrue(
@@ -134,31 +139,43 @@ public class HttpFiberTest extends AbstractTest {
 
     @Test
     public void testClientDisconnectWhileRetryParkedOnFiber() throws Exception {
-        TestUtils.assertMemoryLeak(() -> new HttpQueryTestBuilder()
+        final HttpQueryTestBuilder builder = new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withFiberEnabled(true))
-                .withTelemetry(false)
+                .withTelemetry(false);
+        TestUtils.assertMemoryLeak(() -> builder
                 .run((engine, sqlExecutionContext) -> {
                     try (TestHttpClient testHttpClient = new TestHttpClient()) {
                         testHttpClient.assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (x LONG)");
+                        final WaitProcessor waitProcessor = builder.getHttpServer().getWaitProcessor();
+                        final ActiveConnectionTracker connectionTracker = builder
+                                .getHttpServer()
+                                .getActiveConnectionTracker();
+                        final long activeConnectionsBeforeRequest = connectionTracker.get(
+                                ActiveConnectionTracker.PROCESSOR_JSON
+                        );
                         try (TableWriter ignore = engine.getWriter(engine.verifyTableName("tab"), "test")) {
+                            final long parkedBaseline = waitProcessor.getRescheduleCount();
                             final long fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(
                                     "GET /query?query=INSERT+INTO+tab+VALUES+(42) HTTP/1.1\r\n"
                                             + "Host: localhost:9001\r\n"
                                             + "\r\n"
                             );
                             // the INSERT parks in the retry queue while the writer is busy
-                            Os.sleep(300);
+                            TestUtils.assertEventually(() -> Assert.assertTrue(
+                                    waitProcessor.getRescheduleCount() > parkedBaseline
+                            ));
                             // the client vanishes while its retry is parked; nothing
                             // observes the dead socket until the rerun touches it
                             Net.close(fd);
                         }
-                        // the rerun after release either lands the insert and hits the
-                        // dead socket on the response write, or the breaker trips first;
-                        // both paths must reap the connection (the fd-leak check at
-                        // teardown asserts the cleanup) and leave the server serving
-                        Os.sleep(500);
+                        // A rerun either reaches the response write or trips the breaker.
+                        // Both paths must reap the dead connection.
+                        TestUtils.assertEventually(() -> Assert.assertEquals(
+                                activeConnectionsBeforeRequest,
+                                connectionTracker.get(ActiveConnectionTracker.PROCESSOR_JSON)
+                        ));
                         testHttpClient.assertGet(
                                 "{\"query\":\"SELECT 1 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
                                 "SELECT 1 x"
@@ -169,11 +186,12 @@ public class HttpFiberTest extends AbstractTest {
 
     @Test
     public void testCsvImportRetryResumesMultipartOnFiber() throws Exception {
-        TestUtils.assertMemoryLeak(() -> new HttpQueryTestBuilder()
+        final HttpQueryTestBuilder builder = new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withFiberEnabled(true))
-                .withTelemetry(false)
+                .withTelemetry(false);
+        TestUtils.assertMemoryLeak(() -> builder
                 .run((engine, sqlExecutionContext) -> {
                     try (TestHttpClient testHttpClient = new TestHttpClient()) {
                         testHttpClient.assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE test (a LONG)");
@@ -194,6 +212,7 @@ public class HttpFiberTest extends AbstractTest {
                                 + "\r\n"
                                 + body;
 
+                        final WaitProcessor waitProcessor = builder.getHttpServer().getWaitProcessor();
                         final SOCountDownLatch imported = new SOCountDownLatch(1);
                         final AtomicReference<Throwable> importError = new AtomicReference<>();
                         Thread thread;
@@ -201,6 +220,7 @@ public class HttpFiberTest extends AbstractTest {
                             // the held writer suspends the import mid-multipart: the parser
                             // state is saved on the context and every due rerun launches on
                             // a fiber, resuming multipart consumption once the writer frees
+                            final long parkedBaseline = waitProcessor.getRescheduleCount();
                             thread = new Thread(() -> {
                                 try {
                                     new SendAndReceiveRequestBuilder().execute(importRequest, "HTTP/1.1 200 OK");
@@ -211,7 +231,10 @@ public class HttpFiberTest extends AbstractTest {
                                 }
                             });
                             thread.start();
-                            Os.sleep(300);
+                            // the import parks at least once while the writer is busy
+                            TestUtils.assertEventually(() -> Assert.assertTrue(
+                                    waitProcessor.getRescheduleCount() > parkedBaseline
+                            ));
                             Assert.assertEquals(1, imported.getCount());
                         }
                         Assert.assertTrue(
@@ -477,27 +500,31 @@ public class HttpFiberTest extends AbstractTest {
                 }
             });
             workerPool.start();
-            try (TestHttpClient testHttpClient = new TestHttpClient()) {
-                testHttpClient.assertGet(
-                        "{\"query\":\"SELECT 42 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[42]],\"count\":1}",
-                        "SELECT 42 x"
-                );
-            }
+            try {
+                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                    testHttpClient.assertGet(
+                            "{\"query\":\"SELECT 42 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[42]],\"count\":1}",
+                            "SELECT 42 x"
+                    );
+                }
 
-            Assert.assertEquals(workerPoolMode, workerPool.getWorkerPoolMode());
-            Assert.assertEquals(
-                    isFiberEnabled ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY,
-                    httpConfiguration.getWorkerPoolMode()
-            );
-            if (workerPoolMode == WorkerPoolMode.FIBER_HOST) {
+                Assert.assertEquals(workerPoolMode, workerPool.getWorkerPoolMode());
                 Assert.assertEquals(
-                        isFiberExecutionExpected,
-                        workerPool.getFiberRuntime().getLaunchCount(LaunchResult.LAUNCHED) > 0
+                        isFiberEnabled ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY,
+                        httpConfiguration.getWorkerPoolMode()
                 );
-                Assert.assertEquals(
-                        isFiberExecutionExpected,
-                        workerPool.getFiberRuntime().getCreatedFiberCount() > 0
-                );
+                if (workerPoolMode == WorkerPoolMode.FIBER_HOST) {
+                    Assert.assertEquals(
+                            isFiberExecutionExpected,
+                            workerPool.getFiberRuntime().getLaunchCount(LaunchResult.LAUNCHED) > 0
+                    );
+                    Assert.assertEquals(
+                            isFiberExecutionExpected,
+                            workerPool.getFiberRuntime().getCreatedFiberCount() > 0
+                    );
+                }
+            } finally {
+                workerPool.halt();
             }
         }
     }

@@ -40,10 +40,6 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.continuation.FiberEventWaitQueue;
-import io.questdb.mp.continuation.FiberEventWaitRegistration;
-import io.questdb.mp.continuation.FiberWaitCoordinator;
-import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -231,7 +227,6 @@ public class WriterPool extends AbstractPool {
                         return OWNERSHIP_REASON_NONE;
                     } else {
                         entries.remove(dirName);
-                        fireAllWriterWaiters(e);
                         return reinterpretOwnershipReason(e.ownershipReason);
                     }
                 } else {
@@ -268,22 +263,6 @@ public class WriterPool extends AbstractPool {
         return entries.size();
     }
 
-    public SourceRegistrationResult registerWriterWaiter(
-            TableToken tableToken,
-            FiberEventWaitRegistration registration
-    ) {
-        final Entry entry = entries.get(tableToken.getDirName());
-        if (entry == null) {
-            return SourceRegistrationResult.NOT_ACCEPTED;
-        }
-        final SourceRegistrationResult result = registration.register(entry.writerWaitQueue);
-        if (result == SourceRegistrationResult.ACCEPTED
-                && (entry.owner == UNALLOCATED || entries.get(tableToken.getDirName()) != entry)) {
-            entry.writerWaitQueue.fire();
-        }
-        return result;
-    }
-
     public void unlock(TableToken tableToken, @Nullable TableWriter writer, boolean newTable) {
         long thread = Thread.currentThread().threadId();
 
@@ -313,7 +292,6 @@ public class WriterPool extends AbstractPool {
                     }
                 }
                 entries.remove(tableToken.getDirName());
-                fireAllWriterWaiters(e);
             } else {
                 e.writer = writer;
                 writer.setLifecycleManager(e);
@@ -322,7 +300,6 @@ public class WriterPool extends AbstractPool {
                 e.ownershipReason = OWNERSHIP_REASON_NONE;
                 Unsafe.storeFence();
                 Unsafe.putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
-                e.writerWaitQueue.fire();
             }
             notifyListener(thread, tableToken, PoolListener.EV_UNLOCKED);
             LOG.debug().$("unlocked [table=").$(tableToken)
@@ -397,9 +374,7 @@ public class WriterPool extends AbstractPool {
                     w.tick(true);
                 }
             } finally {
-                if (Unsafe.cas(e, ENTRY_OWNER, thread, UNALLOCATED)) {
-                    e.writerWaitQueue.fire();
-                }
+                Unsafe.cas(e, ENTRY_OWNER, thread, UNALLOCATED);
             }
         }
     }
@@ -478,7 +453,6 @@ public class WriterPool extends AbstractPool {
             e.ex = ex;
             e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;
             e.owner = UNALLOCATED;
-            e.writerWaitQueue.fire();
             notifyListener(e.owner, tableToken, PoolListener.EV_CREATE_EX);
             throw ex;
         } catch (CairoError ex) {
@@ -488,7 +462,6 @@ public class WriterPool extends AbstractPool {
                     .I$();
             e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;
             e.owner = UNALLOCATED;
-            e.writerWaitQueue.fire();
             notifyListener(e.owner, tableToken, PoolListener.EV_CREATE_EX);
             throw ex;
         }
@@ -516,15 +489,6 @@ public class WriterPool extends AbstractPool {
     // maps to this exact entry. Rare path - only a dropped WAL table reaches it.
     private void evictEntry(Entry e) {
         entries.remove(e.dirName, e);
-        fireAllWriterWaiters(e);
-    }
-
-    private void fireAllWriterWaiters(Entry e) {
-        if (isClosed()) {
-            e.writerWaitQueue.shutdown();
-        } else {
-            e.writerWaitQueue.fireAll();
-        }
     }
 
     private TableWriter getWriterEntry(
@@ -579,7 +543,6 @@ public class WriterPool extends AbstractPool {
                         // this writer failed to allocate by this very thread
                         // ensure consistent response
                         entries.remove(tableToken.getDirName());
-                        fireAllWriterWaiters(e);
                         throw e.ex;
                     }
                 }
@@ -612,7 +575,6 @@ public class WriterPool extends AbstractPool {
                     .$(", thread=").$(thread).I$();
             e.ownershipReason = OWNERSHIP_REASON_MISSING;
             e.owner = UNALLOCATED;
-            e.writerWaitQueue.fire();
             return false;
         }
         LOG.debug().$("locked [table=").$(tableToken).$(", thread=").$(thread).I$();
@@ -673,7 +635,6 @@ public class WriterPool extends AbstractPool {
         if (isDistressed) {
             closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_DISTRESSED);
             entries.remove(tableToken.getDirName());
-            fireAllWriterWaiters(e);
             notifyListener(thread, tableToken, PoolListener.EV_RETURN);
             return true;
         }
@@ -707,12 +668,10 @@ public class WriterPool extends AbstractPool {
                     // closeWriter() does on the other free paths.
                     drainCommandPublishers(e);
                     notifyListener(thread, tableToken, PoolListener.EV_OUT_OF_POOL_CLOSE);
-                    fireAllWriterWaiters(e);
                     return false;
                 }
             }
 
-            e.writerWaitQueue.fire();
             notifyListener(thread, tableToken, PoolListener.EV_RETURN);
         } else {
             LOG.critical().$("orphaned [table=").$(tableToken).I$();
@@ -760,7 +719,6 @@ public class WriterPool extends AbstractPool {
                     // lock successful
                     closeWriter(thread, e, PoolListener.EV_EXPIRE, reason);
                     iterator.remove();
-                    fireAllWriterWaiters(e);
                     removed = true;
                 }
             } else if (e.lockFd != -1 && isClosed()) {
@@ -776,13 +734,11 @@ public class WriterPool extends AbstractPool {
                 if (ff.close(e.lockFd)) {
                     e.lockFd = -1;
                     iterator.remove();
-                    fireAllWriterWaiters(e);
                     removed = true;
                 }
             } else if (e.ex != null) {
                 LOG.info().$("purging entry for failed to allocate writer").$();
                 iterator.remove();
-                fireAllWriterWaiters(e);
                 removed = true;
             }
         }
@@ -807,9 +763,6 @@ public class WriterPool extends AbstractPool {
         private volatile long owner = Thread.currentThread().threadId();
         private volatile String ownershipReason = OWNERSHIP_REASON_NONE;
         private TableWriter writer;
-        private final FiberEventWaitQueue writerWaitQueue = new FiberEventWaitQueue(
-                FiberWaitCoordinator.REASON_WRITER
-        );
 
         public Entry(long lastReleaseTime, String dirName) {
             this.lastReleaseTime = lastReleaseTime;

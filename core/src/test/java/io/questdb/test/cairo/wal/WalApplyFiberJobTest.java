@@ -26,6 +26,7 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalApplyFiberJob;
 import io.questdb.mp.Job;
 import io.questdb.mp.continuation.Fiber;
@@ -36,27 +37,12 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.TableUtils.WAL_2_TABLE_WRITE_REASON;
+
 public class WalApplyFiberJobTest extends AbstractCairoTest {
 
     @Test
-    public void testEmptyQueueDoesNotAllocate() throws Exception {
-        assertMemoryLeak(() -> {
-            final FiberRuntime runtime = new FiberRuntime(1);
-            final WalApplyFiberJob job = new WalApplyFiberJob(engine, 0, runtime);
-            try {
-                Assert.assertFalse(job.run(Job.RUNNING_STATUS));
-                Assert.assertEquals(0, runtime.getCreatedFiberCount());
-                Assert.assertEquals(0, job.getExecutorCount());
-                Assert.assertEquals(0, job.getTaskCount());
-                close(runtime);
-            } finally {
-                close(runtime, job);
-            }
-        });
-    }
-
-    @Test
-    public void testParkedTableDoesNotBlockAnotherTable() throws Exception {
+    public void testBusyWriterDoesNotBlockAnotherTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE wal_fiber_a (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE wal_fiber_b (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -69,10 +55,12 @@ public class WalApplyFiberJobTest extends AbstractCairoTest {
             final FiberRuntime runtime = new FiberRuntime(2);
             final WalApplyFiberJob job = new WalApplyFiberJob(engine, 0, runtime);
             try {
-                try (TableWriter ignored = engine.getWriter(tableTokenA, "test")) {
+                try (TableWriter ignored = engine.getWriter(tableTokenA, WAL_2_TABLE_WRITE_REASON)) {
                     Assert.assertTrue(job.run(Job.RUNNING_STATUS));
                     Assert.assertEquals(1, runtime.drain(1));
-                    Assert.assertEquals(1, runtime.getParkedFiberCount());
+                    Assert.assertEquals(0, runtime.getParkedFiberCount());
+                    Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                    Assert.assertEquals(job.getExecutorCount(), job.getFreeExecutorCount());
 
                     Assert.assertTrue(job.run(Job.RUNNING_STATUS));
                     Assert.assertEquals(1, runtime.drain(1));
@@ -81,7 +69,19 @@ public class WalApplyFiberJobTest extends AbstractCairoTest {
                     Assert.assertFalse(writerIsBehind(tableTokenB));
                 }
 
+                final long publishedBeforeCheck = engine.getMessageBus()
+                        .getWalTxnNotificationPubSequence()
+                        .current();
+                new CheckWalTransactionsJob(engine).run();
+                Assert.assertTrue(
+                        publishedBeforeCheck < engine.getMessageBus()
+                                .getWalTxnNotificationPubSequence()
+                                .current()
+                );
                 drain(job, runtime);
+
+                Assert.assertEquals(2, job.getTaskCount());
+                Assert.assertEquals(job.getExecutorCount(), job.getFreeExecutorCount());
                 assertQuery("SELECT x FROM wal_fiber_a").expectSize().returns("x\n1\n");
                 assertQuery("SELECT x FROM wal_fiber_b").expectSize().returns("x\n2\n");
                 close(runtime);
@@ -92,27 +92,48 @@ public class WalApplyFiberJobTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testQuiesceReleasesWriterWait() throws Exception {
+    public void testDuplicateNotificationRequeuesOwnedTask() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE wal_fiber_quiesce (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE wal_fiber_duplicate (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            execute("INSERT INTO wal_fiber_quiesce VALUES (1, '2026-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO wal_fiber_duplicate VALUES (42, '2026-01-01T00:00:00.000000Z')");
 
-            final TableToken tableToken = engine.verifyTableName("wal_fiber_quiesce");
+            final TableToken tableToken = engine.verifyTableName("wal_fiber_duplicate");
+            final FiberRuntime runtime = new FiberRuntime(2);
+            final WalApplyFiberJob job = new WalApplyFiberJob(engine, 0, runtime);
+            try {
+                Assert.assertTrue(job.run(Job.RUNNING_STATUS));
+                Assert.assertTrue(engine.notifyWalTxnCommitted(tableToken));
+                Assert.assertTrue(job.run(Job.RUNNING_STATUS));
+                Assert.assertEquals(1, job.getTaskCount());
+                Assert.assertEquals(1, runtime.getOutstandingTaskCount());
+
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                Assert.assertTrue(job.run(Job.RUNNING_STATUS));
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(job.getExecutorCount(), job.getFreeExecutorCount());
+                assertQuery("SELECT x FROM wal_fiber_duplicate").expectSize().returns("x\n42\n");
+                close(runtime);
+            } finally {
+                close(runtime, job);
+            }
+        });
+    }
+
+    @Test
+    public void testEmptyQueueDoesNotAllocate() throws Exception {
+        assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1);
             final WalApplyFiberJob job = new WalApplyFiberJob(engine, 0, runtime);
             try {
-                try (TableWriter ignored = engine.getWriter(tableToken, "test")) {
-                    Assert.assertTrue(job.run(Job.RUNNING_STATUS));
-                    Assert.assertEquals(1, runtime.drain(1));
-                    Assert.assertEquals(1, runtime.getParkedFiberCount());
-
-                    close(runtime);
-
-                    Assert.assertEquals(0, runtime.getOutstandingTaskCount());
-                    Assert.assertEquals(job.getExecutorCount(), job.getFreeExecutorCount());
-                    Assert.assertFalse(job.run(Job.RUNNING_STATUS));
-                }
+                Assert.assertFalse(job.run(Job.RUNNING_STATUS));
+                Assert.assertEquals(0, runtime.getCreatedFiberCount());
+                Assert.assertEquals(0, job.getExecutorCount());
+                Assert.assertEquals(0, job.getTaskCount());
+                close(runtime);
             } finally {
                 close(runtime, job);
             }
@@ -142,41 +163,6 @@ public class WalApplyFiberJobTest extends AbstractCairoTest {
                 Assert.assertEquals(1, job.getFreeExecutorCount());
                 Assert.assertEquals(1, job.getTaskCount());
                 assertQuery("SELECT x FROM wal_fiber_saturation").expectSize().returns("x\n42\n");
-                close(runtime);
-            } finally {
-                close(runtime, job);
-            }
-        });
-    }
-
-    @Test
-    public void testWriterWaitCoalescesDuplicateNotifications() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE wal_fiber_duplicate (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            drainWalQueue();
-            execute("INSERT INTO wal_fiber_duplicate VALUES (42, '2026-01-01T00:00:00.000000Z')");
-
-            final TableToken tableToken = engine.verifyTableName("wal_fiber_duplicate");
-            final FiberRuntime runtime = new FiberRuntime(2);
-            final WalApplyFiberJob job = new WalApplyFiberJob(engine, 0, runtime);
-            try {
-                try (TableWriter ignored = engine.getWriter(tableToken, "test")) {
-                    Assert.assertTrue(job.run(Job.RUNNING_STATUS));
-                    Assert.assertEquals(1, runtime.drain(1));
-                    Assert.assertEquals(1, runtime.getParkedFiberCount());
-
-                    engine.notifyWalTxnCommitted(tableToken);
-                    Assert.assertTrue(job.run(Job.RUNNING_STATUS));
-
-                    Assert.assertEquals(1, job.getTaskCount());
-                    Assert.assertEquals(1, runtime.getOutstandingTaskCount());
-                }
-
-                drain(job, runtime);
-
-                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
-                Assert.assertEquals(job.getExecutorCount(), job.getFreeExecutorCount());
-                assertQuery("SELECT x FROM wal_fiber_duplicate").expectSize().returns("x\n42\n");
                 close(runtime);
             } finally {
                 close(runtime, job);

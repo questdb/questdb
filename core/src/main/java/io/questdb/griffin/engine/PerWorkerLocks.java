@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
-import io.questdb.mp.continuation.FiberCancellationWaitRegistration;
 import io.questdb.mp.continuation.FiberSlotWaitQueue;
 import io.questdb.mp.continuation.FiberSlotWaitRegistration;
 import io.questdb.mp.continuation.FiberWaitCoordinator;
@@ -112,7 +111,7 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                 sqlCircuitBreaker.statefulThrowExceptionIfTripped();
                 throw CairoException.nonCritical().put("query aborted").setInterruption(true);
             }
-            if (mode == null || mode == SuspensionScope.Mode.FORBIDDEN) {
+            if (mode == SuspensionScope.Mode.FORBIDDEN) {
                 throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
             }
             sqlCircuitBreaker.statefulThrowExceptionIfTripped();
@@ -141,7 +140,7 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                 }
                 break;
             }
-            if (mode == null || mode == SuspensionScope.Mode.FORBIDDEN) {
+            if (mode == SuspensionScope.Mode.FORBIDDEN) {
                 throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
             }
             if (circuitBreaker.checkIfTripped()) {
@@ -197,13 +196,6 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
         testAcquireLatch = latch;
     }
 
-    private void countDownTestAcquireLatch() {
-        final CountDownLatch latch = testAcquireLatch;
-        if (latch != null) {
-            latch.countDown();
-        }
-    }
-
     private int awaitSlot(int slotStart) {
         final Fiber fiber = Fiber.current();
         if (fiber == null || !Fiber.isMounted()) {
@@ -212,20 +204,14 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
         final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
         final FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
         final long token = fiber.beginWaitBuild(cancellationSignal == null ? 1 : 2);
-        FiberCancellationWaitRegistration cancellationRegistration = null;
-        FiberSlotWaitRegistration slotRegistration = null;
         try {
-            slotRegistration = coordinator.acquireSlot(token);
+            final FiberSlotWaitRegistration slotRegistration = coordinator.acquireSlot(token);
             if (slotRegistration.register(slotWaitQueue) != SourceRegistrationResult.ACCEPTED
                     || !coordinator.tryAcceptSource(token)) {
                 throw new IllegalStateException("reducer slot wait registration failed");
             }
-            if (cancellationSignal != null) {
-                cancellationRegistration = coordinator.acquireCancellation(token, cancellationSignal);
-                if (cancellationRegistration.register() != SourceRegistrationResult.ACCEPTED
-                        || !coordinator.tryAcceptSource(token)) {
-                    throw new IllegalStateException("reducer cancellation registration failed");
-                }
+            if (cancellationSignal != null && !coordinator.armCancellation(token, cancellationSignal)) {
+                throw new IllegalStateException("reducer cancellation registration failed");
             }
 
             final int slot = tryAcquireSlot(slotStart);
@@ -242,14 +228,14 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
             }
             return -1;
         } finally {
-            if (cancellationRegistration != null) {
-                cancellationRegistration.cancel();
-            }
-            if (slotRegistration != null) {
-                slotRegistration.cancel();
-            }
-            coordinator.abort(token);
-            coordinator.consume(token);
+            coordinator.teardownWait(token);
+        }
+    }
+
+    private void countDownTestAcquireLatch() {
+        final CountDownLatch latch = testAcquireLatch;
+        if (latch != null) {
+            latch.countDown();
         }
     }
 

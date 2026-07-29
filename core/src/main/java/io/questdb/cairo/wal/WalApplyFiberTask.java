@@ -138,8 +138,8 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
             throw new IllegalStateException("WAL apply fiber lease has no executor");
         }
         this.executor = null;
-        isForceRepublish = false;
-        isReusable = false;
+        this.isForceRepublish = false;
+        this.isReusable = false;
         runVersion = 0;
         executorPool.release(executor);
         if (isReusable) {

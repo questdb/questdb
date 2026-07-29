@@ -124,8 +124,6 @@ import io.questdb.mp.Queue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SimpleWaitingLock;
-import io.questdb.mp.continuation.FiberEventWaitRegistration;
-import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.TimerShards;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.CarrierLocal;
@@ -1851,13 +1849,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void registerTableToken(TableToken tableToken) {
         tableNameRegistry.registerName(tableToken);
-    }
-
-    public SourceRegistrationResult registerWriterWaiter(
-            TableToken tableToken,
-            FiberEventWaitRegistration registration
-    ) {
-        return writerPool.registerWriterWaiter(tableToken, registration);
     }
 
     @TestOnly

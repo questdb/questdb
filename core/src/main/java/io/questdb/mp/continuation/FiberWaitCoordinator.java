@@ -37,7 +37,6 @@ public final class FiberWaitCoordinator {
     public static final int REASON_SLOT = 5;
     public static final int REASON_TIMER = 1;
     public static final int REASON_WAL = 2;
-    public static final int REASON_WRITER = 7;
     private static final int STATE_ABORTED = 5;
     private static final int STATE_ARMED = 2;
     private static final int STATE_BUILDING = 1;
@@ -113,7 +112,7 @@ public final class FiberWaitCoordinator {
         registration.of(token, cancellationSignal);
         target.onWaitRegistrationAcquired();
         inFlightRegistrationCount++;
-        link(registration);
+        activeCancellationRegistrations = linkActive(activeCancellationRegistrations, registration);
         return registration;
     }
 
@@ -128,7 +127,7 @@ public final class FiberWaitCoordinator {
         registration.of(token);
         target.onWaitRegistrationAcquired();
         inFlightRegistrationCount++;
-        link(registration);
+        activeEventRegistrations = linkActive(activeEventRegistrations, registration);
         return registration;
     }
 
@@ -143,7 +142,7 @@ public final class FiberWaitCoordinator {
         registration.of(token);
         target.onWaitRegistrationAcquired();
         inFlightRegistrationCount++;
-        link(registration);
+        activeSlotRegistrations = linkActive(activeSlotRegistrations, registration);
         return registration;
     }
 
@@ -170,7 +169,7 @@ public final class FiberWaitCoordinator {
             registration.of(token, timerShards, clock, delayMillis);
             target.onWaitRegistrationAcquired();
             inFlightRegistrationCount++;
-            link(registration);
+            activeTimerRegistrations = linkActive(activeTimerRegistrations, registration);
             return registration;
         } catch (Throwable th) {
             registration.nextFree = freeTimerRegistrations;
@@ -190,8 +189,23 @@ public final class FiberWaitCoordinator {
         registration.of(token, targetWriterTxn);
         target.onWaitRegistrationAcquired();
         inFlightRegistrationCount++;
-        link(registration);
+        activeWalRegistrations = linkActive(activeWalRegistrations, registration);
         return registration;
+    }
+
+    public boolean armCancellation(long token, FiberCancellationSignal cancellationSignal) {
+        final FiberCancellationWaitRegistration registration = acquireCancellation(token, cancellationSignal);
+        return registration.register() == SourceRegistrationResult.ACCEPTED && tryAcceptSource(token);
+    }
+
+    public boolean armEvent(long token, FiberEventWaitQueue queue) {
+        final FiberEventWaitRegistration registration = acquireEvent(token);
+        return registration.register(queue) == SourceRegistrationResult.ACCEPTED && tryAcceptSource(token);
+    }
+
+    public boolean armTimer(long token, TimerShards timerShards, MillisecondClock clock, long delayMillis) {
+        final FiberTimerWaitRegistration registration = acquireTimer(token, timerShards, clock, delayMillis);
+        return registration.register() == SourceRegistrationResult.ACCEPTED && tryAcceptSource(token);
     }
 
     public synchronized long beginBuild(int expectedSourceCount) {
@@ -332,6 +346,12 @@ public final class FiberWaitCoordinator {
         cancelInFlightRegistrations();
     }
 
+    public void teardownWait(long token) {
+        cancelInFlightRegistrations();
+        abort(token);
+        consume(token);
+    }
+
     public synchronized boolean tryAcceptSource(long token) {
         if (this.token != token || state != STATE_BUILDING || acceptedSourceCount >= expectedSourceCount) {
             return false;
@@ -341,105 +361,110 @@ public final class FiberWaitCoordinator {
     }
 
     synchronized void discard(FiberTimerWaitRegistration registration) {
-        if (inFlightRegistrationCount < 1) {
-            throw new IllegalStateException("timer registration is not in flight");
-        }
-        unlink(registration);
-        inFlightRegistrationCount--;
-        target.onWaitRegistrationReleased();
+        ensureInFlight();
+        activeTimerRegistrations = unlinkActive(activeTimerRegistrations, registration);
+        completeRelease();
     }
 
     synchronized void release(FiberCancellationWaitRegistration registration) {
-        if (inFlightRegistrationCount < 1) {
-            throw new IllegalStateException("cancellation registration is not in flight");
-        }
-        unlink(registration);
-        inFlightRegistrationCount--;
+        ensureInFlight();
+        activeCancellationRegistrations = unlinkActive(activeCancellationRegistrations, registration);
         registration.nextFree = freeCancellationRegistrations;
         freeCancellationRegistrations = registration;
-        target.onWaitRegistrationReleased();
+        completeRelease();
     }
 
     synchronized void release(FiberEventWaitRegistration registration) {
-        if (inFlightRegistrationCount < 1) {
-            throw new IllegalStateException("event registration is not in flight");
-        }
-        unlink(registration);
-        inFlightRegistrationCount--;
+        ensureInFlight();
+        activeEventRegistrations = unlinkActive(activeEventRegistrations, registration);
         registration.nextFree = freeEventRegistrations;
         freeEventRegistrations = registration;
-        target.onWaitRegistrationReleased();
+        completeRelease();
     }
 
     synchronized void release(FiberSlotWaitRegistration registration) {
-        if (inFlightRegistrationCount < 1) {
-            throw new IllegalStateException("slot registration is not in flight");
-        }
-        unlink(registration);
-        inFlightRegistrationCount--;
+        ensureInFlight();
+        activeSlotRegistrations = unlinkActive(activeSlotRegistrations, registration);
         registration.nextFree = freeSlotRegistrations;
         freeSlotRegistrations = registration;
-        target.onWaitRegistrationReleased();
+        completeRelease();
     }
 
     synchronized void release(FiberTimerWaitRegistration registration) {
-        if (inFlightRegistrationCount < 1) {
-            throw new IllegalStateException("timer registration is not in flight");
-        }
-        unlink(registration);
-        inFlightRegistrationCount--;
+        ensureInFlight();
+        activeTimerRegistrations = unlinkActive(activeTimerRegistrations, registration);
         registration.nextFree = freeTimerRegistrations;
         freeTimerRegistrations = registration;
-        target.onWaitRegistrationReleased();
+        completeRelease();
     }
 
     synchronized void release(FiberWalWaitRegistration registration) {
-        if (inFlightRegistrationCount < 1) {
-            throw new IllegalStateException("WAL registration is not in flight");
-        }
-        unlink(registration);
-        inFlightRegistrationCount--;
+        ensureInFlight();
+        activeWalRegistrations = unlinkActive(activeWalRegistrations, registration);
         registration.nextFree = freeWalRegistrations;
         freeWalRegistrations = registration;
-        target.onWaitRegistrationReleased();
+        completeRelease();
+    }
+
+    private static <T extends FiberWaitRegistrationNode<T>> void cancelAllActive(T head) {
+        T registration = head;
+        while (registration != null) {
+            final T next = registration.nextActive;
+            registration.cancel();
+            registration = next;
+        }
+    }
+
+    private static <T extends FiberWaitRegistrationNode<T>> T linkActive(T head, T registration) {
+        registration.nextActive = head;
+        registration.prevActive = null;
+        if (head != null) {
+            head.prevActive = registration;
+        }
+        return registration;
+    }
+
+    private static <T extends FiberWaitRegistrationNode<T>> T unlinkActive(T head, T registration) {
+        final T next = registration.nextActive;
+        final T prev = registration.prevActive;
+        if (prev == null) {
+            if (head != registration) {
+                throw new IllegalStateException("wait registration is not active");
+            }
+            head = next;
+        } else {
+            prev.nextActive = next;
+        }
+        if (next != null) {
+            next.prevActive = prev;
+        }
+        registration.nextActive = null;
+        registration.prevActive = null;
+        return head;
     }
 
     private synchronized void cancelInFlightRegistrations() {
-        FiberCancellationWaitRegistration cancellationRegistration = activeCancellationRegistrations;
-        while (cancellationRegistration != null) {
-            final FiberCancellationWaitRegistration next = cancellationRegistration.nextActive;
-            cancellationRegistration.cancel();
-            cancellationRegistration = next;
-        }
-        FiberEventWaitRegistration eventRegistration = activeEventRegistrations;
-        while (eventRegistration != null) {
-            final FiberEventWaitRegistration next = eventRegistration.nextActive;
-            eventRegistration.cancel();
-            eventRegistration = next;
-        }
-        FiberSlotWaitRegistration slotRegistration = activeSlotRegistrations;
-        while (slotRegistration != null) {
-            final FiberSlotWaitRegistration next = slotRegistration.nextActive;
-            slotRegistration.cancel();
-            slotRegistration = next;
-        }
-        FiberTimerWaitRegistration timerRegistration = activeTimerRegistrations;
-        while (timerRegistration != null) {
-            final FiberTimerWaitRegistration next = timerRegistration.nextActive;
-            timerRegistration.cancel();
-            timerRegistration = next;
-        }
-        FiberWalWaitRegistration walRegistration = activeWalRegistrations;
-        while (walRegistration != null) {
-            final FiberWalWaitRegistration next = walRegistration.nextActive;
-            walRegistration.cancel();
-            walRegistration = next;
-        }
+        cancelAllActive(activeCancellationRegistrations);
+        cancelAllActive(activeEventRegistrations);
+        cancelAllActive(activeSlotRegistrations);
+        cancelAllActive(activeTimerRegistrations);
+        cancelAllActive(activeWalRegistrations);
     }
 
     private void checkBuilding(long token) {
         if (this.token != token || state != STATE_BUILDING) {
             throw new IllegalStateException("wait coordinator is not building this token");
+        }
+    }
+
+    private void completeRelease() {
+        inFlightRegistrationCount--;
+        target.onWaitRegistrationReleased();
+    }
+
+    private void ensureInFlight() {
+        if (inFlightRegistrationCount < 1) {
+            throw new IllegalStateException("wait registration is not in flight");
         }
     }
 
@@ -471,141 +496,6 @@ public final class FiberWaitCoordinator {
             }
         }
         finishFire(token);
-    }
-
-    private void link(FiberCancellationWaitRegistration registration) {
-        registration.nextActive = activeCancellationRegistrations;
-        registration.prevActive = null;
-        if (activeCancellationRegistrations != null) {
-            activeCancellationRegistrations.prevActive = registration;
-        }
-        activeCancellationRegistrations = registration;
-    }
-
-    private void link(FiberEventWaitRegistration registration) {
-        registration.nextActive = activeEventRegistrations;
-        registration.prevActive = null;
-        if (activeEventRegistrations != null) {
-            activeEventRegistrations.prevActive = registration;
-        }
-        activeEventRegistrations = registration;
-    }
-
-    private void link(FiberSlotWaitRegistration registration) {
-        registration.nextActive = activeSlotRegistrations;
-        registration.prevActive = null;
-        if (activeSlotRegistrations != null) {
-            activeSlotRegistrations.prevActive = registration;
-        }
-        activeSlotRegistrations = registration;
-    }
-
-    private void link(FiberTimerWaitRegistration registration) {
-        registration.nextActive = activeTimerRegistrations;
-        registration.prevActive = null;
-        if (activeTimerRegistrations != null) {
-            activeTimerRegistrations.prevActive = registration;
-        }
-        activeTimerRegistrations = registration;
-    }
-
-    private void link(FiberWalWaitRegistration registration) {
-        registration.nextActive = activeWalRegistrations;
-        registration.prevActive = null;
-        if (activeWalRegistrations != null) {
-            activeWalRegistrations.prevActive = registration;
-        }
-        activeWalRegistrations = registration;
-    }
-
-    private void unlink(FiberCancellationWaitRegistration registration) {
-        final FiberCancellationWaitRegistration next = registration.nextActive;
-        final FiberCancellationWaitRegistration prev = registration.prevActive;
-        if (prev == null) {
-            if (activeCancellationRegistrations != registration) {
-                throw new IllegalStateException("cancellation registration is not active");
-            }
-            activeCancellationRegistrations = next;
-        } else {
-            prev.nextActive = next;
-        }
-        if (next != null) {
-            next.prevActive = prev;
-        }
-        registration.nextActive = null;
-        registration.prevActive = null;
-    }
-
-    private void unlink(FiberEventWaitRegistration registration) {
-        final FiberEventWaitRegistration next = registration.nextActive;
-        final FiberEventWaitRegistration prev = registration.prevActive;
-        if (prev == null) {
-            if (activeEventRegistrations != registration) {
-                throw new IllegalStateException("event registration is not active");
-            }
-            activeEventRegistrations = next;
-        } else {
-            prev.nextActive = next;
-        }
-        if (next != null) {
-            next.prevActive = prev;
-        }
-        registration.nextActive = null;
-        registration.prevActive = null;
-    }
-
-    private void unlink(FiberSlotWaitRegistration registration) {
-        final FiberSlotWaitRegistration next = registration.nextActive;
-        final FiberSlotWaitRegistration prev = registration.prevActive;
-        if (prev == null) {
-            if (activeSlotRegistrations != registration) {
-                throw new IllegalStateException("slot registration is not active");
-            }
-            activeSlotRegistrations = next;
-        } else {
-            prev.nextActive = next;
-        }
-        if (next != null) {
-            next.prevActive = prev;
-        }
-        registration.nextActive = null;
-        registration.prevActive = null;
-    }
-
-    private void unlink(FiberTimerWaitRegistration registration) {
-        final FiberTimerWaitRegistration next = registration.nextActive;
-        final FiberTimerWaitRegistration prev = registration.prevActive;
-        if (prev == null) {
-            if (activeTimerRegistrations != registration) {
-                throw new IllegalStateException("timer registration is not active");
-            }
-            activeTimerRegistrations = next;
-        } else {
-            prev.nextActive = next;
-        }
-        if (next != null) {
-            next.prevActive = prev;
-        }
-        registration.nextActive = null;
-        registration.prevActive = null;
-    }
-
-    private void unlink(FiberWalWaitRegistration registration) {
-        final FiberWalWaitRegistration next = registration.nextActive;
-        final FiberWalWaitRegistration prev = registration.prevActive;
-        if (prev == null) {
-            if (activeWalRegistrations != registration) {
-                throw new IllegalStateException("WAL registration is not active");
-            }
-            activeWalRegistrations = next;
-        } else {
-            prev.nextActive = next;
-        }
-        if (next != null) {
-            next.prevActive = prev;
-        }
-        registration.nextActive = null;
-        registration.prevActive = null;
     }
 
     public interface Target {

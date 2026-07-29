@@ -383,6 +383,11 @@ public class HttpServer implements Closeable {
         return dispatcher.getPort();
     }
 
+    @TestOnly
+    public WaitProcessor getWaitProcessor() {
+        return rescheduleContext;
+    }
+
     public void registerClosable(Closeable closeable) {
         closeables.add(closeable);
     }

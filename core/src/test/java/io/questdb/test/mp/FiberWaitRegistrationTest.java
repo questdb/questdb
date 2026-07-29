@@ -299,7 +299,7 @@ public class FiberWaitRegistrationTest {
 
     @Test
     public void testEventFireAllPreservesReasonAndLeavesQueueOpen() {
-        final FiberEventWaitQueue queue = new FiberEventWaitQueue(FiberWaitCoordinator.REASON_WRITER);
+        final FiberEventWaitQueue queue = new FiberEventWaitQueue(FiberWaitCoordinator.REASON_CAPACITY);
         final ObjList<FiberWaitCoordinator> coordinators = new ObjList<>();
         final ObjList<TestTarget> targets = new ObjList<>();
         final LongList tokens = new LongList();
@@ -322,7 +322,7 @@ public class FiberWaitRegistrationTest {
         for (int i = 0; i < coordinators.size(); i++) {
             final FiberWaitCoordinator coordinator = coordinators.getQuick(i);
             Assert.assertFalse(coordinator.hasInFlightRegistrations());
-            Assert.assertEquals(FiberWaitCoordinator.REASON_WRITER, coordinator.consume(tokens.getQuick(i)));
+            Assert.assertEquals(FiberWaitCoordinator.REASON_CAPACITY, coordinator.consume(tokens.getQuick(i)));
             Assert.assertEquals(1, targets.getQuick(i).fireCount);
         }
 
@@ -334,7 +334,7 @@ public class FiberWaitRegistrationTest {
         Assert.assertTrue(nextCoordinator.tryAcceptSource(nextToken));
         Assert.assertTrue(nextCoordinator.seal(nextToken));
         queue.fire();
-        Assert.assertEquals(FiberWaitCoordinator.REASON_WRITER, nextCoordinator.consume(nextToken));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_CAPACITY, nextCoordinator.consume(nextToken));
         Assert.assertEquals(1, nextTarget.fireCount);
     }
 

@@ -44,6 +44,8 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
+import org.jetbrains.annotations.TestOnly;
+
 import java.io.Closeable;
 import java.util.PriorityQueue;
 
@@ -110,6 +112,11 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             freeRetry(retryHolder);
             scheduledRetryPool.release(retryHolder);
         }
+    }
+
+    @TestOnly
+    public long getRescheduleCount() {
+        return inPubSequence.current() + 1;
     }
 
     public boolean launchReruns(FiberRuntime runtime, RetryLauncher launcher) {

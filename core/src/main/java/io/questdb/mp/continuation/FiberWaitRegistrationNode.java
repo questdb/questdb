@@ -22,29 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.mp.continuation;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.mp.continuation.Fiber;
-import io.questdb.mp.continuation.SuspensionScope;
-import org.jetbrains.annotations.Nullable;
+abstract class FiberWaitRegistrationNode<T extends FiberWaitRegistrationNode<T>> {
+    T nextActive;
+    T nextFree;
+    T prevActive;
 
-public final class SqlExecutionSuspension {
-    public static @Nullable Fiber currentFiber() {
-        final SuspensionScope.Mode mode = SuspensionScope.getMode();
-        if (mode == SuspensionScope.Mode.FORBIDDEN) {
-            throw CairoException.nonCritical().put("SQL suspension is forbidden in this execution context");
-        }
-        if (mode != SuspensionScope.Mode.FIBER) {
-            return null;
-        }
-        final Fiber fiber = Fiber.current();
-        if (fiber != null && Fiber.isMounted()) {
-            return fiber;
-        }
-        throw CairoException.nonCritical().put("SQL suspension requires a mounted fiber");
-    }
-
-    private SqlExecutionSuspension() {
-    }
+    public abstract boolean cancel();
 }

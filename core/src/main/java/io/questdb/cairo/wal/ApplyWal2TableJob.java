@@ -47,17 +47,12 @@ import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TableSequencerCursorPool;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionSuspension;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
-import io.questdb.mp.continuation.Fiber;
-import io.questdb.mp.continuation.FiberEventWaitRegistration;
-import io.questdb.mp.continuation.FiberWaitCoordinator;
-import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -661,45 +656,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
-    private int awaitWriterAvailability(TableToken tableToken) {
-        final Fiber fiber = SqlExecutionSuspension.currentFiber();
-        if (fiber == null) {
-            return FiberWaitCoordinator.REASON_NONE;
-        }
-        final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
-        final long token = fiber.beginWaitBuild(1);
-        FiberEventWaitRegistration registration = null;
-        try {
-            registration = coordinator.acquireEvent(token);
-            if (engine.registerWriterWaiter(tableToken, registration) != SourceRegistrationResult.ACCEPTED) {
-                registration.cancel();
-                coordinator.abort(token);
-                coordinator.consume(token);
-                return FiberWaitCoordinator.REASON_WRITER;
-            }
-            if (!coordinator.tryAcceptSource(token)) {
-                throw new IllegalStateException("writer wait registration was not accepted");
-            }
-            final int reason = fiber.suspendWait(token);
-            registration.cancel();
-            if (reason == FiberWaitCoordinator.REASON_WRITER
-                    || reason == FiberWaitCoordinator.REASON_SHUTDOWN) {
-                return reason;
-            }
-            if (reason == FiberWaitCoordinator.REASON_ABORTED) {
-                throw new IllegalStateException("fiber refused writer wait suspension");
-            }
-            throw new IllegalStateException("unexpected writer wait reason [reason=" + reason + ']');
-        } catch (Throwable th) {
-            if (registration != null) {
-                registration.cancel();
-            }
-            coordinator.abort(token);
-            coordinator.consume(token);
-            throw th;
-        }
-    }
-
     private void doStoreTelemetry(short event, short origin) {
         TelemetryTask.store(telemetry, origin, event);
     }
@@ -1092,26 +1048,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 TableWriterPressureControl pressureControl = txnTracker.getMemPressureControl();
                 TableWriter writer = null;
                 try {
-                    while (writer == null) {
-                        try {
-                            writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON);
-                        } catch (EntryUnavailableException tableBusy) {
-                            final int waitReason = awaitWriterAvailability(updatedToken);
-                            if (waitReason == FiberWaitCoordinator.REASON_WRITER) {
-                                continue;
-                            }
-                            if (waitReason == FiberWaitCoordinator.REASON_SHUTDOWN) {
-                                return;
-                            }
-                            if (isUnsolicitedTableLock(tableBusy.getReason())) {
-                                LOG.critical().$("unsolicited table lock [table=").$(tableToken)
-                                        .$(", lockReason=").$(tableBusy.getReason())
-                                        .I$();
-                                engine.notifyWalTxnRepublisher(tableToken);
-                            }
-                            return;
-                        }
-                    }
+                    writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON);
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
                     if (!pressureControl.isReadyToProcess()) {
                         // rely on CheckWalTransactionsJob to notify us when to apply transactions
@@ -1125,6 +1062,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                     writerTxn = writer.getSeqTxn();
                     dirtyWriterTxn = writer.getAppliedSeqTxn();
+                } catch (EntryUnavailableException tableBusy) {
+                    if (isUnsolicitedTableLock(tableBusy.getReason())) {
+                        LOG.critical().$("unsolicited table lock [table=").$(tableToken)
+                                .$(", lockReason=").$(tableBusy.getReason())
+                                .I$();
+                        engine.notifyWalTxnRepublisher(tableToken);
+                    }
+                    return;
                 } catch (Throwable th) {
                     // There is some unexpected error and table will likely to be suspended.
                     // It is safer to create new TableWriter after exceptions.

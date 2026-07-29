@@ -43,10 +43,7 @@ import io.questdb.griffin.SqlExecutionSuspension;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
-import io.questdb.mp.continuation.FiberCancellationWaitRegistration;
-import io.questdb.mp.continuation.FiberTimerWaitRegistration;
 import io.questdb.mp.continuation.FiberWaitCoordinator;
-import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.IntList;
@@ -215,42 +212,22 @@ public class SleepFunctionFactory implements FunctionFactory {
                     executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
                     long chunk = Math.min(remaining, wakeIntervalMillis);
                     long token = fiber.beginWaitBuild(cancellationSignal == null ? 1 : 2);
-                    FiberCancellationWaitRegistration cancellationRegistration = null;
-                    FiberTimerWaitRegistration registration = null;
                     try {
-                        if (cancellationSignal != null) {
-                            cancellationRegistration = coordinator.acquireCancellation(token, cancellationSignal);
-                            if (cancellationRegistration.register() != SourceRegistrationResult.ACCEPTED
-                                    || !coordinator.tryAcceptSource(token)) {
-                                throw CairoException.nonCritical().put("sleep aborted, connection closing");
-                            }
+                        if (cancellationSignal != null && !coordinator.armCancellation(token, cancellationSignal)) {
+                            throw CairoException.nonCritical().put("sleep aborted, connection closing");
                         }
-                        registration = coordinator.acquireTimer(token, shards, clock, chunk);
-                        if (registration.register() != SourceRegistrationResult.ACCEPTED
-                                || !coordinator.tryAcceptSource(token)) {
+                        if (!coordinator.armTimer(token, shards, clock, chunk)) {
                             throw CairoException.nonCritical().put("sleep aborted, connection closing");
                         }
                         int reason = fiber.suspendWait(token);
-                        if (cancellationRegistration != null) {
-                            cancellationRegistration.cancel();
-                        }
-                        registration.cancel();
                         if (reason == FiberWaitCoordinator.REASON_ABORTED) {
                             throw new IllegalStateException("fiber refused sleep suspension");
                         }
                         if (reason == FiberWaitCoordinator.REASON_SHUTDOWN) {
                             throw CairoException.nonCritical().put("sleep aborted, connection closing");
                         }
-                    } catch (Throwable th) {
-                        if (cancellationRegistration != null) {
-                            cancellationRegistration.cancel();
-                        }
-                        if (registration != null) {
-                            registration.cancel();
-                        }
-                        coordinator.abort(token);
-                        coordinator.consume(token);
-                        throw th;
+                    } finally {
+                        coordinator.teardownWait(token);
                     }
                 }
             }

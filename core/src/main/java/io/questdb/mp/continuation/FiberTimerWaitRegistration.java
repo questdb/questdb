@@ -33,15 +33,12 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.concurrent.Delayed;
 import java.util.concurrent.TimeUnit;
 
-public final class FiberTimerWaitRegistration implements DelayedFireable {
+public final class FiberTimerWaitRegistration extends FiberWaitRegistrationNode<FiberTimerWaitRegistration> implements DelayedFireable {
     private static final int STATE_DISCARDED = 3;
     private static final int STATE_FREE = 0;
     private static final int STATE_NEW = 1;
     private static final long STATE_OFFSET = Unsafe.getFieldOffset(FiberTimerWaitRegistration.class, "state");
     private static final int STATE_QUEUED = 2;
-    FiberTimerWaitRegistration nextActive;
-    FiberTimerWaitRegistration nextFree;
-    FiberTimerWaitRegistration prevActive;
     @TestOnly
     private @Nullable Runnable beforeRegisterCleanupForTesting;
     private MillisecondClock clock;
@@ -56,6 +53,7 @@ public final class FiberTimerWaitRegistration implements DelayedFireable {
         this.coordinator = coordinator;
     }
 
+    @Override
     public boolean cancel() {
         if (state == STATE_NEW) {
             return releaseNew();

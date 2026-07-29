@@ -124,20 +124,12 @@ public final class FiberRuntime {
             throw e;
         }
         final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
-        FiberCancellationWaitRegistration cancellationRegistration = null;
-        FiberEventWaitRegistration capacityRegistration = null;
         try {
-            capacityRegistration = coordinator.acquireEvent(token);
-            if (capacityRegistration.register(capacityWaitQueue) != SourceRegistrationResult.ACCEPTED
-                    || !coordinator.tryAcceptSource(token)) {
+            if (!coordinator.armEvent(token, capacityWaitQueue)) {
                 throw new IllegalStateException("fiber capacity wait registration failed");
             }
-            if (cancellationSignal != null) {
-                cancellationRegistration = coordinator.acquireCancellation(token, cancellationSignal);
-                if (cancellationRegistration.register() != SourceRegistrationResult.ACCEPTED
-                        || !coordinator.tryAcceptSource(token)) {
-                    throw new IllegalStateException("fiber capacity cancellation registration failed");
-                }
+            if (cancellationSignal != null && !coordinator.armCancellation(token, cancellationSignal)) {
+                throw new IllegalStateException("fiber capacity cancellation registration failed");
             }
             if (state == FiberRuntimeState.OPEN
                     && outstandingTaskCount.get() < maxLiveFiberCount
@@ -146,14 +138,7 @@ public final class FiberRuntime {
             }
             return fiber.suspendWait(token);
         } finally {
-            if (cancellationRegistration != null) {
-                cancellationRegistration.cancel();
-            }
-            if (capacityRegistration != null) {
-                capacityRegistration.cancel();
-            }
-            coordinator.abort(token);
-            coordinator.consume(token);
+            coordinator.teardownWait(token);
         }
     }
 
@@ -309,6 +294,7 @@ public final class FiberRuntime {
         try {
             fiber = tryReserveFiber();
         } catch (Throwable th) {
+            LOG.critical().$("fiber reservation failed [error=").$(th).I$();
             return record(LaunchResult.RESOURCE_FAILURE);
         }
         if (fiber == null) {

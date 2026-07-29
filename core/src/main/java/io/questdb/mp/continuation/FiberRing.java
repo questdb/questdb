@@ -77,7 +77,14 @@ final class FiberRing {
         this.depth = depth;
     }
 
-    synchronized Fiber tryDequeue() {
+    Fiber tryDequeue() {
+        if (depth == 0) {
+            return null;
+        }
+        return dequeue();
+    }
+
+    private synchronized Fiber dequeue() {
         if (depth == 0) {
             return null;
         }
