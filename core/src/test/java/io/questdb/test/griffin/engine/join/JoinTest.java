@@ -1531,8 +1531,8 @@ public class JoinTest extends AbstractCairoTest {
                     5\t50\t500
                     """;
 
-            execute("create table long_tbl as (select x key, x*10 val, timestamp_sequence(0, 1000000) ts from long_sequence(5)) timestamp(ts)");
-            execute("create table int_tbl as (select x::int key, x*100 val, timestamp_sequence(0, 1000000) ts from long_sequence(5)) timestamp(ts)");
+            execute("create table long_tbl as (select x key, x*10 val, timestamp_sequence(0, 1_000_000) ts from long_sequence(5)) timestamp(ts)");
+            execute("create table int_tbl as (select x::int key, x*100 val, timestamp_sequence(0, 1_000_000) ts from long_sequence(5)) timestamp(ts)");
 
             assertQuery("select long_tbl.key, long_tbl.val long_val, int_tbl.val int_val from long_tbl asof join int_tbl on int_tbl.key = long_tbl.key order by long_tbl.key")
                     .noLeakCheck()
