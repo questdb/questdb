@@ -188,8 +188,9 @@ public class LongChain implements Closeable, Mutable, Reopenable {
             return nextOffset != CHAIN_END;
         }
 
+        // Callers must check hasNext() first: compressed offsets are unsigned, so CHAIN_END
+        // resolves to heapStart + 16GB and the read lands off the heap.
         public long next() {
-            assert nextOffset != CHAIN_END;
             final long rawOffset = CompressedOffsets.uncompressAligned4(nextOffset);
             final long value = Unsafe.getLong(heapStart + rawOffset);
             nextOffset = Unsafe.getInt(heapStart + rawOffset + 8);

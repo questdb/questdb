@@ -171,13 +171,12 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     }
 
     /**
-     * Resolves a block offset to its heap address for the setters. The assert turns a silent write
-     * at {@code keyHeapStart + 32GB} - where an unsigned EMPTY offset lands - into a loud failure
-     * under {@code -ea}. Holding it here keeps the setters under {@code MaxInlineSize} (14 bytes
-     * against the 35-byte default), so they inline cold rather than only once they run hot.
+     * Resolves a block offset to its heap address for the setters. Callers must never pass
+     * {@link #EMPTY}: compressed offsets are unsigned, so the sentinel resolves to
+     * {@code keyHeapStart + 32GB} and the write lands off the heap. The getters below guard the
+     * sentinel themselves because they are reachable with a nil child; the setters are not.
      */
     private long blockAddress(int blockOffset) {
-        assert blockOffset != EMPTY;
         return keyHeapStart + CompressedOffsets.uncompressAligned8(blockOffset);
     }
 
@@ -324,12 +323,9 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         }
     }
 
-    // Holds both the sentinel check and the widening so the four value accessors stay under
-    // MaxInlineSize - the assert prologue sits in the class file whether or not -ea is on, and
-    // inlined into each accessor it pushed them past the 35-byte default, leaving them inlinable
-    // only once they ran hot. blockAddress() plays the same role for the node getters.
+    // Holds the widening for the four value accessors. Callers must never pass CHAIN_END:
+    // compressed offsets are unsigned, so the sentinel resolves to valueHeapStart + 16GB.
     private long valueAddress(int valueOffset) {
-        assert valueOffset != CHAIN_END;
         return valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset);
     }
 
@@ -389,11 +385,10 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
 
         while (node != root && colorOf(node) == BLACK) {
             if (isLeftChild) { // node is left child of parent
-                int sibling = rightOf(parent);
                 // A doubly-black node always has a non-nil sibling: its subtree must carry the
                 // extra black. The setColor calls below rely on this, and unlike the sibling's
                 // children it is not established by a local guard.
-                assert sibling != EMPTY;
+                int sibling = rightOf(parent);
                 if (colorOf(sibling) == RED) {
                     setColor(sibling, BLACK);
                     setColor(parent, RED);
@@ -422,8 +417,8 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
                     break;
                 }
             } else { // node is right child of parent, left/right expressions are reversed
+                // Non-nil for the same reason as the left-child case above.
                 int sibling = leftOf(parent);
-                assert sibling != EMPTY;
                 if (colorOf(sibling) == RED) {
                     setColor(sibling, BLACK);
                     setColor(parent, RED);

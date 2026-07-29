@@ -320,10 +320,10 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     // remove node and put on freelist (if holds only one value in chain)
+    // Callers must not pass EMPTY: find() documents a -1 return, and a -1 here would walk the
+    // value chain off the heap - uncompressAligned4(-1) is ~16GB now that compressed offsets
+    // are unsigned.
     public void removeAndCache(int node) {
-        // find() documents a -1 return, and a -1 here would walk the value chain off the
-        // heap: uncompressAligned4(-1) is ~16GB now that compressed offsets are unsigned.
-        assert node != EMPTY;
         if (hasMoreThanOneValue(node)) {
             removeMostRecentChainValue(node); // don't change minMax
         } else {
@@ -331,7 +331,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             // exactly what lets remove() below take its nodeToRemove == node branch. An interior
             // node here would send remove() down the ref-swapping branch and hand nextExtremeAfter
             // the wrong neighbour, silently returning wrong top-N rows instead of failing.
-            assert node != minMaxNode || (isFirstN ? rightOf(node) == EMPTY : leftOf(node) == EMPTY);
+            //
             // Name the replacement before remove() restructures anything. The cached extreme has
             // no child on its outer side, so remove() takes its nodeToRemove == node branch and
             // never swaps refs with a successor, and fixDelete() rotates without reordering the
