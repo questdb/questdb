@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import com.sun.management.ThreadMXBean;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
@@ -31,9 +32,11 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
+import java.lang.management.ManagementFactory;
 import java.nio.charset.StandardCharsets;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.FLAG_TABLE_OPTIONS;
@@ -41,6 +44,8 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TABLE_OPTION_TAG_DESI
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class QwpMessageCursorTableOptionsTest {
+
+    private static final long MAX_CURSOR_INIT_ALLOCATION_BYTES = 64 * 1024;
 
     @Test
     public void testBlockLengthOverrunIsRejected() throws Exception {
@@ -85,6 +90,45 @@ public class QwpMessageCursorTableOptionsTest {
     }
 
     @Test
+    public void testMalformedTableOptionsDoesNotPreallocateFromTableCount() throws Exception {
+        assertMemoryLeak(() -> {
+            ThreadMXBean threadMXBean = threadAllocationBean();
+            byte[] payload = new byte[Integer.BYTES];
+
+            // Warm up the parser, flyweight exception, and allocation counter.
+            withCursor(message(1, payload), cursor -> {
+                try {
+                    cursor.ofAddress();
+                    Assert.fail("expected missing table options block");
+                } catch (QwpParseException ignored) {
+                }
+            });
+            threadMXBean.getCurrentThreadAllocatedBytes();
+
+            withCursor(message(65_535, payload), cursor -> {
+                long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+                QwpParseException parseException = null;
+                try {
+                    cursor.ofAddress();
+                } catch (QwpParseException e) {
+                    parseException = e;
+                }
+                long allocatedBytes = threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore;
+
+                Assert.assertNotNull(parseException);
+                Assert.assertEquals(
+                        "missing table options block [tableIndex=0]",
+                        parseException.getMessage()
+                );
+                Assert.assertTrue(
+                        "malformed table options allocated " + allocatedBytes + " bytes",
+                        allocatedBytes < MAX_CURSOR_INIT_ALLOCATION_BYTES
+                );
+            });
+        });
+    }
+
+    @Test
     public void testMultiTableMixedOptions() throws Exception {
         assertMemoryLeak(() -> {
             byte[] message = validMessage(
@@ -102,6 +146,52 @@ public class QwpMessageCursorTableOptionsTest {
                 Assert.assertEquals("b", cursor.getCursor().nextTable().getTableName().toString());
                 Assert.assertEquals("c", cursor.getCursor().nextTable().getTableName().toString());
                 Assert.assertFalse(cursor.getCursor().hasNextTable());
+            });
+        });
+    }
+
+    @Test
+    public void testNoTableOptionsDoesNotAllocateBoundsFromTableCount() throws Exception {
+        assertMemoryLeak(() -> {
+            ThreadMXBean threadMXBean = threadAllocationBean();
+
+            // Warm up the no-options path and allocation counter.
+            withCursor(message(0, (byte) 0, new byte[0]), NativeCursor::ofAddress);
+            threadMXBean.getCurrentThreadAllocatedBytes();
+
+            withCursor(message(65_535, (byte) 0, new byte[0]), cursor -> {
+                long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+                cursor.ofAddress();
+                long allocatedBytes = threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore;
+
+                Assert.assertTrue(
+                        "message without table options allocated " + allocatedBytes + " bytes",
+                        allocatedBytes < MAX_CURSOR_INIT_ALLOCATION_BYTES
+                );
+                Assert.assertNull(cursor.getCursor().getDesignatedTsName(0));
+            });
+        });
+    }
+
+    @Test
+    public void testOptionsBoundsAreClearedWhenCursorIsReusedWithoutOptions() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] optionsMessage = validMessage(
+                    new String[]{"first"},
+                    timestampBlock("event_time")
+            );
+            byte[] legacyMessage = message(1, (byte) 0, tableBlocks("second"));
+            QwpMessageCursor cursor = new QwpMessageCursor();
+
+            withCursor(optionsMessage, firstMessage -> {
+                firstMessage.ofAddress(cursor);
+                assertName(cursor, 0, "event_time");
+
+                withCursor(legacyMessage, secondMessage -> {
+                    secondMessage.ofAddress(cursor);
+                    Assert.assertNull(cursor.getDesignatedTsName(0));
+                    Assert.assertEquals("second", cursor.nextTable().getTableName().toString());
+                });
             });
         });
     }
@@ -275,13 +365,17 @@ public class QwpMessageCursorTableOptionsTest {
     }
 
     private static byte[] message(int tableCount, byte[] payload) {
+        return message(tableCount, FLAG_TABLE_OPTIONS, payload);
+    }
+
+    private static byte[] message(int tableCount, byte flags, byte[] payload) {
         ByteArrayOutputStream message = new ByteArrayOutputStream();
         message.write('Q');
         message.write('W');
         message.write('P');
         message.write('1');
         message.write(QwpConstants.VERSION);
-        message.write(FLAG_TABLE_OPTIONS);
+        message.write(flags);
         message.write(tableCount & 0xff);
         message.write((tableCount >>> 8) & 0xff);
         writeIntLE(message, payload.length);
@@ -306,6 +400,17 @@ public class QwpMessageCursorTableOptionsTest {
             writeVarint(tables, 0);
         }
         return tables.toByteArray();
+    }
+
+    private static ThreadMXBean threadAllocationBean() {
+        java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
+        Assume.assumeTrue("thread allocation profiling unavailable", mxBean instanceof ThreadMXBean);
+        ThreadMXBean threadMXBean = (ThreadMXBean) mxBean;
+        Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
+        if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
+            threadMXBean.setThreadAllocatedMemoryEnabled(true);
+        }
+        return threadMXBean;
     }
 
     private static byte[] timestampBlock(String name) {
@@ -386,6 +491,10 @@ public class QwpMessageCursorTableOptionsTest {
         }
 
         private void ofAddress() throws QwpParseException {
+            cursor.of(address, length, null);
+        }
+
+        private void ofAddress(QwpMessageCursor cursor) throws QwpParseException {
             cursor.of(address, length, null);
         }
     }

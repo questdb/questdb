@@ -112,6 +112,9 @@ public class QwpMessageCursor implements Mutable {
             throw new IndexOutOfBoundsException("table index out of bounds: " + tableIndex);
         }
         int offsetIndex = tableIndex * 2;
+        if (offsetIndex >= designatedTsNameBounds.size()) {
+            return null;
+        }
         long lo = designatedTsNameBounds.getQuick(offsetIndex);
         if (lo < 0) {
             return null;
@@ -206,7 +209,7 @@ public class QwpMessageCursor implements Mutable {
         this.payloadAddress = messageAddress + HEADER_SIZE;
         this.payloadEnd = payloadAddress + payloadLength;
         this.currentTableAddress = payloadAddress;
-        this.designatedTsNameBounds.setAll(tableCount * 2, -1);
+        this.designatedTsNameBounds.clear();
 
         if (messageHeader.isTableOptionsEnabled()) {
             parseTableOptions();
@@ -262,6 +265,8 @@ public class QwpMessageCursor implements Mutable {
             }
 
             long blockEnd = address + blockLength;
+            long designatedTsNameHi = -1;
+            long designatedTsNameLo = -1;
             while (address < blockEnd) {
                 int tag = Unsafe.getByte(address++) & 0xff;
                 QwpVarint.decode(address, blockEnd, varintResult);
@@ -277,12 +282,12 @@ public class QwpMessageCursor implements Mutable {
 
                 long valueEnd = address + valueLength;
                 if (tag == TABLE_OPTION_TAG_DESIGNATED_TIMESTAMP_NAME) {
-                    int offsetIndex = tableIndex * 2;
-                    designatedTsNameBounds.setQuick(offsetIndex, address);
-                    designatedTsNameBounds.setQuick(offsetIndex + 1, valueEnd);
+                    designatedTsNameLo = address;
+                    designatedTsNameHi = valueEnd;
                 }
                 address = valueEnd;
             }
+            designatedTsNameBounds.add(designatedTsNameLo, designatedTsNameHi);
         }
 
         if (address != footerAddress) {
