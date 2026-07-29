@@ -33,9 +33,9 @@ import io.questdb.std.LongList;
  */
 class TestRecordCursor implements RecordCursor {
     final Record left = new SingleLongRecord();
+    int position = -1;
     final Record right = new SingleLongRecord();
     final LongList values = new LongList();
-    int position = -1;
 
     TestRecordCursor(long... newValues) {
         for (int i = 0; i < newValues.length; i++) {

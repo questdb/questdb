@@ -21976,8 +21976,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // re-evaluates the same comparison: reverting only that copy makes both queries throw
         // again, at the second site.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (sym SYMBOL INDEX, l LONG, ts TIMESTAMP)" +
-                    " TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    CREATE TABLE tab (sym SYMBOL INDEX, l LONG, ts TIMESTAMP)
+                      TIMESTAMP(ts) PARTITION BY DAY""");
             execute("""
                     INSERT INTO tab VALUES
                       ('a', 1, '2024-01-01T00:00:00.000000Z'),
@@ -21985,9 +21986,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       ('a', 3, '2024-01-01T00:00:02.000000Z'),
                       ('b', 4, '2024-01-01T00:00:03.000000Z')""");
 
-            assertQuery("SELECT sym, l, rank() OVER (ORDER BY sym, ts, l) rnk FROM tab" +
-                    " WHERE ts IN '2024-01-01' ORDER BY sym, ts")
+            // Both queries reach both copies, so neither one covers a site the other misses. The
+            // plan assertion is what earns them their keep: without it the test would still pass
+            // if a query silently stopped taking the CachedWindow path the guard lives on.
+            assertQuery("""
+                    SELECT sym, l, rank() OVER (ORDER BY sym, ts, l) AS rnk FROM tab
+                    WHERE ts IN '2024-01-01' ORDER BY sym, ts""")
                     .expectSize()
+                    .noLeakCheck()
                     .withPlanContaining("CachedWindow")
                     .returns("""
                             sym\tl\trnk
@@ -21997,15 +22003,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             b\t4\t4
                             """);
 
-            // This is the only probe of the cached generator copy, so pin the factory as well as
-            // the rows: without the plan assertion the test would still pass if the query silently
-            // stopped taking the CachedWindow path the guard lives on.
-            assertQuery("SELECT sym, l, avg(l) OVER (ORDER BY sym, ts, l) avg FROM tab" +
-                    " WHERE ts IN '2024-01-01' ORDER BY sym, ts")
+            // A one-pass frame function alongside the two-pass rank(): the first copy runs before
+            // the pass-count check, so the two shapes enter it from different sides.
+            assertQuery("""
+                    SELECT sym, l, avg(l) OVER (ORDER BY sym, ts, l) AS mean FROM tab
+                    WHERE ts IN '2024-01-01' ORDER BY sym, ts""")
                     .expectSize()
+                    .noLeakCheck()
                     .withPlanContaining("CachedWindow")
                     .returns("""
-                            sym\tl\tavg
+                            sym\tl\tmean
                             a\t1\t1.0
                             a\t3\t2.0
                             b\t2\t2.0

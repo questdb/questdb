@@ -29,6 +29,7 @@ import io.questdb.cutlass.http.HttpCookie;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpHeaderParser;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -94,10 +95,12 @@ public class HttpHeaderParserTest {
     @Test
     public void testBoundaryAugmenterReopenAfterCloseRestoresLimit() throws Exception {
         // close() zeroes lim, so reopen() has to commit INITIAL_CAPACITY back alongside the block
-        // it allocates. Assert the allocation directly: drop the commit and lim stays 0 while lo
-        // holds a 64-byte block, so the next of() reallocs against an oldSize of 0 and leaks the
-        // difference. reopen() sizes its malloc from the constant rather than from lim, so it can
-        // no longer ask for a zero-length block whichever order the two commits land in.
+        // it allocates. The two assertions below split that in half. The first covers the malloc:
+        // reopen() sizes it from the constant rather than from lim, so it can no longer ask for a
+        // zero-length block whichever order the two commits land in. The second covers the commit
+        // itself, which the first cannot see - drop `lim = INITIAL_CAPACITY` and the malloc still
+        // runs, but lim stays 0 while lo holds a 64-byte block, so the of() below takes the resize
+        // path it should have skipped and reallocs against an oldSize of 0.
         TestUtils.assertMemoryLeak(() -> {
             try (HttpHeaderParser.BoundaryAugmenter augmenter = new HttpHeaderParser.BoundaryAugmenter()) {
                 TestUtils.assertEquals("\r\n--first", augmenter.of(new Utf8String("first")));
@@ -111,7 +114,14 @@ public class HttpHeaderParserTest {
                         Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN)
                 );
 
+                // 10 bytes against a restored 64-byte limit: of() must find room and leave the
+                // block alone. A lim left at 0 makes the same call resize.
                 TestUtils.assertEquals("\r\n--second", augmenter.of(new Utf8String("second")));
+                Assert.assertEquals(
+                        "a boundary inside the initial capacity must not reallocate",
+                        usedAfterClose + 64,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN)
+                );
             }
         });
     }
@@ -211,20 +221,26 @@ public class HttpHeaderParserTest {
         // reproducible here. Keeping both allocations inside the try - rather than in field
         // initialisers, which run before the try is entered - is what covers that window.
         TestUtils.assertMemoryLeak(() -> {
+            final int headerBufferSize = 1_048_576;
             final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 8);
             final long savedLimit = Unsafe.getRssMemLimit();
+            // Holds the parser on the path where the constructor unexpectedly succeeds. Dropping
+            // it there would leak a built parser and make the enclosing leak check fail on top of
+            // the Assert.fail below, burying the failure that matters.
+            HttpHeaderParser parser = null;
             try {
                 Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 4096);
-                new HttpHeaderParser(1_048_576, csPool);
+                parser = new HttpHeaderParser(headerBufferSize, csPool);
                 Assert.fail("expected CairoException");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
                 // Pin which allocation ran out of room. Without this the test passes vacuously if
                 // the headroom ever stops covering the first two allocations: the augmenter would
                 // throw first, the sink would never allocate, and nothing would leak either way.
-                TestUtils.assertContains(e.getFlyweightMessage(), "size=1048576");
+                TestUtils.assertContains(e.getFlyweightMessage(), "size=" + headerBufferSize);
             } finally {
                 Unsafe.setRssMemLimit(savedLimit);
+                Misc.free(parser);
             }
         });
     }

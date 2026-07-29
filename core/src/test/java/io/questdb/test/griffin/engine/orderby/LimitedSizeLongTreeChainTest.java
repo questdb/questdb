@@ -61,14 +61,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
     @Before
     public void before() {
-        chain = new LimitedSizeLongTreeChain(
-                configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxBytes(),
-                configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxBytes(),
-                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
-                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
-        );
+        chain = newChain();
         chain.updateLimits(true, 20);
     }
 
@@ -144,47 +137,56 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIncrementalMinMaxMatchesFullWalk() {
+    public void testIncrementalMinMaxMatchesFullWalk() throws Exception {
         // put() and removeAndCache() maintain the cached extreme in place instead of re-walking the
         // spine from root on every accepted row. The cache decides which row a full chain evicts,
         // so a wrong cache silently keeps the wrong rows rather than failing an invariant. Drive
         // random data through both limit directions and compare against a sorted reference: any
         // drift in the cache shows up as a wrong result set.
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        for (int trial = 0; trial < 40; trial++) {
-            final int n = 1 + rnd.nextInt(200);
-            final int limit = 1 + rnd.nextInt(32);
-            final boolean isFirstN = rnd.nextBoolean();
-            final long[] values = new long[n];
-            for (int i = 0; i < n; i++) {
-                // A narrow range on purpose, so duplicates land on the chain-append path too.
-                values[i] = rnd.nextInt(40);
-            }
+        //
+        // Close the @Before chain and build the one under test inside the leak window: the
+        // freelist outgrows its initial 16 entries over these trials, and only close() gives that
+        // back, so bracketing the puts alone would report the growth as a leak.
+        chain.close();
+        assertMemoryLeak(() -> {
+            chain = newChain();
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            for (int trial = 0; trial < 40; trial++) {
+                final int n = 1 + rnd.nextInt(200);
+                final int limit = 1 + rnd.nextInt(32);
+                final boolean isFirstN = rnd.nextBoolean();
+                final long[] values = new long[n];
+                for (int i = 0; i < n; i++) {
+                    // A narrow range on purpose, so duplicates land on the chain-append path too.
+                    values[i] = rnd.nextInt(40);
+                }
 
-            chain.clear();
-            chain.updateLimits(isFirstN, limit);
-            createTree(values);
+                chain.clear();
+                chain.updateLimits(isFirstN, limit);
+                createTree(values);
 
-            final long[] sorted = values.clone();
-            Arrays.sort(sorted);
-            final int kept = Math.min(limit, n);
-            final long[] expected = new long[kept];
-            System.arraycopy(sorted, isFirstN ? 0 : n - kept, expected, 0, kept);
+                final long[] sorted = values.clone();
+                Arrays.sort(sorted);
+                final int kept = Math.min(limit, n);
+                final long[] expected = new long[kept];
+                System.arraycopy(sorted, isFirstN ? 0 : n - kept, expected, 0, kept);
 
-            final LongList actual = new LongList();
-            LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
-            while (treeCursor.hasNext()) {
-                cursor.recordAt(placeholder, treeCursor.next());
-                actual.add(placeholder.getLong(0));
-            }
-            // The tree yields ascending order, and so does the reference slice.
-            Assert.assertEquals("trial " + trial + " isFirstN=" + isFirstN + " limit=" + limit
-                    + " n=" + n + " kept count", expected.length, actual.size());
-            for (int i = 0; i < expected.length; i++) {
+                final LongList actual = new LongList();
+                LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
+                while (treeCursor.hasNext()) {
+                    cursor.recordAt(placeholder, treeCursor.next());
+                    actual.add(placeholder.getLong(0));
+                }
+                // The tree yields ascending order, and so does the reference slice.
                 Assert.assertEquals("trial " + trial + " isFirstN=" + isFirstN + " limit=" + limit
-                        + " position " + i, expected[i], actual.getQuick(i));
+                        + " n=" + n + " kept count", expected.length, actual.size());
+                for (int i = 0; i < expected.length; i++) {
+                    Assert.assertEquals("trial " + trial + " isFirstN=" + isFirstN + " limit=" + limit
+                            + " position " + i, expected[i], actual.getQuick(i));
+                }
             }
-        }
+            chain.close();
+        });
     }
 
     @Test
@@ -278,28 +280,30 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPutAfterNonExtremeRemovalRecomputesMinMax() {
+    public void testPutAfterNonExtremeRemovalRecomputesMinMax() throws Exception {
         // put() maintains the cached extreme in place and falls back to the full spine walk only
         // when removeAndCache() could not name a replacement. Its production caller only ever
         // removes the cached extreme, so after that optimisation the fallback - and with it
         // refreshMinMaxNode(), findMinNode() and findMaxNode() - is reachable only through the
         // removeAndCache(node) API a dozen tests here already drive. Keep it covered: the walk is
         // the safety net for every one of those removals.
-        chain.updateLimits(true, 4);
-        createTree(1, 2, 3, 4, 5);
+        assertMemoryLeak(() -> {
+            chain.updateLimits(true, 4);
+            createTree(1, 2, 3, 4, 5);
 
-        // 2 is neither the smallest nor the cached maximum, so removeAndCache() cannot name a
-        // replacement and invalidates the cache outright.
-        removeRowWithValue(2);
+            // 2 is neither the smallest nor the cached maximum, so removeAndCache() cannot name a
+            // replacement and invalidates the cache outright.
+            removeRowWithValue(2);
 
-        // Back below the limit, so this insert takes the fallback and has to find the new maximum
-        // from the tree rather than trust the cache.
-        putValue(5);
-        // At the limit again. The accept/reject compare now runs against whatever the fallback
-        // decided the maximum is: 2 is below it, so it must be accepted and evict 5.
-        putValue(2);
+            // Back below the limit, so this insert takes the fallback and has to find the new
+            // maximum from the tree rather than trust the cache.
+            putValue(5);
+            // At the limit again. The accept/reject compare now runs against whatever the fallback
+            // decided the maximum is: 2 is below it, so it must be accepted and evict 5.
+            putValue(2);
 
-        assertChainHolds(1, 2, 3, 4);
+            assertChainHolds(1, 2, 3, 4);
+        });
     }
 
     @Test
@@ -702,9 +706,8 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     /**
-     * Walks the tree back after a clamped growth step. Values go in ascending with rowId == value,
-     * so the cursor has to yield 0..inserted-1 in order - which only holds if every heap-relative
-     * offset survived the reallocs that moved the heap.
+     * Asserts the exact set the chain kept, in the ascending order the tree yields. Which rows
+     * survive is what the cached extreme decides, so this is the assertion the top-N tests use.
      */
     private void assertChainHolds(long... expected) {
         final LongList actual = new LongList();
@@ -719,6 +722,11 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Walks the tree back after a clamped growth step. Values go in ascending with rowId == value,
+     * so the cursor has to yield 0..inserted-1 in order - which only holds if every heap-relative
+     * offset survived the reallocs that moved the heap.
+     */
     private void assertReadsBack(int inserted) {
         LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
         int count = 0;
@@ -755,8 +763,8 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
      * <p>
      * Deliberately not shared with the namesake in {@code LongTreeChainTest}: this chain's
      * {@code put()} expects the caller to have set the comparator's left side, while
-     * {@link io.questdb.griffin.engine.orderby.LongTreeChain#put} sets it itself, and the two
-     * cursor types are unrelated inner classes.
+     * {@link io.questdb.griffin.engine.orderby.LongTreeChain#put} sets it itself. Both drive the
+     * same {@link TestRecordCursor}; it is the one {@code comparator.setLeft} call that differs.
      */
     private int fillUntilOverflow(String expectedMessage) {
         final long[] values = new long[256];
@@ -782,6 +790,17 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
         }
         Assert.fail("expected LimitOverflowException");
         return -1;
+    }
+
+    private LimitedSizeLongTreeChain newChain() {
+        return new LimitedSizeLongTreeChain(
+                configuration.getSqlSortKeyPageSize(),
+                configuration.getSqlSortKeyMaxBytes(),
+                configuration.getSqlSortLightValuePageSize(),
+                configuration.getSqlSortLightValueMaxBytes(),
+                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+        );
     }
 
     private void putValue(long value) {

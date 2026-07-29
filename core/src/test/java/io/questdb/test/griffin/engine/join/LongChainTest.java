@@ -30,10 +30,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -81,9 +79,11 @@ public class LongChainTest {
     public void testBudgetFlooredAtOnePage() throws Exception {
         // cairo.sql.hash.join.light.value.max.pages = 0 is accepted by config and used to give a
         // zero budget, so every hash join failed with "limit of 0" even though the chain had
-        // already allocated a full page. Flooring the budget at one page makes the reported limit
-        // agree with what the chain actually holds, and is user-visible behaviour: without the
-        // floor the first put below throws instead of succeeding.
+        // already allocated a full page. What the floor changes is the message, not where the
+        // chain gives up: this constructor allocates the page up front, so the first five puts
+        // land either way and the sixth throws either way - reporting "limit of 0" without the
+        // floor and "limit of 64" with it. The number a user is told to raise now matches what
+        // the chain actually holds.
         assertMemoryLeak(() -> {
             try (LongChain chain = new LongChain(64, 0)) {
                 // 64-byte page, 12-byte values: five fit, the sixth needs 72.
@@ -171,28 +171,26 @@ public class LongChainTest {
         // reopen() has to allocate the configured page rather than grow from heapSize 0.
         assertMemoryLeak(() -> {
             try (LongChain chain = new LongChain(64, 3, true)) {
-                final long usedBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
-                final int first = chain.put(42, -1);
+                Assert.assertEquals("a keepClosed chain allocates nothing until it is used", 0, chain.getHeapSize());
 
-                // Assert the consequence rather than the delta. NATIVE_DEFAULT is engine-wide, so a
-                // one-sided ">= 64" bound fails in the wrong direction: a concurrent free of 52 or
-                // more bytes on the tag drives the delta under 64 and turns a real regression into
-                // a pass. Four more values instead - 5 * 12 = 60 bytes, inside the configured
-                // 64-byte page - separate the two outcomes with no allocation of their own. A chain
-                // that opened its page absorbs them; one that grew from a closed heap opened 12
-                // bytes, re-doubles from there for the rest of its life, and has to realloc before
-                // the fifth value lands.
-                final long usedAfterFirstPut = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
-                Assert.assertTrue(usedAfterFirstPut > usedBefore);
-                int tail = first;
+                // Ask the chain what it holds rather than reading the engine-wide NATIVE_DEFAULT
+                // counter: that counter moves for reasons this test does not control, in both
+                // directions, so neither a delta nor an equality against it separates the two
+                // outcomes reliably. A chain that opened its configured page reads 64 here; one
+                // that grew from a closed heap reads 12 and re-doubles from there for the rest of
+                // its life.
+                int tail = chain.put(42, -1);
+                Assert.assertEquals(
+                        "a keepClosed chain must open its configured page, not grow from a closed heap",
+                        64,
+                        chain.getHeapSize()
+                );
+
                 for (int i = 0; i < 4; i++) {
                     tail = chain.put(44 + i, tail);
                 }
-                Assert.assertEquals(
-                        "a keepClosed chain must open its configured page, not grow from a closed heap",
-                        usedAfterFirstPut,
-                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT)
-                );
+                // 5 * 12 = 60 bytes, still inside the 64-byte page.
+                Assert.assertEquals(64, chain.getHeapSize());
 
                 final int second = chain.put(43, tail);
 

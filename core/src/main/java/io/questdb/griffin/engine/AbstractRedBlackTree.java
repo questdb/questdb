@@ -173,7 +173,8 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     /**
      * Resolves a block offset to its heap address for the setters. The assert turns a silent write
      * at {@code keyHeapStart + 32GB} - where an unsigned EMPTY offset lands - into a loud failure
-     * under {@code -ea}, and holding it here keeps the six callers small enough to inline.
+     * under {@code -ea}. Holding it here keeps the setters under {@code MaxInlineSize} (14 bytes
+     * against the 35-byte default), so they inline cold rather than only once they run hot.
      */
     private long blockAddress(int blockOffset) {
         assert blockOffset != EMPTY;
@@ -323,10 +324,10 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         }
     }
 
-    // Holds both the sentinel check and the widening so the four value accessors stay small
-    // enough for the JIT to inline them - the assert prologue sits in the class file whether or
-    // not -ea is on, and inlined into each accessor it pushed them past MaxInlineSize.
-    // blockAddress() plays the same role for the node getters.
+    // Holds both the sentinel check and the widening so the four value accessors stay under
+    // MaxInlineSize - the assert prologue sits in the class file whether or not -ea is on, and
+    // inlined into each accessor it pushed them past the 35-byte default, leaving them inlinable
+    // only once they ran hot. blockAddress() plays the same role for the node getters.
     private long valueAddress(int valueOffset) {
         assert valueOffset != CHAIN_END;
         return valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset);

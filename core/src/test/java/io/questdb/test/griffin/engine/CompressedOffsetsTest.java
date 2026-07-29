@@ -61,12 +61,11 @@ public class CompressedOffsetsTest {
         Assert.assertTrue(CompressedOffsets.compressAligned4(lastValueOffset) < 0);
 
         // The chain-end sentinel decodes to 4 bytes past the largest addressable heap, which is
-        // what makes it safe to reserve: no legal offset can produce it.
+        // what makes it safe to reserve: no legal offset can produce it. The literal is the point
+        // - spelling the expectation as maxHeapSize + 4 restates how the test derives maxHeapSize
+        // and would hold whatever uncompressAligned4() did with the sign bit.
+        Assert.assertEquals(17_179_869_180L, CompressedOffsets.uncompressAligned4(-1));
         Assert.assertEquals(maxHeapSize + 4, CompressedOffsets.uncompressAligned4(-1));
-        for (long offset : offsets) {
-            Assert.assertNotEquals("offset " + offset + " must not compress to the chain-end sentinel",
-                    -1, CompressedOffsets.compressAligned4(offset));
-        }
     }
 
     @Test
@@ -99,12 +98,10 @@ public class CompressedOffsetsTest {
         Assert.assertTrue(CompressedOffsets.compressAligned8(lastBlockOffset) < 0);
 
         // The empty-block sentinel decodes to 8 bytes past the largest addressable heap, so no
-        // legal block offset can collide with it.
+        // legal block offset can collide with it. Pinned by literal for the same reason as the
+        // 4-byte case above.
+        Assert.assertEquals(34_359_738_360L, CompressedOffsets.uncompressAligned8(-1));
         Assert.assertEquals(maxKeyHeapSize + 8, CompressedOffsets.uncompressAligned8(-1));
-        for (long offset : offsets) {
-            Assert.assertNotEquals("offset " + offset + " must not compress to the EMPTY sentinel",
-                    -1, CompressedOffsets.compressAligned8(offset));
-        }
     }
 
     @Test

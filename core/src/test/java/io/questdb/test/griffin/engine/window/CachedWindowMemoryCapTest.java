@@ -108,27 +108,12 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
         // the dense flag. It used to hard-code the RANK() owner, which told a DENSE_RANK() user to
         // go look at a function their query never mentioned.
         //
-        // Same shape as testRankStreamingSinkCapNamesRankOwner: a two-column (SYMBOL, TIMESTAMP)
-        // window ORDER BY serializes to 12 bytes and so outgrows the sink's 8-byte initial
-        // capacity, which is what takes the query into resize().
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 64);
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 0);
+        // Same shape as testRankStreamingSinkCapNamesRankOwner, which pins the rank() owner.
+        setUpStreamingSinkCap();
 
         assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE tab (sym SYMBOL INDEX, l LONG, ts TIMESTAMP)
-                      TIMESTAMP(ts) PARTITION BY DAY""");
-            execute("""
-                    INSERT INTO tab VALUES
-                      ('a', 1, '2024-01-01T00:00:00.000000Z'),
-                      ('b', 2, '2024-01-01T00:00:01.000000Z'),
-                      ('a', 3, '2024-01-01T00:00:02.000000Z'),
-                      ('b', 4, '2024-01-01T00:00:03.000000Z')""");
-
+            createStreamingSinkCapTable();
             assertSinkCapMessage("dense_rank", "DENSE_RANK() window function");
-            // The sibling test pins the same path for rank(), so assert here that the two owners
-            // stay distinct rather than both drifting onto one name.
-            assertSinkCapMessage("rank", "RANK() window function");
         });
     }
 
@@ -250,24 +235,10 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
         // Reaching the sink's budget needs a key wider than its 8-byte initial capacity. Following
         // order-by advice on an indexed SYMBOL admits a two-column (SYMBOL, TIMESTAMP) window
         // ORDER BY, which serializes to 12 bytes and therefore enters resize().
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 64);
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 0);
+        setUpStreamingSinkCap();
 
         assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE tab (sym SYMBOL INDEX, l LONG, ts TIMESTAMP)
-                      TIMESTAMP(ts) PARTITION BY DAY""");
-            execute("""
-                    INSERT INTO tab VALUES
-                      ('a', 1, '2024-01-01T00:00:00.000000Z'),
-                      ('b', 2, '2024-01-01T00:00:01.000000Z'),
-                      ('a', 3, '2024-01-01T00:00:02.000000Z'),
-                      ('b', 4, '2024-01-01T00:00:03.000000Z')""");
-
-            // Catch explicitly to assert on the typed LimitOverflowException rather than on a
-            // message alone. (assertExceptionNoLeakCheck() would also do: TestUtils.assertException
-            // ends with Assert.fail("SQL statement should have failed"), and that AssertionError is
-            // not a FlyweightMessageContainer, so it is rethrown rather than swallowed.)
+            createStreamingSinkCapTable();
             assertSinkCapMessage("rank", "RANK() window function");
 
             // Negative control: a single 8-byte key fits the initial capacity, so the same budget
@@ -377,6 +348,8 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
     // the substring and reports "limit of 0". RankFunctionFactory's / 2 stays unpinned here - the
     // product is 0 with or without it - and no reachable configuration prints a halved budget,
     // since at stock settings the limit works out to ~1 PB.
+    // Catches explicitly rather than going through assertExceptionNoLeakCheck(), so that the
+    // thrown type is asserted alongside the message.
     private void assertSinkCapMessage(String function, String owner) throws Exception {
         try {
             printSql("SELECT sym, ts, " + function + "() OVER (ORDER BY sym, ts) FROM tab" +
@@ -387,5 +360,24 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                     "limit of 8 memory exceeded in " + owner
                             + " (raise cairo.sql.window.store.page.size or cairo.sql.window.store.max.pages)");
         }
+    }
+
+    private void createStreamingSinkCapTable() throws Exception {
+        execute("""
+                CREATE TABLE tab (sym SYMBOL INDEX, l LONG, ts TIMESTAMP)
+                  TIMESTAMP(ts) PARTITION BY DAY""");
+        execute("""
+                INSERT INTO tab VALUES
+                  ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                  ('b', 2, '2024-01-01T00:00:01.000000Z'),
+                  ('a', 3, '2024-01-01T00:00:02.000000Z'),
+                  ('b', 4, '2024-01-01T00:00:03.000000Z')""");
+    }
+
+    // A 64-byte page times zero pages floors the sink budget at its 8-byte initial capacity, so
+    // any window ORDER BY key wider than 8 bytes enters resize() and reports the cap.
+    private void setUpStreamingSinkCap() {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 64);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 0);
     }
 }

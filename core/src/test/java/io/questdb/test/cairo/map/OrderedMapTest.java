@@ -1934,7 +1934,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                 k.putInt(key);
                 Assert.assertTrue(k.createValue().isNew());
                 final int home = onlyOccupiedSlot(map);
-                final int keyHash = Numbers.decodeHighInt(map.rawSlotAt(home));
+                final int keyHash = hashCodeAt(map, home);
                 map.clear();
 
                 // Plant an occupied slot with the top bit set right where the key probes. Flipping
@@ -1949,14 +1949,12 @@ public class OrderedMapTest extends AbstractCairoTest {
                 k.putInt(key);
                 Assert.assertTrue(k.createValue().isNew());
 
-                final long planted = map.rawSlotAt(home);
-                Assert.assertEquals("planted slot must survive the probe", plantedOffset, Numbers.decodeLowInt(planted));
-                Assert.assertEquals(plantedHash, Numbers.decodeHighInt(planted));
+                Assert.assertEquals("planted slot must survive the probe", plantedOffset, rawOffsetAt(map, home));
+                Assert.assertEquals(plantedHash, hashCodeAt(map, home));
 
                 final int next = (home + 1) & (map.getKeyCapacity() - 1);
-                final long landed = map.rawSlotAt(next);
-                Assert.assertNotEquals("key must land in the slot after the planted one", 0, Numbers.decodeLowInt(landed));
-                Assert.assertEquals(keyHash, Numbers.decodeHighInt(landed));
+                Assert.assertTrue("key must land in the slot after the planted one", isSlotOccupied(map, next));
+                Assert.assertEquals(keyHash, hashCodeAt(map, next));
 
                 // The read-only probe has to walk past the planted slot too, otherwise it reports
                 // a live key as absent.
@@ -2046,7 +2044,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                 MapKey k = map.withKey();
                 k.putInt(0);
                 Assert.assertTrue(k.createValue().isNew());
-                final int anchorHash = Numbers.decodeHighInt(map.rawSlotAt(onlyOccupiedSlot(map)));
+                final int anchorHash = hashCodeAt(map, onlyOccupiedSlot(map));
 
                 // Both planted hashes share their low bits with a live key's, so all three collide
                 // at the same index of the rebuilt table and the inner placement probe has to walk
@@ -2058,7 +2056,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                 final int plantedHashB = anchorHash ^ 0x4000_0000;
                 int planted = 0;
                 for (int i = 0, n = map.getKeyCapacity(); i < n && planted < 2; i++) {
-                    if (Numbers.decodeLowInt(map.rawSlotAt(i)) == 0) {
+                    if (!isSlotOccupied(map, i)) {
                         map.pokeRawSlot(
                                 i,
                                 planted == 0 ? plantedOffsetA : plantedOffsetB,
@@ -2708,7 +2706,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                 }
                 k.createValue().putLong(0, 1);
                 final int home = onlyOccupiedSlot(dest);
-                final int keyHash = Numbers.decodeHighInt(dest.rawSlotAt(home));
+                final int keyHash = hashCodeAt(dest, home);
                 dest.clear();
 
                 // Flipping only the top hash bit keeps the planted hash distinct from the key's, so
@@ -2726,14 +2724,12 @@ public class OrderedMapTest extends AbstractCairoTest {
 
                 dest.merge(src, new TestMapValueMergeFunction());
 
-                final long planted = dest.rawSlotAt(home);
-                Assert.assertEquals("planted slot must survive the merge", plantedOffset, Numbers.decodeLowInt(planted));
-                Assert.assertEquals(plantedHash, Numbers.decodeHighInt(planted));
+                Assert.assertEquals("planted slot must survive the merge", plantedOffset, rawOffsetAt(dest, home));
+                Assert.assertEquals(plantedHash, hashCodeAt(dest, home));
 
                 final int next = (home + 1) & (dest.getKeyCapacity() - 1);
-                final long landed = dest.rawSlotAt(next);
-                Assert.assertNotEquals("merged key must land in the slot after the planted one", 0, Numbers.decodeLowInt(landed));
-                Assert.assertEquals(keyHash, Numbers.decodeHighInt(landed));
+                Assert.assertTrue("merged key must land in the slot after the planted one", isSlotOccupied(dest, next));
+                Assert.assertEquals(keyHash, hashCodeAt(dest, next));
                 Assert.assertEquals(1, dest.size());
 
                 // The source entry was inserted, not merged into the planted slot, so the value is
@@ -2749,7 +2745,7 @@ public class OrderedMapTest extends AbstractCairoTest {
 
     private static int firstEmptySlot(OrderedMap map) {
         for (int i = 0, n = map.getKeyCapacity(); i < n; i++) {
-            if (Numbers.decodeLowInt(map.rawSlotAt(i)) == 0) {
+            if (!isSlotOccupied(map, i)) {
                 return i;
             }
         }
@@ -2757,10 +2753,26 @@ public class OrderedMapTest extends AbstractCairoTest {
         return -1;
     }
 
+    /**
+     * The hash half of a raw slot. Keeps knowledge of the slot's
+     * {@code [rawOffset | hashCodeLo]} packing in this file to the three accessors below.
+     */
+    private static int hashCodeAt(OrderedMap map, int slot) {
+        return Numbers.decodeHighInt(map.rawSlotAt(slot));
+    }
+
+    /**
+     * A slot is empty when its biased offset half reads 0, which is exactly the predicate the
+     * map's eight scans route through {@code CompressedOffsets.isEmptyBiased8}.
+     */
+    private static boolean isSlotOccupied(OrderedMap map, int slot) {
+        return Numbers.decodeLowInt(map.rawSlotAt(slot)) != 0;
+    }
+
     private static int occupiedSlotCount(OrderedMap map) {
         int count = 0;
         for (int i = 0, n = map.getKeyCapacity(); i < n; i++) {
-            if (Numbers.decodeLowInt(map.rawSlotAt(i)) != 0) {
+            if (isSlotOccupied(map, i)) {
                 count++;
             }
         }
@@ -2770,13 +2782,20 @@ public class OrderedMapTest extends AbstractCairoTest {
     private static int onlyOccupiedSlot(OrderedMap map) {
         int found = -1;
         for (int i = 0, n = map.getKeyCapacity(); i < n; i++) {
-            if (Numbers.decodeLowInt(map.rawSlotAt(i)) != 0) {
+            if (isSlotOccupied(map, i)) {
                 Assert.assertEquals("expected exactly one occupied slot", -1, found);
                 found = i;
             }
         }
         Assert.assertNotEquals("expected exactly one occupied slot", -1, found);
         return found;
+    }
+
+    /**
+     * The biased-offset half of a raw slot, as {@code pokeRawSlot} takes it.
+     */
+    private static int rawOffsetAt(OrderedMap map, int slot) {
+        return Numbers.decodeLowInt(map.rawSlotAt(slot));
     }
 
     /**

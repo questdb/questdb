@@ -42,7 +42,6 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenable {
     // Name both knobs, not just *.max.pages. That one defaults to Integer.MAX_VALUE, so a user who
@@ -83,11 +82,6 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     // they outlive the cursor a tracker is scoped to.
     @Nullable
     private MemoryTracker memoryTracker;
-
-    @TestOnly
-    public SingleRecordSink(long maxHeapSizeBytes, int memoryTag, @NotNull String ownerName) {
-        this(maxHeapSizeBytes, memoryTag, ownerName, null);
-    }
 
     public SingleRecordSink(long maxHeapSizeBytes, int memoryTag, @NotNull String ownerName, @Nullable String configKey) {
         this.memoryTag = memoryTag;

@@ -44,7 +44,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class SingleRecordSinkTest extends AbstractTest {
     public static void runWithSink(WithNewSink code) throws Exception {
         assertMemoryLeak(() -> {
-            try (SingleRecordSink sink = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT, "test sink")) {
+            try (SingleRecordSink sink = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT, "test sink", null)) {
                 code.runWithSink(sink);
             }
         });
@@ -52,8 +52,8 @@ public class SingleRecordSinkTest extends AbstractTest {
 
     public static void runWithSinks(WithNewSinks code, int maxHeap) throws Exception {
         assertMemoryLeak(() -> {
-            try (SingleRecordSink left = new SingleRecordSink(maxHeap, MemoryTag.NATIVE_DEFAULT, "test sink");
-                 SingleRecordSink right = new SingleRecordSink(maxHeap, MemoryTag.NATIVE_DEFAULT, "test sink")) {
+            try (SingleRecordSink left = new SingleRecordSink(maxHeap, MemoryTag.NATIVE_DEFAULT, "test sink", null);
+                 SingleRecordSink right = new SingleRecordSink(maxHeap, MemoryTag.NATIVE_DEFAULT, "test sink", null)) {
                 code.runWithSink(left, right);
             }
         });
@@ -76,7 +76,7 @@ public class SingleRecordSinkTest extends AbstractTest {
         // target exactly 2052. That is the boundary of the throw predicate - a value that fits
         // exactly must be accepted, so 513 ints fit rather than 512.
         assertMemoryLeak(() -> {
-            try (SingleRecordSink sink = new SingleRecordSink(2052, MemoryTag.NATIVE_DEFAULT, "test sink")) {
+            try (SingleRecordSink sink = new SingleRecordSink(2052, MemoryTag.NATIVE_DEFAULT, "test sink", null)) {
                 for (int i = 0; i < 513; i++) {
                     sink.putInt(i);
                 }
@@ -100,9 +100,9 @@ public class SingleRecordSinkTest extends AbstractTest {
         // one end to end.
         assertMemoryLeak(() -> {
             try (
-                    SingleRecordSink clamped = new SingleRecordSink(3000, MemoryTag.NATIVE_DEFAULT, "test sink");
+                    SingleRecordSink clamped = new SingleRecordSink(3000, MemoryTag.NATIVE_DEFAULT, "test sink", null);
                     // 4096 is a power of two above the budget, so this one never clamps.
-                    SingleRecordSink reference = new SingleRecordSink(4096, MemoryTag.NATIVE_DEFAULT, "test sink")
+                    SingleRecordSink reference = new SingleRecordSink(4096, MemoryTag.NATIVE_DEFAULT, "test sink", null)
             ) {
                 for (int i = 0; i < 750; i++) {
                     clamped.putInt(i);
@@ -129,36 +129,21 @@ public class SingleRecordSinkTest extends AbstractTest {
         // for: an 8-byte key succeeded against a declared 0-byte limit, and the overflow message
         // then read "limit of 0" - neither what was configured nor what is actually allowed.
         // Flooring the budget at the initial capacity makes the two agree.
+        //
+        // The message is asserted whole rather than by substring, which also pins the null arm of
+        // the config-key guard: the " (raise <key>)" suffix appears only when the owner names one,
+        // and deleting the guard outright would report "(raise null)" here. The ASOF and window
+        // owners pin the non-null arm end to end.
         assertMemoryLeak(() -> {
-            try (SingleRecordSink sink = new SingleRecordSink(0, MemoryTag.NATIVE_DEFAULT, "test sink")) {
+            try (SingleRecordSink sink = new SingleRecordSink(0, MemoryTag.NATIVE_DEFAULT, "test sink", null)) {
                 // Exactly the initial capacity, so this must fit rather than overflow.
                 sink.putLong(1);
                 try {
                     sink.putLong(2);
                     Assert.fail("expected LimitOverflowException");
                 } catch (LimitOverflowException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 8 memory exceeded in test sink");
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testOverflowMessageOmitsRaiseHintWithoutConfigKey() throws Exception {
-        // The message appends " (raise <key>)" only when the owner names one. Every test here uses
-        // the 3-arg constructor, which passes null, so deleting the null guard outright used to
-        // leave the whole class green while a query with no config key reported "(raise null)".
-        // The ASOF and window owners pin the non-null arm end to end; pin the null arm here.
-        assertMemoryLeak(() -> {
-            try (SingleRecordSink sink = new SingleRecordSink(0, MemoryTag.NATIVE_DEFAULT, "test sink")) {
-                sink.reopen();
-                sink.putLong(1);
-                try {
-                    sink.putLong(2);
-                    Assert.fail("expected LimitOverflowException");
-                } catch (LimitOverflowException e) {
-                    final String message = e.getFlyweightMessage().toString();
-                    Assert.assertEquals("limit of 8 memory exceeded in test sink", message);
+                    Assert.assertEquals("limit of 8 memory exceeded in test sink",
+                            e.getFlyweightMessage().toString());
                 }
             }
         });
@@ -175,10 +160,10 @@ public class SingleRecordSinkTest extends AbstractTest {
         // rather than a live code path.
         assertMemoryLeak(() -> {
             try (
-                    SingleRecordSink sink = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT, "test sink");
+                    SingleRecordSink sink = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT, "test sink", null);
                     // Never closed, so it stays in the pristine unallocated state the closed sink
                     // has to match.
-                    SingleRecordSink reference = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT, "test sink")
+                    SingleRecordSink reference = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT, "test sink", null)
             ) {
                 // Grow the heap so that close() has a non-zero limit to leave behind.
                 for (int i = 0; i < 64; i++) {

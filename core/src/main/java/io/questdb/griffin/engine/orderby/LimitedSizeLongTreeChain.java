@@ -425,13 +425,14 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     // N. The extreme has no child on its outer side, so when the inner one is missing too the
     // neighbour is simply its parent, and EMPTY there means the tree had a single node left.
     private int nextExtremeAfter(int node) {
+        int child;
         if (isFirstN) {
             int p = leftOf(node);
             if (p == EMPTY) {
                 return parentOf(node);
             }
-            while (rightOf(p) != EMPTY) {
-                p = rightOf(p);
+            while ((child = rightOf(p)) != EMPTY) {
+                p = child;
             }
             return p;
         }
@@ -439,8 +440,8 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         if (p == EMPTY) {
             return parentOf(node);
         }
-        while (leftOf(p) != EMPTY) {
-            p = leftOf(p);
+        while ((child = leftOf(p)) != EMPTY) {
+            p = child;
         }
         return p;
     }

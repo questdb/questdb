@@ -32,6 +32,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -97,6 +98,16 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     public Cursor getCursor(int tailOffset) {
         cursor.of(tailOffset);
         return cursor;
+    }
+
+    /**
+     * Bytes currently backing the chain, or 0 while it is closed or has never been opened.
+     * Tests assert on this rather than on the engine-wide memory counter, which moves for
+     * reasons they do not control.
+     */
+    @TestOnly
+    public long getHeapSize() {
+        return heapSize;
     }
 
     public int put(long value, int parentOffset) {
