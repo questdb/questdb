@@ -67,6 +67,18 @@ public interface TableNameRegistry extends Closeable {
     boolean dropTable(TableToken token);
 
     /**
+     * Returns the reverse-map entry for a directory name: the token plus whether the table it names
+     * has been dropped. {@link #getTokenByDirName(CharSequence)} and
+     * {@link #getTableTokenByDirName(CharSequence)} are both projections of this entry, so a caller
+     * that needs the token AND the dropped flag resolves them here in ONE map read rather than
+     * hashing the same key twice.
+     *
+     * @param dirName directory name
+     * @return the entry, or null when the registry has no record of the directory
+     */
+    @Nullable ReverseTableMapItem getReverseMapItemByDirName(CharSequence dirName);
+
+    /**
      * Returns table token by table name. If table does not exist, returns null.
      *
      * @param tableName table name
