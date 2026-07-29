@@ -57,10 +57,12 @@ import java.util.List;
  * <p>Both are asserted as an ORDER over file operations, because ordering is the entire content of the
  * invariant: a test that checked only the end state would pass against either sequence.
  *
- * <p><b>Strength of each arm.</b> Inverting the order in the product makes the LEAVING arm fail (verified),
- * so that arm is a proven control. The ENTERING arm still passed under the same inversion — its assertion
- * is therefore reinforcement, not proof, and should not be cited as one until someone works out which later
- * operation masks the inversion there. The live
+ * <p><b>Both arms are proven controls:</b> inverting the order in the product makes each of them fail.
+ * Getting there took two attempts, and the reason is worth keeping. The assertion first looked for the LAST
+ * write at the record's offset, and the ENTERING arm then passed even when inverted — because an inverted
+ * build writes the record TWICE (once early, once again later in the writer's life), so a last-write search
+ * always found one after the marker. The correct build writes it exactly once, after the barrier. Pinning
+ * the FIRST write is what makes the assertion mean "the record was not written early". The live
  * {@code _meta} is written through {@code _meta.swp}, so the assertion is that the write of the
  * record itself — a write at the enrolled-mode offset of the live {@code _meta} — follows the last
  * operation on the {@code _snapshot} marker.
@@ -128,9 +130,12 @@ public class AdaptiveEnrollmentOrderTest extends AbstractCairoTest {
             // merely "some _meta operation". The writer touches _meta for many reasons and the epoch
             // publication copies it to _meta.epoch.N, so anything coarser stops discriminating: an inverted
             // order would still find an unrelated _meta op after the marker and pass.
+            // The FIRST such write, not the last: the record is written again later in the writer's life,
+            // so pinning the last one would find a post-barrier write even when the enrolment wrote its
+            // record too early -- which is exactly how an inverted order slipped past this assertion.
             // Matches the tail of a logged write line; the absolute path sits between the "WRITE " prefix
             // and the table dir, so the prefix must not be part of the needle.
-            final int meta = lastIndexContaining(tableDir + "/_meta@"
+            final int meta = firstIndexContaining(tableDir + "/_meta@"
                     + TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE);
             Assert.assertTrue(
                     "no _snapshot operation recorded while " + direction + ", so this proves nothing about"
