@@ -139,6 +139,26 @@ public class RostiTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedIntSumIntMergeKeepsPartialsAboveIntRange() throws Exception {
+        // sum(int) and avg(int) accumulate into a 64-bit slot, so a worker shard's partial can
+        // exceed int range long before the total does. Driven through JNI because nothing pins a
+        // group's rows to a chosen shard: the slot comes from whichever pool thread dequeues the
+        // task, plus the inline work-stealing path. A SQL test could never fail spuriously -- a
+        // single-shard group skips the merge entirely -- but it would often pass without
+        // exercising the merge at all.
+        //
+        // 3_000_000_000 sign-extends from its low 32 bits to -1_294_967_296, so both branches
+        // below land far from the correct answer when the slot is read as jint.
+        assertMemoryLeak(() -> {
+            // Key present in both shards: the accumulate branch.
+            assertSumIntMergeKeepsPartial(true, 4_000_000_000L, 3);
+            // Key present only in the source shard: the assign branch, which is the ordinary
+            // case when a group's rows never reached the destination shard.
+            assertSumIntMergeKeepsPartial(false, 3_000_000_000L, 2);
+        });
+    }
+
+    @Test
     public void testKeyedIntSumLongWrapUpSweepSurvivesNullKeyInsertResize() throws Exception {
         // wrapUp() populates the null-key slot and then sweeps the map, NULLing every group
         // whose count is still 0. The populate inserts, and an insert past the growth threshold
@@ -188,6 +208,22 @@ public class RostiTest extends AbstractCairoTest {
         return pRosti;
     }
 
+    // sum(int) and avg(int) share this slot layout and the same merge.
+    private static long allocSumIntRosti() {
+        final ArrayColumnTypes types = new ArrayColumnTypes();
+        types.add(ColumnType.INT);      // key
+        types.add(ColumnType.LONG);     // running sum, 64-bit even though the column is INT
+        types.add(ColumnType.LONG);     // count
+        final long pRosti = Rosti.alloc(types, 64);
+        Assert.assertNotEquals(0, pRosti);
+        // Mirrors GroupByRecordCursorFactory's null-key setup and
+        // SumIntVectorAggregateFunction.initRosti().
+        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti, 0), Numbers.INT_NULL);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 1), 0);
+        return pRosti;
+    }
+
     private static void assertMergeCarriesCompensation(
             double sumA,
             double compensationA,
@@ -210,6 +246,30 @@ public class RostiTest extends AbstractCairoTest {
                 Assert.assertTrue(Rosti.keyedIntNSumDoubleWrapUp(pRostiA, VALUE_OFFSET, 0.0, 0, 0.0));
 
                 Assert.assertEquals(expected, readSingleSlotDouble(pRostiA, VALUE_OFFSET), 0.0);
+            } finally {
+                Rosti.free(pRostiB);
+            }
+        } finally {
+            Rosti.free(pRostiA);
+        }
+    }
+
+    private static void assertSumIntMergeKeepsPartial(boolean hasDestinationSlot, long expectedSum, long expectedCount) {
+        final long pRostiA = allocSumIntRosti();
+        try {
+            final long pRostiB = allocSumIntRosti();
+            try {
+                if (hasDestinationSlot) {
+                    Assert.assertTrue(Rosti.keyedIntDistinct(pRostiA, Rosti.getInitialValueSlot(pRostiA, 0), 1));
+                    seedSumIntSlot(pRostiA, 1_000_000_000L, 1);
+                }
+                Assert.assertTrue(Rosti.keyedIntDistinct(pRostiB, Rosti.getInitialValueSlot(pRostiB, 0), 1));
+                seedSumIntSlot(pRostiB, 3_000_000_000L, 2);
+
+                Assert.assertTrue(Rosti.keyedIntSumIntMerge(pRostiA, pRostiB, VALUE_OFFSET));
+
+                Assert.assertEquals(expectedSum, readSingleSlotLong(pRostiA, VALUE_OFFSET));
+                Assert.assertEquals(expectedCount, readSingleSlotLong(pRostiA, VALUE_OFFSET + 1));
             } finally {
                 Rosti.free(pRostiB);
             }
@@ -334,6 +394,12 @@ public class RostiTest extends AbstractCairoTest {
         Unsafe.putDouble(slot + slotFieldOffset(pRosti, valueOffset), sum);
         Unsafe.putDouble(slot + slotFieldOffset(pRosti, valueOffset + 1), compensation);
         Unsafe.putLong(slot + slotFieldOffset(pRosti, valueOffset + 2), count);
+    }
+
+    private static void seedSumIntSlot(long pRosti, long sum, long count) {
+        final long slot = findSingleSlot(pRosti);
+        Unsafe.putLong(slot + slotFieldOffset(pRosti, VALUE_OFFSET), sum);
+        Unsafe.putLong(slot + slotFieldOffset(pRosti, VALUE_OFFSET + 1), count);
     }
 
     private static int slotFieldOffset(long pRosti, int columnIndex) {

@@ -1812,15 +1812,18 @@ Java_io_questdb_std_Rosti_keyedIntSumIntMerge(JNIEnv *env, jclass cl, jlong pRos
         if (c > -1) {
             auto src = slots + (i << shift);
             auto key = *reinterpret_cast<int32_t *>(src);
-            auto val = *reinterpret_cast<jint *>(src + value_offset);
+            // The slot is 64-bit (SumIntVectorAggregateFunction declares LONG) because a sum of
+            // ints leaves int range long before the total does. Reading it as jint truncated
+            // every worker partial above INT_MAX to its sign-extended low half.
+            auto val = *reinterpret_cast<jlong *>(src + value_offset);
             auto count = *reinterpret_cast<jlong *>(src + count_offset);
 
             auto res = find(map_a, key);
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
             auto dest = map_a->slots_ + res.first;
             if (PREDICT_FALSE(res.second)) {
-                if (PREDICT_FALSE(res.first == UL_MAX)) {
-                    return JNI_FALSE;
-                }
                 *reinterpret_cast<int32_t *>(dest) = key;
             }
 
