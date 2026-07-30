@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.http.client;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientCookieHandlerFactory;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.HttpClientLinux;
 import io.questdb.cutlass.http.client.HttpClientOsx;
@@ -45,6 +46,36 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class HttpClientConstructorTest extends AbstractOomSweepTest {
+
+    @Test
+    public void testConstructorFailureAtCookieHandlerFactoryClosesSocket() throws Exception {
+        // The cookie-handler factory is the first extension point the constructor reaches after it
+        // takes the socket - only getTimeout() precedes it - and it still runs before the first
+        // native allocation, so the socket is the only resource live at the throw. The sweep below
+        // cannot pin that branch: it builds a PlainSocket whose fd is still -1, whose close() is
+        // then a no-op, so dropping the socket rollback keeps the leak check green. Counting the
+        // closes is the only oracle for it.
+        final HttpClientConfiguration configuration = new DefaultHttpClientConfiguration() {
+            @Override
+            public HttpClientCookieHandlerFactory getCookieHandlerFactory() {
+                throw new InjectedFailure();
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            final CountingSocketFactory socketFactory = new CountingSocketFactory();
+            try {
+                // Closing here keeps the leak check honest on the path where the constructor
+                // unexpectedly succeeds: dropping a built client would leak on top of the assertion
+                // below and bury it.
+                HttpClientFactory.newInstance(configuration, socketFactory).close();
+                Assert.fail("expected InjectedFailure");
+            } catch (InjectedFailure ignore) {
+                // the injected configuration getter threw
+            }
+            Assert.assertEquals("the constructor must close the socket it took", 1, socketFactory.closeCount);
+        });
+    }
 
     @Test
     public void testConstructorFailureFreesNativeAllocations() throws Exception {
@@ -158,7 +189,7 @@ public class HttpClientConstructorTest extends AbstractOomSweepTest {
 
     private static class InjectedFailure extends RuntimeException {
         InjectedFailure() {
-            super("injected facade failure", null, false, false);
+            super("injected configuration failure", null, false, false);
         }
     }
 }

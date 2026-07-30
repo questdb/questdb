@@ -124,6 +124,23 @@ public class HttpConnectionContextTest extends AbstractOomSweepTest {
     }
 
     @Test
+    public void testConstructorFailureAtCookieHandlerClosesSocket() throws Exception {
+        // The cookie handler is the first extension hook the constructor reaches once IOContext has
+        // taken the socket, and the session store, the context configuration and the network facade
+        // follow it before any native allocation happens. Nothing native is live at that point, so
+        // the socket is the only thing a throw can strand and the socket count is the only oracle:
+        // a half-built context never reaches the connection pool, so nothing else ever closes it.
+        final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+            @Override
+            public FactoryProvider getFactoryProvider() {
+                throw new InjectedFailure();
+            }
+        };
+
+        assertMemoryLeak(() -> assertConstructorRollback(httpConfig, new CountingSocketFactory()));
+    }
+
+    @Test
     public void testConstructorFailureAtRejectFactoryClosesSocketAndAuthenticator() throws Exception {
         // The reject processor is created immediately after the authenticator, so a throw there is
         // the narrowest window in which the authenticator is live and unreachable. The socket is

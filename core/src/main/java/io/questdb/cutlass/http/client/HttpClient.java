@@ -88,6 +88,11 @@ public abstract class HttpClient implements QuietCloseable {
         // client that no caller can reach, so close() will never run and the catch has to free
         // what was taken. The catch cannot read a blank final the failing statement never
         // assigned, hence the locals. Sizes are read up front for the same reason.
+        //
+        // The parser goes last on purpose. It is the one resource the catch below cannot free -
+        // ResponseHeaders overrides close() to keep parser memory alive for the client - so nothing
+        // fallible may follow it. The constructor either already holds everything the parser needs
+        // or hands it in, so this ordering costs nothing.
         final int requestBufSize = configuration.getInitialRequestBufferSize();
         final int responseBufSize = configuration.getResponseBufferSize();
         Socket socket = null;
@@ -103,7 +108,13 @@ public abstract class HttpClient implements QuietCloseable {
             this.fixBrokenConnection = configuration.fixBrokenConnection();
             this.bufLo = requestBuf = Unsafe.malloc(requestBufSize, MemoryTag.NATIVE_DEFAULT);
             this.responseParserBufLo = responseBuf = Unsafe.malloc(responseBufSize, MemoryTag.NATIVE_DEFAULT);
-            this.responseHeaders = new ResponseHeaders(responseBuf, responseBufSize, defaultTimeout, 4096, csPool);
+            this.responseHeaders = new ResponseHeaders(
+                    defaultTimeout,
+                    4096,
+                    csPool,
+                    new ResponseImpl(responseBuf, responseBuf + responseBufSize, defaultTimeout),
+                    new ChunkedResponseImpl(responseBuf, responseBuf + responseBufSize, defaultTimeout)
+            );
         } catch (Throwable th) {
             if (responseBuf != 0) {
                 this.responseParserBufLo = Unsafe.free(responseBuf, responseBufSize, MemoryTag.NATIVE_DEFAULT);
@@ -901,34 +912,29 @@ public abstract class HttpClient implements QuietCloseable {
     }
 
     public class ResponseHeaders extends HttpHeaderParser {
-        private final ChunkedResponseImpl chunkedResponse;
+        private final AbstractChunkedResponse chunkedResponse;
         private final int defaultTimeout;
-        private final ResponseImpl response;
+        private final AbstractResponse response;
 
-        public ResponseHeaders(long respParserBufLo, int respParserBufSize, int defaultTimeout, int headerBufSize, ObjectPool<DirectUtf8String> pool) {
+        public ResponseHeaders(
+                int defaultTimeout,
+                int headerBufSize,
+                ObjectPool<DirectUtf8String> pool,
+                AbstractResponse response,
+                AbstractChunkedResponse chunkedResponse
+        ) {
+            // The client builds both response views and hands them in, so everything that can throw
+            // runs while Java evaluates the arguments, before super() takes the parser's header
+            // buffer, boundary augmenter and sink. Only field assignments follow that call, which is
+            // what keeps this constructor out of the leak: HttpClient never receives the object when
+            // a constructor here throws, so its own catch would have no reference to reach the
+            // parser through, and Java does not run a superclass close() when a subclass constructor
+            // fails. HttpHeaderParser rolls its own allocations back, so a throw inside super()
+            // leaves nothing behind either.
             super(headerBufSize, pool);
-            try {
-                this.defaultTimeout = defaultTimeout;
-                this.response = new ResponseImpl(respParserBufLo, respParserBufLo + respParserBufSize, defaultTimeout);
-                this.chunkedResponse = new ChunkedResponseImpl(respParserBufLo, respParserBufLo + respParserBufSize, defaultTimeout);
-            } catch (Throwable th) {
-                // super() has already taken the parser's header buffer, boundary augmenter and sink.
-                // HttpClient never receives this object when a statement here throws, so its own
-                // catch has no reference to reach the parser through and nothing would ever free it.
-                // Java does not run a superclass close() when a subclass constructor fails.
-                //
-                // The two response objects allocate nothing native, so only a Java-heap
-                // OutOfMemoryError reaches this catch, and there is no seam that can inject one
-                // without adding test-only production surface. That leaves the block untested by
-                // design; it is the same shape as the platform subclasses above, which
-                // HttpClientConstructorTest does cover.
-                //
-                // super.close() rather than close(): close() is overridden to keep parser memory
-                // alive for the client to free later and would also tear down the outer client's
-                // live socket.
-                super.close();
-                throw th;
-            }
+            this.defaultTimeout = defaultTimeout;
+            this.response = response;
+            this.chunkedResponse = chunkedResponse;
         }
 
         public void await() {

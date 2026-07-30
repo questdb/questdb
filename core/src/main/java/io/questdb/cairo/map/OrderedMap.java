@@ -128,9 +128,12 @@ public class OrderedMap implements Map, Reopenable {
     private final long valueSize;
     private long batchEmptyValueStart;
     private int free;
+    // The map owns the heap range [heapAddr, heapLimit) and derives the heap size from that pair
+    // rather than caching it in a field of its own. No ordering of assignments can then commit a
+    // size for a block the map does not hold: every free and every realloc reads the size off the
+    // same two pointers that say which block it is talking about.
     private long heapAddr; // Heap memory start pointer.
     private long heapLimit; // Heap memory limit pointer.
-    private long heapSize;
     private long initialHeapSize;
     private int initialKeyCapacity;
     private long kPos;      // Current key-value memory pointer (contains searched key / pending key-value pair).
@@ -248,7 +251,6 @@ public class OrderedMap implements Map, Reopenable {
             this.maxResizes = maxResizes;
             if (openOnInit) {
                 heapAddr = kPos = Unsafe.malloc(heapSize, heapMemoryTag, memoryTracker);
-                this.heapSize = heapSize;
                 heapLimit = heapAddr + heapSize;
                 this.keyCapacity = computedKeyCapacity;
                 mask = this.keyCapacity - 1;
@@ -346,11 +348,12 @@ public class OrderedMap implements Map, Reopenable {
         if (heapAddr != 0) {
             offsetsAddr = Unsafe.free(offsetsAddr, (long) keyCapacity << 3, listMemoryTag, memoryTracker);
             keyCapacity = 0;
+            // Take the size first: the next line overwrites one of the two pointers it comes from.
+            final long heapSize = heapLimit - heapAddr;
             heapAddr = Unsafe.free(heapAddr, heapSize, heapMemoryTag, memoryTracker);
             heapLimit = kPos = 0;
             free = 0;
             size = 0;
-            heapSize = 0;
             nResizes = 0;
             // Clear the mask along with the capacity it derives from, so the two stay consistent
             // the way every other field here does. It is not what makes a probe on a closed map
@@ -507,15 +510,14 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public void restoreInitialCapacity() {
+        final long heapSize = heapLimit - heapAddr;
         if (heapSize != initialHeapSize || keyCapacity != initialKeyCapacity) {
             try {
-                // Commit heapSize only once the realloc has returned. Java evaluates arguments
-                // left to right, so assigning it inline would leave close() freeing the still
-                // larger block while decrementing the counters by the smaller size.
-                long newHeapAddr = Unsafe.realloc(heapAddr, heapLimit - heapAddr, initialHeapSize, heapMemoryTag, memoryTracker);
+                // Commit both pointers only once the realloc has returned, so a breach leaves the
+                // map still describing the block it continues to own and close() frees it whole.
+                long newHeapAddr = Unsafe.realloc(heapAddr, heapSize, initialHeapSize, heapMemoryTag, memoryTracker);
                 heapAddr = kPos = newHeapAddr;
-                heapSize = initialHeapSize;
-                heapLimit = heapAddr + initialHeapSize;
+                heapLimit = newHeapAddr + initialHeapSize;
                 int newKeyCapacity = initialKeyCapacity < MIN_KEY_CAPACITY ? MIN_KEY_CAPACITY : Numbers.ceilPow2(initialKeyCapacity);
                 offsetsAddr = Unsafe.realloc(offsetsAddr, (long) keyCapacity << 3, (long) newKeyCapacity << 3, listMemoryTag, memoryTracker);
                 keyCapacity = newKeyCapacity;
@@ -1011,15 +1013,17 @@ public class OrderedMap implements Map, Reopenable {
             kCapacity = maxHeapSize;
         }
         validateHeapAddressable(kCapacity);
-        long kAddr = Unsafe.realloc(heapAddr, heapSize, kCapacity, heapMemoryTag, memoryTracker);
+        final long oldHeapAddr = heapAddr;
+        long kAddr = Unsafe.realloc(oldHeapAddr, heapLimit - oldHeapAddr, kCapacity, heapMemoryTag, memoryTracker);
 
-        this.heapSize = kCapacity;
-        long delta = kAddr - heapAddr;
-        kPos += delta;
-        assert kPos > 0;
-
+        // Commit both pointers before anything else can leave the method, so no path ever sees the
+        // map describing the block the realloc has already released.
         this.heapAddr = kAddr;
         this.heapLimit = kAddr + kCapacity;
+
+        long delta = kAddr - oldHeapAddr;
+        kPos += delta;
+        assert kPos > 0;
 
         return delta;
     }

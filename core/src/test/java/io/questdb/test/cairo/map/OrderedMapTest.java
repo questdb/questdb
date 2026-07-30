@@ -2384,19 +2384,67 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestoreInitialCapacityBillsTheTrackerForEveryBlockItReleases() throws Exception {
+        // Every heap realloc and free bills the tracker for the block it actually touches, and the
+        // map takes that size from the [heapAddr, heapLimit) pair it manages the block through
+        // rather than from a cached size that could name a different block. Growing the heap,
+        // shrinking it back and closing it must therefore return the tracker to exactly zero.
+        //
+        // The map opens lazily and the test binds the tracker before reopen(), so the tracker sees
+        // every allocation from the first one and the closing balance is a complete account rather
+        // than a difference between two arbitrary points.
+        TestUtils.assertMemoryLeak(() -> {
+            final SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
+            final SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024)) {
+                // This leg grows the heap, restores it, then closes it. The balance it takes
+                // mid-flight is the part the enclosing leak check cannot reach, since that reading
+                // falls while the map is still open.
+                try (OrderedMap map = new OrderedMap(32, keyTypes, valueTypes, 16, 0.5, 1024, false)) {
+                    map.setMemoryTracker(tracker);
+                    map.reopen();
+                    fillLongKeys(map, 100);
+                    // A 32-byte heap holds two 16-byte entries, so 100 of them force several
+                    // resizes, and the 0.5 load factor over 32 slots grows the offsets array too.
+                    Assert.assertTrue("the map must have outgrown its initial heap", map.getHeapSize() > 32L);
+                    Assert.assertTrue("the map must have outgrown its initial offsets array", map.getKeyCapacity() > 32);
+
+                    map.restoreInitialCapacity();
+                    Assert.assertEquals(32L, map.getHeapSize());
+                    // 32-byte heap plus a 32-slot offsets array, and nothing else outstanding. The
+                    // test pins the capacity separately so a sizing change names itself here
+                    // instead of surfacing as an unexplained byte count.
+                    Assert.assertEquals(32, map.getKeyCapacity());
+                    Assert.assertEquals(32 + (32L << 3), tracker.getUsed());
+                }
+                Assert.assertEquals("close() must return every tracker-charged byte", 0, tracker.getUsed());
+
+                // This leg closes straight off a grown heap, with no restore in between, so close()
+                // has to size the free off a heap it never shrank.
+                try (OrderedMap map = new OrderedMap(32, keyTypes, valueTypes, 16, 0.5, 1024, false)) {
+                    map.setMemoryTracker(tracker);
+                    map.reopen();
+                    fillLongKeys(map, 100);
+                    Assert.assertTrue("the map must have outgrown its initial heap", map.getHeapSize() > 32L);
+                }
+                Assert.assertEquals("close() must return every tracker-charged byte", 0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
     public void testRestoreInitialCapacityHeapFailureLeavesMapClosed() throws Exception {
         // restoreInitialCapacity() reallocs the key heap and then the offsets array, and rolls the
         // whole thing back through close() if either throws. A lazily opened map reaches that path
         // from reopen(): both reallocs grow from address and size zero, so a per-query limit can
         // reject them.
         //
-        // Note what this does and does not prove. The PR's change here - committing heapSize only
-        // after the realloc returns - has no observable failure mode of its own: with heapAddr != 0
-        // the restore realloc is always a shrink, and both limit checks bail out on a non-positive
-        // delta, so the mis-sized free the old ordering could produce is unreachable. This is
-        // therefore forward coverage for the rollback itself, which is reachable and was untested.
-        // This half pins the tag the breach reports and the map being reusable once the limit is
-        // lifted; close() has nothing to do here, since the failing realloc left heapAddr at 0.
+        // A failing realloc cannot leave the map describing a block it no longer owns: the map
+        // derives the heap size from the pointer pair, so no second copy of it exists to commit
+        // early. That leaves the rollback itself to cover, which is reachable and was untested.
+        // This half pins the tag the breach reports and the map staying reusable once the test
+        // lifts the limit; close() has nothing to do here, since the failing realloc left heapAddr
+        // at 0.
         assertRestoreInitialCapacityRollback(16, "memoryTag=" + MemoryTag.NATIVE_FAST_MAP);
     }
 
@@ -2874,6 +2922,16 @@ public class OrderedMapTest extends AbstractCairoTest {
                 Assert.assertEquals(7, value.getLong(0));
             }
         });
+    }
+
+    private static void fillLongKeys(OrderedMap map, int count) {
+        for (int i = 0; i < count; i++) {
+            MapKey key = map.withKey();
+            key.putLong(i);
+            MapValue value = key.createValue();
+            Assert.assertTrue(value.isNew());
+            value.putLong(0, i);
+        }
     }
 
     private static int firstEmptySlot(OrderedMap map) {

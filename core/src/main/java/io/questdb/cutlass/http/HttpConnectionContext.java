@@ -154,22 +154,25 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 configuration.getHttpContextConfiguration().getNetworkFacade(),
                 LOG
         );
-        this.configuration = configuration;
-        this.cookieHandler = configuration.getFactoryProvider().getHttpCookieHandler();
-        this.sessionStore = configuration.getFactoryProvider().getHttpSessionStore();
-        this.activeConnectionTracker = activeConnectionTracker;
-        final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
-        this.nf = contextConfiguration.getNetworkFacade();
-        // Both header parsers, the response sink and the receive buffer allocate natively. A throw
-        // past any of them used to leave a half-built context that the pool never sees and nothing
-        // ever closes, leaking everything taken so far. Locals mirror the owners because the catch
-        // cannot read a blank final the failing statement never assigned.
+        // Both header parsers, the response sink and the receive buffer allocate natively, and the
+        // cookie handler, the session store and the context configuration the try opens with are
+        // extension points that can throw before any of that. super() has already taken the socket,
+        // so the rollback scope starts here rather than at the first allocation: a throw anywhere
+        // below leaves a half-built context that the pool never sees and nothing ever closes,
+        // leaking everything taken so far. Locals mirror the owners because the catch cannot read a
+        // blank final the failing statement never assigned.
         HttpHeaderParser parser = null;
         HttpHeaderParser multipartParser = null;
         HttpResponseSink sink = null;
         HttpAuthenticator auth = null;
         long recvBuf = 0;
         try {
+            this.configuration = configuration;
+            this.cookieHandler = configuration.getFactoryProvider().getHttpCookieHandler();
+            this.sessionStore = configuration.getFactoryProvider().getHttpSessionStore();
+            this.activeConnectionTracker = activeConnectionTracker;
+            final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
+            this.nf = contextConfiguration.getNetworkFacade();
             this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
             this.headerParser = parser = configuration.getFactoryProvider().getHttpHeaderParserFactory().newParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
             this.multipartContentHeaderParser = multipartParser = new HttpHeaderParser(contextConfiguration.getMultipartHeaderBufferSize(), csPool);
