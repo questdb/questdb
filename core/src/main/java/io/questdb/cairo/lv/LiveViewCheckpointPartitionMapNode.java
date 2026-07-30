@@ -34,12 +34,25 @@ import java.util.Arrays;
  */
 final class LiveViewCheckpointPartitionMapNode {
 
+    /**
+     * {@link #sourceSegmentId} of a node this build minted rather than decoded -
+     * a split sibling, a fresh root, or the empty leaf of a first build. It
+     * supersedes no published page.
+     */
+    static final long NO_SOURCE_SEGMENT_ID = -1;
     private static final int FORMAT_VERSION = 1;
     private static final int HEADER_SIZE = 2 * Integer.BYTES;
     LiveViewCheckpointPartitionMapNode[] childNodes = new LiveViewCheckpointPartitionMapNode[0];
     LiveViewCheckpointPageRef[] childRefs = new LiveViewCheckpointPageRef[0];
     byte[][] keys = new byte[0][];
     byte[][] scalarStates = new byte[0][];
+    /**
+     * Metadata segment of the published page this node was decoded from, or
+     * {@link #NO_SOURCE_SEGMENT_ID}. A copy-on-write build reads it to report the
+     * page it is about to supersede, so the segment holding that page loses a
+     * reachable page exactly when the build stops naming it.
+     */
+    long sourceSegmentId = NO_SOURCE_SEGMENT_ID;
     LiveViewCheckpointStatePageRef[][] statePageRefs = new LiveViewCheckpointStatePageRef[0][];
     private int count;
     private boolean leaf;
@@ -99,6 +112,7 @@ final class LiveViewCheckpointPartitionMapNode {
                     .put(decodedCount);
         }
         count = 0;
+        sourceSegmentId = NO_SOURCE_SEGMENT_ID;
         ensureCapacity(decodedCount);
         long offset = HEADER_SIZE;
         byte[] previousKey = null;
@@ -230,11 +244,13 @@ final class LiveViewCheckpointPartitionMapNode {
     void resetInternal() {
         leaf = false;
         count = 0;
+        sourceSegmentId = NO_SOURCE_SEGMENT_ID;
     }
 
     void resetLeaf() {
         leaf = true;
         count = 0;
+        sourceSegmentId = NO_SOURCE_SEGMENT_ID;
     }
 
     void setChild(int index, LiveViewCheckpointPartitionMapNode child) {

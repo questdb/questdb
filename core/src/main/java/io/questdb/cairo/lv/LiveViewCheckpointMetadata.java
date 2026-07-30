@@ -27,6 +27,7 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.LongList;
 import org.jetbrains.annotations.Nullable;
 
 import java.nio.ByteBuffer;
@@ -38,6 +39,54 @@ final class LiveViewCheckpointMetadata {
     static final int MAX_STATE_PAGE_REFS = 1 << 16;
 
     private LiveViewCheckpointMetadata() {
+    }
+
+    /**
+     * Folds {@code delta} into the sorted {@code (segmentId, useCount)} pairs a
+     * root persists, inserting a pair a positive delta needs and dropping one a
+     * negative delta empties. Both root kinds keep their data-segment reference
+     * counts and their metadata-segment page counts in one such list: the id
+     * spaces are disjoint, so a single ordered list serves both.
+     */
+    static void adjustSegmentUseCount(LongList counts, long segmentId, long delta) {
+        if (delta == 0) {
+            return;
+        }
+        int lo = 0;
+        int hi = counts.size() / 2;
+        while (lo < hi) {
+            final int mid = (lo + hi) >>> 1;
+            if (counts.getQuick(mid * 2) < segmentId) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if (lo < counts.size() / 2 && counts.getQuick(lo * 2) == segmentId) {
+            final int countIndex = lo * 2 + 1;
+            final long oldCount = counts.getQuick(countIndex);
+            if (delta > 0 && oldCount > Long.MAX_VALUE - delta) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint root segment use count overflow, segmentId=").put(segmentId);
+            }
+            final long newCount = oldCount + delta;
+            if (newCount < 0) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint root segment use count underflow, segmentId=").put(segmentId);
+            }
+            if (newCount == 0) {
+                counts.removeIndex(countIndex);
+                counts.removeIndex(countIndex - 1);
+            } else {
+                counts.setQuick(countIndex, newCount);
+            }
+        } else if (delta > 0) {
+            counts.add(lo * 2, segmentId);
+            counts.add(lo * 2 + 1, delta);
+        } else {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint root segment use count underflow, segmentId=").put(segmentId);
+        }
     }
 
     static int compareBytes(byte[] left, byte[] right) {

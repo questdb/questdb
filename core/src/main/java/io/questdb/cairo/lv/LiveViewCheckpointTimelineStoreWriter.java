@@ -370,6 +370,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 if (dropSegmentId(addedSegmentIds, targetSegmentId)) {
                     targetSegmentRootRefs[0]++;
                 }
+                registerBoundarySegments(directoryWriter, roots.writtenMetaSegments, addedSegmentIds);
                 directoryWriter.applyRootReferenceChanges(removedSegmentIds, addedSegmentIds, generation);
             });
 
@@ -602,6 +603,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 if (dropSegmentId(addedSegmentIds, capture.dataSegmentId)) {
                     captureSegmentRootRefs++;
                 }
+                registerBoundarySegments(directoryWriter, roots.writtenMetaSegments, addedSegmentIds);
                 directoryWriter.applyRootReferenceChanges(removedSegmentIds, addedSegmentIds, generation);
 
                 final long prefixCorrection = deltaReader.prefixSum(
@@ -1035,6 +1037,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             );
             nextSegmentId = roots.nextSegmentId;
             long metadataBytesAdded = roots.metadataBytesAdded;
+            registerBoundarySegments(directoryWriter, roots.writtenMetaSegments, reusedSegmentIds);
 
             final long prefixCorrection = deltaReader.prefixSum(oldDeltaRoot, maxTimestamp, checkpointId);
             final long baseLvRowPosition;
@@ -1218,6 +1221,38 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return null;
         }
         return ref;
+    }
+
+    /**
+     * Catalogues the metadata segments one boundary's build wrote, and takes each
+     * out of the root reference set it is already part of. A boundary segment is
+     * named by exactly one root - the boundary that wrote it - so it enters the
+     * catalogue with a count of one and moves from there exactly as a data segment
+     * does: the next boundary that reuses one of its pages takes a reference, and
+     * retiring the last boundary naming it releases the file.
+     */
+    private static void registerBoundarySegments(
+            LiveViewCheckpointSegmentDirectoryWriter directoryWriter,
+            LongList writtenMetaSegments,
+            LongList rootSegmentIds
+    ) {
+        for (int i = 0, n = writtenMetaSegments.size(); i < n; i += 2) {
+            final long segmentId = writtenMetaSegments.getQuick(i);
+            if (!dropSegmentId(rootSegmentIds, segmentId)) {
+                // The root is built from the very roots that named these
+                // segments, so one it does not name means the closure the root
+                // publishes and the files the build wrote have diverged.
+                throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                        .put("live view checkpoint root does not name the metadata segment its build wrote, segmentId=")
+                        .put(segmentId);
+            }
+            directoryWriter.addSegment(
+                    segmentId,
+                    writtenMetaSegments.getQuick(i + 1),
+                    1,
+                    LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_BOUNDARY
+            );
+        }
     }
 
     /**
@@ -2445,6 +2480,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final LiveViewCheckpointPageRef redirectOldFunctionRootRef = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointPageRef redirectPartitionMapRoot = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointStatePageRef redirectScalarRef = new LiveViewCheckpointStatePageRef();
+        /**
+         * {@code (segmentId, fileLength)} of every metadata segment the boundary
+         * built last wrote, for the caller to catalogue. Reset per boundary, so a
+         * repair's per-root reference transaction sees only its own.
+         */
+        private final LongList writtenMetaSegments = new LongList();
         private long metadataBytesAdded;
         private long nextSegmentId;
 
@@ -2469,6 +2510,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 LongList removedSegmentIdsOut,
                 LongList addedSegmentIdsOut
         ) {
+            writtenMetaSegments.clear();
             redirectCheckpointRoot.of(checkpointsDir, oldRootRef);
             if (redirectCheckpointRoot.getDefinitionTxn() != definitionTxn) {
                 throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
@@ -2515,8 +2557,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
 
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
-            checkpointRootBuilder.build(nextSegmentId++, rootRefOut);
+            final long rootSegmentId = nextSegmentId++;
+            checkpointRootBuilder.build(rootSegmentId, rootRefOut);
             metadataBytesAdded = checkedAdd(metadataBytesAdded, checkpointRootBuilder.getLastSegmentBytes());
+            writtenMetaSegments.add(rootSegmentId, checkpointRootBuilder.getLastSegmentBytes());
             checkpointRootBuilder.getReferencedSegmentIds(addedSegmentIdsOut);
             return true;
         }
@@ -2564,8 +2608,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
             oldPartitionReader.iterateAll(redirectPartitionMapRoot, entry -> redirectPartition(entry, plan));
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
-            functionRootBuilder.build(nextSegmentId++, newRootRefOut);
+            final long functionSegmentId = nextSegmentId++;
+            functionRootBuilder.build(functionSegmentId, newRootRefOut);
             metadataBytesAdded = checkedAdd(metadataBytesAdded, functionRootBuilder.getLastSegmentBytes());
+            writtenMetaSegments.add(functionSegmentId, functionRootBuilder.getLastSegmentBytes());
             return true;
         }
 
@@ -2621,6 +2667,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 LiveViewCheckpointPageRef rootRefOut,
                 LongList referencedSegmentIdsOut
         ) {
+            writtenMetaSegments.clear();
             final LiveViewCheckpointPageRef anchorRootRef = new LiveViewCheckpointPageRef();
             if (boundary.anchor != null) {
                 final FrozenAnchor anchor = boundary.anchor;
@@ -2635,8 +2682,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     anchorRootBuilder.putPartition(anchor.keys.getQuick(i), anchor.anchorValues.getQuick(i));
                 }
                 nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
-                anchorRootBuilder.build(nextSegmentId++, anchorRootRef);
+                final long anchorSegmentId = nextSegmentId++;
+                anchorRootBuilder.build(anchorSegmentId, anchorRootRef);
                 metadataBytesAdded = checkedAdd(metadataBytesAdded, anchorRootBuilder.getLastSegmentBytes());
+                writtenMetaSegments.add(anchorSegmentId, anchorRootBuilder.getLastSegmentBytes());
             }
 
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
@@ -2683,14 +2732,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     }
                 }
                 nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
-                functionRootBuilder.build(nextSegmentId++, functionRootRef);
+                final long functionSegmentId = nextSegmentId++;
+                functionRootBuilder.build(functionSegmentId, functionRootRef);
                 metadataBytesAdded = checkedAdd(metadataBytesAdded, functionRootBuilder.getLastSegmentBytes());
+                writtenMetaSegments.add(functionSegmentId, functionRootBuilder.getLastSegmentBytes());
                 checkpointRootBuilder.addFunction(functionRootRef);
             }
 
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
-            checkpointRootBuilder.build(nextSegmentId++, rootRefOut);
+            final long rootSegmentId = nextSegmentId++;
+            checkpointRootBuilder.build(rootSegmentId, rootRefOut);
             metadataBytesAdded = checkedAdd(metadataBytesAdded, checkpointRootBuilder.getLastSegmentBytes());
+            writtenMetaSegments.add(rootSegmentId, checkpointRootBuilder.getLastSegmentBytes());
             checkpointRootBuilder.getReferencedSegmentIds(referencedSegmentIdsOut);
         }
 

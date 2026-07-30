@@ -36,8 +36,9 @@ import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
-import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryEntry;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
@@ -362,9 +363,9 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             }
                         });
                         // The anchor reaches no data segment, so the newest root's
-                        // only one is the function state the same seal wrote.
-                        Assert.assertEquals(1, root.getSegmentIdCount());
-                        Assert.assertTrue(directory.getFileLength(root.getSegmentId(0)) > 0);
+                        // only one is the function state the same seal wrote. Every
+                        // other segment it names is its own boundary metadata.
+                        Assert.assertEquals(1, countRootDataSegments(directory, root));
                     }
                 }
                 assertNoRefreshFaults("lv");
@@ -409,14 +410,15 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                     // holds, and all but the newest of those were written by earlier
                     // seals. Without sharing this would be one - the segment this
                     // seal wrote its own complete image into.
-                    Assert.assertTrue(
-                            "the head root names " + root.getSegmentIdCount() + " data segments",
-                            root.getSegmentIdCount() > 1
-                    );
                     directory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
+                    final int rootDataSegments = countRootDataSegments(directory, root);
+                    Assert.assertTrue(
+                            "the head root names " + rootDataSegments + " data segments",
+                            rootDataSegments > 1
+                    );
                     final int[] sharedSegments = {0};
                     directory.iterateAll(entry -> {
-                        if (entry.referenceCount > 1) {
+                        if (!entry.isMetadata() && entry.referenceCount > 1) {
                             sharedSegments[0]++;
                         }
                     });
@@ -845,6 +847,27 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
             }
         });
         return count[0];
+    }
+
+    /**
+     * Data segments the root names, out of the complete closure it now states -
+     * which also carries the metadata segments its own boundary reaches, so the
+     * two have to be told apart through the catalogue.
+     */
+    private static int countRootDataSegments(
+            LiveViewCheckpointSegmentDirectoryReader directory,
+            LiveViewCheckpointRoot root
+    ) {
+        final LiveViewCheckpointSegmentDirectoryEntry entry = new LiveViewCheckpointSegmentDirectoryEntry();
+        int count = 0;
+        for (int i = 0, n = root.getSegmentIdCount(); i < n; i++) {
+            Assert.assertTrue(directory.find(root.getSegmentId(i), entry));
+            Assert.assertTrue(entry.fileLength > 0);
+            if (!entry.isMetadata()) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static long lastDataSegmentId(LiveViewCheckpointSegmentDirectoryReader directory) {

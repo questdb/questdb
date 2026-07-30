@@ -49,6 +49,9 @@ public class LiveViewCheckpointAnchorRootTest extends AbstractCairoTest {
 
     private static final int ANCHOR_VALUE_TYPE = ColumnType.TIMESTAMP_MICRO;
     private static final byte[] EMPTY_KEY_SCHEMA = keySchema();
+    // Kept in step with LiveViewCheckpointAnchorRoot's own constant, so a hand-written
+    // page exercises the field checks rather than the version gate ahead of them.
+    private static final int FORMAT_VERSION = 2;
     private static final String LV_DIR = "lv_anchor_root";
     private static final byte[] SYMBOL_KEY_SCHEMA = keySchema(ColumnType.STRING);
     private static final byte[] WINDOW_NAME = "w".getBytes(StandardCharsets.UTF_8);
@@ -305,20 +308,33 @@ public class LiveViewCheckpointAnchorRootTest extends AbstractCairoTest {
                 putBytes(mem, SYMBOL_KEY_SCHEMA);
             });
             final LiveViewCheckpointPageRef truncatedPayload = writeRawRoot(61, mem -> {
-                mem.putInt(1);
+                mem.putInt(FORMAT_VERSION);
                 mem.putInt(ANCHOR_VALUE_TYPE);
                 mem.putInt(WINDOW_NAME.length + 1); // one byte more than the page carries
                 mem.putInt(SYMBOL_KEY_SCHEMA.length);
+                mem.putInt(0); // segment use count
                 putNullMetaRef(mem);
                 putBytes(mem, WINDOW_NAME);
                 putBytes(mem, SYMBOL_KEY_SCHEMA);
             });
             final LiveViewCheckpointPageRef emptyWindowName = writeRawRoot(62, mem -> {
-                mem.putInt(1);
+                mem.putInt(FORMAT_VERSION);
                 mem.putInt(ANCHOR_VALUE_TYPE);
                 mem.putInt(0);
                 mem.putInt(SYMBOL_KEY_SCHEMA.length);
+                mem.putInt(0); // segment use count
                 putNullMetaRef(mem);
+                putBytes(mem, SYMBOL_KEY_SCHEMA);
+            });
+            // A page whose segment catalogue claims more pairs than it carries.
+            final LiveViewCheckpointPageRef truncatedSegmentCatalogue = writeRawRoot(63, mem -> {
+                mem.putInt(FORMAT_VERSION);
+                mem.putInt(ANCHOR_VALUE_TYPE);
+                mem.putInt(WINDOW_NAME.length);
+                mem.putInt(SYMBOL_KEY_SCHEMA.length);
+                mem.putInt(1);
+                putNullMetaRef(mem);
+                putBytes(mem, WINDOW_NAME);
                 putBytes(mem, SYMBOL_KEY_SCHEMA);
             });
 
@@ -327,6 +343,7 @@ public class LiveViewCheckpointAnchorRootTest extends AbstractCairoTest {
                 assertInvalid(() -> root.of(checkpointsDir(dir), badVersion), "anchor root format version mismatch");
                 assertInvalid(() -> root.of(checkpointsDir(dir), truncatedPayload), "anchor root payload length mismatch");
                 assertInvalid(() -> root.of(checkpointsDir(dir), emptyWindowName), "anchor root window name or key schema invalid");
+                assertInvalid(() -> root.of(checkpointsDir(dir), truncatedSegmentCatalogue), "anchor root payload length mismatch");
             }
         });
     }

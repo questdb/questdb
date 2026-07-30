@@ -652,7 +652,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         for (int i = 0, n = functionRoot.getSegmentUseCountSize(); i < n; i++) {
             final long segmentId = functionRoot.getSegmentId(i);
             if (!rootCatalogueContains(segmentId) || !segmentDirectory.find(segmentId, segmentDirectoryEntry)) {
-                throw invalid("function data segment is absent from its parent root, segmentId=").put(segmentId);
+                throw invalid("function segment is absent from its parent root, segmentId=").put(segmentId);
             }
         }
         final LiveViewCheckpointStatePageRef scalarRef = new LiveViewCheckpointStatePageRef();

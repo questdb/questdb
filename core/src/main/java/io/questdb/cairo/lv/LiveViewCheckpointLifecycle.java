@@ -127,6 +127,7 @@ public final class LiveViewCheckpointLifecycle {
         }
 
         boolean replaceEpoch = false;
+        boolean catalogueMismatch = false;
         long nextSegmentIdCeiling = 0;
         long walPurgeFloor = -1;
         long normalizedBaseSeqTxn = Numbers.LONG_NULL;
@@ -138,7 +139,9 @@ public final class LiveViewCheckpointLifecycle {
                 final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
                 replaceEpoch = superblock.definitionTxn != expectedDefinitionTxn
                         || superblock.historyEpoch != expectedHistoryEpoch;
-                if (!replaceEpoch) {
+                catalogueMismatch = !replaceEpoch
+                        && hasUnregisteredRootSegment(configuration, checkpointsDir, superblock);
+                if (!replaceEpoch && !catalogueMismatch) {
                     nextSegmentIdCeiling = superblock.getNextSegmentIdCeiling();
                     walPurgeFloor = metaStore.getWalPurgeFloor();
                     normalizedBaseSeqTxn = superblock.normalizedBaseSeqTxn;
@@ -155,6 +158,16 @@ public final class LiveViewCheckpointLifecycle {
                     }
                 }
             }
+        }
+
+        if (catalogueMismatch) {
+            // The generation names a metadata segment its own catalogue does not
+            // hold, so nothing can decide that file's fate and no count describes
+            // what still reaches it. The timeline is derived state: discard it and
+            // rebuild from the base table rather than publish over a catalogue
+            // that has already lost track of its files.
+            resetForeignFormat(configuration, checkpointsDir);
+            return ReconcileResult.FORMAT_RESET;
         }
 
         if (replaceEpoch) {
@@ -392,6 +405,39 @@ public final class LiveViewCheckpointLifecycle {
         return false;
     }
 
+    /**
+     * Checks the one crash-safety exception the catalogue allows. Every metadata
+     * segment a published root names is registered by the publication that wrote
+     * it, except the one carrying the segment directory itself: a directory tree
+     * cannot list the file it is being written into, so the superblock names it as
+     * pending and the next publication registers it. Any other root segment the
+     * catalogue does not hold means the generation and its own catalogue disagree,
+     * and no reference count then describes what still reaches that file.
+     * <p>
+     * The three superblock-rooted trees are what this walks. The boundary metadata
+     * below a timeline entry obeys the same rule, but proving it needs the whole
+     * retained closure - one partition-map walk per surviving boundary - which is
+     * the sweep the accounting exists to avoid.
+     */
+    private static boolean hasUnregisteredRootSegment(
+            @NotNull CairoConfiguration configuration,
+            @NotNull Path checkpointsDir,
+            @NotNull LiveViewCheckpointSuperblock superblock
+    ) {
+        try (LiveViewCheckpointSegmentDirectoryReader directory =
+                     new LiveViewCheckpointSegmentDirectoryReader(configuration)) {
+            directory.of(checkpointsDir, superblock.segmentDirectoryRootRef);
+            final LiveViewCheckpointSegmentDirectoryEntry entry = new LiveViewCheckpointSegmentDirectoryEntry();
+            return isUnregistered(directory, entry, superblock.timelineRootRef, superblock, checkpointsDir, "timeline")
+                    || isUnregistered(directory, entry, superblock.rowPositionDeltaRootRef, superblock, checkpointsDir, "row position delta")
+                    || isUnregistered(directory, entry, superblock.segmentDirectoryRootRef, superblock, checkpointsDir, "segment directory");
+        } catch (CairoException e) {
+            LOG.error().$("could not read the live view checkpoint segment catalogue [path=")
+                    .$(checkpointsDir).$(", error=").$safe(e.getFlyweightMessage()).I$();
+            return true;
+        }
+    }
+
     private static boolean isForeignFormat(
             @NotNull CairoConfiguration configuration,
             @NotNull Path checkpointsDir
@@ -406,6 +452,26 @@ public final class LiveViewCheckpointLifecycle {
             }
         }
         return hasUnknownEntry(ff, checkpointsDir);
+    }
+
+    private static boolean isUnregistered(
+            @NotNull LiveViewCheckpointSegmentDirectoryReader directory,
+            @NotNull LiveViewCheckpointSegmentDirectoryEntry entry,
+            @NotNull LiveViewCheckpointPageRef rootRef,
+            @NotNull LiveViewCheckpointSuperblock superblock,
+            @NotNull Path checkpointsDir,
+            @NotNull CharSequence what
+    ) {
+        if (rootRef.isNull()
+                || rootRef.getSegmentId() == superblock.pendingDirectorySegmentId
+                || directory.find(rootRef.getSegmentId(), entry)) {
+            return false;
+        }
+        LOG.error().$("live view checkpoint root names a segment its own catalogue does not hold [path=")
+                .$(checkpointsDir).$(", root=").$(what)
+                .$(", segmentId=").$(rootRef.getSegmentId())
+                .$(", generation=").$(superblock.generation).I$();
+        return true;
     }
 
     private static void purgeFinalOrphansInDir(

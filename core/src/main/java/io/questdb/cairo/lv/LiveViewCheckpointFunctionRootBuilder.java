@@ -39,9 +39,21 @@ import java.util.Arrays;
  * Builds one immutable function root and its changed partition-map paths in the
  * same metadata segment. Segment use counts are adjusted from only the changed
  * old/new partition entries, avoiding a full-map reachability walk at seal time.
+ * <p>
+ * The same counts carry the root's metadata closure. A function root's data
+ * entries count the state-page references its map holds in each data segment; its
+ * metadata entries count the pages of each boundary-metadata segment the root
+ * itself reaches - its own page plus the partition-map pages below it. Both are
+ * maintained the same way, from the delta of one build rather than a walk, and
+ * the metadata half is what lets a parent checkpoint root state the complete set
+ * of metadata segments a boundary names, so retiring the boundary releases them
+ * in one reference transaction. The two id spaces are disjoint - one id names at
+ * most one file, in exactly one of {@code data/} and {@code meta/} - so they
+ * share the list without ambiguity.
  */
 public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
 
+    private static final long NO_SEGMENT = -1;
     private final Path checkpointsDir = new Path();
     private byte[] functionIdentity = new byte[0];
     private byte[] keySchema = new byte[0];
@@ -59,6 +71,11 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
     private boolean initialized;
     private long lastSegmentBytes;
     private int mutationCount;
+    /**
+     * Metadata segment holding the function-root page this build supersedes, or
+     * {@link #NO_SEGMENT} for the first root of a function.
+     */
+    private long oldRootPageSegmentId = NO_SEGMENT;
     private int stateFormatVersion;
 
     public LiveViewCheckpointFunctionRootBuilder(@NotNull CairoConfiguration configuration) {
@@ -102,6 +119,18 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
                 segmentWriter,
                 partitionMapRoot
         );
+        // The metadata closure moves by exactly what the path copy took away and
+        // what this segment gains: every superseded map page, the root page this
+        // build replaces, and the pages written here - the map's copied path plus
+        // the root page about to follow it.
+        final LongList releasedSegmentIds = partitionMapWriter.getLastReleasedSegmentIds();
+        for (int i = 0, n = releasedSegmentIds.size(); i < n; i++) {
+            LiveViewCheckpointMetadata.adjustSegmentUseCount(candidateCounts, releasedSegmentIds.getQuick(i), -1);
+        }
+        if (oldRootPageSegmentId != NO_SEGMENT) {
+            LiveViewCheckpointMetadata.adjustSegmentUseCount(candidateCounts, oldRootPageSegmentId, -1);
+        }
+        LiveViewCheckpointMetadata.adjustSegmentUseCount(candidateCounts, metadataSegmentId, partitionMapWriter.getLastSegmentPageCount() + 1);
         resultFunctionRoot.ofBuilder(
                 functionIdentity,
                 stateFormatVersion,
@@ -115,6 +144,7 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
         segmentUseCounts.clear();
         segmentUseCounts.add(candidateCounts);
         oldPartitionMapRoot.of(partitionMapRoot.getSegmentId(), partitionMapRoot.getOffset(), partitionMapRoot.getLength());
+        oldRootPageSegmentId = metadataSegmentId;
         mutationCount = 0;
     }
 
@@ -139,6 +169,7 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
         this.stateFormatVersion = stateFormatVersion;
         mutationCount = 0;
         segmentUseCounts.clear();
+        oldRootPageSegmentId = oldFunctionRootRef.isNull() ? NO_SEGMENT : oldFunctionRootRef.getSegmentId();
         if (oldFunctionRootRef.isNull()) {
             oldPartitionMapRoot.clear();
             oldScalarStateRef.clear();
@@ -182,49 +213,18 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
         ensureInitialized();
         LiveViewCheckpointMetadata.validateStateRef(ref, true, "function scalar");
         if (!oldScalarStateRef.isNull()) {
-            adjustSegment(segmentUseCounts, oldScalarStateRef.getSegmentId(), -1);
+            LiveViewCheckpointMetadata.adjustSegmentUseCount(segmentUseCounts, oldScalarStateRef.getSegmentId(), -1);
         }
         copyStateRef(ref, scalarStateRef);
         if (!ref.isNull()) {
-            adjustSegment(segmentUseCounts, ref.getSegmentId(), 1);
+            LiveViewCheckpointMetadata.adjustSegmentUseCount(segmentUseCounts, ref.getSegmentId(), 1);
         }
         copyStateRef(ref, oldScalarStateRef);
     }
 
     private static void adjustRefs(LongList counts, LiveViewCheckpointPartitionMapEntry entry, int delta) {
         for (int i = 0; i < entry.getStatePageCount(); i++) {
-            adjustSegment(counts, entry.getStatePageRef(i).getSegmentId(), delta);
-        }
-    }
-
-    private static void adjustSegment(LongList counts, long segmentId, int delta) {
-        int lo = 0;
-        int hi = counts.size() / 2;
-        while (lo < hi) {
-            final int mid = (lo + hi) >>> 1;
-            if (counts.getQuick(mid * 2) < segmentId) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        if (lo < counts.size() / 2 && counts.getQuick(lo * 2) == segmentId) {
-            final int countIndex = lo * 2 + 1;
-            final long oldCount = counts.getQuick(countIndex);
-            if (delta < 0 && oldCount == 1) {
-                counts.removeIndex(countIndex);
-                counts.removeIndex(countIndex - 1);
-            } else {
-                if ((delta < 0 && oldCount <= 0) || (delta > 0 && oldCount == Long.MAX_VALUE)) {
-                    throw CairoException.critical(0).put("live view checkpoint function segment use count overflow");
-                }
-                counts.setQuick(countIndex, oldCount + delta);
-            }
-        } else if (delta > 0) {
-            counts.add(lo * 2, segmentId);
-            counts.add(lo * 2 + 1, 1);
-        } else {
-            throw CairoException.critical(0).put("live view checkpoint function segment use count underflow, segmentId=").put(segmentId);
+            LiveViewCheckpointMetadata.adjustSegmentUseCount(counts, entry.getStatePageRef(i).getSegmentId(), delta);
         }
     }
 

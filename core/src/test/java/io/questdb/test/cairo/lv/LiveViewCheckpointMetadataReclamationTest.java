@@ -25,12 +25,17 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
+import io.questdb.cairo.lv.LiveViewCheckpointRoot;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -50,31 +55,43 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Coverage for metadata segment reclamation: the three trees the superblock roots
- * - the timeline, the row-position delta index and the segment catalogue itself -
- * catalogue the metadata segments their pages live in, release the pages a path
- * copy supersedes, and let the ordinary purge sweep unlink a segment whose last
- * reachable page is gone.
+ * Coverage for metadata segment reclamation, in the two units the catalogue keeps.
+ * <p>
+ * The three trees the superblock roots - the timeline, the row-position delta
+ * index and the segment catalogue itself - have one live version at a time, so
+ * their segments count <em>pages</em>: a publication adds the pages it wrote and
+ * releases the ones its path copy replaced, and a B+ tree page is named exactly
+ * once, by its parent or by the superblock's root reference, which is what makes
+ * that exact. Boundary metadata - checkpoint roots, anchor roots, function roots
+ * and the partition-map pages below them - has one live version per surviving
+ * boundary instead, and boundaries retire in bulk, so its segments count
+ * <em>roots</em> exactly as data segments do: each root states the segments its
+ * whole closure names, and a repair splice or a truncate releases them in one
+ * reference transaction.
  * <p>
  * Before this, nothing ever removed a file from {@code meta/}. Every seal writes
  * one segment for its timeline path copy and one for the catalogue path copy, and
  * both are superseded by the next seal, so a view sealing on a five-minute cadence
- * left 576 dead files a day behind with no mechanism able to reclaim them. The
- * boundary metadata beside them - checkpoint roots, function roots, anchor roots
- * and partition maps - is retained state rather than garbage while its boundary
- * lives, and stays out of the catalogue until a retention horizon can retire the
- * boundaries naming it.
+ * left 576 dead files a day behind with no mechanism able to reclaim them; beside
+ * them, every boundary a repair re-versioned or a truncate dropped left its whole
+ * closure behind for good.
  * <p>
- * What makes the accounting exact is that a B+ tree page is named exactly once, by
- * its parent or by the superblock's root reference, so a metadata segment's
- * reference count is the number of its pages the current generation still reaches:
- * the publication adds the pages it wrote and subtracts the ones it replaced. Each
- * case therefore pairs its structural assertion with a restart and the from-base
- * recompute oracle, so a count that retired a segment one page too early surfaces
- * as a failed restore rather than as a saving.
+ * What a cadence seal leaves is retained state rather than garbage - its boundary
+ * stays live - so it is still there after these cases run, and only a retention
+ * horizon can retire it. Each case therefore pairs its structural assertion with a
+ * restart and the from-base recompute oracle, so a count that retired a segment
+ * one page or one root too early surfaces as a failed restore rather than as a
+ * saving.
  */
 public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewTest {
 
+    // ANCHOR compiles only inside a live view, and every row these cases commit
+    // lands on the same calendar day, so a plain row_number() over the same
+    // partition and order is exactly what the anchored view must produce.
+    private static final String ANCHORED_RECOMPUTE_SQL =
+            "SELECT ts, sym, row_number() OVER (PARTITION BY sym ORDER BY ts) AS s FROM base";
+    private static final String ANCHORED_VIEW_SQL = "SELECT ts, sym, row_number() OVER w AS s FROM base " +
+            "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')";
     private static final int KEYS = 4;
     // Two measurement points far enough apart that unbounded growth cannot hide.
     private static final int SEALS_EARLY = 8;
@@ -82,6 +99,7 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
     private static final String VIEW_SQL = "SELECT ts, sym, sum(x) OVER (" +
             "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW" +
             ") AS s FROM base";
+    private String viewSql = VIEW_SQL;
 
     @After
     public void resetClock() {
@@ -175,6 +193,98 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
     }
 
     @Test
+    public void testBoundaryPagesSharedAcrossSealsOutliveTheBoundaryThatWroteThem() throws Exception {
+        assertMemoryLeak(() -> {
+            // An anchored window is the sharing case: an anchor value moves once a
+            // day, so consecutive seals put a byte-identical entry and the map
+            // writer drops it - leaving the newer boundary's anchor root pointing
+            // at a map page an older seal wrote, in an older segment.
+            createAnchoredView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seal = 1; seal <= 8; seal++) {
+                    commit(job, seal);
+                }
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+                purgeCycle(instance);
+
+                final Set<Long> shared = sharedBoundarySegmentIds(instance);
+                Assert.assertFalse(
+                        "no boundary metadata segment is named by more than one root, so this case"
+                                + " proves nothing about cross-boundary sharing",
+                        shared.isEmpty()
+                );
+                // A segment several boundaries reach must survive the sweep for as
+                // long as the last of them does; releasing on the first would take
+                // pages a live root still names.
+                final Set<Long> metaFiles = metaSegmentIds(instance);
+                for (long segmentId : shared) {
+                    Assert.assertTrue(
+                            "a shared boundary metadata segment was unlinked, segmentId=" + segmentId,
+                            metaFiles.contains(segmentId)
+                    );
+                }
+
+                assertCatalogueMatchesDisk(instance);
+                restartCycle();
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testRepairReclaimsTheBoundaryMetadataItReVersions() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seal = 1; seal <= 12; seal++) {
+                    commit(job, seal);
+                }
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+                purgeCycle(instance);
+                final Set<Long> beforeBoundaries = boundarySegmentIds(instance);
+                final Set<Long> beforeKeys = timelineKeys(instance);
+
+                // A correction just below the head converges inside the history the
+                // view still holds, so the repair splices: it re-versions the
+                // boundaries it replays over and keeps every logical key. Their old
+                // checkpoint, function and anchor roots stop being reachable from any
+                // surviving root, which is half of where the repair-driven garbage is.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('" + timestamp(10 + 12 * 10 - 3) + "', 'k1', 500)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue(
+                        "the correction must have taken a repair",
+                        instance.getO3BoundaryReplayRows() + instance.getO3ResumeReplayRows() > 0
+                );
+                // A splice preserves every logical key - which is what makes this the
+                // re-versioning case rather than the truncate one below.
+                Assert.assertTrue(
+                        "a splice must keep every logical boundary it re-versions",
+                        timelineKeys(instance).containsAll(beforeKeys)
+                );
+
+                // Two more publications, so the fallback A/B slot advances past the
+                // generation the repair retired those segments at and the sweep is
+                // allowed to act on them.
+                commit(job, 13);
+                commit(job, 14);
+                driveRefreshToQuiescence(job);
+                purgeCycle(instance);
+
+                assertReclaimedSomeOf(instance, beforeBoundaries, "the repair");
+                assertCatalogueMatchesDisk(instance);
+                restartCycle();
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testRepairReclaimsTheMetadataItSupersedes() throws Exception {
         assertMemoryLeak(() -> {
             createView();
@@ -209,6 +319,57 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
     }
 
     @Test
+    public void testTruncateReclaimsTheBoundaryMetadataOfTheEntriesItDrops() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seal = 1; seal <= 12; seal++) {
+                    commit(job, seal);
+                }
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+                purgeCycle(instance);
+                final Set<Long> beforeBoundaries = boundarySegmentIds(instance);
+                final Set<Long> beforeKeys = timelineKeys(instance);
+
+                // A correction deep enough that the repair cannot classify a
+                // converged suffix has no tail worth keeping, so it truncates above
+                // the repair floor and re-seals a fresh head over the surviving
+                // prefix. Every dropped entry releases its whole closure in one
+                // reference transaction.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('" + timestamp(65) + "', 'k2', 900)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue(
+                        "the correction must have taken a repair",
+                        instance.getO3BoundaryReplayRows() + instance.getO3ResumeReplayRows() > 0
+                );
+                // The discriminator against the splice case: a truncate is the only
+                // publication that drops a logical key rather than re-versioning it.
+                final Set<Long> dropped = new HashSet<>(beforeKeys);
+                dropped.removeAll(timelineKeys(instance));
+                Assert.assertFalse(
+                        "the correction spliced rather than truncated, so this case tests the wrong publication",
+                        dropped.isEmpty()
+                );
+
+                commit(job, 13);
+                commit(job, 14);
+                driveRefreshToQuiescence(job);
+                purgeCycle(instance);
+
+                assertReclaimedSomeOf(instance, beforeBoundaries, "the truncate");
+                assertCatalogueMatchesDisk(instance);
+                restartCycle();
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testSupersededTimelineAndCatalogueSegmentsAreReclaimed() throws Exception {
         assertMemoryLeak(() -> {
             createView();
@@ -219,7 +380,7 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
                 driveRefreshToQuiescence(job);
                 final LiveViewInstance instance = viewInstance();
                 purgeCycle(instance);
-                final int earlyLiveMetaSegments = liveMetadataSegmentCount(instance);
+                final int earlyLiveMetaSegments = liveTreeMetadataSegmentCount(instance);
                 final int earlyMetaFiles = metaSegmentIds(instance).size();
 
                 int purged = 0;
@@ -237,16 +398,19 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
                 // keeps an entry for every segment ever written - a purge unlinks
                 // the file and leaves the entry - so the catalogue tree gains a leaf
                 // every leafCapacity entries, and each such leaf is a live metadata
-                // page of its own. That is a pre-existing property of the data-side
-                // catalogue which cataloguing metadata segments beside them makes
-                // about three times as fast. Bounding the catalogue itself needs an
-                // entry-retirement path this phase does not add.
-                final int lateLiveMetaSegments = liveMetadataSegmentCount(instance);
+                // page of its own, in whichever segment last rewrote it. That is a
+                // pre-existing property of the data-side catalogue, and cataloguing
+                // both kinds of metadata segment beside the data ones now puts about
+                // five entries per seal through it rather than one. Bounding the
+                // catalogue itself needs an entry-retirement path this phase does
+                // not add; what this asserts is only that the residual stays well
+                // below one segment per seal.
+                final int lateLiveMetaSegments = liveTreeMetadataSegmentCount(instance);
                 final int extraSeals = SEALS_LATE - SEALS_EARLY;
                 Assert.assertTrue(
                         "live metadata segments went " + earlyLiveMetaSegments + " -> " + lateLiveMetaSegments
                                 + " over " + extraSeals + " further seals",
-                        lateLiveMetaSegments <= earlyLiveMetaSegments + 2
+                        lateLiveMetaSegments - earlyLiveMetaSegments <= extraSeals / 4
                 );
 
                 // And the files really go. Each of the extra seals writes a timeline
@@ -360,16 +524,81 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
         }
     }
 
+    /**
+     * At least one of the boundary-metadata segments live before the event is gone
+     * from disk after it, and nothing a surviving root still names went with it.
+     * Both halves matter: the first is what the reclamation buys and the second is
+     * what a count that released one root too early would fail.
+     */
+    private void assertReclaimedSomeOf(LiveViewInstance instance, Set<Long> before, String what) {
+        final Set<Long> metaFiles = metaSegmentIds(instance);
+        final Set<Long> reclaimed = new HashSet<>(before);
+        reclaimed.removeAll(metaFiles);
+        Assert.assertFalse(
+                what + " reclaimed none of the " + before.size() + " boundary metadata segments it superseded",
+                reclaimed.isEmpty()
+        );
+        for (long segmentId : boundarySegmentIds(instance)) {
+            Assert.assertTrue(
+                    "a surviving root names an unlinked metadata segment, segmentId=" + segmentId,
+                    metaFiles.contains(segmentId)
+            );
+        }
+    }
+
     private void assertViewMatchesRecompute() throws Exception {
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + VIEW_SQL + ") ORDER BY 2, 1",
+                "(" + viewSql + ") ORDER BY 2, 1",
                 "(lv) ORDER BY 2, 1",
                 LOG,
                 true
         );
         assertNoRefreshFaults("lv");
+    }
+
+    /**
+     * Boundary-metadata segments the live timeline names through its roots: one
+     * per checkpoint root, one per anchor root and one per function root. A
+     * boundary's partition-map pages can sit in older segments than these, so the
+     * set is a lower bound on what must survive - which is all a "nothing live was
+     * unlinked" check needs, and exactly what a "something dead went" check wants
+     * to draw its candidates from.
+     */
+    private Set<Long> boundarySegmentIds(LiveViewInstance instance) {
+        final Set<Long> ids = new HashSet<>();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the generation must be readable", metaStore.isValid());
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointTimelineReader timeline = new LiveViewCheckpointTimelineReader(configuration);
+                    LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
+                    LiveViewCheckpointFunctionDirectory functions = new LiveViewCheckpointFunctionDirectory(configuration)
+            ) {
+                timeline.of(dir);
+                final LiveViewCheckpointPageRef ref = new LiveViewCheckpointPageRef();
+                timeline.iterateAll(pin.getTimelineRootRef(), entry -> {
+                    ids.add(entry.rootRef.getSegmentId());
+                    root.of(dir, entry.rootRef);
+                    root.getAnchorRootRef(ref);
+                    if (!ref.isNull()) {
+                        ids.add(ref.getSegmentId());
+                    }
+                    root.getFunctionDirectoryRef(ref);
+                    functions.of(dir, ref);
+                    for (int i = 0, n = functions.size(); i < n; i++) {
+                        functions.getRootRef(i, ref);
+                        ids.add(ref.getSegmentId());
+                    }
+                });
+            }
+        }
+        return ids;
     }
 
     // The catalogued segment ids of the selected generation, whatever their kind.
@@ -403,9 +632,19 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
         drainWalQueue();
     }
 
+    private void createAnchoredView() throws Exception {
+        viewSql = ANCHORED_RECOMPUTE_SQL;
+        createView(ANCHORED_VIEW_SQL);
+    }
+
     private void createView() throws Exception {
+        viewSql = VIEW_SQL;
+        createView(VIEW_SQL);
+    }
+
+    private void createView(String sql) throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + VIEW_SQL);
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + sql);
     }
 
     private boolean dataSegmentFileExists(LiveViewInstance instance, long segmentId) {
@@ -415,7 +654,13 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
         }
     }
 
-    private int liveMetadataSegmentCount(LiveViewInstance instance) {
+    /**
+     * Live segments of the three superblock-rooted trees. Boundary metadata is
+     * deliberately excluded: it grows with the boundary count by design and only a
+     * retention horizon retires it, so folding it in would hide what the per-page
+     * accounting bounds.
+     */
+    private int liveTreeMetadataSegmentCount(LiveViewInstance instance) {
         final int[] count = {0};
         try (
                 Path dir = checkpointsDir(instance);
@@ -429,7 +674,8 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
             ) {
                 directory.of(dir, pin.getSegmentDirectoryRootRef());
                 directory.iterateAll(entry -> {
-                    if (entry.isMetadata() && entry.referenceCount > 0) {
+                    if (entry.kind == LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META
+                            && entry.referenceCount > 0) {
                         count[0]++;
                     }
                 });
@@ -487,6 +733,59 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
     private void restartCycle() {
         engine.getLiveViewRegistry().clear();
         engine.buildViewGraphs();
+    }
+
+    /**
+     * Boundary-metadata segments more than one root names - the pages one seal
+     * wrote and a later one reused rather than copying.
+     */
+    private Set<Long> sharedBoundarySegmentIds(LiveViewInstance instance) {
+        final Set<Long> ids = new HashSet<>();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the generation must be readable", metaStore.isValid());
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader directory =
+                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                directory.of(dir, pin.getSegmentDirectoryRootRef());
+                directory.iterateAll(entry -> {
+                    if (entry.kind == LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_BOUNDARY
+                            && entry.referenceCount > 1) {
+                        ids.add(entry.segmentId);
+                    }
+                });
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * The {@code maxTimestamp} of every logical boundary the timeline holds. A
+     * splice preserves the whole set and a truncate drops a suffix of it, which is
+     * what tells the two publications apart from the outside.
+     */
+    private Set<Long> timelineKeys(LiveViewInstance instance) {
+        final Set<Long> keys = new HashSet<>();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the generation must be readable", metaStore.isValid());
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointTimelineReader timeline = new LiveViewCheckpointTimelineReader(configuration)
+            ) {
+                timeline.of(dir);
+                timeline.iterateAll(pin.getTimelineRootRef(), entry -> keys.add(entry.maxTimestamp));
+            }
+        }
+        return keys;
     }
 
     private LiveViewInstance viewInstance() {

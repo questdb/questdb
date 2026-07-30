@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.lv.LiveViewCheckpointAnchorRootBuilder;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRootBuilder;
@@ -35,6 +37,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointRootBuilder;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -50,6 +53,7 @@ import java.nio.charset.StandardCharsets;
 
 public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
 
+    private static final byte[] ANCHOR_NAME = "w0".getBytes(StandardCharsets.UTF_8);
     private static final byte[] AVG_ID = "avg(double):w0:0".getBytes(StandardCharsets.UTF_8);
     private static final String LV_DIR = "lv_root_builder";
     private static final byte[] SUM_ID = "sum(long):w1:1".getBytes(StandardCharsets.UTF_8);
@@ -68,18 +72,21 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final LiveViewCheckpointPageRef avgRoot = buildInitialAvgRoot(20);
             final LiveViewCheckpointPageRef sumRoot = buildSumRoot(21);
-            final LiveViewCheckpointPageRef fakeAnchorRoot = new LiveViewCheckpointPageRef().of(77, 24, 64);
+            final LiveViewCheckpointPageRef anchorRoot = buildAnchorRoot(22);
             final LiveViewCheckpointPageRef checkpoint1 = new LiveViewCheckpointPageRef();
             final LongList referenced1 = new LongList();
             try (LiveViewCheckpointRootBuilder builder = new LiveViewCheckpointRootBuilder(configuration);
                  Path dir = new Path()) {
-                builder.begin(checkpointsDir(dir), 7, 123_456, 42, fakeAnchorRoot);
+                builder.begin(checkpointsDir(dir), 7, 123_456, 42, anchorRoot);
                 builder.addFunction(sumRoot);
                 builder.addFunction(avgRoot);
-                builder.getReferencedSegmentIds(referenced1);
                 builder.build(30, checkpoint1);
+                builder.getReferencedSegmentIds(referenced1);
             }
-            assertLongList(referenced1, 1, 2, 4);
+            // Data segments 1, 2 and 4 hold the functions' state pages; 20, 21 and
+            // 22 hold the function and anchor roots with their map pages, and 30
+            // holds this root and its function directory.
+            assertLongList(referenced1, 1, 2, 4, 20, 21, 22, 30);
 
             final LiveViewCheckpointPageRef avgDirectoryRef = new LiveViewCheckpointPageRef();
             final LiveViewCheckpointPageRef sumDirectoryRef = new LiveViewCheckpointPageRef();
@@ -90,7 +97,7 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                 Assert.assertEquals(7, root.getCheckpointId());
                 Assert.assertEquals(123_456, root.getMaxTimestamp());
                 Assert.assertEquals(42, root.getDefinitionTxn());
-                Assert.assertEquals(3, root.getSegmentIdCount());
+                Assert.assertEquals(7, root.getSegmentIdCount());
                 final LiveViewCheckpointPageRef directoryRef = new LiveViewCheckpointPageRef();
                 root.getFunctionDirectoryRef(directoryRef);
                 directory.of(checkpointsDir(dir), directoryRef);
@@ -105,13 +112,15 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
             final LongList referenced2 = new LongList();
             try (LiveViewCheckpointRootBuilder builder = new LiveViewCheckpointRootBuilder(configuration);
                  Path dir = new Path()) {
-                builder.begin(checkpointsDir(dir), 8, 223_456, 42, fakeAnchorRoot);
+                builder.begin(checkpointsDir(dir), 8, 223_456, 42, anchorRoot);
                 builder.addFunction(avgRoot);
                 builder.addFunction(sumRoot);
-                builder.getReferencedSegmentIds(referenced2);
                 builder.build(31, checkpoint2);
+                builder.getReferencedSegmentIds(referenced2);
             }
-            assertLongList(referenced2, 1, 2, 4);
+            // The second root reuses every subordinate root by reference, so only
+            // the segment carrying the root itself differs.
+            assertLongList(referenced2, 1, 2, 4, 20, 21, 22, 31);
             try (LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
                  LiveViewCheckpointFunctionDirectory directory = new LiveViewCheckpointFunctionDirectory(configuration);
                  Path dir = new Path()) {
@@ -126,17 +135,30 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                 assertRefEquals(sumRoot, ref);
             }
 
+            // Swapping the first root for the second is one reference transaction
+            // over both halves of the closure: everything the two share keeps its
+            // single reference, the segment only the old root named retires, and
+            // the one only the new root names takes its place.
             try (LiveViewCheckpointSegmentDirectoryWriter segments = new LiveViewCheckpointSegmentDirectoryWriter(configuration);
                  Path dir = new Path()) {
                 segments.of(checkpointsDir(dir));
                 segments.begin(new LiveViewCheckpointPageRef());
                 for (int i = 0; i < referenced1.size(); i++) {
-                    segments.addSegment(referenced1.getQuick(i), 100 + i, 1);
+                    final long segmentId = referenced1.getQuick(i);
+                    segments.addSegment(segmentId, 100 + i, 1, kindOf(segmentId));
                 }
-                segments.applyRootReferenceChanges(referenced1, referenced2, 2);
+                // The segment the second build wrote enters the catalogue with the
+                // one reference its own root holds, so it is not counted again.
+                segments.addSegment(31, 200, 1, LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_BOUNDARY);
+                final LongList added = new LongList(referenced2);
+                added.remove(31);
+                segments.applyRootReferenceChanges(referenced1, added, 2);
                 for (int i = 0; i < referenced1.size(); i++) {
-                    Assert.assertEquals(1, segments.getReferenceCount(referenced1.getQuick(i)));
+                    final long segmentId = referenced1.getQuick(i);
+                    Assert.assertEquals(segmentId == 30 ? 0 : 1, segments.getReferenceCount(segmentId));
                 }
+                Assert.assertEquals(2, segments.getRetireGeneration(30));
+                Assert.assertEquals(1, segments.getReferenceCount(31));
             }
         });
     }
@@ -159,19 +181,28 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                  LiveViewCheckpointFunctionRoot newFunction = new LiveViewCheckpointFunctionRoot(configuration);
                  LiveViewCheckpointPartitionMapReader mapReader = new LiveViewCheckpointPartitionMapReader(configuration);
                  Path dir = new Path()) {
+                // Data segments 1 and 2 hold two state pages each; metadata segment
+                // 40 holds the root page and the one map leaf under it.
                 oldFunction.of(checkpointsDir(dir), oldRoot);
-                Assert.assertEquals(2, oldFunction.getSegmentUseCountSize());
+                Assert.assertEquals(3, oldFunction.getSegmentUseCountSize());
                 Assert.assertEquals(1, oldFunction.getSegmentId(0));
                 Assert.assertEquals(2, oldFunction.getSegmentUseCount(0));
                 Assert.assertEquals(2, oldFunction.getSegmentId(1));
                 Assert.assertEquals(2, oldFunction.getSegmentUseCount(1));
+                Assert.assertEquals(40, oldFunction.getSegmentId(2));
+                Assert.assertEquals(2, oldFunction.getSegmentUseCount(2));
 
+                // The rewrite drops segment 1 entirely, keeps one page of 2, takes
+                // the new scalar's segment 3, and moves both its own pages into 41 -
+                // so 40 leaves the closure and can be reclaimed with the old root.
                 newFunction.of(checkpointsDir(dir), newRoot);
-                Assert.assertEquals(2, newFunction.getSegmentUseCountSize());
+                Assert.assertEquals(3, newFunction.getSegmentUseCountSize());
                 Assert.assertEquals(2, newFunction.getSegmentId(0));
                 Assert.assertEquals(1, newFunction.getSegmentUseCount(0));
                 Assert.assertEquals(3, newFunction.getSegmentId(1));
                 Assert.assertEquals(1, newFunction.getSegmentUseCount(1));
+                Assert.assertEquals(41, newFunction.getSegmentId(2));
+                Assert.assertEquals(2, newFunction.getSegmentUseCount(2));
 
                 final LiveViewCheckpointPageRef oldMapRoot = new LiveViewCheckpointPageRef();
                 final LiveViewCheckpointPageRef newMapRoot = new LiveViewCheckpointPageRef();
@@ -281,6 +312,17 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
         return new byte[]{(byte) key};
     }
 
+    /**
+     * The two id spaces this test mints by hand: ids below 20 name the data
+     * segments the state page references point at, the rest name the metadata
+     * segments the builders wrote.
+     */
+    private static long kindOf(long segmentId) {
+        return segmentId < 20
+                ? LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_DATA
+                : LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_BOUNDARY;
+    }
+
     private static void putDirectoryEntry(MemoryA mem, byte identity) {
         mem.putInt(1);
         mem.putByte(identity);
@@ -301,6 +343,18 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
 
     private static LiveViewCheckpointStatePageRef stateRef(long segmentId, long offset) {
         return new LiveViewCheckpointStatePageRef().of(segmentId, offset, 8, 8, 0x31, 0, 1, 0);
+    }
+
+    private LiveViewCheckpointPageRef buildAnchorRoot(long metadataSegmentId) {
+        final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+        try (LiveViewCheckpointAnchorRootBuilder builder = new LiveViewCheckpointAnchorRootBuilder(configuration);
+             Path dir = new Path()) {
+            builder.of(checkpointsDir(dir), new LiveViewCheckpointPageRef(), ANCHOR_NAME, ColumnType.TIMESTAMP_MICRO, new byte[]{1, 0, 0, 0});
+            builder.putPartition(key(1), 111);
+            builder.putPartition(key(2), 222);
+            builder.build(metadataSegmentId, root);
+        }
+        return root;
     }
 
     private LiveViewCheckpointPageRef buildInitialAvgRoot(long metadataSegmentId) {

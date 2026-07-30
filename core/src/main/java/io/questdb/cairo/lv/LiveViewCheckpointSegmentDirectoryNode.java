@@ -42,6 +42,7 @@ import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.NODE_HEADER
 import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.PAGE_KIND_INTERNAL;
 import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.PAGE_KIND_LEAF;
 import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.RETIRE_GENERATION_NONE;
+import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_BOUNDARY;
 import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_DATA;
 import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META;
 
@@ -376,7 +377,7 @@ final class LiveViewCheckpointSegmentDirectoryNode {
                         .put(", retireGeneration=").put(retireGeneration)
                         .put(']');
             }
-            if (kind != SEGMENT_KIND_DATA && kind != SEGMENT_KIND_META) {
+            if (kind != SEGMENT_KIND_DATA && kind != SEGMENT_KIND_META && kind != SEGMENT_KIND_BOUNDARY) {
                 throw invalid("segment directory entry kind unknown")
                         .put(" [segmentId=").put(segmentId)
                         .put(", kind=").put(kind)

@@ -35,6 +35,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointRepairState;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
@@ -2515,19 +2516,37 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         return snapshotRuntime(functions);
     }
 
+    /**
+     * The one data segment a root names. Its segment set also carries the metadata
+     * segments its own boundary reaches, so the two are told apart through the
+     * catalogue's kind rather than by position.
+     */
     private long rootDataSegmentId(LiveViewInstance instance, long maxTimestamp, long checkpointId) {
         try (
                 LiveViewCheckpointMetaStore store = openStore(instance);
                 LiveViewCheckpointGenerationPin pin = store.pin();
                 LiveViewCheckpointTimelineReader timeline = openTimelineReader(instance);
                 LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
+                LiveViewCheckpointSegmentDirectoryReader directory =
+                        new LiveViewCheckpointSegmentDirectoryReader(configuration);
                 Path checkpointsDir = checkpointsDir(instance)
         ) {
             final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
             Assert.assertTrue(timeline.findExact(pin.getTimelineRootRef(), maxTimestamp, checkpointId, entry));
             root.of(checkpointsDir, entry.rootRef);
-            Assert.assertEquals(1, root.getSegmentIdCount());
-            return root.getSegmentId(0);
+            directory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
+            final LiveViewCheckpointSegmentDirectoryEntry catalogued = new LiveViewCheckpointSegmentDirectoryEntry();
+            long dataSegmentId = -1;
+            for (int i = 0, n = root.getSegmentIdCount(); i < n; i++) {
+                final long segmentId = root.getSegmentId(i);
+                Assert.assertTrue(directory.find(segmentId, catalogued));
+                if (!catalogued.isMetadata()) {
+                    Assert.assertEquals("the root names more than one data segment", -1, dataSegmentId);
+                    dataSegmentId = segmentId;
+                }
+            }
+            Assert.assertNotEquals("the root names no data segment", -1, dataSegmentId);
+            return dataSegmentId;
         }
     }
 

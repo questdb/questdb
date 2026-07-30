@@ -39,9 +39,19 @@ import java.util.Arrays;
  * Builds a checkpoint root and sorted function directory. Unchanged functions
  * are represented by their existing immutable function-root references; only
  * the small directory and checkpoint root are rewritten for an adjacent seal.
+ * <p>
+ * The root also states the segments its whole closure names - the data segments
+ * its functions' state pages sit in, and the metadata segments holding its own
+ * page, its function directory, and every anchor-root, function-root and
+ * partition-map page below them. Both halves come from the subordinate roots'
+ * own per-segment counts rather than a walk, and both are read the same way when
+ * a boundary is written or retired: a repair splice or a truncate hands the union
+ * to the catalogue as one reference transaction, so a segment retires exactly
+ * when the last boundary naming it does.
  */
 public class LiveViewCheckpointRootBuilder implements Closeable {
 
+    private final LiveViewCheckpointAnchorRoot anchorRoot;
     private final LiveViewCheckpointPageRef anchorRootRef = new LiveViewCheckpointPageRef();
     private long checkpointId;
     private final Path checkpointsDir = new Path();
@@ -58,6 +68,7 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
 
     public LiveViewCheckpointRootBuilder(@NotNull CairoConfiguration configuration) {
+        anchorRoot = new LiveViewCheckpointAnchorRoot(configuration);
         functionRoot = new LiveViewCheckpointFunctionRoot(configuration);
         resultRoot = new LiveViewCheckpointRoot(configuration);
         segmentWriter = new LiveViewCheckpointMetaSegmentWriter(configuration);
@@ -85,6 +96,9 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
      * Starts one checkpoint root. The anchor root reference may be null when the
      * live view has no anchored WINDOW; it contributes no data segment, because
      * an anchor entry's whole state is scalar metadata inside its own map pages.
+     * It does contribute metadata segments - its own page and the anchor-map pages
+     * below it, which older seals may have written - so a non-null reference is
+     * read here for the set it names.
      */
     public void begin(
             @Transient @NotNull Path checkpointsDir,
@@ -105,6 +119,12 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         this.anchorRootRef.of(anchorRootRef.getSegmentId(), anchorRootRef.getOffset(), anchorRootRef.getLength());
         functionCount = 0;
         segmentIds.clear();
+        if (!anchorRootRef.isNull()) {
+            anchorRoot.of(checkpointsDir, anchorRootRef);
+            for (int i = 0, n = anchorRoot.getSegmentUseCountSize(); i < n; i++) {
+                addSegmentId(anchorRoot.getSegmentId(i));
+            }
+        }
         initialized = true;
     }
 
@@ -124,6 +144,9 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
                 throw CairoException.critical(0).put("duplicate live view checkpoint function identity");
             }
         }
+        // The root page and its function directory land here, so this segment is
+        // part of the boundary's closure as much as the ones below it are.
+        addSegmentId(metadataSegmentId);
         segmentWriter.of(checkpointsDir, metadataSegmentId);
         final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
         LiveViewCheckpointFunctionDirectory.writeTo(
@@ -147,6 +170,7 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
 
     @Override
     public void close() {
+        Misc.free(anchorRoot);
         Misc.free(functionRoot);
         Misc.free(resultRoot);
         Misc.free(segmentWriter);

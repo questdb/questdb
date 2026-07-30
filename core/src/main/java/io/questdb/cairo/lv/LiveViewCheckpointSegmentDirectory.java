@@ -58,15 +58,29 @@ package io.questdb.cairo.lv;
  * it, and a segment whose file is missing stays distinguishable from one of the
  * other kind.
  * <p>
- * What a {@code referenceCount} counts depends on the kind. A
- * {@link #SEGMENT_KIND_DATA} segment counts logical roots, not pages: a root that
- * names one segment from several of its pages counts once. A
- * {@link #SEGMENT_KIND_META} segment counts pages instead - the pages of the
- * three superblock-rooted trees that reside in it and are still reachable from
- * the current generation's roots. Both reach zero exactly when the current
- * generation stops naming the file, which is all the purge rule needs. A zero
- * count carries the generation at which the segment became obsolete, so a later
- * purge can prove no reader can still reach it.
+ * What a {@code referenceCount} counts depends on the kind, and the three kinds
+ * split along which question a reclamation has to answer:
+ * <ul>
+ *     <li>{@link #SEGMENT_KIND_DATA} counts logical roots, not pages: a root that
+ *     names one segment from several of its pages counts once.</li>
+ *     <li>{@link #SEGMENT_KIND_META} counts pages - the pages of the three
+ *     superblock-rooted trees that reside in it and are still reachable from the
+ *     current generation's roots. There is one live version of each of those
+ *     trees at a time, and a publication knows exactly which pages its path copy
+ *     replaced, so pages are both maintainable and the finest unit available.</li>
+ *     <li>{@link #SEGMENT_KIND_BOUNDARY} counts logical roots again, like a data
+ *     segment. Boundary metadata - checkpoint roots, anchor roots, function roots
+ *     and the partition-map pages below them - has one live version per surviving
+ *     boundary rather than one in total, and boundaries retire in bulk, so the
+ *     unit that matters is "does any surviving boundary reach this file". Each
+ *     root carries the set of boundary segments its own closure names, which is
+ *     what lets a repair splice or a truncate release a whole boundary in one
+ *     reference transaction.</li>
+ * </ul>
+ * All three reach zero exactly when the current generation stops naming the file,
+ * which is all the purge rule needs. A zero count carries the generation at which
+ * the segment became obsolete, so a later purge can prove no reader can still
+ * reach it.
  *
  * <h2>Internal page payload</h2>
  * <pre>
@@ -143,12 +157,22 @@ public final class LiveViewCheckpointSegmentDirectory {
      */
     public static final long RETIRE_GENERATION_NONE = -1;
     /**
+     * A {@code meta/m.<segmentId>} file holding one boundary's metadata: a
+     * checkpoint root and its function directory, an anchor root, or a function
+     * root and the partition-map pages its build path-copied. Its
+     * {@code referenceCount} is the number of current logical roots whose closure
+     * names it, exactly as a data segment's is, and it moves through
+     * {@link LiveViewCheckpointSegmentDirectoryWriter#applyRootReferenceChanges}.
+     */
+    public static final long SEGMENT_KIND_BOUNDARY = 2;
+    /**
      * A {@code data/d.<segmentId>} file holding encoded state pages. Its
      * {@code referenceCount} is the number of current logical roots that name it.
      */
     public static final long SEGMENT_KIND_DATA = 0;
     /**
-     * A {@code meta/m.<segmentId>} file holding B+ tree pages. Its
+     * A {@code meta/m.<segmentId>} file holding B+ tree pages of the timeline, the
+     * row-position delta index or the segment catalogue itself. Its
      * {@code referenceCount} is the number of its pages the current generation's
      * superblock-rooted trees still reach - see
      * {@link LiveViewCheckpointSegmentDirectoryWriter#releaseMetadataPages}.

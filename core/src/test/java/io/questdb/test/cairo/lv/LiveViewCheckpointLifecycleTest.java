@@ -478,7 +478,7 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
              Path dir = checkpointsDir()) {
             writer.of(dir, metadataSegmentId);
             writeEmptySegmentDirectoryRoot(writer, directoryRoot);
-            writer.commit();
+            final long directoryBytes = writer.commit();
 
             final LiveViewCheckpointSuperblock superblock = store.getSuperblock();
             superblock.generation = generation;
@@ -492,6 +492,12 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
                     directoryRoot.getOffset(),
                     directoryRoot.getLength()
             );
+            // A directory tree cannot hold an entry naming the file it is written
+            // into, so a real publication carries that one registration forward
+            // and reconciliation accepts exactly this segment as uncatalogued.
+            superblock.pendingDirectorySegmentId = metadataSegmentId;
+            superblock.pendingDirectorySegmentBytes = directoryBytes;
+            superblock.pendingDirectorySegmentPages = 1;
             store.publish();
         }
     }

@@ -36,6 +36,15 @@ import java.io.Closeable;
 
 /**
  * Durable state root referenced by one logical timeline entry.
+ * <p>
+ * Beside the anchor and function references, the root carries the sorted set of
+ * segments its whole closure names: the data segments its functions' state pages
+ * sit in, and the metadata segments holding its own page, its function directory
+ * and every anchor-root, function-root and partition-map page below them. Both
+ * halves are counted the same way by the catalogue, so publishing this root takes
+ * one reference on each and retiring the boundary releases them in one
+ * transaction - which is what lets a repair splice or a truncate reclaim a
+ * boundary's files without walking anything.
  */
 public class LiveViewCheckpointRoot implements Closeable {
 

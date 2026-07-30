@@ -26,6 +26,7 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
@@ -39,6 +40,15 @@ import java.util.Arrays;
  * tree of copied paths and serialized post-order, so partitions touched by the
  * same checkpoint share copied ancestors and no intermediate metadata pages are
  * leaked. Untouched child references remain byte-for-byte identical.
+ * <p>
+ * A build also reports what it took away. Every decoded page it either rewrites
+ * or drops stops being reachable from the map it produces, and
+ * {@link #getLastReleasedSegmentIds()} lists the segment of each such page, once
+ * per page. A page it decoded and left alone - the mutation turned out to be a
+ * no-op, or the descent never reached it - is not listed, because the new map
+ * still names it. Together with {@link #getLastSegmentPageCount()} that is
+ * exactly the delta a caller needs to keep a per-segment reachable-page count
+ * without walking the map.
  */
 public class LiveViewCheckpointPartitionMapWriter implements Closeable {
 
@@ -46,6 +56,7 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
     private final int internalCapacity;
     private final int leafCapacity;
     private final LiveViewCheckpointPartitionMapReader reader;
+    private final LongList releasedSegmentIds = new LongList();
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
     private int lastSegmentPageCount;
 
@@ -74,19 +85,18 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
             long newSegmentId,
             @NotNull LiveViewCheckpointPageRef newRootOut
     ) {
+        lastSegmentPageCount = 0;
         final Prepared prepared = prepare(oldRoot, mutations, mutationCount);
         if (!prepared.changed) {
             copy(oldRoot, newRootOut);
-            lastSegmentPageCount = 0;
             return;
         }
         if (prepared.root.count() == 0) {
+            releaseSource(prepared.root);
             newRootOut.clear();
-            lastSegmentPageCount = 0;
             return;
         }
         segmentWriter.of(checkpointsDir, newSegmentId);
-        lastSegmentPageCount = 0;
         writePrepared(prepared.root, segmentWriter, newRootOut);
         segmentWriter.commit();
     }
@@ -96,6 +106,15 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
         Misc.free(reader);
         Misc.free(segmentWriter);
         Misc.free(checkpointsDir);
+    }
+
+    /**
+     * @return the segment of every published page the last build superseded, one
+     * element per page, in no particular order. Empty when the build changed
+     * nothing.
+     */
+    public @NotNull LongList getLastReleasedSegmentIds() {
+        return releasedSegmentIds;
     }
 
     public int getLastSegmentPageCount() {
@@ -114,6 +133,7 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
             @NotNull LiveViewCheckpointMetaSegmentWriter writer,
             @NotNull LiveViewCheckpointPageRef newRootOut
     ) {
+        lastSegmentPageCount = 0;
         final Prepared prepared = prepare(oldRoot, mutations, mutationCount);
         if (!prepared.changed) {
             copy(oldRoot, newRootOut);
@@ -126,6 +146,7 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
     private LiveViewCheckpointPartitionMapNode load(LiveViewCheckpointPageRef ref) {
         final LiveViewCheckpointPartitionMapNode node = new LiveViewCheckpointPartitionMapNode();
         reader.openAndDecode(ref.getSegmentId(), ref.getOffset(), ref.getLength(), node);
+        node.sourceSegmentId = ref.getSegmentId();
         return node;
     }
 
@@ -165,6 +186,10 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
             return false;
         }
         if (child.count() == 0) {
+            // The child's own children were removed one at a time, each releasing
+            // its page as it went, so the emptied node is the last page of the
+            // subtree still to account for.
+            releaseSource(child);
             node.removeChild(childIndex);
         } else {
             node.setChild(childIndex, child);
@@ -182,6 +207,7 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
         if (mutationCount < 0 || mutationCount > mutations.length) {
             throw CairoException.critical(0).put("invalid live view checkpoint partition mutation count, count=").put(mutationCount);
         }
+        releasedSegmentIds.clear();
         if (mutationCount == 0) {
             return new Prepared(null, false);
         }
@@ -221,11 +247,27 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
                     root = newRoot;
                 }
                 while (!root.isLeaf() && root.count() == 1) {
+                    // The collapsed root is not written and no parent names it,
+                    // so its page goes with it. The promoted child is written
+                    // whether or not a later mutation dirties it, and releases
+                    // its own page at that point.
+                    releaseSource(root);
                     root = root.childNodes[0] != null ? root.childNodes[0] : load(root.childRefs[0]);
                 }
             }
         }
         return new Prepared(root, changed);
+    }
+
+    /**
+     * Records that {@code node}'s decoded page stops being reachable, and marks
+     * the node so a second visit cannot record it twice.
+     */
+    private void releaseSource(LiveViewCheckpointPartitionMapNode node) {
+        if (node.sourceSegmentId != LiveViewCheckpointPartitionMapNode.NO_SOURCE_SEGMENT_ID) {
+            releasedSegmentIds.add(node.sourceSegmentId);
+            node.sourceSegmentId = LiveViewCheckpointPartitionMapNode.NO_SOURCE_SEGMENT_ID;
+        }
     }
 
     private void serialize(
@@ -243,6 +285,7 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
                 }
             }
         }
+        releaseSource(node);
         node.writeTo(writer, out);
         lastSegmentPageCount++;
     }
@@ -253,6 +296,7 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
             LiveViewCheckpointPageRef out
     ) {
         if (root.count() == 0) {
+            releaseSource(root);
             out.clear();
         } else {
             serialize(root, writer, out);

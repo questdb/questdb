@@ -41,17 +41,18 @@ public final class LiveViewCheckpointSegmentDirectoryEntry {
      */
     public long fileLength;
     /**
-     * {@link LiveViewCheckpointSegmentDirectory#SEGMENT_KIND_DATA} or
-     * {@link LiveViewCheckpointSegmentDirectory#SEGMENT_KIND_META}, which decides
-     * both the directory the file lives in and what
+     * {@link LiveViewCheckpointSegmentDirectory#SEGMENT_KIND_DATA},
+     * {@link LiveViewCheckpointSegmentDirectory#SEGMENT_KIND_META} or
+     * {@link LiveViewCheckpointSegmentDirectory#SEGMENT_KIND_BOUNDARY}, which
+     * decides both the directory the file lives in and what
      * {@link #referenceCount} counts.
      */
     public long kind;
     /**
-     * For a data segment, the number of current logical roots that name it -
-     * repeated references from one root count once. For a metadata segment, the
-     * number of its pages the current generation's superblock-rooted trees still
-     * reach.
+     * For a data or boundary-metadata segment, the number of current logical roots
+     * that name it - repeated references from one root count once. For a
+     * tree-metadata segment, the number of its pages the current generation's
+     * superblock-rooted trees still reach.
      */
     public long referenceCount;
     /**
@@ -74,8 +75,13 @@ public final class LiveViewCheckpointSegmentDirectoryEntry {
         return this;
     }
 
+    /**
+     * @return true when the segment's file lives in {@code meta/} - either kind of
+     * metadata segment. Callers that care about the counting unit rather than the
+     * directory read {@link #kind} instead.
+     */
     public boolean isMetadata() {
-        return kind == LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META;
+        return kind != LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_DATA;
     }
 
     public LiveViewCheckpointSegmentDirectoryEntry of(

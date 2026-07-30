@@ -52,13 +52,16 @@ import java.io.Closeable;
  * validation contract: a rejected transaction leaves the staged image, and
  * therefore the reusable directory, exactly as it was.
  * <p>
- * The catalogue holds metadata segments beside data ones, and
- * {@link #publish} folds in its own accounting: the pages a path copy supersedes
- * are released against the segments holding them, so a metadata segment whose
- * last reachable page goes retires like a data segment whose last root does. The
- * one thing it cannot do is register the segment it is writing - the entry would
- * have to name a file whose length the tree carrying it does not yet know - so
- * the caller carries that registration to the next publication.
+ * The catalogue holds metadata segments beside data ones, in two flavours. A
+ * boundary-metadata segment counts roots and moves through
+ * {@link #applyRootReferenceChanges} exactly as a data segment does. A
+ * tree-metadata segment counts pages, and {@link #publish} folds in its own
+ * accounting: the pages a path copy supersedes are released against the segments
+ * holding them, so such a segment whose last reachable page goes retires like a
+ * data segment whose last root does. The one thing it cannot do is register the
+ * segment it is writing - the entry would have to name a file whose length the
+ * tree carrying it does not yet know - so the caller carries that registration to
+ * the next publication.
  * <p>
  * The instance is reusable across publications and is not thread safe.
  */
@@ -132,8 +135,9 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
 
     /**
      * Registers a newly published segment. {@code referenceCount} counts logical
-     * roots for a {@link LiveViewCheckpointSegmentDirectory#SEGMENT_KIND_DATA}
-     * segment and reachable pages for a
+     * roots for a {@link LiveViewCheckpointSegmentDirectory#SEGMENT_KIND_DATA} or
+     * {@link LiveViewCheckpointSegmentDirectory#SEGMENT_KIND_BOUNDARY} segment and
+     * reachable pages for a
      * {@link LiveViewCheckpointSegmentDirectory#SEGMENT_KIND_META} one.
      */
     public void addSegment(long segmentId, long fileLength, long referenceCount, long kind) {
@@ -150,7 +154,7 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
         int index = stagedIndexOf(segmentId);
         if (index >= 0 || reader.find(segmentId, lookupEntry)) {
             throw CairoException.critical(0)
-                    .put("duplicate live view checkpoint data segment, segmentId=")
+                    .put("duplicate live view checkpoint segment, segmentId=")
                     .put(segmentId);
         }
         index = -index - 1;
@@ -198,24 +202,24 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
         for (int i = 0, n = removedSegmentIds.size(); i < n; i++) {
             final long segmentId = removedSegmentIds.get(i);
             final int index = stageExisting(segmentId, false);
-            ensureDataSegment(index, segmentId);
+            ensureRootCounted(index, segmentId);
             if (staged.getQuick(index * STAGED_STRIDE + STAGED_REFERENCE_COUNT) <= 0) {
                 throw CairoException.critical(0)
-                        .put("live view checkpoint data segment reference count underflow, segmentId=")
+                        .put("live view checkpoint segment root reference count underflow, segmentId=")
                         .put(segmentId);
             }
         }
         for (int i = 0, n = addedSegmentIds.size(); i < n; i++) {
             final long segmentId = addedSegmentIds.get(i);
             final int index = stageExisting(segmentId, true);
-            ensureDataSegment(index, segmentId);
+            ensureRootCounted(index, segmentId);
             long count = staged.getQuick(index * STAGED_STRIDE + STAGED_REFERENCE_COUNT);
             if (removedSegmentIds.contains(segmentId)) {
                 count--;
             }
             if (count == Long.MAX_VALUE) {
                 throw CairoException.critical(0)
-                        .put("live view checkpoint data segment reference count overflow, segmentId=")
+                        .put("live view checkpoint segment root reference count overflow, segmentId=")
                         .put(segmentId);
             }
         }
@@ -401,7 +405,7 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
             }
             if (staged.getQuick(index * STAGED_STRIDE + STAGED_KIND) != LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META) {
                 throw CairoException.critical(0)
-                        .put("cannot release a page of a live view checkpoint data segment, segmentId=")
+                        .put("cannot release a page of a root-counted live view checkpoint segment, segmentId=")
                         .put(segmentId);
             }
             tallyRelease(segmentId);
@@ -438,7 +442,8 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
 
     private static void validateKind(long kind) {
         if (kind != LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_DATA
-                && kind != LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META) {
+                && kind != LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META
+                && kind != LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_BOUNDARY) {
             throw CairoException.critical(0)
                     .put("live view checkpoint segment kind unknown, kind=").put(kind);
         }
@@ -447,7 +452,7 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
     private static void validateReferenceSegmentId(long segmentId) {
         if (segmentId < 0) {
             throw CairoException.critical(0)
-                    .put("live view checkpoint data segment reference id must be non-negative, was ")
+                    .put("live view checkpoint segment reference id must be non-negative, was ")
                     .put(segmentId);
         }
     }
@@ -662,10 +667,17 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
         }
     }
 
-    private void ensureDataSegment(int stagedIndex, long segmentId) {
-        if (staged.getQuick(stagedIndex * STAGED_STRIDE + STAGED_KIND) != LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_DATA) {
+    /**
+     * Refuses a root reference on a tree-metadata segment. Data and
+     * boundary-metadata segments both count roots, so both belong here; the three
+     * superblock-rooted trees count pages instead and move only through
+     * {@link #releaseMetadataPages}, so counting a root against one of them would
+     * mix two units in the same field.
+     */
+    private void ensureRootCounted(int stagedIndex, long segmentId) {
+        if (staged.getQuick(stagedIndex * STAGED_STRIDE + STAGED_KIND) == LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META) {
             throw CairoException.critical(0)
-                    .put("cannot take a root reference on a live view checkpoint metadata segment, segmentId=")
+                    .put("cannot take a root reference on a live view checkpoint tree metadata segment, segmentId=")
                     .put(segmentId);
         }
     }
@@ -782,7 +794,7 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
     private LiveViewCheckpointSegmentDirectoryEntry required(long segmentId) {
         if (!reader.find(segmentId, lookupEntry)) {
             throw CairoException.critical(0)
-                    .put("unknown live view checkpoint data segment, segmentId=")
+                    .put("unknown live view checkpoint segment, segmentId=")
                     .put(segmentId);
         }
         return lookupEntry;
@@ -823,7 +835,7 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
         if (index < 0) {
             throw CairoException.critical(0)
                     .put("cannot ").put(isAdd ? "add" : "remove")
-                    .put(" reference to unknown live view checkpoint data segment, segmentId=")
+                    .put(" reference to unknown live view checkpoint segment, segmentId=")
                     .put(segmentId);
         }
         return index;
