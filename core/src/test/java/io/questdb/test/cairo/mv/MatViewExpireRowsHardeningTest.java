@@ -42,6 +42,7 @@ import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -70,6 +71,17 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
+    @After
+    @Override
+    public void tearDown() throws Exception {
+        // The sequencer barrier seam self-clears only when a fenced commit consumes it; a test that returns
+        // before its conditional commit would otherwise leave it armed for the next test on the shared engine.
+        if (engine != null) {
+            engine.getTableSequencerAPI().setTestNextTxnIfLastTxnBarrier(null);
+        }
+        super.tearDown();
     }
 
     @Test
