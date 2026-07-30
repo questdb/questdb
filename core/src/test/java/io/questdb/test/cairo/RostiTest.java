@@ -41,6 +41,36 @@ public class RostiTest extends AbstractCairoTest {
     private static final int VALUE_OFFSET = 1;
 
     @Test
+    public void testFailedResetLeavesTheMapReportingItsEntries() throws Exception {
+        // reset() shrinks a map by building a fresh arena, and that allocation can fail. It used to
+        // empty the map before trying, so a failed reset left size_ at 0 while the old arena still
+        // held every entry. GroupByRecordCursorFactory skips maps that report fewer than one entry
+        // when merging worker shards, so those groups vanished from the result.
+        assertMemoryLeak(() -> {
+            final long pRosti = allocCompensatedSumRosti();
+            try {
+                Assert.assertTrue(Rosti.keyedIntDistinct(pRosti, Rosti.getInitialValueSlot(pRosti, 0), 1));
+                Assert.assertEquals(1, Rosti.getSize(pRosti));
+
+                Rosti.enableOOMOnMalloc();
+                try {
+                    Assert.assertFalse(Rosti.reset(pRosti, 16));
+                } finally {
+                    Rosti.disableOOMOnMalloc();
+                }
+
+                Assert.assertEquals(1, Rosti.getSize(pRosti));
+                // A successful reset afterwards still empties it, so the failure changed nothing
+                // beyond leaving the map as it was.
+                Assert.assertTrue(Rosti.reset(pRosti, 16));
+                Assert.assertEquals(0, Rosti.getSize(pRosti));
+            } finally {
+                Rosti.free(pRosti);
+            }
+        });
+    }
+
+    @Test
     public void testKeyedIntKSumDoubleMergeCarriesDestinationCompensation() throws Exception {
         // Each shard holds a Kahan (sum, c) pair standing for sum - c, and merge() folds shard B
         // into shard A. The step has to subtract A's own pending correction as well as B's:

@@ -481,8 +481,13 @@ inline bool reset(rosti_t *map, uint64_t newSize) {
         auto *old_init = map->slot_initial_values_;
         const uint64_t old_capacity = map->capacity_;
         map->capacity_ = newSize;
-        map->size_ = 0;
         if (initialize_slots(&map)) {
+            // Empty the map only once the new arena is in place. Zeroing size_ up front left a
+            // failed reset() reporting an empty map while the old arena still held every entry,
+            // and callers that skip empty maps -- the vector aggregate merge among them -- would
+            // then drop those groups from the result.
+            map->size_ = 0;
+            reset_growth_left(map);
             cpySlot(map->slot_initial_values_, old_init, map->slot_size_);
             if (old_init) {
                 free(old_init);
