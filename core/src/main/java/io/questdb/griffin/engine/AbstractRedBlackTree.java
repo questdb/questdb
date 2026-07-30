@@ -480,7 +480,9 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
 
         int px;
         while (x != EMPTY && x != root && colorOf(px = parentOf(x)) == RED) {
-            int p20x = parent2Of(x);
+            // The grandparent comes off px, not off x: px already holds parentOf(x), so going
+            // through it saves a compressed offset decode and a native read per lookup.
+            int p20x = parentOf(px);
             if (px == leftOf(p20x)) {
                 int y = rightOf(p20x);
                 if (colorOf(y) == RED) {
@@ -493,7 +495,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
                         x = px;
                         rotateLeft(x);
                         px = parentOf(x);
-                        p20x = parent2Of(x);
+                        p20x = parentOf(px);
                     }
                     setColor(px, BLACK);
                     setColor(p20x, RED);
@@ -508,10 +510,10 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
                     x = p20x;
                 } else {
                     if (x == leftOf(px)) {
-                        x = parentOf(x);
+                        x = px;
                         rotateRight(x);
                         px = parentOf(x);
-                        p20x = parent2Of(x);
+                        p20x = parentOf(px);
                     }
                     setColor(px, BLACK);
                     setColor(p20x, RED);
@@ -534,10 +536,6 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
 
     protected int nextValueOffset(int valueOffset) {
         return Unsafe.getInt(valueAddress(valueOffset) + 8);
-    }
-
-    protected int parent2Of(int blockOffset) {
-        return parentOf(parentOf(blockOffset));
     }
 
     protected int parentOf(int blockOffset) {

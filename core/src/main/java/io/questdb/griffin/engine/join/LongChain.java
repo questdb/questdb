@@ -50,7 +50,9 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     // equality: every offset from the 8GB mark upwards has its top bit set.
     private static final int CHAIN_END = -1;
     private static final long CHAIN_VALUE_SIZE = 12;
-    private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 2;
+    // Upper bound enforced by the compressed-offset encoding (offsets are 4-byte-aligned and
+    // stored as 32-bit ints), independent of any user-supplied byte cap.
+    private static final long MAX_HEAP_SIZE_LIMIT = CompressedOffsets.MAX_ALIGNED4_HEAP_SIZE;
     private final Cursor cursor = new Cursor();
     private final long initialHeapSize;
     private final long maxHeapSize;

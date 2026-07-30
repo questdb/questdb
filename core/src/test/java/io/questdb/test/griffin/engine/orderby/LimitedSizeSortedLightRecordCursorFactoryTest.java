@@ -68,7 +68,11 @@ public class LimitedSizeSortedLightRecordCursorFactoryTest extends AbstractCairo
                 // Pin the routing. Without this the test still passes if codegen sends the query to
                 // the encoded-sort or top-K factory instead - both re-derive the direction per
                 // execution and so handle the flip - leaving the legacy factory uncovered.
-                assertFactoryChainContains(factory, LimitedSizeSortedLightRecordCursorFactory.class);
+                TestUtils.assertFactoryInTree(
+                        factory,
+                        LimitedSizeSortedLightRecordCursorFactory.class,
+                        "the query is no longer routed to the factory under test"
+                );
                 assertPartiallySortedCursor(factory, "lo: $0::long");
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -100,7 +104,11 @@ public class LimitedSizeSortedLightRecordCursorFactoryTest extends AbstractCairo
             bindVariableService.setLong(0, 0L);
             bindVariableService.setLong(1, 3L);
             try (RecordCursorFactory factory = select("SELECT i FROM y ORDER BY ts, c LIMIT $1, $2")) {
-                assertFactoryChainContains(factory, LimitedSizeSortedLightRecordCursorFactory.class);
+                TestUtils.assertFactoryInTree(
+                        factory,
+                        LimitedSizeSortedLightRecordCursorFactory.class,
+                        "the query is no longer routed to the factory under test"
+                );
                 assertPartiallySortedCursor(factory, "lo: $0::long hi: $1::long");
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -171,16 +179,6 @@ public class LimitedSizeSortedLightRecordCursorFactoryTest extends AbstractCairo
                 chain.close();
             }
         });
-    }
-
-    private static void assertFactoryChainContains(RecordCursorFactory factory, Class<?> expected) {
-        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
-            if (expected.isInstance(f)) {
-                return;
-            }
-        }
-        Assert.fail("factory chain does not contain " + expected.getSimpleName()
-                + "; the query is no longer routed to the factory under test");
     }
 
     /**
