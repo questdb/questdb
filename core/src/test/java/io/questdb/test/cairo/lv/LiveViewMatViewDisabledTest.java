@@ -32,15 +32,16 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * {@code ServerMain} wires live-view refresh under its own enable flag, not the
- * mat-view flag.
+ * {@code ServerMain} wires live-view refresh under its own enable flag and its own
+ * worker pool, not the mat-view ones.
  * <p>
- * {@code setupDedicatedPools} shares one dedicated pool between mat-view and
- * live-view refresh. Gating the live-view job on {@code cairo.mat.view.enabled}
- * would silently drop refresh when mat views are off and live views on (the
- * default): {@code CREATE LIVE VIEW} succeeds and the state store enqueues refresh
- * tasks, but nothing ever drains them. This test runs a server with mat views
- * disabled + live views enabled and asserts the view still refreshes.
+ * {@code setupDedicatedPools} used to share one dedicated pool between mat-view and
+ * live-view refresh, so gating the live-view job on {@code cairo.mat.view.enabled} -
+ * or leaving it at the mercy of {@code mat.view.refresh.worker.count} - would silently
+ * drop refresh when mat views are off and live views on (the default): {@code CREATE
+ * LIVE VIEW} succeeds and the state store enqueues refresh tasks, but nothing ever
+ * drains them. This test runs a server with mat views disabled + live views enabled and
+ * asserts the view still refreshes.
  */
 public class LiveViewMatViewDisabledTest extends AbstractBootstrapTest {
 
@@ -57,9 +58,11 @@ public class LiveViewMatViewDisabledTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "false",
                     PropertyKey.CAIRO_LIVE_VIEW_ENABLED.getEnvVarName(), "true",
-                    // Guarantee the shared refresh pool exists regardless of the host's
-                    // CPU-derived default worker count.
-                    PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT.getEnvVarName(), "1",
+                    // Guarantee the live view refresh pool exists regardless of the host's
+                    // CPU-derived default worker count, and pin the mat-view pool to zero so a
+                    // live view refreshing off the mat-view pool could not pass this test.
+                    PropertyKey.LIVE_VIEW_REFRESH_WORKER_COUNT.getEnvVarName(), "1",
+                    PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT.getEnvVarName(), "0",
                     PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false"
             )) {

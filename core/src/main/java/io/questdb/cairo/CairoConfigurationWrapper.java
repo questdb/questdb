@@ -560,6 +560,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getLiveViewRefreshWorkerCount() {
+        return getDelegate().getLiveViewRefreshWorkerCount();
+    }
+
+    @Override
     public boolean getLogLevelVerbose() {
         return getDelegate().getLogLevelVerbose();
     }

@@ -716,15 +716,14 @@ public class ServerMain implements Closeable {
     }
 
     protected void setupDedicatedPools(Log log, boolean isReadOnly, ServerConfiguration config) {
-        // Mat view refresh and live view refresh share one dedicated pool: same workload
-        // shape (compile SELECT, run cursor, materialize) triggered by WAL commits, same
-        // CPU/latency profile, one capacity knob to tune. Each job set is gated on its
-        // OWN enable flag, so enabling only live views (mat views off) still starts the
-        // live view refresh workers - otherwise CREATE LIVE VIEW would succeed and enqueue
-        // refresh tasks that nothing ever drains.
+        // Mat views and live views run the same workload shape (compile SELECT, run cursor,
+        // materialize) triggered by WAL commits, but they own separate pools. Sharing one made
+        // mat.view.refresh.worker.count silently govern live views too, and the engine cannot
+        // read a mat-view knob to answer "will a live view ever be refreshed?" - the question
+        // CairoEngine.buildViewGraphs and WalPurgeJob have to answer before they register a view
+        // or hold the base WAL on its behalf. Both counts default to the wal-apply worker count.
         final boolean isMatViewEnabled = config.getCairoConfiguration().isMatViewEnabled();
-        final boolean isLiveViewEnabled = config.getCairoConfiguration().isLiveViewEnabled();
-        if ((isMatViewEnabled || isLiveViewEnabled) && !isReadOnly) {
+        if (isMatViewEnabled && !isReadOnly) {
             if (config.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0) {
                 // This starts refresh jobs only when there is a dedicated pool configured;
                 // this will not use shared pool write because getWorkerCount() > 0
@@ -732,19 +731,26 @@ public class ServerMain implements Closeable {
                         config.getMatViewRefreshPoolConfiguration(),
                         WorkerPoolManager.Requester.MAT_VIEW_REFRESH
                 );
-                if (isMatViewEnabled) {
-                    setupMatViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
-                }
-                if (isLiveViewEnabled) {
-                    setupLiveViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
-                }
+                setupMatViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
             } else {
-                log.advisory().$("mat view and live view refresh are disabled; set ")
+                log.advisory().$("mat view refresh is disabled; set ")
                         .$(MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath())
                         .$(" to a positive value or keep default to enable refresh. CREATE MATERIALIZED VIEW")
-                        .$(" and CREATE LIVE VIEW still succeed, but nothing will refresh them.")
+                        .$(" still succeeds, but nothing will refresh the view.")
                         .$();
             }
+        }
+
+        // No else-branch advisory: a zero live view worker count is no longer a half-on state to
+        // warn about. SqlParser rejects CREATE LIVE VIEW, buildViewGraphs registers nothing, and
+        // WalPurgeJob holds no base WAL - the same shape as cairo.live.view.enabled=false, which
+        // logs nothing either.
+        if (config.getCairoConfiguration().isLiveViewRefreshEnabled() && !isReadOnly) {
+            WorkerPool lvRefreshWorkerPool = workerPoolManager.getSharedPoolWrite(
+                    config.getLiveViewRefreshPoolConfiguration(),
+                    WorkerPoolManager.Requester.LIVE_VIEW_REFRESH
+            );
+            setupLiveViewJobs(lvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
         }
 
         if (config.getViewCompilerPoolConfiguration().getWorkerCount() > 0) {

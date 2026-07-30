@@ -324,8 +324,16 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long liveViewInMemoryMaxMicros;
     private final int liveViewPartitionCompactThreshold;
     private final long liveViewRefreshMemoryLimitBytes;
+    private final WorkerPoolConfiguration liveViewRefreshPoolConfiguration = new PropLiveViewRefreshPoolConfiguration();
+    private final long liveViewRefreshSleepTimeout;
     private final int liveViewRefreshTurnMaxCommits;
     private final long liveViewRefreshTurnMaxDurationMicros;
+    private final int[] liveViewRefreshWorkerAffinity;
+    private final int liveViewRefreshWorkerCount;
+    private final boolean liveViewRefreshWorkerHaltOnError;
+    private final long liveViewRefreshWorkerNapThreshold;
+    private final long liveViewRefreshWorkerSleepThreshold;
+    private final long liveViewRefreshWorkerYieldThreshold;
     private final boolean lineHttpEnabled;
     private final CharSequence lineHttpPingVersion;
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
@@ -1544,6 +1552,18 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.liveViewPartitionCompactThreshold = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 100_000);
             this.liveViewRefreshTurnMaxCommits = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 64);
             this.liveViewRefreshTurnMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS, 50_000L);
+            // Live views own their pool rather than borrowing the mat-view one: the count is the
+            // signal CairoEngine.buildViewGraphs and WalPurgeJob read to decide whether a refresh
+            // job will ever run, and a knob named for mat views cannot answer that question. Same
+            // wal-apply-derived default as mat views - the workload shape that justified sharing
+            // one pool justifies sizing them alike.
+            this.liveViewRefreshWorkerCount = getInt(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
+            this.liveViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_AFFINITY, liveViewRefreshWorkerCount);
+            this.liveViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
+            this.liveViewRefreshWorkerNapThreshold = getLong(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);
+            this.liveViewRefreshWorkerSleepThreshold = getLong(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD, 10_000);
+            this.liveViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
+            this.liveViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
 
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
@@ -2402,6 +2422,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
         return lineUdpReceiverConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getLiveViewRefreshPoolConfiguration() {
+        return liveViewRefreshPoolConfiguration;
     }
 
     @Override
@@ -4237,6 +4262,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getLiveViewRefreshTurnMaxDurationMicros() {
             return liveViewRefreshTurnMaxDurationMicros;
+        }
+
+        @Override
+        public int getLiveViewRefreshWorkerCount() {
+            return liveViewRefreshWorkerCount;
         }
 
         @Override
@@ -6703,6 +6733,58 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int ownThreadAffinity() {
             return lineUdpOwnThreadAffinity;
+        }
+    }
+
+    private class PropLiveViewRefreshPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
+        public long getNapThreshold() {
+            return liveViewRefreshWorkerNapThreshold;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "live-view-refresh";
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return liveViewRefreshWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepTimeout() {
+            return liveViewRefreshSleepTimeout;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return liveViewRefreshWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return liveViewRefreshWorkerCount;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return liveViewRefreshWorkerYieldThreshold;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return liveViewRefreshWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return liveViewRefreshWorkerCount > 0;
         }
     }
 

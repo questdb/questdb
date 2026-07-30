@@ -851,19 +851,27 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
                         continue;
                     }
-                    if (!configuration.isLiveViewEnabled()) {
-                        // Feature off: no LiveViewRefreshJob runs, so nothing would advance this
-                        // view's watermarks. Reap above regardless (pure cleanup), but do NOT
-                        // register an instance - WalPurgeJob clamps the base WAL floor to every
-                        // registered view's lvConsumedSeqTxn, so an unattended one would pin the base
-                        // WAL forever. The view stays on disk and returns when the flag is back on.
+                    if (!configuration.isLiveViewRefreshEnabled()) {
+                        // No LiveViewRefreshJob will run - the feature is off, or the dedicated
+                        // refresh pool has no workers - so nothing would advance this view's
+                        // watermarks. Reap above regardless (pure cleanup), but do NOT register an
+                        // instance: WalPurgeJob clamps the base WAL floor to every registered view's
+                        // lvConsumedSeqTxn, so an unattended one would pin the base WAL at its
+                        // genesis watermark forever while the base keeps ingesting.
                         //
-                        // The flag is necessary but not sufficient for a refresh job: setupDedicatedPools
-                        // also requires !isReadOnlyInstance() and a positive mat-view refresh worker
-                        // count. Registering anyway in those configurations is deliberate - the view
-                        // stays queryable (serving its last materialised state) exactly as an unattended
-                        // mat view does, rather than vanishing from the catalogue on restart. See the
-                        // matching note in WalPurgeJob.getSafeToPurgeUpToTxn for the retention side.
+                        // Not registering costs less than it looks. The view stays on disk and
+                        // stays queryable - LiveViewRecordCursorFactory falls back to the plain
+                        // disk cursor when the registry has no instance - it only drops out of
+                        // live_views() and loses its in-memory tier. When the pool comes back the
+                        // view resumes, re-deriving from the applied base table if the base WAL it
+                        // owed itself has been purged meanwhile (see
+                        // LiveViewRefreshJob.rederiveFromAppliedBaseAfterWalLoss); that recovery is
+                        // graceful, not an invalidation.
+                        //
+                        // Read-only is deliberately NOT part of the predicate: a replica runs no
+                        // refresh job either, but it follows the replicated on-disk tier and needs
+                        // its instances registered for reads and for a later promote. It creates no
+                        // WalPurgeJob at all, so there is no floor to release there.
                         continue;
                     }
                     try {

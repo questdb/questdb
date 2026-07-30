@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -1289,6 +1290,15 @@ public class SqlParser {
         if (isLiveKeyword(tok)) {
             if (!configuration.isLiveViewEnabled()) {
                 throw SqlException.$(lexer.lastTokenPosition(), "live views are disabled");
+            }
+            // A view created with no refresh worker would never seed, never drain and never serve
+            // a row, while WalPurgeJob would have to hold the base WAL from its genesis seqTxn
+            // forever on its behalf. Refuse it here rather than hand back a view that only looks
+            // created. buildViewGraphs applies the same predicate to views already on disk.
+            if (configuration.getLiveViewRefreshWorkerCount() < 1) {
+                throw SqlException.$(lexer.lastTokenPosition(), "live view refresh is disabled, set ")
+                        .put(PropertyKey.LIVE_VIEW_REFRESH_WORKER_COUNT.getPropertyPath())
+                        .put(" to a positive value");
             }
             // The CREATE body is the one place ANCHOR is written by hand, and it
             // parses with isLiveViewCompile() still false (only the later re-compile

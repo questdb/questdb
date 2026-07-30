@@ -5634,6 +5634,11 @@ public class CheckpointTest extends AbstractCairoTest {
         }
 
         @Override
+        public WorkerPoolConfiguration getLiveViewRefreshPoolConfiguration() {
+            return delegate.getLiveViewRefreshPoolConfiguration();
+        }
+
+        @Override
         public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
             return delegate.getMatViewRefreshPoolConfiguration();
         }

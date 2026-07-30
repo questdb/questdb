@@ -582,6 +582,14 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getLiveViewRefreshWorkerCount() {
+        // Positive so an embedded engine that drives LiveViewRefreshJob itself keeps
+        // registering views and pinning their base WAL floor. PropServerConfiguration
+        // derives the real pool size from the CPU count.
+        return 1;
+    }
+
+    @Override
     public boolean getLogLevelVerbose() {
         return false;
     }

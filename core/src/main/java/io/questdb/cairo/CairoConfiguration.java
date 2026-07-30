@@ -479,6 +479,17 @@ public interface CairoConfiguration {
 
     long getLiveViewRefreshTurnMaxDurationMicros();
 
+    /**
+     * Worker count of the dedicated live-view refresh pool
+     * ({@code live.view.refresh.worker.count}). A positive value is what makes
+     * {@code ServerMain} start {@code LiveViewRefreshJob}s at all, so it is also the
+     * signal {@link #isLiveViewRefreshEnabled()} reads. Lives on the cairo
+     * configuration rather than only on the pool configuration because the engine and
+     * {@code WalPurgeJob} have to answer "will anything ever refresh a live view?"
+     * without reaching into the server configuration.
+     */
+    int getLiveViewRefreshWorkerCount();
+
     boolean getLogLevelVerbose();
 
     boolean getLogSqlQueryProgressExe();
@@ -1181,6 +1192,27 @@ public interface CairoConfiguration {
     boolean isIOURingEnabled();
 
     boolean isLiveViewEnabled();
+
+    /**
+     * True when a {@code LiveViewRefreshJob} will actually run for this configuration:
+     * the feature flag is on AND the dedicated refresh pool has at least one worker.
+     * <p>
+     * Every decision that only makes sense while something advances a live view's
+     * watermarks must read THIS, not {@link #isLiveViewEnabled()} alone. Registering an
+     * unattended instance pins the base WAL at its genesis watermark forever, because
+     * {@code WalPurgeJob} clamps the purge floor to every registered view's
+     * {@code lvConsumedSeqTxn} and nothing would ever advance it. The predicate is
+     * config-derived and evaluated on the boot thread before the pools start, so the
+     * registration guard and the purge gate cannot disagree.
+     * <p>
+     * Deliberately excludes {@code isReadOnlyInstance()}: a read-only replica runs no
+     * refresh job either, but it still needs registered instances for the read path and
+     * for a later promote, and it creates no {@code WalPurgeJob} at all, so there is no
+     * floor to release there.
+     */
+    default boolean isLiveViewRefreshEnabled() {
+        return isLiveViewEnabled() && getLiveViewRefreshWorkerCount() > 0;
+    }
 
     boolean isMatViewCoveringIndexEnabled();
 
