@@ -117,6 +117,9 @@ public final class TableUtils {
     public static final String LEGACY_CHECKPOINT_DIRECTORY = "snapshot";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
+    // upper bound on the orphan directories kept aside under one table name,
+    // see CairoEngine.checkTableDirAvailable()
+    public static final int MAX_ORPHAN_DIRS = 32;
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
     public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
@@ -144,6 +147,9 @@ public final class TableUtils {
     // 24-byte header left empty for possible future use
     // in case we decide to support ALTER MAT VIEW, and modify mat view metadata
     public static final int NULL_LEN = -1;
+    // suffix of a table directory that was moved aside because it had no table name
+    // registry entry, see CairoEngine.checkTableDirAvailable()
+    public static final String ORPHAN_DIR_SUFFIX = ".orphan.";
     public static final String PARQUET_METADATA_FILE_NAME = "_pm";
     public static final String PARQUET_METADATA_STAGING_FILE_NAME = "_pm.staging";
     public static final String PARQUET_PARTITION_NAME = "data.parquet";

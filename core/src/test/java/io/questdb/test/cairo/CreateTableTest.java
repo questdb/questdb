@@ -41,6 +41,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.CreateTableOperationFuture;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
+import io.questdb.metrics.QueryTracingJob;
+import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -390,6 +392,71 @@ public class CreateTableTest extends AbstractCairoTest {
                 0,
                 "cannot create NULL-type column, please use type cast, e.g. x::type"
         );
+    }
+
+    @Test
+    public void testCreateSystemTableFailsWhenRenameRefused() throws Exception {
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (Utf8s.containsAscii(to, TableUtils.ORPHAN_DIR_SUFFIX)) {
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                return super.rename(from, to);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            plantOrphanDir(QueryTracingJob.TABLE_NAME);
+            try {
+                execute(createQueryTraceSql());
+                fail("expected CREATE to fail when the orphan directory cannot be moved aside");
+            } catch (CairoException | SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "name is reserved");
+            }
+            assertTrue(isDirPresent(orphanDirName(QueryTracingJob.TABLE_NAME)));
+        });
+    }
+
+    @Test
+    public void testCreateSystemTableIgnoresSoftLinkedDir() throws Exception {
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean isSoftLink(LPSZ softLink) {
+                return Utf8s.containsAscii(softLink, QueryTracingJob.TABLE_NAME) || super.isSoftLink(softLink);
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (Utf8s.containsAscii(to, TableUtils.ORPHAN_DIR_SUFFIX)) {
+                    fail("a soft-linked directory must never be renamed");
+                }
+                return super.rename(from, to);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            plantOrphanDir(QueryTracingJob.TABLE_NAME);
+            try {
+                execute(createQueryTraceSql());
+                fail("expected CREATE to fail on a soft-linked orphan directory");
+            } catch (CairoException | SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "name is reserved");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateSystemTableQuarantinesOrphanDir() throws Exception {
+        assertMemoryLeak(() -> {
+            final String dirName = orphanDirName(QueryTracingJob.TABLE_NAME);
+            plantOrphanDir(QueryTracingJob.TABLE_NAME);
+            plantMarkerFile(dirName);
+
+            execute(createQueryTraceSql());
+
+            assertNotNull(engine.getTableTokenIfExists(QueryTracingJob.TABLE_NAME));
+            // the husk was moved aside rather than deleted, and its contents survived
+            assertTrue(isMarkerFilePresent(dirName + TableUtils.ORPHAN_DIR_SUFFIX + "0"));
+        });
     }
 
     @Test
@@ -1354,6 +1421,23 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateUserTableFailsOnOrphanDir() throws Exception {
+        assertMemoryLeak(() -> {
+            plantOrphanDir("x_user_orphan");
+            try {
+                execute("CREATE TABLE x_user_orphan (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
+                fail("expected CREATE to fail on an orphan user table directory");
+            } catch (CairoException | SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "name is reserved");
+                TestUtils.assertContains(e.getFlyweightMessage(), "path=");
+                TestUtils.assertContains(e.getFlyweightMessage(), "txn=missing");
+            }
+            // a user table directory is never moved aside
+            assertTrue(isDirPresent(orphanDirName("x_user_orphan")));
+        });
+    }
+
+    @Test
     public void testCreateWalAndNonWalTablesParallel() throws Throwable {
         assertMemoryLeak(() -> {
             int threadCount = 3;
@@ -1711,6 +1795,47 @@ public class CreateTableTest extends AbstractCairoTest {
                 assertEquals(maxUncommittedRows, reader.getMetadata().getMaxUncommittedRows());
             }
         });
+    }
+
+    private static String createQueryTraceSql() {
+        return "CREATE TABLE '" + QueryTracingJob.TABLE_NAME +
+                "' (ts TIMESTAMP, query_text VARCHAR, execution_micros LONG, principal VARCHAR)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL";
+    }
+
+    private static boolean isDirPresent(String dirName) {
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(dirName);
+            return TestFilesFacadeImpl.INSTANCE.exists(path.$());
+        }
+    }
+
+    private static boolean isMarkerFilePresent(String dirName) {
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(dirName).concat("marker.txt");
+            return TestFilesFacadeImpl.INSTANCE.exists(path.$());
+        }
+    }
+
+    // the test configuration mangles table directory names, so a non-WAL table does not
+    // simply live in a directory named after it
+    private static String orphanDirName(String tableName) {
+        return TableUtils.getTableDir(engine.getConfiguration().mangleTableDirNames(), tableName, 0, false);
+    }
+
+    private static void plantMarkerFile(String dirName) {
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(dirName).concat("marker.txt");
+            assertTrue(TestFilesFacadeImpl.INSTANCE.touch(path.$()));
+        }
+    }
+
+    // a table directory with no _txn file: TableUtils.exists() reports TABLE_RESERVED
+    private static void plantOrphanDir(String tableName) {
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(orphanDirName(tableName)).slash();
+            assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, engine.getConfiguration().getMkDirMode()));
+        }
     }
 
     private void createTableLike(boolean isWalEnabled) throws Exception {
