@@ -3444,6 +3444,30 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelRostiColumnTopKey() throws Exception {
+        // Same harness, but the KEY column is added by ALTER, so the partitions written before it
+        // read back as a column top: every one of their rows belongs to the NULL group, and the
+        // build has to materialize that group from row presence alone. Runs through the whole
+        // matrix this class parameterises -- four workers x {parquet, native} x {parallel, serial}
+        // x {JIT, no JIT} -- which is the only coverage the column-top path gets over parquet.
+        //
+        // The value columns have no column top, so the vectorized and row-wise plans owe the same
+        // answers and one expectation serves both.
+        testParallelRostiColumnTopGroupBy(
+                "SELECT key, count(), sum(v) sum_v, min(v) min_v, max(v) max_v, avg(v) avg_v, " +
+                        "ksum(d) ksum_d, nsum(d) nsum_d " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                """
+                        key\tcount\tsum_v\tmin_v\tmax_v\tavg_v\tksum_d\tnsum_d
+                        null\t100\t5050\t1\t100\t50.5\t100.0\t100.0
+                        0\t50\t2550\t2\t100\t51.0\t100.0\t100.0
+                        1\t50\t2500\t1\t99\t50.0\t100.0\t100.0
+                        """
+        );
+    }
+
+    @Test
     public void testParallelRostiCount() throws Exception {
         testParallelRostiGroupBy(
                 "SELECT key, count(i) count_i, count(l) count_l, count(d) count_d " +
@@ -5412,6 +5436,60 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         }
 
                         TestUtils.assertEquals(sink, sinkB);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private void testParallelRostiColumnTopGroupBy(String query, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        // One row per partition, so the frames spread over the workers.
+                        execute(
+                                compiler,
+                                "CREATE TABLE tab AS (SELECT " +
+                                        "x v, " +
+                                        "1.0 d, " +
+                                        "(x * 86400000000L)::timestamp ts " +
+                                        "from long_sequence(100)) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        execute(compiler, "ALTER TABLE tab ADD COLUMN key INT", sqlExecutionContext);
+                        execute(
+                                compiler,
+                                "INSERT INTO tab SELECT x, 2.0, ((100 + x) * 86400000000L)::timestamp, (x % 2)::int " +
+                                        "FROM long_sequence(100)",
+                                sqlExecutionContext
+                        );
+                        if (convertToParquet) {
+                            execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
+
+                        assertQuery(query)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns(expected);
+
+                        if (enableParallelGroupBy) {
+                            // Make sure that we're testing Rosti here.
+                            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                                RecordCursorFactory nestedFactory = factory.getBaseFactory();
+                                while (nestedFactory != null) {
+                                    if (nestedFactory.getClass() == GroupByRecordCursorFactory.class) {
+                                        break;
+                                    }
+                                    nestedFactory = nestedFactory.getBaseFactory();
+                                }
+                                Assert.assertNotNull("parallel GROUP BY doesn't use vect.GroupByRecordCursorFactory", nestedFactory);
+                            }
+                        }
                     },
                     configuration,
                     LOG
