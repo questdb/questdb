@@ -42,6 +42,7 @@ import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntMultiLongHashMap;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -244,15 +245,29 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                 sharedState
         );
 
+        // The symbol lookup map, the owner and per-worker slave data maps and the prevailing caches
+        // all grow with the join's symbol cardinality, so they charge the per-query tracker like the
+        // allocators the parent binds in reopen(). Binding runs while each map is closed - clear()
+        // releases them and drops their tracker - so every block is freed under the tracker that
+        // charged it. A worker slot's map is charged to the query that acquired the slot, which is
+        // the query this atom belongs to.
+        final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+        slaveSymbolLookupMap.setMemoryTracker(memoryTracker);
         slaveSymbolLookupMap.reopen();
+        ownerSlaveData.setMemoryTracker(memoryTracker);
         ownerSlaveData.reopen();
         for (int i = 0, n = perWorkerSlaveData.size(); i < n; i++) {
-            perWorkerSlaveData.getQuick(i).reopen();
+            final DirectIntMultiLongHashMap slaveData = perWorkerSlaveData.getQuick(i);
+            slaveData.setMemoryTracker(memoryTracker);
+            slaveData.reopen();
         }
         if (ownerPrevailingCache != null) {
+            ownerPrevailingCache.setMemoryTracker(memoryTracker);
             ownerPrevailingCache.reopen();
             for (int i = 0, n = perWorkerPrevailingCache.size(); i < n; i++) {
-                perWorkerPrevailingCache.getQuick(i).reopen();
+                final WindowJoinPrevailingCache prevailingCache = perWorkerPrevailingCache.getQuick(i);
+                prevailingCache.setMemoryTracker(memoryTracker);
+                prevailingCache.reopen();
             }
         }
 

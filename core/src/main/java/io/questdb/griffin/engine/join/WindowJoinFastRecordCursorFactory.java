@@ -60,6 +60,7 @@ import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntMultiLongHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
@@ -526,6 +527,21 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 SqlExecutionContext sqlExecutionContext
         ) throws SqlException;
 
+        /**
+         * Binds the two slave maps to the per-query tracker, like the allocators next to them.
+         * {@code slaveSymbolLookupMap} holds one entry per master symbol and {@code slaveData} one
+         * per key in the indexed window, so both grow with the join's symbol cardinality and both
+         * belong under the per-query limit rather than the global counter alone.
+         * <p>
+         * Runs while both maps are closed - {@code close()} releases them and drops their tracker -
+         * so every block is freed under the tracker that charged it.
+         */
+        protected void bindSlaveMapsToTracker(SqlExecutionContext sqlExecutionContext) {
+            final MemoryTracker memoryTracker = sqlExecutionContext.getMemoryTracker();
+            slaveSymbolLookupMap.setMemoryTracker(memoryTracker);
+            slaveData.setMemoryTracker(memoryTracker);
+        }
+
         protected void setupSlaveLookupMap(RecordCursor masterCursor, TimeFrameCursor slaveCursor) {
             slaveSymbolLookupMap.reopen();
             // Master may project the symbol through a SymbolColumn (e.g. CTE / sub-select), so unwrap.
@@ -817,6 +833,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
+                bindSlaveMapsToTracker(sqlExecutionContext);
                 slaveData.reopen();
                 allocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 allocator.reopen();
@@ -1181,7 +1198,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
+                bindSlaveMapsToTracker(sqlExecutionContext);
                 slaveData.reopen();
+                prevailingCache.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 prevailingCache.reopen();
                 allocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 allocator.reopen();
@@ -1645,6 +1664,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+            prevailingCache.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
             prevailingCache.reopen();
             super.of(masterCursor, slaveCursor, sqlExecutionContext);
         }

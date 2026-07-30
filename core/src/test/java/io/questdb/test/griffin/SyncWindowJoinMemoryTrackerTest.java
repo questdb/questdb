@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.MemoryTag;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -55,8 +56,10 @@ import org.junit.Test;
  * They reach the same unbounded native structures as the parallel variants - the
  * {@code GroupByAllocator}s backing group-by function state (e.g. {@code array_agg})
  * and, for the symbol-keyed fast path, the temporary slave row id / timestamp /
- * column lists - which the cursors bind to the per-query tracker in {@code of()}
- * before the build loop and free in {@code close()}.
+ * column lists, the slave symbol lookup and slaveData hash maps and the prevailing
+ * cache - which the cursors bind to the per-query tracker in {@code of()} before the
+ * build loop and free in {@code close()}. The maps scale with the join's symbol
+ * cardinality, which is what the {@code HighCardinality} cases below exercise.
  * <p>
  * A symbol equality join ({@code ON t.sym = p.sym}) routes to the fast
  * {@link WindowJoinFastRecordCursorFactory}; a join without it routes to the general
@@ -125,10 +128,75 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedWindowJoinHighCardinalitySymbolMapsBreachLimitAtOpen() throws Exception {
+        // The symbol-keyed fast cursor carries two native maps next to its allocators:
+        // slaveSymbolLookupMap (one entry per master symbol, built in of()) and slaveData (one entry
+        // per key in the indexed window). Both scale with symbol cardinality and both used to
+        // allocate off the global counter only, so a keyed join over a wide symbol set could run
+        // past the configured per-query limit without breaching it.
+        //
+        // 50k distinct symbols grow the lookup map to a 1 MiB block through doubling rehashes, which
+        // is why a 256 KiB limit breaches. The breach lands in getCursor(), not in the drain: of()
+        // builds the lookup map before a single row is read, and the group-by allocators next to it
+        // hold nothing yet. sum() keeps the aggregate cheap, and the helper pins the breaching
+        // allocation's memory tag to NATIVE_UNORDERED_MAP - the allocators charge
+        // NATIVE_GROUP_BY_FUNCTION - so no other structure can stand in for the maps. Without the
+        // binding getCursor() returns normally and the Assert.fail below fires.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createHighCardinalityTrades(engine, sqlExecutionContext, 50_000);
+                        createHighCardinalityPrices(engine, sqlExecutionContext, 50_000);
+                        final String query = "SELECT t.ts, sum(p.price) " +
+                                "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
+                                "RANGE BETWEEN 1 seconds PRECEDING AND 1 seconds FOLLOWING EXCLUDE PREVAILING";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(factory, WindowJoinFastRecordCursorFactory.class);
+                            assertOpenBreachesOnUnorderedMap(factory, sqlExecutionContext);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testKeyedWindowJoinHighCardinalitySymbolMapsReleaseAllocations() throws Exception {
+        // The same 50k-symbol join under a limit it fits in. The two maps are bound on each open and
+        // must release every byte on close; repeated getCursor/close cycles under assertMemoryLeak
+        // expose a malloc/free asymmetry, and the tracker's own assert (Unsafe.recordPerQueryMemAlloc)
+        // fires under -ea if a block is ever freed under a tracker other than the one that charged it.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64 * 1024 * 1024L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createHighCardinalityTrades(engine, sqlExecutionContext, 50_000);
+                        createHighCardinalityPrices(engine, sqlExecutionContext, 50_000);
+                        final String query = "SELECT t.ts, sum(p.price) " +
+                                "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
+                                "RANGE BETWEEN 1 seconds PRECEDING AND 1 seconds FOLLOWING EXCLUDE PREVAILING";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(factory, WindowJoinFastRecordCursorFactory.class);
+                            assertReleasesAllocations(factory, sqlExecutionContext);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testKeyedWindowJoinOpenFailureReleasesAllocations() throws Exception {
-        // A tiny limit breaches during the first drain (the chunk index is off the per-query tracker,
-        // so nothing per-query-tracked allocates at open); the loop verifies each breach releases
-        // allocations and leaves the factory reusable.
+        // A tiny limit breaches on the keyed cursor's first tracked allocation, which is the symbol
+        // lookup map of() builds at open; the loop verifies each breach releases allocations and
+        // leaves the factory reusable.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -370,9 +438,9 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testVectorizedWindowJoinOpenFailureReleasesAllocations() throws Exception {
         // A batch-computable aggregate (sum) over a symbol-keyed WINDOW JOIN routes to the vectorized
-        // WindowJoinFastVectRecordCursor, which carries its own allocator + slaveAllocator. A tiny
-        // limit breaches during the first drain (the chunk index is off the per-query tracker, so
-        // nothing per-query-tracked allocates at open); the slave data charged to it trips the limit.
+        // WindowJoinFastVectRecordCursor, which carries its own allocator + slaveAllocator on top of
+        // the two symbol maps. A tiny limit breaches on the first of those to allocate - the lookup
+        // map of() builds at open - well before the slave data the drain would charge.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -448,13 +516,35 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         Assert.fail("expected " + expected.getSimpleName() + " in the factory tree, but top was " + factory.getClass().getName());
     }
 
+    // Asserts the breach lands in getCursor() rather than in the drain, that the allocation that
+    // breached is one of the maps, and that every repeat of the failed open breaches the same way -
+    // i.e. the failed open released what it had charged and left the factory reusable.
+    //
+    // The memoryTag assertion is what names the maps: they carry NATIVE_UNORDERED_MAP, while the
+    // allocators next to them charge NATIVE_GROUP_BY_FUNCTION, so an aggregate that outgrew the
+    // limit instead would report a different tag.
+    private static void assertOpenBreachesOnUnorderedMap(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {
+        for (int i = 0; i < 3; i++) {
+            try (RecordCursor ignore = factory.getCursor(ctx)) {
+                Assert.fail("expected a per-query memory breach at open, iteration " + i);
+            } catch (CairoException e) {
+                Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                TestUtils.assertContains(e.getFlyweightMessage(), "memoryTag=" + MemoryTag.NATIVE_UNORDERED_MAP);
+            }
+        }
+    }
+
     private static void assertOpenFailureReleasesAllocations(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {
         for (int i = 0; i < 5; i++) {
             try (RecordCursor cursor = factory.getCursor(ctx)) {
                 //noinspection StatementWithEmptyBody
                 while (cursor.hasNext()) {
-                    // lazy-map path: the chunk index is no longer per-query-tracked, so the
-                    // breach lands during the reduce on the first drain, not at cursor open.
+                    // The keyed cursor breaches at open, on the symbol lookup map. The non-keyed one
+                    // has no map to charge there and breaches during the first drain instead - the
+                    // allocators' chunk index is off the per-query tracker, so nothing of theirs
+                    // allocates at open. getCursor() sits inside the try to cover both.
                 }
                 Assert.fail("expected a per-query memory breach at iteration " + i);
             } catch (CairoException e) {
@@ -554,6 +644,30 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         );
         engine.execute(
                 "INSERT INTO trades SELECT (x * 1_000_000)::timestamp, ('t' || (x % 8))::symbol, x::double FROM long_sequence(" + rows + ")",
+                ctx
+        );
+    }
+
+    private static void createHighCardinalityPrices(CairoEngine engine, SqlExecutionContext ctx, int rows) throws Exception {
+        engine.execute(
+                "CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL CAPACITY 65536, price DOUBLE) timestamp(ts) PARTITION BY DAY",
+                ctx
+        );
+        // One distinct symbol per row, drawn from the same set as the master, so every master symbol
+        // resolves and the lookup map ends up with an entry per master symbol.
+        engine.execute(
+                "INSERT INTO prices SELECT (x * 1_000_000)::timestamp, ('s' || x)::symbol, x::double FROM long_sequence(" + rows + ")",
+                ctx
+        );
+    }
+
+    private static void createHighCardinalityTrades(CairoEngine engine, SqlExecutionContext ctx, int rows) throws Exception {
+        engine.execute(
+                "CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL CAPACITY 65536, qty DOUBLE) timestamp(ts) PARTITION BY DAY",
+                ctx
+        );
+        engine.execute(
+                "INSERT INTO trades SELECT (x * 1_000_000)::timestamp, ('s' || x)::symbol, x::double FROM long_sequence(" + rows + ")",
                 ctx
         );
     }
