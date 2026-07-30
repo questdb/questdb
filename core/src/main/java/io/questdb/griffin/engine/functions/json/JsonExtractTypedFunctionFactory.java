@@ -83,14 +83,23 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
 
         final int targetType = parseTargetType(position, args.getQuick(2));
         final int maxSize = configuration.getStrFunctionMaxBufferLength();
-        // SHORT and INT are narrow: their wider reads must sign-extend the declared-width getter
-        // rather than re-parse per width, so each gets a one-value variant. Other targets keep the
-        // base's per-width parse.
+        // A json_extract expression carries exactly one value per row, so every read of it has to
+        // derive from its declared width rather than parse the JSON again at the width being read.
+        // SHORT, INT, LONG and FLOAT each get a one-value variant for that. BOOLEAN, DOUBLE and IPv4
+        // keep the base because they promote to nothing wider.
+        // DATE and TIMESTAMP still keep the base and still have the defect - both promote to LONG and
+        // DOUBLE (see ColumnType's overload table), where the base re-parses. Closing those two needs
+        // a decision the narrow types did not: DATE is milliseconds and TIMESTAMP is micros or nanos,
+        // so their reads at LONG width have to agree on a unit, not just on a number.
         switch (ColumnType.tagOf(targetType)) {
             case ColumnType.SHORT:
                 return new JsonExtractShortFunction(targetType, json, path, maxSize);
             case ColumnType.INT:
                 return new JsonExtractIntFunction(targetType, json, path, maxSize);
+            case ColumnType.LONG:
+                return new JsonExtractLongFunction(targetType, json, path, maxSize);
+            case ColumnType.FLOAT:
+                return new JsonExtractFloatFunction(targetType, json, path, maxSize);
             default:
                 return new JsonExtractFunction(targetType, json, path, maxSize);
         }

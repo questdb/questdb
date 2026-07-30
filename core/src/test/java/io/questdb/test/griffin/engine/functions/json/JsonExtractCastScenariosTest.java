@@ -179,6 +179,53 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatWidthConsistencyAcrossWidenedReads() throws Exception {
+        // A FLOAT json_extract expression must carry ONE value: getDouble widens getFloat, exactly as
+        // FloatFunction does. The base class ran an independent queryPointerDouble for getDouble and
+        // merely narrowed it for getFloat, so a payload with no exact float read 0.1 through getDouble
+        // and 0.10000000149011612 through getFloat. One expression, two values.
+        // N.B. ::float is DOUBLE here - SqlParser.rewritePgCast maps the cast keyword `float` to
+        // DOUBLE for Postgres driver compatibility - so ::real is the spelling that reaches FLOAT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE j (id INT, f FLOAT, text VARCHAR)");
+            execute("""
+                    INSERT INTO j VALUES
+                      (1, 0.1, '{"a":0.1}'),
+                      (2, 2.5, '{"a":2.5}'),
+                      (3, null, '{"a":"abc"}')""");
+
+            // r is the declared width; d reads getDouble; c reads getFloat through an explicit cast;
+            // control is a FLOAT column holding the same value. All three widened reads must agree.
+            assertQuery("""
+                    SELECT id,
+                      json_extract(text,'$.a')::real r,
+                      json_extract(text,'$.a')::real + 0.0 d,
+                      (json_extract(text,'$.a')::real)::double c,
+                      f + 0.0 control
+                    FROM j ORDER BY id""")
+                    .expectSize()
+                    .returns("""
+                            id\tr\td\tc\tcontrol
+                            1\t0.1\t0.10000000149011612\t0.10000000149011612\t0.10000000149011612
+                            2\t2.5\t2.5\t2.5\t2.5
+                            3\tnull\tnull\tnull\tnull
+                            """);
+
+            // The predicate path reads getDouble, so the extracted FLOAT must answer = 0.1 the same
+            // way a FLOAT column holding 0.1 does. Pre-fix the extracted one matched (its getDouble
+            // was exactly 0.1) while the column did not.
+            assertQuery("SELECT count() c FROM j WHERE json_extract(text,'$.a')::real = 0.1")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+            assertQuery("SELECT count() c FROM j WHERE f = 0.1")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+        });
+    }
+
+    @Test
     public void testIPv4() throws Exception {
         testScenarios(ColumnType.IPv4);
     }
@@ -242,6 +289,48 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
     @Test
     public void testLong() throws Exception {
         testScenarios(ColumnType.LONG);
+    }
+
+    @Test
+    public void testLongWidthConsistencyAcrossWidenedReads() throws Exception {
+        // A LONG json_extract expression must carry ONE value, as LongFunction does: getDouble widens
+        // getLong. The base class derived each width from its own native parse - getLong truncates a
+        // fractional token via queryPointerLong while getDouble re-parses it via queryPointerDouble.
+        // getDouble is the only widened read reachable from SQL for a LONG target; see
+        // JsonExtractLongFunction's javadoc for why getFloat/getDate/getTimestamp are not.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE j (id INT, l LONG, text VARCHAR)");
+            execute("""
+                    INSERT INTO j VALUES
+                      (1, 2, '{"a":2.5}'),
+                      (2, 1, '{"a":1.5}'),
+                      (3, 1, '{"a":"1"}'),
+                      (4, null, '{"a":"1970-01-01T00:00:00.000002Z"}')""");
+
+            // v is the declared width, d reads getDouble, control is a LONG column holding the same
+            // value. Pre-fix the fractional rows printed 2 against 2.5 and 1 against 1.5.
+            assertQuery("""
+                    SELECT id,
+                      json_extract(text,'$.a')::long v,
+                      json_extract(text,'$.a')::long + 0.0 d,
+                      l + 0.0 control
+                    FROM j ORDER BY id""")
+                    .expectSize()
+                    .returns("""
+                            id\tv\td\tcontrol
+                            1\t2\t2.0\t2.0
+                            2\t1\t1.0\t1.0
+                            3\t1\t1.0\t1.0
+                            4\tnull\tnull\tnull
+                            """);
+
+            // The predicate path reads getDouble, so a fractional token must compare as the truncated
+            // long it displays. Row 2 shows 1 and must fail > 1.2; pre-fix its getDouble was 1.5.
+            assertQuery("SELECT count() c FROM j WHERE json_extract(text,'$.a')::long > 1.2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n1\n");
+        });
     }
 
     public void testScenario(int type, int index) throws Exception {
