@@ -94,6 +94,7 @@ import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -161,6 +162,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private static final int COMPACTION_MAX_LIVE_FRACTION_PERCENT = 50;
     private static final int COMPACTION_MAX_SOURCE_SEGMENTS = 8;
     private static final int COMPACTION_MIN_SOURCE_SEGMENTS = 2;
+    // Consecutive failed cadence seals that prove the fault is deterministic rather
+    // than transient. Below this the seal simply retries at its cadence, which is
+    // right for a held writer or a momentarily full disk. At it, the view releases
+    // both WAL purge floor arms: a fault that survived this many attempts will not
+    // produce the recovery state those arms are held for, and holding them retains
+    // the base WAL indefinitely while the base keeps ingesting.
+    private static final int MAX_CONSECUTIVE_SEAL_FAILURES = 3;
     // Upper bound on refresh tasks a single Job.run() drains from the notification queue
     // before yielding. A base table under sustained ingestion re-enqueues its task as soon
     // as the refresh finishes, so an unbounded drain would let one base table monopolize the
@@ -172,6 +180,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // commit mid-gap and handed off to o3Replay (which rebuilt disk + re-stamped
     // the watermarks). Distinct from the non-negative replayed-row counts.
     private static final long REPLAY_TO_APPLIED_O3 = -1L;
+    // Backoff arming the seal cooldown once MAX_CONSECUTIVE_SEAL_FAILURES is spent,
+    // doubling per further failure and capped. A deterministically failing seal
+    // re-streams the whole ring before it throws - up to gigabytes of encode for a
+    // ring at the state-page reference ceiling - so retrying at the cadence burns
+    // that work every tick forever. The cap keeps a view whose fault later clears (a
+    // ring that shrank back under the bound, a disk that freed) recovering within
+    // the hour.
+    private static final long SEAL_COOLDOWN_BASE_MICROS = Micros.MINUTE_MICROS;
+    // Bounds the shift the backoff takes. Sixteen doublings of the base already run
+    // to weeks, so the cap below always wins; the bound exists so an unbounded
+    // failure streak cannot shift past 63 and wrap.
+    private static final int SEAL_COOLDOWN_MAX_DOUBLINGS = 16;
+    private static final long SEAL_COOLDOWN_MAX_MICROS = 60 * Micros.MINUTE_MICROS;
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
     // Reusable {minTs, maxTs} out-pair from computeApplyAheadBounds. Worker-owned;
@@ -2878,6 +2899,41 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", headLvSeqTxn=").$(instance.getHeadCheckpointLvSeqTxn())
                 .I$();
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+    }
+
+    /**
+     * Retires the checkpoint state of a view whose seal keeps failing, and arms a
+     * backoff before the next attempt.
+     * <p>
+     * Both {@code WalPurgeJob} floor arms this view publishes -
+     * {@code getHeadCheckpointBaseSeqTxn()} and
+     * {@code getCheckpointTimelineWalPurgeFloor()} - are held so a restart can replay
+     * the base WAL above the newest durable root. A seal that has failed
+     * {@link #MAX_CONSECUTIVE_SEAL_FAILURES} times running will not produce that root,
+     * so the arms pin the base table's WAL indefinitely while it keeps ingesting, for
+     * a recovery that is never going to happen. Releasing them costs the fast restart
+     * path only: with no timeline the view rebuilds from the applied base table, which
+     * reads no raw base WAL at all.
+     * <p>
+     * Retire rather than invalidate. The timeline is derived state, so losing it
+     * leaves the view serving correct results; invalidation is terminal and needs DROP
+     * plus CREATE. The two calls must stay in this order - the timeline arm keeps the
+     * floor pinned until {@code clearCheckpointTimelineOwnership()} runs after the
+     * on-disk retire, so no purge can outrun a root a restart could still restore.
+     */
+    private void retireCheckpointStateAfterRepeatedSealFailure(LiveViewInstance instance, long nowUs, int streak) {
+        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+        retireCheckpointTimeline(instance);
+        // Doubling per failure past the budget, capped. The shift count is bounded
+        // before it is taken: a streak on a long-lived view grows without limit and
+        // would otherwise shift past 63 and wrap to a cooldown in the past.
+        final int doublings = Math.min(streak - MAX_CONSECUTIVE_SEAL_FAILURES, SEAL_COOLDOWN_MAX_DOUBLINGS);
+        final long backoffUs = Math.min(SEAL_COOLDOWN_BASE_MICROS << doublings, SEAL_COOLDOWN_MAX_MICROS);
+        instance.setSealCooldownUntilUs(nowUs + backoffUs);
+        LOG.critical().$("live view checkpoint seal keeps failing, retiring the timeline and backing off [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", consecutiveFailures=").$(streak)
+                .$(", backoffMicros=").$(backoffUs).I$();
     }
 
     /**
@@ -5826,6 +5882,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long rowsCadence = engine.getConfiguration().getLiveViewCheckpointRows();
         final long durationCadence = engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros();
         final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        // A cooldown is armed only after MAX_CONSECUTIVE_SEAL_FAILURES proved the fault
+        // deterministic, so suppress the seal here whatever triggered it - force
+        // included. A forced O3 seal would fail the same way and be swallowed the same
+        // way, leaving the same cleared head it leaves now, so letting it through buys
+        // nothing and pays the whole re-stream for it. The row counter above keeps
+        // accruing, so the first cycle past the cooldown seals at once rather than
+        // waiting out a fresh cadence.
+        if (instance.isSealOnCooldown(nowUs)) {
+            return false;
+        }
         final long lastWrittenUs = instance.getLastCheckpointWrittenUs();
         final long priorLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
         final boolean firstCp = priorLvSeqTxn == Numbers.LONG_NULL;
@@ -5904,6 +5970,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // cadence-gate clock read above. Surfaced via
             // live_views().checkpoint_last_write_micros.
             instance.recordCheckpointWriteMicros(engine.getConfiguration().getMicrosecondClock().getTicks() - nowUs);
+            // Clears the failure streak and any armed cooldown. A seal that got
+            // through proves whatever rejected the previous ones has passed.
+            instance.recordSealSuccess();
             sealed = true;
         } catch (LiveViewCheckpointTimelineStoreWriter.BoundaryNotAboveHeadException e) {
             // Every row this cycle emitted sat on the head boundary's own designated
@@ -5923,10 +5992,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // stay parked on the previous root and the next eligible cycle seals
             // again. Any temporary segment the failed append staged is reclaimed by
             // the next lifecycle reconciliation.
+            final int streak = instance.recordSealFailure();
             LOG.critical().$("could not write live view head checkpoint [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", lvSeqTxn=").$(lvSeqTxn)
+                    .$(", consecutiveFailures=").$(streak)
                     .$(", error=").$(t).I$();
+            if (streak >= MAX_CONSECUTIVE_SEAL_FAILURES) {
+                retireCheckpointStateAfterRepeatedSealFailure(instance, nowUs, streak);
+            }
         }
         // Best-effort maintenance, kept off the seal's own try so a compaction fault never reads
         // as a failed head write. It publishes its own generation after the seal's is durable, so

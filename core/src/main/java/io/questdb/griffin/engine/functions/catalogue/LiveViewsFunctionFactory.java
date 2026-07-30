@@ -215,6 +215,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_CHECKPOINT_REPAIR_PLAN = 49;
         private static final int COLUMN_CHECKPOINT_REPAIR_RESUMES = 47;
         private static final int COLUMN_CHECKPOINT_REPAIR_ROOTS_VERSIONED = 45;
+        private static final int COLUMN_CHECKPOINT_SEAL_FAILURES = 52;
         private static final int COLUMN_CHECKPOINT_TIMELINE_ENTRIES = 26;
         private static final int COLUMN_CHECKPOINT_TIMELINE_GENERATION = 25;
         private static final int COLUMN_CHECKPOINT_TIMELINE_LOGICAL_BYTES = 28;
@@ -533,6 +534,13 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_CHECKPOINT_REPAIR_NEW_BYTES -> instance.getCheckpointRepairNewBytes();
                         case COLUMN_CHECKPOINT_REPAIR_RESUMES -> instance.getCheckpointRepairResumes();
                         case COLUMN_CHECKPOINT_REPAIR_FAILURES -> instance.getCheckpointRepairFailures();
+                        // Cadence seals this view has failed since the process started.
+                        // A growing value is the only in-band signal that the view is
+                        // serving correct results over stale restart-recovery state:
+                        // the refresh job swallows the fault, and once the streak
+                        // exhausts its budget the timeline is retired and the WAL purge
+                        // floor arms released. In-memory counter, resets on restart.
+                        case COLUMN_CHECKPOINT_SEAL_FAILURES -> instance.getCheckpointSealFailures();
                         // Base rows the O3 replay paths scanned (>= the emit counters
                         // above; a WHERE filter makes scan exceed emit). In-memory
                         // counter, resets on restart.
@@ -715,6 +723,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("checkpoint_repair_plan", ColumnType.STRING));             // 49
             metadata.add(new TableColumnMetadata("checkpoint_repair_last_disposition", ColumnType.STRING)); // 50
             metadata.add(new TableColumnMetadata("checkpoint_repair_last_denial", ColumnType.STRING));      // 51
+            metadata.add(new TableColumnMetadata("checkpoint_seal_failures", ColumnType.LONG));            // 52
             METADATA = metadata;
         }
     }

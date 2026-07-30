@@ -267,6 +267,13 @@ public class LiveViewInstance implements QuietCloseable {
     private volatile long checkpointRepairOutcome;
     private volatile long checkpointRepairResumes;
     private volatile long checkpointRepairRootsVersioned;
+    // Cadence seals this view has failed, counted for the whole process lifetime
+    // rather than per streak. A permanently failing seal is otherwise invisible:
+    // the refresh job swallows the fault, the view keeps serving correct results,
+    // and nothing else in live_views() moves. Bumped only on the refresh worker;
+    // volatile for the catalogue thread. In-memory only - it resets on restart,
+    // like the counters above.
+    private volatile long checkpointSealFailures;
     // Shape of the newest published timeline generation, mirrored off the
     // superblock by whichever seam last committed or adopted one: a cadence seal,
     // a repair splice, or startup reconciliation. Packed into one immutable
@@ -491,6 +498,19 @@ public class LiveViewInstance implements QuietCloseable {
     // only on the refresh-worker thread under the refresh latch; not volatile
     // because no other thread reads it.
     private long rowsSinceLastCheckpointWritten;
+    // Wall-clock (micros) the seal cadence stays suppressed until, armed once a
+    // failure streak exhausts its budget. A deterministically failing seal - a ring
+    // that outgrew the state-page reference ceiling, a wedged superblock, a full
+    // disk - re-streams the whole ring on every cadence tick and throws at the same
+    // point every time, so retrying at the cadence burns the encode for nothing.
+    // LONG_NULL when no cooldown is armed. Mutated only on the refresh-worker thread
+    // under the refresh latch; not volatile because no other thread reads it.
+    private long sealCooldownUntilUs = Numbers.LONG_NULL;
+    // Consecutive failed cadence seals, reset by the next seal that succeeds. Drives
+    // the budget that decides when to release the WAL purge floor arms, and the
+    // exponent of the cooldown backoff above. Mutated only on the refresh-worker
+    // thread under the refresh latch; not volatile because no other thread reads it.
+    private int sealFailureStreak;
     // Checkpoint seals completed since the last compaction pass, i.e. the cadence
     // cairo.live.view.checkpoint.compaction.interval is actually expressed in. Counting
     // seals rather than testing a base seqTxn modulo matters: the base seqTxn advances on
@@ -977,6 +997,15 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return cadence seals this view has failed since the process started. A
+     * non-zero and growing value means the view is serving correct results while
+     * its restart recovery state is stale; see {@link #checkpointSealFailures}
+     */
+    public long getCheckpointSealFailures() {
+        return checkpointSealFailures;
+    }
+
+    /**
      * @return the shape of the newest published timeline generation. The array is
      * published by volatile store and never mutated afterwards, so the caller
      * reads a consistent tuple without copying. See {@link #checkpointTimeline}
@@ -1379,6 +1408,15 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return whether an armed cooldown still suppresses this view's seal cadence.
+     * The clock is read by the caller so a single cycle sees one consistent
+     * timestamp across every gate it evaluates.
+     */
+    public boolean isSealOnCooldown(long nowUs) {
+        return sealCooldownUntilUs != Numbers.LONG_NULL && nowUs < sealCooldownUntilUs;
+    }
+
+    /**
      * @return {@code true} once the refresh worker has attempted to resume the
      * seed sweep from the timeline's newest root on the first turn of this
      * process (whether a resume point was found or not). Single-shot per
@@ -1701,6 +1739,32 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Records a failed cadence seal and reports the streak it belongs to. The
+     * caller uses the streak to decide when the failure has proved itself
+     * deterministic, at which point releasing the WAL purge floor arms costs less
+     * than holding them for a recovery state that will never be written.
+     *
+     * @return consecutive failed seals including this one
+     */
+    public int recordSealFailure() {
+        checkpointSealFailures++;
+        return ++sealFailureStreak;
+    }
+
+    /**
+     * Records a successful cadence seal, clearing both the failure streak and any
+     * armed cooldown. A seal that succeeds proves the fault was transient - or that
+     * the ring shrank back under whatever bound rejected it - so the view returns to
+     * the configured cadence immediately rather than serving out the backoff.
+     * Deliberately leaves {@link #checkpointSealFailures} alone: it is a lifetime
+     * total, not a streak.
+     */
+    public void recordSealSuccess() {
+        sealFailureStreak = 0;
+        sealCooldownUntilUs = Numbers.LONG_NULL;
+    }
+
+    /**
      * Records a sealed seed boundary: stamps the sweep's base data-cursor row
      * offset, the boundary timestamp, and the write time. The seed cadence keys
      * off the offset delta (not {@link #rowsSinceLastCheckpointWritten}, which
@@ -1962,6 +2026,14 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void setRefreshedUpToSeqTxn(long refreshedUpToSeqTxn) {
         this.refreshedUpToSeqTxn = refreshedUpToSeqTxn;
+    }
+
+    /**
+     * Arms the seal cooldown. {@link Numbers#LONG_NULL} disarms it, which
+     * {@link #recordSealSuccess()} does on every successful seal.
+     */
+    public void setSealCooldownUntilUs(long sealCooldownUntilUs) {
+        this.sealCooldownUntilUs = sealCooldownUntilUs;
     }
 
     public void setSeedBaseReader(TableReader seedBaseReader) {

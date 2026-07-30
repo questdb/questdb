@@ -60,6 +60,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -132,6 +133,75 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                 LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH,
                 5
         );
+    }
+
+    @Test
+    public void testRepeatedSealFailureRetiresTheTimelineAndReleasesTheWalFloor() throws Exception {
+        assertMemoryLeak(() -> {
+            createView(false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1);
+                appendAndRefresh(job, 20, 2);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertTrue("a healthy view holds the head arm", instance.getHeadCheckpointBaseSeqTxn() > -1);
+                Assert.assertTrue("a healthy view holds the timeline arm", instance.getCheckpointTimelineWalPurgeFloor() > -1);
+                Assert.assertEquals(0, instance.getCheckpointSealFailures());
+
+                // Fails at the same point on every later seal, which is what makes the
+                // fault deterministic rather than transient.
+                job.setCheckpointTimelineTestFailureStage(
+                        LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_DATA_PUBLISH
+                );
+
+                // Below the budget both arms stay held. A held writer or a momentarily
+                // full disk must not cost the view its restart recovery state.
+                appendAndRefresh(job, 30, 3);
+                Assert.assertEquals(1, instance.getCheckpointSealFailures());
+                Assert.assertTrue(instance.getHeadCheckpointBaseSeqTxn() > -1);
+                Assert.assertTrue(instance.getCheckpointTimelineWalPurgeFloor() > -1);
+
+                appendAndRefresh(job, 40, 4);
+                Assert.assertEquals(2, instance.getCheckpointSealFailures());
+                Assert.assertTrue(instance.getHeadCheckpointBaseSeqTxn() > -1);
+                Assert.assertTrue(instance.getCheckpointTimelineWalPurgeFloor() > -1);
+
+                // The third spends MAX_CONSECUTIVE_SEAL_FAILURES. Both WalPurgeJob floor
+                // arms release, so the base WAL stops being retained for a root that is
+                // never going to be written.
+                appendAndRefresh(job, 50, 5);
+                Assert.assertEquals(3, instance.getCheckpointSealFailures());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getCheckpointTimelineWalPurgeFloor());
+                try (Path checkpointsDir = checkpointsDir(instance); Path timelinePath = new Path()) {
+                    LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
+                    Assert.assertFalse(configuration.getFilesFacade().exists(timelinePath.$()));
+                }
+                assertQuery("SELECT checkpoint_seal_failures FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("checkpoint_seal_failures\n3\n");
+
+                // The cooldown suppresses the seal outright rather than re-streaming the
+                // whole ring only to throw at the same point again. A cleared head would
+                // otherwise force a seal past the cadence gate on every cycle.
+                appendAndRefresh(job, 51, 6);
+                Assert.assertEquals(3, instance.getCheckpointSealFailures());
+
+                // Past the cooldown, with the fault cleared, the view seals on its own and
+                // re-establishes both arms - no restart, no DROP.
+                job.setCheckpointTimelineTestFailureStage(0);
+                setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+                appendAndRefresh(job, 52, 7);
+                Assert.assertEquals(
+                        "the seal-failure count is a lifetime total, not a streak",
+                        3,
+                        instance.getCheckpointSealFailures()
+                );
+                Assert.assertTrue(instance.getHeadCheckpointBaseSeqTxn() > -1);
+                Assert.assertTrue(instance.getCheckpointTimelineWalPurgeFloor() > -1);
+            }
+        });
     }
 
     private void assertCrashBeforeSuperblockPublish(int failureStage, long expectedRetryDataSegmentId) throws Exception {

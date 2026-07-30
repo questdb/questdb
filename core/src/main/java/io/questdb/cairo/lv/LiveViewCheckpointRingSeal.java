@@ -56,8 +56,22 @@ import java.io.Closeable;
  * the ratio holds). {@link #chunkCap(long)} therefore lets a partition hold one
  * chunk per {@link #MIN_SHARED_CHUNK_ROWS} live rows and rebuilds from empty
  * rather than exceed that, which leaves a small frame writing one complete image
- * per root - the cheapest thing it can do - and lets a large one share almost
- * everything.
+ * per root - the cheapest thing it can do.
+ * <p>
+ * Two things that arithmetic understates. It prices a row at its <em>raw</em>
+ * width, but what sharing avoids re-writing is the <em>encoded</em> width:
+ * {@link LiveViewCheckpointStateCodec} delta-of-delta encodes timestamps and XOR
+ * encodes DOUBLE values, so a well-compressing ring saves far fewer bytes per
+ * shared row than 16 - near enough to the 80 that a chunk costs for the margin to
+ * matter. LONG and DECIMAL value pages store raw, so for those the figure holds as
+ * written. And a large frame does <em>not</em> share almost everything: past
+ * {@link #MAX_LIVE_CHUNKS} times the codec's chunk row count - about one million
+ * live rows for a one-word ring - {@code chunkCap} can never be met, so every seal
+ * re-images the whole ring for that partition key. Above roughly 134 million live
+ * rows the re-image itself exceeds
+ * {@code LiveViewCheckpointMetadata.MAX_STATE_PAGE_REFS} and the seal fails
+ * outright; {@code LiveViewRefreshJob} treats a persistent seal failure as a
+ * reason to retire the timeline and back off rather than pin the base WAL.
  */
 public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpointRingStateSink {
 
