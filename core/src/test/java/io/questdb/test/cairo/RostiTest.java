@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
@@ -221,6 +222,28 @@ public class RostiTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEveryWrapUpSweepSurvivesNullKeyInsertResize() throws Exception {
+        // Same property as testKeyedIntSumLongWrapUpSweepSurvivesNullKeyInsertResize, across all
+        // nine sweeping wrapUps rather than the one. Each seeds its own slot layout, so the
+        // assertion is expressed in the one term they share: the sweep visits every live group,
+        // and an empty group is one the sweep has not yet touched, still holding the value
+        // initRosti() wrote. A sweep walking a snapshot taken before the populate resized would
+        // leave the live ones behind.
+        assertMemoryLeak(() -> {
+            final ObjList<WrapUpCase> cases = wrapUpCases();
+            for (int i = 0, n = cases.size(); i < n; i++) {
+                final WrapUpCase c = cases.getQuick(i);
+                boolean hasResizedInWrapUp = false;
+                for (int liveKeys = 8; liveKeys <= 20; liveKeys++) {
+                    hasResizedInWrapUp |= assertWrapUpSweepsEveryGroup(c, liveKeys);
+                }
+                Assert.assertTrue("no iteration resized inside wrapUp() [case=" + c.name
+                        + "] -- widen the liveKeys sweep", hasResizedInWrapUp);
+            }
+        });
+    }
+
+    @Test
     public void testKeyedIntSumLongWrapUpSweepSurvivesNullKeyInsertResize() throws Exception {
         // wrapUp() populates the null-key slot and then sweeps the map, NULLing every group
         // whose count is still 0. The populate inserts, and an insert past the growth threshold
@@ -229,7 +252,8 @@ public class RostiTest extends AbstractCairoTest {
         // live count-0 groups un-NULLed.
         //
         // Capacity is ceilPow2(16) - 1 = 15 and the threshold is capacity - capacity/8 = 14, so
-        // the sweep below straddles the resize.
+        // the sweep below straddles the resize. This case also pins the swept value itself
+        // (LONG_NULL) and the null group's own value, which the all-wrapUps sweep above does not.
         assertMemoryLeak(() -> {
             boolean hasResizedInWrapUp = false;
             for (int liveKeys = 8; liveKeys <= 20; liveKeys++) {
@@ -250,6 +274,21 @@ public class RostiTest extends AbstractCairoTest {
         } finally {
             Rosti.free(pRosti);
         }
+    }
+
+    private static void initCompensatedSumSlot(long pRosti) {
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET), 0.0);
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 1), 0.0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 2), 0);
+    }
+
+    private static ArrayColumnTypes types(int... valueTypes) {
+        final ArrayColumnTypes types = new ArrayColumnTypes();
+        types.add(ColumnType.INT); // key
+        for (int valueType : valueTypes) {
+            types.add(valueType);
+        }
+        return types;
     }
 
     // ksum and nsum share this slot layout, so both drive the same helper.
@@ -337,6 +376,62 @@ public class RostiTest extends AbstractCairoTest {
             }
         } finally {
             Rosti.free(pRostiA);
+        }
+    }
+
+    // Seeds liveKeys empty groups, wraps up with a null value that has to be inserted, and checks
+    // that the sweep reached every live group. Returns whether the populate resized the map, which
+    // is the arrangement the caller is really after.
+    private static boolean assertWrapUpSweepsEveryGroup(WrapUpCase c, int liveKeys) {
+        final long pRosti = Rosti.alloc(c.types, 16);
+        Assert.assertNotEquals(0, pRosti);
+        final long sizeAtAlloc = Rosti.getAllocMemory(pRosti);
+        final long keysSize = 4L * liveKeys;
+        final long pKeys = Unsafe.malloc(keysSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putInt(Rosti.getInitialValueSlot(pRosti, 0), Numbers.INT_NULL);
+            c.initializer.init(pRosti);
+            // What an untouched group's value field looks like, which is what the sweep must
+            // overwrite. Read after the initializer, so each case supplies its own.
+            final long emptyValue = Unsafe.getLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET));
+
+            for (int i = 0; i < liveKeys; i++) {
+                Unsafe.putInt(pKeys + 4L * i, i + 1);
+            }
+            Assert.assertTrue(Rosti.keyedIntDistinct(pRosti, pKeys, liveKeys));
+
+            final long sizeBeforeWrapUp = Rosti.getAllocMemory(pRosti);
+            Assert.assertTrue(c.name, c.invoker.wrapUp(pRosti));
+            final boolean hasResizedInWrapUp = Rosti.getAllocMemory(pRosti) > sizeBeforeWrapUp;
+
+            final long ctrl = Rosti.getCtrl(pRosti);
+            final long slots = Rosti.getSlots(pRosti);
+            final long shift = Rosti.getSlotShift(pRosti);
+            final long capacity = Rosti.getCapacity(pRosti);
+            final int valueField = slotFieldOffset(pRosti, VALUE_OFFSET);
+            int liveSlots = 0;
+            boolean hasNullKey = false;
+            for (long i = 0; i < capacity; i++) {
+                if (Unsafe.getByte(ctrl + i) > -1) {
+                    final long slot = slots + (i << shift);
+                    liveSlots++;
+                    if (Unsafe.getInt(slot) == Numbers.INT_NULL) {
+                        hasNullKey = true;
+                    } else {
+                        Assert.assertNotEquals("group left un-swept [case=" + c.name
+                                        + ", liveKeys=" + liveKeys + ", key=" + Unsafe.getInt(slot) + ']',
+                                emptyValue, Unsafe.getLong(slot + valueField));
+                    }
+                }
+            }
+            Assert.assertTrue("null-key group missing [case=" + c.name + ", liveKeys=" + liveKeys + ']', hasNullKey);
+            Assert.assertEquals("live slot count [case=" + c.name + ", liveKeys=" + liveKeys + ']',
+                    liveKeys + 1, liveSlots);
+            return hasResizedInWrapUp;
+        } finally {
+            Unsafe.free(pKeys, keysSize, MemoryTag.NATIVE_DEFAULT);
+            Rosti.updateMemoryUsage(pRosti, sizeAtAlloc);
+            Rosti.free(pRosti);
         }
     }
 
@@ -464,7 +559,123 @@ public class RostiTest extends AbstractCairoTest {
         Unsafe.putLong(slot + slotFieldOffset(pRosti, VALUE_OFFSET + 1), count);
     }
 
+    // One entry per sweeping wrapUp, each mirroring its aggregate's pushValueTypes() and
+    // initRosti(). The null value passed to each wrapUp is one its populate branch acts on, so
+    // every case inserts the null key and can resize while doing it.
+    private static ObjList<WrapUpCase> wrapUpCases() {
+        final ObjList<WrapUpCase> cases = new ObjList<>();
+        cases.add(new WrapUpCase(
+                "sum(long)",
+                types(ColumnType.LONG, ColumnType.LONG),
+                pRosti -> {
+                    Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET), 0);
+                    Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 1), 0);
+                },
+                pRosti -> Rosti.keyedIntSumLongWrapUp(pRosti, VALUE_OFFSET, 7, 1)
+        ));
+        cases.add(new WrapUpCase(
+                "sum(long256)",
+                types(ColumnType.LONG256, ColumnType.LONG),
+                pRosti -> {
+                    final long slot = Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET);
+                    for (int i = 0; i < 4; i++) {
+                        Unsafe.putLong(slot + (long) i * Long.BYTES, 0);
+                    }
+                    Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 1), 0);
+                },
+                pRosti -> Rosti.keyedIntSumLong256WrapUp(pRosti, VALUE_OFFSET, 7, 0, 0, 0, 1)
+        ));
+        cases.add(new WrapUpCase(
+                "sum(double)",
+                types(ColumnType.DOUBLE, ColumnType.LONG),
+                pRosti -> {
+                    Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET), 0);
+                    Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 1), 0);
+                },
+                pRosti -> Rosti.keyedIntSumDoubleWrapUp(pRosti, VALUE_OFFSET, 7.0, 1)
+        ));
+        cases.add(new WrapUpCase(
+                "ksum(double)",
+                types(ColumnType.DOUBLE, ColumnType.DOUBLE, ColumnType.LONG),
+                RostiTest::initCompensatedSumSlot,
+                pRosti -> Rosti.keyedIntKSumDoubleWrapUp(pRosti, VALUE_OFFSET, 7.0, 1)
+        ));
+        cases.add(new WrapUpCase(
+                "nsum(double)",
+                types(ColumnType.DOUBLE, ColumnType.DOUBLE, ColumnType.LONG),
+                RostiTest::initCompensatedSumSlot,
+                pRosti -> Rosti.keyedIntNSumDoubleWrapUp(pRosti, VALUE_OFFSET, 7.0, 1, 0.0)
+        ));
+        cases.add(new WrapUpCase(
+                "avg(int)",
+                types(ColumnType.DOUBLE, ColumnType.LONG),
+                pRosti -> {
+                    // avg spaces its accumulator out as a long and the sweep replaces it with the
+                    // quotient, so initRosti() writes longs into a DOUBLE slot on purpose.
+                    Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET), 0);
+                    Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 1), 0);
+                },
+                pRosti -> Rosti.keyedIntAvgLongWrapUp(pRosti, VALUE_OFFSET, 7.0, 1)
+        ));
+        cases.add(new WrapUpCase(
+                "avg(long)",
+                types(ColumnType.LONG, ColumnType.LONG, ColumnType.LONG),
+                pRosti -> {
+                    Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET), 0);
+                    Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 1), 0);
+                    Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 2), 0);
+                },
+                pRosti -> Rosti.keyedIntAvgLongLongWrapUp(pRosti, VALUE_OFFSET, 7.0, 1)
+        ));
+        cases.add(new WrapUpCase(
+                "avg(double)",
+                types(ColumnType.DOUBLE, ColumnType.LONG),
+                pRosti -> {
+                    Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET), 0);
+                    Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 1), 0);
+                },
+                pRosti -> Rosti.keyedIntAvgDoubleWrapUp(pRosti, VALUE_OFFSET, 7.0, 1)
+        ));
+        cases.add(new WrapUpCase(
+                "min(double)",
+                types(ColumnType.DOUBLE),
+                pRosti -> Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET), Double.POSITIVE_INFINITY),
+                pRosti -> Rosti.keyedIntMinDoubleWrapUp(pRosti, VALUE_OFFSET, 7.0)
+        ));
+        cases.add(new WrapUpCase(
+                "max(double)",
+                types(ColumnType.DOUBLE),
+                pRosti -> Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET), Double.NEGATIVE_INFINITY),
+                pRosti -> Rosti.keyedIntMaxDoubleWrapUp(pRosti, VALUE_OFFSET, 7.0)
+        ));
+        return cases;
+    }
+
     private static int slotFieldOffset(long pRosti, int columnIndex) {
         return Unsafe.getInt(Rosti.getValueOffsets(pRosti) + columnIndex * 4L);
+    }
+
+    @FunctionalInterface
+    private interface RostiInitializer {
+        void init(long pRosti);
+    }
+
+    @FunctionalInterface
+    private interface WrapUpInvoker {
+        boolean wrapUp(long pRosti);
+    }
+
+    private static class WrapUpCase {
+        private final RostiInitializer initializer;
+        private final WrapUpInvoker invoker;
+        private final String name;
+        private final ArrayColumnTypes types;
+
+        private WrapUpCase(String name, ArrayColumnTypes types, RostiInitializer initializer, WrapUpInvoker invoker) {
+            this.name = name;
+            this.types = types;
+            this.initializer = initializer;
+            this.invoker = invoker;
+        }
     }
 }
