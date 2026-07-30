@@ -1372,8 +1372,15 @@ public class MetadataCache implements QuietCloseable {
         @Override
         public void hydrateTable(@NotNull TableMetadata tableMetadata) {
             if (engine.isTableDropped(tableMetadata.getTableToken())) {
-                // Table writer can still process some transactions when DROP table has already
-                // been executed, essentially updating dropped table. We should ignore such updates.
+                // Table writer can still process some transactions when DROP table has already been
+                // executed, essentially updating a dropped table. We ignore such updates for caching, but a
+                // SET/DROP EXPIRE apply on the dropped table already added a pending mark via
+                // markExpiryPolicyPossible(); release it here and rebuild the snapshot so the id leaves the
+                // policy set. Table ids never reuse, and dropTable ran before this apply added the mark, so
+                // nothing else would ever clear it - leaving mayHaveExpiryPolicy() stuck true forever.
+                if (clearPendingExpiryPolicy(tableMetadata.getTableToken().getTableId())) {
+                    publishActiveExpiryPolicySnapshot();
+                }
                 return;
             }
 
