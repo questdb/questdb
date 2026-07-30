@@ -47,9 +47,9 @@ public class LiveViewStatePageTest {
             mem.putLong(0x7f7e_7d7c_7b7a_7978L);
             final LiveViewStatePageReader reader = new LiveViewStatePageReader().of(mem, 0, Long.BYTES);
             Assert.assertEquals(0x1122_3344_5566_7788L, reader.getLong(0));
-            assertInvalid(() -> reader.getByte(Long.BYTES), "state page read out of bounds");
-            assertInvalid(() -> reader.getLong(1), "state page read out of bounds");
-            assertInvalid(() -> reader.getLong(-1), "state page read out of bounds");
+            assertCorrupt(() -> reader.getByte(Long.BYTES), "state page read out of bounds");
+            assertCorrupt(() -> reader.getLong(1), "state page read out of bounds");
+            assertCorrupt(() -> reader.getLong(-1), "state page read out of bounds");
         }
     }
 
@@ -58,11 +58,34 @@ public class LiveViewStatePageTest {
         try (MemoryCARWImpl mem = new MemoryCARWImpl(64, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putLong(42);
             final LiveViewStatePageReader reader = new LiveViewStatePageReader();
-            assertInvalid(() -> reader.of(mem, -1, 1), "state page reference out of bounds");
-            assertInvalid(() -> reader.of(mem, 0, -1), "state page reference out of bounds");
-            assertInvalid(() -> reader.of(mem, Long.MAX_VALUE, 1), "state page reference out of bounds");
-            assertInvalid(() -> reader.of(mem, 4, Long.MAX_VALUE), "state page reference out of bounds");
+            assertCorrupt(() -> reader.of(mem, -1, 1), "state page reference out of bounds");
+            assertCorrupt(() -> reader.of(mem, 0, -1), "state page reference out of bounds");
+            assertCorrupt(() -> reader.of(mem, Long.MAX_VALUE, 1), "state page reference out of bounds");
+            assertCorrupt(() -> reader.of(mem, 4, Long.MAX_VALUE), "state page reference out of bounds");
         }
+    }
+
+    @Test
+    public void testReaderRejectsMalformedStringLength() {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(128, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            // Both malformed-length shapes must classify as corruption so the restore
+            // fallback can isolate the damage to one root version.
+            mem.putInt(-2);
+            mem.putInt(1_000);
+            final LiveViewStatePageReader reader = new LiveViewStatePageReader().of(mem, 0, 2 * Integer.BYTES);
+            assertCorrupt(() -> reader.getStrA(0), "state page string length invalid");
+            assertCorrupt(() -> reader.getStrA(Integer.BYTES), "state page read out of bounds");
+        }
+    }
+
+    @Test
+    public void testUnopenedReaderIsNotClassifiedAsStorageCorruption() {
+        // A reader that was never opened is a caller defect, not stored corruption.
+        // Classifying it as LV_CHECKPOINT_TIMELINE_INVALID would let the restore
+        // predecessor fallback swallow it as a bad root and mask the defect.
+        final LiveViewStatePageReader reader = new LiveViewStatePageReader();
+        assertCallerDefect(() -> reader.getLong(0), "state page reader is not open");
+        assertCallerDefect(reader::size, "state page reader is not open");
     }
 
     @Test
@@ -87,18 +110,49 @@ public class LiveViewStatePageTest {
             writer.putLong(42);
             Assert.assertEquals(Long.BYTES, writer.size());
             Assert.assertEquals(Integer.BYTES, writer.getPageStart());
-            assertInvalid(() -> writer.putByte((byte) 1), "state page exceeds size limit");
+            assertCallerDefect(() -> writer.putByte((byte) 1), "state page exceeds size limit");
             Assert.assertEquals(0x1234_5678, mem.getInt(0));
             Assert.assertEquals(42, mem.getLong(Integer.BYTES));
         }
     }
 
-    private static void assertInvalid(Runnable action, CharSequence message) {
+    /**
+     * Asserts a rejection that a caller's own defect caused, never stored corruption.
+     * It must stay off {@link CairoException#LV_CHECKPOINT_TIMELINE_INVALID}, which
+     * the restore fallback treats as "skip this root and try its predecessor".
+     */
+    private static void assertCallerDefect(Runnable action, CharSequence message) {
         try {
             action.run();
             Assert.fail("expected checkpoint state page rejection");
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), message);
+            Assert.assertEquals(
+                    "a caller defect must not be classified as recoverable checkpoint corruption",
+                    0,
+                    e.getErrno()
+            );
+        }
+    }
+
+    /**
+     * Asserts a rejection that a malformed checkpoint payload caused. It must carry
+     * {@link CairoException#LV_CHECKPOINT_TIMELINE_INVALID}, or
+     * {@code LiveViewCheckpointTimelineStoreReader.restoreLatestCompatible} rethrows
+     * instead of skipping the root and retrying its predecessor.
+     */
+    private static void assertCorrupt(Runnable action, CharSequence message) {
+        try {
+            action.run();
+            Assert.fail("expected checkpoint state page rejection");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), message);
+            Assert.assertEquals(
+                    "a corrupt state page must classify as LV_CHECKPOINT_TIMELINE_INVALID"
+                            + " so the restore predecessor fallback engages",
+                    CairoException.LV_CHECKPOINT_TIMELINE_INVALID,
+                    e.getErrno()
+            );
         }
     }
 }

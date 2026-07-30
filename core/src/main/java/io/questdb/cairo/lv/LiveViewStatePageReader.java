@@ -117,8 +117,21 @@ public final class LiveViewStatePageReader {
         return pageLength;
     }
 
+    /**
+     * Classifies a bounds or framing violation as recoverable checkpoint corruption.
+     * This reader frames nothing but checkpoint-contract payloads, so a framing
+     * violation is recovery-quality by construction.
+     * {@code LiveViewCheckpointTimelineStoreReader.restoreLatestCompatible} skips the
+     * offending root and retries its predecessor only on this errno; anything weaker
+     * fails the whole generation instead of isolating the damage to one root version.
+     * <p>
+     * No decoder that reaches this reader over durable storage currently loops on a
+     * page-embedded count - those all sit on the ring path, which classifies the same
+     * way - so today this arms the contract rather than a live corruption class.
+     */
     private static CairoException invalid(CharSequence message) {
-        return CairoException.critical(0).put("live view checkpoint ").put(message);
+        return CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                .put("live view checkpoint ").put(message);
     }
 
     private void boundsCheck(long offset, long bytes) {
@@ -133,7 +146,10 @@ public final class LiveViewStatePageReader {
 
     private void ensureOpen() {
         if (source == null) {
-            throw invalid("state page reader is not open");
+            // A reader that was never opened is a caller defect, not stored corruption:
+            // keep it off LV_CHECKPOINT_TIMELINE_INVALID so the restore fallback cannot
+            // swallow it as a bad root and mask the bug.
+            throw CairoException.critical(0).put("live view checkpoint state page reader is not open");
         }
     }
 }

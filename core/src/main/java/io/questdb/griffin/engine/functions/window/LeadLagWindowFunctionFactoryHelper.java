@@ -522,7 +522,13 @@ public class LeadLagWindowFunctionFactoryHelper {
             // them - the row `offset` back - reading its frame not at all. Its state extent is
             // therefore -offset, whatever ROWS frame it was declared over, and can reach
             // further back than the frame does. See WindowFunction.checkpointRowsStateExtentOverride.
-            return -offset;
+            //
+            // Under IGNORE NULLS the ring advances only on non-null rows, so those `offset`
+            // values span an unbounded number of ROWS - a run of nulls pushes the oldest of
+            // them arbitrarily far back. No row count describes that, so claim no override.
+            // hasFrameLocalCheckpointState() is what actually keeps the repair off this state;
+            // the frame this defers to would not bound it either.
+            return ignoreNulls ? Long.MIN_VALUE : -offset;
         }
 
         @Override
@@ -549,7 +555,14 @@ public class LeadLagWindowFunctionFactoryHelper {
             // `offset`-row warm-up has already cleared - but the emitted values match. The
             // compiler reads the extent from checkpointRowsStateExtentOverride (offset, not the
             // frame) and admits this only for ROWS framing.
-            return true;
+            //
+            // IGNORE NULLS breaks the warm-up: computeNext advances the ring only when
+            // computeNext0 reports a non-null argument, so the ring holds the last `offset`
+            // NON-NULL values and a run of nulls pushes it unboundedly far back in ROWS. No
+            // row-count floor refills it, so decline the claim and let the repair rebuild from
+            // the boundary. The whole-state checkpoint restores firstIdx, count and the ring
+            // verbatim and stays correct either way.
+            return !ignoreNulls;
         }
 
         @Override

@@ -50,6 +50,10 @@ public class LiveViewCheckpointRepairDispositionTest extends AbstractLiveViewTes
 
     // In-order commits driven before the out-of-order one, one per 10 seconds.
     private static final int HISTORY_COMMITS = 12;
+    // Second-of-day of the null-run cases' correction. Mid-history and inside the null
+    // run, which is what earns a localized rebuild whose floor sits above the two
+    // non-null rows - see assertNullRunRepairOutcome.
+    private static final int NULL_RUN_O3_SECOND = 55;
     // Second-of-day of the out-of-order row. Below the first boundary at 10s, so no
     // resume can qualify and the disposition is the rebuild either way - which is what
     // lets the cases read the denial without the price of a resume entering it.
@@ -85,6 +89,55 @@ public class LiveViewCheckpointRepairDispositionTest extends AbstractLiveViewTes
     }
 
     @Test
+    public void testLagIgnoreNullsDeniesTheRepairItsFloor() throws Exception {
+        // IGNORE NULLS advances the ring only on non-null rows, so the state is the last
+        // `offset` NON-NULL values and reaches back an unbounded number of ROWS - a run of
+        // nulls pushes it arbitrarily far. No row-count extent can bound that, so lag must
+        // decline the frame-local claim here even though the frame is a bounded ROWS one.
+        // The one-variable RESPECT NULLS control is
+        // testLagRespectNullsOverANullRunLocalizesTheSameRepair.
+        assertRepairOutcome(
+                "lag(x, 2) IGNORE NULLS OVER (PARTITION BY sym ORDER BY ts "
+                        + "ROWS BETWEEN 5 PRECEDING AND CURRENT ROW)",
+                "",
+                "none",
+                "boundary rebuild",
+                "incomplete dependency"
+        );
+    }
+
+    @Test
+    public void testLagIgnoreNullsOverANullRunRepairsToTheSameAnswer() throws Exception {
+        // What a wrongly claimed frame-local extent costs, in persisted values. A run of nulls
+        // separates the two non-null rows the ring must still hold from the correction, so
+        // lag(x, 2) IGNORE NULLS reaches back past them while a rows plan warms up only
+        // `offset` = 2 rows - both of them null - and emits the default instead.
+        // Pre-fix this failed with the 55s row reading NULL where 10 belongs.
+        //
+        // Declining the claim costs less here than the sibling case above, which corrects
+        // below every boundary and so has no anchor to resume from: with a boundary at every
+        // row this resumes from the one below the correction and replays forward, rather than
+        // rebuilding the whole history.
+        assertNullRunRepairOutcome("IGNORE NULLS ", "none", "resume from anchor", "incomplete dependency");
+    }
+
+    @Test
+    public void testLagRespectNullsOverANullRunLocalizesTheSameRepair() throws Exception {
+        // The one-variable control for the case above: same history, same correction, same
+        // frame, differing only in IGNORE NULLS. RESPECT NULLS keeps the frame-local claim,
+        // and its answer at the correction is the row two back whatever those rows hold, so
+        // a two-row warm-up is genuinely sufficient.
+        //
+        // Its real job is to pin the premise the sibling's redness rests on: that this
+        // correction selects the LOCALIZED rebuild. The disposition turns on a scan-cost
+        // comparison neither test controls - a correction below every boundary rebuilds from
+        // the history's first row, and one above the last boundary resumes from an anchor,
+        // both landing on the right answer regardless. Should that pricing ever shift, this
+        // control goes red rather than letting the sibling quietly stop testing the bug.
+        assertNullRunRepairOutcome("", "rows", "localized rebuild", null);
+    }
+
+    @Test
     public void testRowsRepairLocalizesOverABaseThatCannotDedup() throws Exception {
         // The control for testDedupDeniesAStaticallyPlannedRowsRepair: the same SQL over
         // a base that cannot replace a row. The plan is identical, and now the repair
@@ -111,6 +164,85 @@ public class LiveViewCheckpointRepairDispositionTest extends AbstractLiveViewTes
                 "boundary rebuild",
                 "incomplete dependency"
         );
+    }
+
+    /**
+     * Drives a lag view over a history whose two non-null rows are separated from the
+     * correction by a run of nulls, corrects mid-history INSIDE that run, then asserts both
+     * the published plan/disposition pair and the view's values against a from-base
+     * recompute.
+     * <p>
+     * The correction's placement is the whole point and is why this does not reuse
+     * {@link #assertRepairOutcome}: only a mid-history correction earns a localized rebuild
+     * whose floor sits above the non-null rows. A correction below every boundary rebuilds
+     * from the history's first row and a correction above the last one resumes from an
+     * anchor - both reconstruct the ring correctly and would hide a too-narrow floor.
+     *
+     * @param ignoreNullsClause {@code "IGNORE NULLS "} or empty, the only thing that differs
+     *                          between the two cases
+     */
+    private void assertNullRunRepairOutcome(
+            String ignoreNullsClause,
+            String expectedPlan,
+            String expectedDisposition,
+            String expectedDenial
+    ) throws Exception {
+        // One boundary per row, so the mid-history correction has an anchor below it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final String viewSql = "SELECT ts, sym, lag(x, 2) " + ignoreNullsClause
+                + "OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) AS s FROM base";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // 10 and 20 are the two non-null values an IGNORE NULLS ring must still
+                // hold at the correction; commits 3..10 are the null run that separates
+                // them from it.
+                for (int commit = 1; commit <= HISTORY_COMMITS; commit++) {
+                    setCurrentMicros(commit * 200_000L);
+                    final String value = switch (commit) {
+                        case 1 -> "10";
+                        case 2 -> "20";
+                        case 11 -> "30";
+                        case 12 -> "40";
+                        default -> "NULL";
+                    };
+                    execute("INSERT INTO base (ts, sym, x) VALUES ('"
+                            + secondsTs(commit * 10) + "', 'a', " + value + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                setCurrentMicros((HISTORY_COMMITS + 1) * 200_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('" + secondsTs(NULL_RUN_O3_SECOND) + "', 'a', NULL)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT checkpoint_repair_plan, checkpoint_repair_last_disposition, " +
+                        "checkpoint_repair_last_denial FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("checkpoint_repair_plan\tcheckpoint_repair_last_disposition\t" +
+                                "checkpoint_repair_last_denial\n" +
+                                expectedPlan + "\t" + expectedDisposition + "\t"
+                                + (expectedDenial == null ? "" : expectedDenial) + "\n");
+
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "(" + viewSql + ") ORDER BY 2, 1",
+                        "(lv) ORDER BY 2, 1",
+                        LOG,
+                        true
+                );
+                assertNoRefreshFaults("lv");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
     }
 
     /**

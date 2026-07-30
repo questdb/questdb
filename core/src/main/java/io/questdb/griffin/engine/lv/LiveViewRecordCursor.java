@@ -936,10 +936,16 @@ public class LiveViewRecordCursor implements RecordCursor {
      * <p>
      * The STRING, BINARY, VARCHAR and ARRAY accessors read from the pinned buffer's
      * per-row offset/header vector while in in-mem mode, mirroring the fixed-width
-     * accessors. ARRAY also overrides {@link #getArrayDouble1d2d}, the direct-index
-     * fast path a nested {@code SELECT arr[i] FROM (SELECT * FROM lv)} can reach
-     * through the routed cursor, so it reads from RAM too rather than delegating to
-     * the disk record.
+     * accessors. ARRAY also overrides the two accessors that would otherwise reach the
+     * disk record without going through the virtual {@code getArray}:
+     * {@link #getArrayDouble1d2d}, the direct-index fast path a nested
+     * {@code SELECT arr[i] FROM (SELECT * FROM lv)} can reach through the routed cursor,
+     * and {@link #getArrayDimLen}, the one {@code dim_length()} takes over a plain array
+     * column. {@code Record}'s own defaults for both call the virtual {@code getArray} and
+     * would have been correct; {@code DelegatingRecord} replaces them with hard delegation,
+     * so every one of them has to be re-overridden here. An accessor missed here does not
+     * fail loudly - it reads whichever row the disk record happens to sit on, or throws when
+     * a lead-only scan has never positioned it at all.
      */
     // The mirror image, walking DOWN through slotBands: lead-only descending serves the
     // slot's band(s) newest-first before handing over to the descending disk scan.
@@ -1050,6 +1056,18 @@ public class LiveViewRecordCursor implements RecordCursor {
         @Override
         public ArrayView getArray(int col, int columnType) {
             return inMemMode ? buffer.getArray(bufferRow, tierCol(col), arrayView(col)) : super.getArray(col, columnType);
+        }
+
+        @Override
+        public int getArrayDimLen(int col, int columnType, int dim) {
+            if (!inMemMode) {
+                return super.getArrayDimLen(col, columnType, dim);
+            }
+            // Mirror Record's default getArrayDimLen over the buffer's array view
+            // (DelegatingRecord's override would otherwise read the disk record, which a
+            // lead-only or empty-prefix scan never even positions).
+            final ArrayView array = buffer.getArray(bufferRow, tierCol(col), arrayView(col));
+            return array.isNull() ? Numbers.INT_NULL : array.getDimLen(dim - 1);
         }
 
         @Override

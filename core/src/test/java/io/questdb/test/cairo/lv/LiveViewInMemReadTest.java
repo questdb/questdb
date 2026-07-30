@@ -3226,6 +3226,57 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testArrayDimLengthServedFromRam() throws Exception {
+        // dim_length() reaches MergedRecord.getArrayDimLen, which DelegatingRecord
+        // otherwise delegates hard to the disk record - unlike Record's own default,
+        // which routes through the virtual getArray the merge record does override.
+        // Two distinct failures follow, and the lead rows carry dimension lengths that
+        // differ from the last disk row's so both are visible:
+        //   - forward: every tier-served row reports the last disk row's length;
+        //   - ORDER BY ts DESC: the slot band is served before the disk cursor is ever
+        //     positioned, so the delegated read dereferences a null aux address.
+        // The page-frame path answers correctly either way, so the two read paths on
+        // the same query must agree with the base oracle.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, a1 DOUBLE[], a2 DOUBLE[][], g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
+                    "SELECT ts, a1, a2, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: three flushed rows on disk, last one of length 3.
+                execute("INSERT INTO base (ts, a1, a2) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', ARRAY[1.0, 2.0], ARRAY[[10.0, 11.0], [12.0, 13.0]]), " +
+                        "('2026-05-12T00:00:02.000000Z', ARRAY[3.0], ARRAY[[14.0]]), " +
+                        "('2026-05-12T00:00:03.000000Z', ARRAY[4.0, 5.0, 6.0], ARRAY[[15.0, 16.0]])");
+                drainWalQueue();
+                drainJob(job); // clock 0: first tick flushes the batch to disk
+
+                // Cycle 2: a 2-row un-flushed lead. Every length differs from the last
+                // disk row's, so a delegated read is visibly wrong rather than
+                // accidentally right, and the NULL row must report NULL not inherit one.
+                execute("INSERT INTO base (ts, a1, a2) VALUES " +
+                        "('2026-05-12T00:00:04.000000Z', ARRAY[7.0, 8.0, 9.0, 10.0], ARRAY[[17.0], [18.0], [19.0]]), " +
+                        "('2026-05-12T00:00:05.000000Z', NULL, NULL)");
+                drainWalQueue();
+                drainJob(job); // clock still 0: refresh the lead, no flush
+            }
+
+            // dim 2 of a DOUBLE[][] pins the 1-based dim -> 0-based getDimLen conversion:
+            // an off-by-one reads the wrong extent here, while ArrayView's own range assert
+            // only fires under -ea and so would not catch it in a production build.
+            final String projection = "ts, dim_length(a1, 1) AS d1, dim_length(a2, 1) AS d2, dim_length(a2, 2) AS d3";
+            assertLvMatchesOracle(
+                    "SELECT " + projection + " FROM lv",
+                    "SELECT " + projection + " FROM base"
+            );
+            assertLvMatchesOracle(
+                    "SELECT " + projection + " FROM lv ORDER BY ts DESC",
+                    "SELECT " + projection + " FROM base ORDER BY ts DESC"
+            );
+        });
+    }
+
+    @Test
     public void testArrayPassthroughServesLeadFromRam() throws Exception {
         // Passthrough DOUBLE[] output column: the tier carries the raw arrays from
         // RAM via ArrayTypeDriver, so an array LV gets the same lead-serving

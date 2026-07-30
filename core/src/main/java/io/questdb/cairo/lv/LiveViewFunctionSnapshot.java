@@ -79,6 +79,15 @@ public final class LiveViewFunctionSnapshot {
      * restoreCheckpointState that reads more or fewer bytes than its writer
      * emitted) would otherwise silently decode the next partition from the wrong
      * offset.
+     * <p>
+     * Errno 0 covers this class's own framing checks. The bounded
+     * {@link LiveViewStatePageReader} it decodes each page through keeps its own
+     * classification and raises
+     * {@link CairoException#LV_CHECKPOINT_TIMELINE_INVALID}, which is correct for the
+     * durable checkpoint reader that shares it. No caller on this in-RAM overlay path
+     * keys on the errno - both catch {@code Throwable} - so the two coexist; a future
+     * caller that does key on it must not read a page-framing failure here as
+     * recoverable storage corruption.
      *
      * @param source        read-only memory containing the payload
      * @param offset        byte offset within {@code source} of the payload start

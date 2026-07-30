@@ -443,6 +443,30 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
     }
 
     /**
+     * IGNORE NULLS turns lag's ring into the last {@code offset} NON-NULL values, which a run
+     * of nulls pushes unboundedly far back in ROWS. No row count describes that, so lag must
+     * decline the frame-local claim outright rather than hand the compiler a narrower bound
+     * than its state really spans. {@link #testLagDeclaresFrameLocalStateFromItsOffset} is the
+     * RESPECT NULLS control: same shape, claim intact.
+     * <p>
+     * This asserts the declaration directly, so it stays a regression guard regardless of how
+     * the repair planner later prices one disposition against another.
+     */
+    @Test
+    public void testLagIgnoreNullsDeclinesFrameLocalState() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+            final Metadata ignoreNulls = compileMetadata(
+                    "select ts, sym, lag(x, 5) ignore nulls over (partition by sym order by ts "
+                            + "rows between 3 preceding and current row) l from base",
+                    0
+            );
+            Assert.assertFalse(ignoreNulls.dependency.hasFrameLocalState());
+            Assert.assertNull(ignoreNulls.rowsPlan);
+        });
+    }
+
+    /**
      * The sum/count/avg families over every value type that reaches a partitioned bounded
      * frame. All three hold a ring of the frame's own rows and an accumulator over exactly
      * that ring, so the claim is one claim - but the accumulator's arithmetic is not, and
