@@ -64,6 +64,25 @@ public class LiveViewCheckpointDataSegmentWriter implements Closeable {
     }
 
     /**
+     * Address of a payload range this segment already holds. A repair capture
+     * compares one boundary's freshly encoded state against the page a lower
+     * boundary of the same capture wrote, and this is the only way to read it:
+     * the segment is still a temporary file with no final name and no reader.
+     */
+    public long addressOfPage(long offset, int length) {
+        ensureOpen();
+        if (offset < 0 || length <= 0 || offset > mem.getAppendOffset() - length) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint data page range outside the open segment")
+                    .put(" [offset=").put(offset)
+                    .put(", length=").put(length)
+                    .put(", appendOffset=").put(mem.getAppendOffset())
+                    .put(']');
+        }
+        return mem.addressOf(offset);
+    }
+
+    /**
      * Starts a payload at the current append offset. Calls must be paired with
      * {@link #endPage}.
      */
@@ -178,6 +197,15 @@ public class LiveViewCheckpointDataSegmentWriter implements Closeable {
         }
         out.of(segmentId, pageOffset, (int) storedLength, decodedLength, pageKind, codec, rowCount, flags);
         pageOffset = -1;
+    }
+
+    /**
+     * @return the id of the open segment, which every page reference this writer
+     * mints carries
+     */
+    public long getSegmentId() {
+        ensureOpen();
+        return segmentId;
     }
 
     /**

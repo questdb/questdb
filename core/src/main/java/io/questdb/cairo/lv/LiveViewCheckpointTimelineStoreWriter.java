@@ -35,12 +35,15 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -90,6 +93,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     @TestOnly
     public static final int TEST_FAIL_AFTER_SUPERBLOCK_PUBLISH = 3;
 
+    private static final Log LOG = LogFactory.getLog(LiveViewCheckpointTimelineStoreWriter.class);
+    /**
+     * Published data segments one seal may hold mapped at once while it compares
+     * cold keys against their previous pages. Elision spreads a boundary's live
+     * references over the segments each key was last written into, so a wide key
+     * set walks more segments than one; a set wider than the cache re-maps rather
+     * than failing, which still costs less than re-imaging every key.
+     */
+    private static final int PREVIOUS_DATA_READER_CACHE_SIZE = 8;
+
     private final HashSet<String> lifecycleReconciledDirs = new HashSet<>();
     private final CairoConfiguration configuration;
     // Read-only argument of a cadence seal's reference transaction, which only
@@ -97,6 +110,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     private final LongList emptySegmentIds = new LongList();
     private final MemoryCARW keyBuffer;
     private final LiveViewCheckpointRingSeal ringSeal;
+    // One whole-state image at a time, encoded here before the freeze decides
+    // whether it has to become a page at all.
+    private final MemoryCARW stateBuffer;
+    private final LiveViewStatePageWriter statePageWriter = new LiveViewStatePageWriter();
     @TestOnly
     private int testFailureStage;
 
@@ -104,6 +121,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         this.configuration = configuration;
         this.keyBuffer = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
         this.ringSeal = new LiveViewCheckpointRingSeal(configuration, null);
+        this.stateBuffer = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
     }
 
     /**
@@ -242,6 +260,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     public void close() {
         Misc.free(keyBuffer);
         Misc.free(ringSeal);
+        Misc.free(stateBuffer);
         lifecycleReconciledDirs.clear();
     }
 
@@ -937,9 +956,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     && batchMinTs != Numbers.LONG_NULL
                     && batchMinTs > previousEntry.maxTimestamp;
             final FrozenBoundary boundary;
-            try (RootPreviousBoundary previousBoundary = isStrictlyForward
-                    ? new RootPreviousBoundary(checkpointsDir, oldFunctionDirectory, previousEntry.maxTimestamp)
-                    : null) {
+            try (RootPreviousBoundary previousBoundary = isStrictlyForward ? new RootPreviousBoundary(
+                    checkpointsDir,
+                    oldFunctionDirectory,
+                    oldDirectoryRoot,
+                    previousEntry.maxTimestamp
+            ) : null) {
                 boundary = freezeBoundary(dataWriter, functions, anchorWindow, previousBoundary);
             }
             final boolean hasData = !dataWriter.isEmpty();
@@ -1106,6 +1128,28 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 .put(ref.getSegmentId()).put(", offset=").put(ref.getOffset()).put(']');
     }
 
+    /**
+     * Narrows a previous boundary's reference to one this freeze may reuse: a
+     * single whole-state image under the framing {@link #freezeStatePage} mints.
+     * Anything else - a ring chunk, a page written by another codec, a reference
+     * whose stored and decoded lengths disagree - comes back null, and the freeze
+     * writes its own page.
+     */
+    private static @Nullable LiveViewCheckpointStatePageRef rawStatePageRef(
+            @Nullable LiveViewCheckpointStatePageRef ref
+    ) {
+        if (ref == null
+                || ref.isNull()
+                || ref.getPageKind() != FUNCTION_STATE_PAGE_KIND
+                || ref.getCodec() != RAW_CODEC
+                || ref.getRowCount() != 1
+                || ref.getFlags() != 0
+                || ref.getStoredLength() != ref.getDecodedLength()) {
+            return null;
+        }
+        return ref;
+    }
+
     private static void removeMissingPartitions(
             Path checkpointsDir,
             LiveViewCheckpointPageRef oldFunctionRootRef,
@@ -1125,6 +1169,20 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 builder.removePartition(entry.getKey());
             }
         });
+    }
+
+    /**
+     * The previous boundary's whole-state page for one partition, or null when
+     * its entry holds something a whole-state freeze cannot reuse - a ring entry,
+     * a function-owned scalar payload beside the page, or no page at all.
+     */
+    private static @Nullable LiveViewCheckpointStatePageRef wholeStatePageRef(
+            @Nullable LiveViewCheckpointPartitionMapEntry entry
+    ) {
+        if (entry == null || entry.getScalarState().length != 0 || entry.getStatePageCount() != 1) {
+            return null;
+        }
+        return rawStatePageRef(entry.getStatePageRef(0));
     }
 
     private void ensureDirectories(Path checkpointsDir) {
@@ -1227,7 +1285,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 throw CairoException.critical(0)
                         .put("live view checkpoint ring state requires a partition map");
             }
-            final LiveViewCheckpointStatePageRef ref = freezeStatePage(dataWriter, function, null);
+            final LiveViewCheckpointStatePageRef previousScalarRef = previousBoundary == null
+                    ? null
+                    : rawStatePageRef(
+                    previousBoundary.findScalarStatePage(frozen.identity, frozen.stateFormatVersion)
+            );
+            final LiveViewCheckpointStatePageRef ref =
+                    freezeStatePage(dataWriter, function, null, previousBoundary, previousScalarRef);
             frozen.scalarStateRef = ref;
             return ref.getDecodedLength();
         }
@@ -1268,7 +1332,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 ));
                 frozen.addPartition(ringEntry);
             } else {
-                final LiveViewCheckpointStatePageRef stateRef = freezeStatePage(dataWriter, function, value);
+                final LiveViewCheckpointPartitionMapEntry previous = previousBoundary == null
+                        ? null
+                        : previousBoundary.find(frozen.identity, frozen.stateFormatVersion, key);
+                final LiveViewCheckpointStatePageRef stateRef = freezeStatePage(
+                        dataWriter,
+                        function,
+                        value,
+                        previousBoundary,
+                        wholeStatePageRef(previous)
+                );
                 frozen.addPartition(key, stateRef);
                 logicalBytes = checkedAdd(logicalBytes, stateRef.getDecodedLength());
             }
@@ -1276,15 +1349,44 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         return logicalBytes;
     }
 
+    /**
+     * Encodes one whole-state image and names it with a page reference.
+     * <p>
+     * The image goes into a reusable scratch buffer rather than straight into the
+     * segment, so a key the batch did not touch can be compared against the page
+     * the previous boundary wrote for it and reuse that page's reference instead
+     * of writing an identical copy. The elision then carries into metadata for
+     * free: the partition-map entry a reused reference produces is byte-identical
+     * to the one already stored, and
+     * {@link LiveViewCheckpointPartitionMapWriter} drops a put whose key and value
+     * both match, so neither the leaf nor its ancestors are rewritten either.
+     * <p>
+     * A cold key therefore costs one encode and one comparison per seal instead
+     * of a state page plus its share of a full partition-map rewrite. The cost it
+     * adds is the comparison read: the previous page usually sits in an older
+     * segment that has to be mapped.
+     */
     private LiveViewCheckpointStatePageRef freezeStatePage(
             LiveViewCheckpointDataSegmentWriter dataWriter,
             WindowFunction function,
-            @Nullable MapValue value
+            @Nullable MapValue value,
+            @Nullable PreviousBoundary previousBoundary,
+            @Nullable LiveViewCheckpointStatePageRef previousRef
     ) {
-        final MemoryA sink = dataWriter.beginPage();
-        final LiveViewStatePageWriter pageWriter = new LiveViewStatePageWriter().of(sink);
+        stateBuffer.jumpTo(0);
+        final LiveViewStatePageWriter pageWriter = statePageWriter.of(stateBuffer);
         function.freezeCheckpointState(pageWriter, value);
         final int bytes = checkedIntLength(pageWriter.size(), "function state");
+        // After the encode: an extending put moves the buffer.
+        final long address = stateBuffer.addressOf(0);
+        if (previousBoundary != null
+                && previousRef != null
+                && previousRef.getStoredLength() == bytes
+                && previousBoundary.isStatePageEqual(previousRef, address, bytes)) {
+            return LiveViewCheckpointPartitionMapEntry.copyRef(previousRef);
+        }
+        final MemoryA sink = dataWriter.beginPage();
+        sink.putBlockOfBytes(address, bytes);
         final LiveViewCheckpointStatePageRef ref = new LiveViewCheckpointStatePageRef();
         dataWriter.endPage(ref, bytes, FUNCTION_STATE_PAGE_KIND, RAW_CODEC, 1, 0);
         return ref;
@@ -1417,7 +1519,24 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         @Nullable
         LiveViewCheckpointPartitionMapEntry find(byte[] functionIdentity, int stateFormatVersion, byte[] key);
 
+        /**
+         * The previous boundary's whole-state page for a function that keeps no
+         * partition map, or null when it holds none this freeze can compare
+         * against.
+         */
+        @Nullable
+        LiveViewCheckpointStatePageRef findScalarStatePage(byte[] functionIdentity, int stateFormatVersion);
+
         long getMaxTimestamp();
+
+        /**
+         * Compares the {@code length} freshly encoded bytes at {@code address}
+         * with the payload {@code ref} names. Answers false rather than raising
+         * when that payload cannot be read: a previous boundary with nothing to
+         * share costs one fresh page, which is what every freeze wrote before
+         * this comparison existed.
+         */
+        boolean isStatePageEqual(LiveViewCheckpointStatePageRef ref, long address, int length);
     }
 
     /**
@@ -1427,12 +1546,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      */
     private static final class CapturedPreviousBoundary implements PreviousBoundary {
         private final FrozenBoundary boundary;
+        private final LiveViewCheckpointDataSegmentWriter dataWriter;
         private final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
         private final long maxTimestamp;
 
-        private CapturedPreviousBoundary(FrozenBoundary boundary, long maxTimestamp) {
+        private CapturedPreviousBoundary(
+                FrozenBoundary boundary,
+                long maxTimestamp,
+                LiveViewCheckpointDataSegmentWriter dataWriter
+        ) {
             this.boundary = boundary;
             this.maxTimestamp = maxTimestamp;
+            this.dataWriter = dataWriter;
         }
 
         @Override
@@ -1441,25 +1566,53 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 int stateFormatVersion,
                 byte[] key
         ) {
-            for (int i = 0, n = boundary.functions.size(); i < n; i++) {
-                final FrozenFunction function = boundary.functions.getQuick(i);
-                if (function.stateFormatVersion != stateFormatVersion
-                        || !Arrays.equals(function.identity, functionIdentity)) {
-                    continue;
-                }
-                final FrozenPartition partition = function.partitionsByKey.get(ByteBuffer.wrap(key));
-                if (partition == null) {
-                    return null;
-                }
-                partition.copyTo(entry);
-                return entry;
+            final FrozenFunction function = findFunction(functionIdentity, stateFormatVersion);
+            if (function == null) {
+                return null;
             }
-            return null;
+            final FrozenPartition partition = function.partitionsByKey.get(ByteBuffer.wrap(key));
+            if (partition == null) {
+                return null;
+            }
+            partition.copyTo(entry);
+            return entry;
+        }
+
+        @Override
+        public @Nullable LiveViewCheckpointStatePageRef findScalarStatePage(
+                byte[] functionIdentity,
+                int stateFormatVersion
+        ) {
+            final FrozenFunction function = findFunction(functionIdentity, stateFormatVersion);
+            return function == null ? null : function.scalarStateRef;
         }
 
         @Override
         public long getMaxTimestamp() {
             return maxTimestamp;
+        }
+
+        @Override
+        public boolean isStatePageEqual(LiveViewCheckpointStatePageRef ref, long address, int length) {
+            // Every page a captured boundary holds went into this capture's own
+            // segment: the first boundary of a repair shares against nothing, so
+            // no reference the replay can hand back here names a published one.
+            // Anything else is left to the freeze rather than read blind.
+            if (ref.getSegmentId() != dataWriter.getSegmentId()) {
+                return false;
+            }
+            return Vect.memeq(dataWriter.addressOfPage(ref.getOffset(), length), address, length);
+        }
+
+        private @Nullable FrozenFunction findFunction(byte[] functionIdentity, int stateFormatVersion) {
+            for (int i = 0, n = boundary.functions.size(); i < n; i++) {
+                final FrozenFunction function = boundary.functions.getQuick(i);
+                if (function.stateFormatVersion == stateFormatVersion
+                        && Arrays.equals(function.identity, functionIdentity)) {
+                    return function;
+                }
+            }
+            return null;
         }
     }
 
@@ -1883,7 +2036,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     ? null
                     : new CapturedPreviousBoundary(
                     boundaries.getQuick(size - 1),
-                    boundaries.getQuick(size - 1).oldEntry.maxTimestamp
+                    boundaries.getQuick(size - 1).oldEntry.maxTimestamp,
+                    dataWriter
             );
             final FrozenBoundary boundary = freezeBoundary(dataWriter, functions, anchorWindow, previousBoundary);
             boundary.oldEntry.copyFrom(entry);
@@ -1995,6 +2149,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      */
     private final class RootPreviousBoundary implements PreviousBoundary, Closeable {
         private final Path checkpointsDir = new Path();
+        private final long[] dataReaderSegmentIds = new long[PREVIOUS_DATA_READER_CACHE_SIZE];
+        private final LiveViewCheckpointDataSegmentReader[] dataReaders =
+                new LiveViewCheckpointDataSegmentReader[PREVIOUS_DATA_READER_CACHE_SIZE];
         private final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
         private final LiveViewCheckpointFunctionDirectory functionDirectory;
         private final LiveViewCheckpointFunctionRoot functionRoot =
@@ -2004,23 +2161,40 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 new LiveViewCheckpointPartitionMapReader(configuration);
         private final LiveViewCheckpointPageRef partitionRootRef = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointStatePageRef scalarStateRef = new LiveViewCheckpointStatePageRef();
+        private final LiveViewCheckpointSegmentDirectoryReader segmentDirectory =
+                new LiveViewCheckpointSegmentDirectoryReader(configuration);
+        private final LiveViewCheckpointSegmentDirectoryEntry segmentDirectoryEntry =
+                new LiveViewCheckpointSegmentDirectoryEntry();
+        private int dataReaderClock;
+        private boolean isUnreadablePageLogged;
         private byte[] resolvedIdentity;
 
         private RootPreviousBoundary(
                 Path checkpointsDir,
                 LiveViewCheckpointFunctionDirectory functionDirectory,
+                LiveViewCheckpointPageRef segmentDirectoryRootRef,
                 long maxTimestamp
         ) {
             this.checkpointsDir.of(checkpointsDir);
             this.functionDirectory = functionDirectory;
             this.maxTimestamp = maxTimestamp;
             this.partitionReader.of(checkpointsDir);
+            // The published catalogue is what bounds every comparison read: a page
+            // is only opened against the exact file length its entry records.
+            this.segmentDirectory.of(checkpointsDir, segmentDirectoryRootRef);
+            Arrays.fill(dataReaderSegmentIds, -1);
         }
 
         @Override
         public void close() {
+            for (int i = 0; i < PREVIOUS_DATA_READER_CACHE_SIZE; i++) {
+                dataReaders[i] = Misc.free(dataReaders[i]);
+                dataReaderSegmentIds[i] = -1;
+            }
             Misc.free(functionRoot);
             Misc.free(partitionReader);
+            Misc.free(segmentDirectory);
             Misc.free(checkpointsDir);
         }
 
@@ -2030,25 +2204,101 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 int stateFormatVersion,
                 byte[] key
         ) {
-            if (!Arrays.equals(resolvedIdentity, functionIdentity)) {
-                resolvedIdentity = null;
-                partitionRootRef.clear();
-                if (!functionDirectory.find(functionIdentity, functionRootRef)) {
-                    return null;
-                }
-                functionRoot.of(checkpointsDir, functionRootRef);
-                if (functionRoot.getStateFormatVersion() != stateFormatVersion) {
-                    return null;
-                }
-                functionRoot.getPartitionMapRootRef(partitionRootRef);
-                resolvedIdentity = functionIdentity;
+            if (!resolveFunction(functionIdentity, stateFormatVersion)) {
+                return null;
             }
             return partitionReader.find(partitionRootRef, key, entry) ? entry : null;
         }
 
         @Override
+        public @Nullable LiveViewCheckpointStatePageRef findScalarStatePage(
+                byte[] functionIdentity,
+                int stateFormatVersion
+        ) {
+            if (!resolveFunction(functionIdentity, stateFormatVersion)) {
+                return null;
+            }
+            return scalarStateRef.isNull() ? null : scalarStateRef;
+        }
+
+        @Override
         public long getMaxTimestamp() {
             return maxTimestamp;
+        }
+
+        @Override
+        public boolean isStatePageEqual(LiveViewCheckpointStatePageRef ref, long address, int length) {
+            try {
+                if (!segmentDirectory.find(ref.getSegmentId(), segmentDirectoryEntry)
+                        || segmentDirectoryEntry.referenceCount <= 0
+                        || segmentDirectoryEntry.fileLength <= 0) {
+                    return false;
+                }
+                final LiveViewCheckpointDataSegmentReader reader =
+                        readerFor(ref.getSegmentId(), segmentDirectoryEntry.fileLength);
+                reader.openPage(ref, FUNCTION_STATE_PAGE_KIND, RAW_CODEC, 0, 1, Integer.MAX_VALUE);
+                return reader.getPageStoredLength() == length
+                        && Vect.memeq(reader.getPageAddress(), address, length);
+            } catch (CairoException e) {
+                // The seal writes its own image instead, so a predecessor it cannot read
+                // costs bytes rather than the publication - and the root that still names
+                // that page is a restore's problem, which restore reports on its own. One
+                // line per boundary: a segment that has gone missing fails every key.
+                if (!isUnreadablePageLogged) {
+                    isUnreadablePageLogged = true;
+                    LOG.error().$("could not read live view checkpoint state page for reuse [segmentId=")
+                            .$(ref.getSegmentId())
+                            .$(", offset=").$(ref.getOffset())
+                            .$(", error=").$safe(e.getFlyweightMessage())
+                            .I$();
+                }
+                return false;
+            }
+        }
+
+        private LiveViewCheckpointDataSegmentReader readerFor(long segmentId, long fileLength) {
+            for (int i = 0; i < PREVIOUS_DATA_READER_CACHE_SIZE; i++) {
+                if (dataReaderSegmentIds[i] == segmentId) {
+                    return dataReaders[i];
+                }
+            }
+            final int slot = dataReaderClock;
+            dataReaderClock = dataReaderClock + 1 == PREVIOUS_DATA_READER_CACHE_SIZE ? 0 : dataReaderClock + 1;
+            if (dataReaders[slot] == null) {
+                dataReaders[slot] = new LiveViewCheckpointDataSegmentReader(configuration);
+            }
+            // Invalidated before the open, which resets the reader and can then throw:
+            // the slot must not go on advertising the segment it held against a reader
+            // that no longer holds it.
+            dataReaderSegmentIds[slot] = -1;
+            dataReaders[slot].of(checkpointsDir, segmentId, fileLength);
+            dataReaderSegmentIds[slot] = segmentId;
+            return dataReaders[slot];
+        }
+
+        /**
+         * Binds the previous root's map and scalar references for one function.
+         * A seal freezes each function's partitions in one run, so the resolution
+         * is memoised on the identity and the root is read once per function.
+         */
+        private boolean resolveFunction(byte[] functionIdentity, int stateFormatVersion) {
+            if (Arrays.equals(resolvedIdentity, functionIdentity)) {
+                return true;
+            }
+            resolvedIdentity = null;
+            partitionRootRef.clear();
+            scalarStateRef.clear();
+            if (!functionDirectory.find(functionIdentity, functionRootRef)) {
+                return false;
+            }
+            functionRoot.of(checkpointsDir, functionRootRef);
+            if (functionRoot.getStateFormatVersion() != stateFormatVersion) {
+                return false;
+            }
+            functionRoot.getPartitionMapRootRef(partitionRootRef);
+            functionRoot.getScalarStateRef(scalarStateRef);
+            resolvedIdentity = functionIdentity;
+            return true;
         }
     }
 
