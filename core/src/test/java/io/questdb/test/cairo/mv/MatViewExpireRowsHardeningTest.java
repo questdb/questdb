@@ -87,8 +87,9 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     @Test
     public void testClockAndRandomThresholdCleanupSkipped() throws Exception {
         assertMemoryLeak(() -> {
-            // A pre-epoch clock makes `now() - now()*2` a positive post-epoch threshold. Before the fix,
-            // cleanup classified it monotonic and physically dropped the first two partitions.
+            // A pre-epoch clock makes `now() - now()*2` a positive post-epoch threshold. This decreasing
+            // transform is not monotonic: cleanup must classify it non-monotonic and reclaim nothing, since
+            // treating it as monotonic would physically drop the first two partitions.
             setCurrentMicros(-864_000_000_000L); // 1969-12-22, threshold of decreasing transform = 1970-01-11
             execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("""
@@ -1228,7 +1229,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
     @Test
     public void testCleanupDefersWhileRefreshHoldsViewLock() throws Exception {
-        // M5 serialization: cleanup and the mat-view refresh job are mutually exclusive per view via the
+        // Cleanup and the mat-view refresh job are mutually exclusive per view via the
         // MatViewState lock — so a back-fill can never land between the survivor scan and the REPLACE_RANGE
         // commit. Holding that lock (as an in-progress refresh would) must make cleanup DEFER (no reclamation);
         // releasing it lets the next sweep reclaim normally.
@@ -1279,16 +1280,15 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         );
     }
 
-    // M1 GATE deterministic pin (writer caught up + policy change lands MID-SWEEP). Since the seqTxn baseline
-    // is now the reader's own applied txn (readerSeqTxn), even the committed-but-not-applied
-    // testCleanupWithStalePredicate...Unapplied tests reach the bounds-DROP fast path (racyOpsAllowed is true
-    // against that baseline) and defer at the per-commit gate -- so reverting the M1 one-liner already breaks
-    // them. This test pins the same gate under the fully-applied mid-sweep race: the view is fully applied so
-    // racyOpsAllowed == true and the bounds-DROP fast path IS entered, and an in-job barrier injects the
-    // loosening ALTER exactly before the first destructive commit — advancing the sequencer past the sweep's
-    // expectedSeqTxn while the writer was caught up. Only the M1 per-commit gate on the bounds-DROP fast path
-    // can defer here; reverting that one-liner makes this test fail (the bounds-DROP would wipe OLD1/OLD2
-    // against the stale strict predicate before the loosened policy applies).
+    // Deterministic pin for the per-commit sequencer-txn gate when the writer is caught up and a policy change
+    // lands MID-SWEEP. Because the seqTxn baseline is the reader's own applied txn (readerSeqTxn), even the
+    // committed-but-not-applied testCleanupWithStalePredicate...Unapplied tests reach the bounds-DROP fast path
+    // (racyOpsAllowed is true against that baseline) and defer at the per-commit gate. This test pins the same
+    // gate under the fully-applied mid-sweep race: the view is fully applied so racyOpsAllowed == true and the
+    // bounds-DROP fast path IS entered, and an in-job barrier injects the loosening ALTER exactly before the
+    // first destructive commit — advancing the sequencer past the sweep's expectedSeqTxn while the writer was
+    // caught up. Only the per-commit gate on the bounds-DROP fast path can defer here; without it the
+    // bounds-DROP would wipe OLD1/OLD2 against the stale strict predicate before the loosened policy applies.
     @Test
     public void testM1BoundsDropGateDefersOnMidSweepPolicyChange() throws Exception {
         assertMemoryLeak(() -> {
@@ -1396,7 +1396,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         });
     }
 
-    // C1 (mid-sweep predicate reconciliation, data-loss). A cleanup sweep snapshots (token, predicate) at
+    // Mid-sweep predicate reconciliation (data-loss guard). A cleanup sweep snapshots (token, predicate) at
     // sweep-start discovery (runSerially) and opens its reader LATER. If an ALTER SET/DROP EXPIRE applied in
     // between and was FULLY applied (writer caught up), the seqTxn per-commit gate alone does NOT defer -- the
     // sequencer moved but the writer is caught up again, so racyOpsAllowed is true and getSeqTxn()==expectedSeqTxn
@@ -1547,7 +1547,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         });
     }
 
-    // M1/M6 DETERMINISTIC data-loss guard (non-fuzz): a cleanup sweep that snapshotted a now-STALE (stricter)
+    // Deterministic data-loss guard (non-fuzz): a cleanup sweep that snapshotted a now-STALE (stricter)
     // predicate must not physically delete rows the CURRENT (loosened / dropped) policy keeps. TableWriter's
     // policy-change apply path does not take the MatViewState lock the sweep holds, so a policy change can
     // apply mid-sweep; the sequencer-txn gate on every destructive commit (incl. the bounds-DROP fast path,

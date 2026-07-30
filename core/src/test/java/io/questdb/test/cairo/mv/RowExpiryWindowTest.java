@@ -158,7 +158,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOnOverExpiringViewUsesIndexedFastPath() throws Exception {
-        // R1 + R2 end-to-end: LATEST ON over a passthrough EXPIRE ROWS view reads through the injected
+        // End-to-end: LATEST ON over a passthrough EXPIRE ROWS view reads through the injected
         // retention keep-filter using the SYMBOL index the view inherited from its base (indexed
         // latest-by), NOT a LatestBy light full scan - and returns the correct latest row per key within
         // the retained window.
@@ -472,8 +472,8 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
 
     @Test
     public void testRejectedOnUnpartitionedTable() throws Exception {
-        // EXPIRE on an un-partitioned CREATE TABLE must give the SPECIFIC message; the rejection used to live
-        // inside the PARTITION BY block, so this case fell through to a generic "unexpected token".
+        // EXPIRE on an un-partitioned CREATE TABLE must give the SPECIFIC message. The rejection is raised
+        // before the PARTITION BY block, so this case does not fall through to a generic "unexpected token".
         assertException(
                 "create table t (a int, ts timestamp) timestamp(ts) expire rows when a < 2",
                 51,
@@ -903,7 +903,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     A\t3.0\t2024-01-02T00:00:00.000000Z
                     """);
 
-            // ASOF JOIN over the window-policied view: previously failed to compile.
+            // ASOF JOIN over the window-policied view must compile and read through the keep-filter.
             execute("create table probe (k symbol, p double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into probe values ('A', 100.0, '2024-01-05T00:00:00.000000Z'),('B', 200.0, '2024-01-05T00:00:00.000000Z')");
             drainWalAndMatViewQueues();

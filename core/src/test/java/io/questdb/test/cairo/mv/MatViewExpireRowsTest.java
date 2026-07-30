@@ -1084,9 +1084,9 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // Regression: a DISTINCT sub-query wrapped so a timestamp(ts) designation survives to the top must
         // still be rejected. isSqlDistinctGroupByRewriteEnabled() rewrites DISTINCT into an implicit
         // SELECT_MODEL_GROUP_BY whose getGroupBy() list is empty and whose isDistinct() flag is cleared, so
-        // isPassthrough must reject the group-by MODEL, not just an explicit GROUP BY clause. Before the fix
-        // this DISTINCT-derived (non-1:1) view was created as a passthrough and would receive EXPIRE ROWS
-        // physical cleanup.
+        // isPassthrough must reject the group-by MODEL, not just an explicit GROUP BY clause; otherwise this
+        // DISTINCT-derived (non-1:1) view would be created as a passthrough and receive EXPIRE ROWS physical
+        // cleanup.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             assertExceptionNoLeakCheck(
@@ -1201,7 +1201,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     @Test
     public void testCreateExpireRowsUnbalancedOpenParenRejected() throws Exception {
-        // M4: an open paren that is never closed must be detected, not silently swallow the trailing
+        // An open paren that is never closed must be detected, not silently swallow the trailing
         // CLEANUP clause into the predicate text (which would also drop the custom cleanup interval).
         // The error is reported at the start of the predicate.
         assertMemoryLeak(() -> {
@@ -1217,7 +1217,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     @Test
     public void testCreateExpireRowsUnbalancedCloseParenRejected() throws Exception {
-        // M4: a ')' with no matching '(' (depth would go negative) must be flagged at the offending ')'.
+        // A ')' with no matching '(' (depth would go negative) must be flagged at the offending ')'.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             assertExceptionNoLeakCheck(
@@ -1231,7 +1231,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     @Test
     public void testCreateExpireRowsBalancedParensWithCleanupParses() throws Exception {
-        // M4 regression guard: a fully-balanced parenthesised predicate followed by CLEANUP EVERY must
+        // Regression guard: a fully-balanced parenthesised predicate followed by CLEANUP EVERY must
         // still parse, with CLEANUP terminating the predicate (not swallowed) and the custom interval kept.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
@@ -1636,8 +1636,9 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                         "ALTER did not publish its metadata version",
                         metadataVersionPublished.await(30, TimeUnit.SECONDS)
                 );
-                // _meta/_txn now expose V+1 while MetadataCache still contains policy P0. The factory must not
-                // combine P0 with V+1 and remain valid after hydration publishes the current policy.
+                // _meta/_txn now expose V+1 while MetadataCache still contains the previous policy. The factory
+                // must not combine that stale policy with V+1 and remain valid after hydration publishes the
+                // current policy.
                 try (RecordCursorFactory factory = select("SELECT k, v FROM mv ORDER BY k")) {
                     resumeCacheHydration.countDown();
                     applyThread.join(30_000);
@@ -1674,7 +1675,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("CREATE TABLE sink (k SYMBOL, v DOUBLE)");
             drainWalAndMatViewQueues();
 
-            // Warm the cache so the INSERT model captures P0 before the transition starts.
+            // Warm the cache so the INSERT model captures the current (pre-transition) policy first.
             if (initialExpiryClause.isEmpty()) {
                 assertQuery("SELECT k, v FROM mv ORDER BY k").expectSize().noLeakCheck().returns(
                         "k\tv\nA\t1.0\nB\t2.0\nC\t3.0\n"
