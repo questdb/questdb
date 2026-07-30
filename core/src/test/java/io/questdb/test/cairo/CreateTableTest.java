@@ -460,6 +460,25 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateSystemTableQuarantinesSecondOrphanDir() throws Exception {
+        assertMemoryLeak(() -> {
+            final String dirName = orphanDirName(QueryTracingJob.TABLE_NAME);
+            plantOrphanDir(QueryTracingJob.TABLE_NAME);
+            execute(createQueryTraceSql());
+            assertTrue(isDirPresent(dirName + TableUtils.ORPHAN_DIR_SUFFIX + "0"));
+
+            execute("DROP TABLE '" + QueryTracingJob.TABLE_NAME + "'");
+            plantOrphanDir(QueryTracingJob.TABLE_NAME);
+            plantMarkerFile(dirName);
+            execute(createQueryTraceSql());
+
+            // .orphan.0 is taken, so the next free suffix is used and the first husk is left alone
+            assertTrue(isDirPresent(dirName + TableUtils.ORPHAN_DIR_SUFFIX + "0"));
+            assertTrue(isMarkerFilePresent(dirName + TableUtils.ORPHAN_DIR_SUFFIX + "1"));
+        });
+    }
+
+    @Test
     public void testCreateTableArrayWithMismatchedBrackets() throws Exception {
         assertMemoryLeak(() -> {
             assertException("create table x (arr double[);", 26, "syntax error at column type definition, expected array type: 'DOUBLE[]...', but found: 'double[)'");

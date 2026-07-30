@@ -312,6 +312,23 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         return findLastTablesFileVersion(ff, path, nameSink);
     }
 
+    /**
+     * Whether a directory name belongs to a system table. Deliberately avoids
+     * {@link TableUtils#getTableNameFromDirName(CharSequence)}, which allocates two Strings for a
+     * mangled name: this is called for every directory the root scan skips, and on a read-only
+     * instance the scan repeats for the life of the process.
+     */
+    private boolean isSystemTableDir(CharSequence dirName) {
+        final int suffixIndex = Chars.indexOf(dirName, TableUtils.SYSTEM_TABLE_NAME_SUFFIX);
+        if (suffixIndex == -1) {
+            return tableFlagResolver.isSystem(dirName);
+        }
+        final StringSink tableName = Misc.getThreadLocalSink();
+        tableName.clear();
+        tableName.put(dirName, 0, suffixIndex);
+        return tableFlagResolver.isSystem(tableName);
+    }
+
     private int readTableId(Path path, CharSequence dirName, FilesFacade ff) {
         path.of(configuration.getDbRoot()).concat(dirName);
         int pathLen = path.size();
@@ -359,7 +376,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             ? TableUtils.TABLE_DOES_NOT_EXIST
                             : TableUtils.exists(ff, path, configuration.getDbRoot(), dirNameSink);
                     if (status == TableUtils.TABLE_RESERVED
-                            && tableFlagResolver.isSystem(TableUtils.getTableNameFromDirName(dirName))
+                            && isSystemTableDir(dirName)
                             && loggedOrphanDirs.add(dirName)) {
                         // a directory with no _txn is never adopted here, so it stays invisible to
                         // the registry while still blocking every create under the same name. that

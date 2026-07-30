@@ -2363,21 +2363,27 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         final FilesFacade ff = configuration.getFilesFacade();
         if (status == TableUtils.TABLE_RESERVED && tableToken.isSystem() && !ff.isSoftLink(tableDir.$())) {
-            final StringSink quarantineName = Misc.getThreadLocalSink();
-            for (int i = 0; i < TableUtils.MAX_ORPHAN_DIRS; i++) {
-                quarantineName.clear();
-                quarantineName.put(tableToken.getDirName()).put(TableUtils.ORPHAN_DIR_SUFFIX).put(i);
-                final Path quarantine = Path.getThreadLocal2(configuration.getDbRoot()).concat(quarantineName);
-                if (ff.exists(quarantine.$())) {
-                    continue;
+            // a dedicated Path rather than a thread-local one: tableDir belongs to the caller, and
+            // a caller that passed the same thread-local would alias it, silently turning the
+            // rename below into a one-buffer no-op. this runs at most once per orphan directory,
+            // so the allocation does not matter
+            try (Path quarantine = new Path()) {
+                final StringSink quarantineName = Misc.getThreadLocalSink();
+                for (int i = 0; i < TableUtils.MAX_ORPHAN_DIRS; i++) {
+                    quarantineName.clear();
+                    quarantineName.put(tableToken.getDirName()).put(TableUtils.ORPHAN_DIR_SUFFIX).put(i);
+                    quarantine.of(configuration.getDbRoot()).concat(quarantineName);
+                    if (ff.exists(quarantine.$())) {
+                        continue;
+                    }
+                    if (ff.rename(tableDir.$(), quarantine.$()) == Files.FILES_RENAME_OK) {
+                        LOG.advisory().$("quarantined orphan system table directory [table=").$(tableToken)
+                                .$(", from=").$(tableDir)
+                                .$(", to=").$(quarantine).I$();
+                        return;
+                    }
+                    break;
                 }
-                if (ff.rename(tableDir.$(), quarantine.$()) == Files.FILES_RENAME_OK) {
-                    LOG.advisory().$("quarantined orphan system table directory [table=").$(tableToken)
-                            .$(", from=").$(tableDir)
-                            .$(", to=").$(quarantine).I$();
-                    return;
-                }
-                break;
             }
         }
         throw CairoException.nonCritical().put("name is reserved [table=")
