@@ -151,6 +151,104 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChunksOfOnePartitionCarryDifferentCodecs() throws Exception {
+        // Codec selection is per page, so the chunks of one partition may each land
+        // under a different format-1 tag. A boundary that appended a dense cadence of
+        // decimal prices compresses both of its pages; a boundary that appended three
+        // far-apart rows carrying a NaN payload stores both raw, because a covering
+        // header costs more than the three words it would describe. Prove all three
+        // tags coexist in one root, that no page exceeds the payload it decodes to,
+        // and that the mixed ring still walks back bit-exactly across a head offset
+        // sitting inside a compressed chunk.
+        assertMemoryLeak(() -> {
+            final int denseRows = LiveViewCheckpointStateCodec.CHUNK_ROWS;
+            final int sparseRows = 3;
+            final int dropRows = denseRows - 6;
+            final long sparseStep = 1L << 40;
+            final long nanBits = 0x7ff8_dead_beef_1234L;
+            final LongList timestamps = new LongList();
+            final LongList values = new LongList();
+            final LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
+            final LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
+            final LiveViewCheckpointPartitionMapEntry third = new LiveViewCheckpointPartitionMapEntry();
+            try (Catalogue directory = new Catalogue()) {
+                try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                     LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                     Path dir = new Path()) {
+                    builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
+                    writer.of(checkpointsDir(dir), 50);
+                    for (int i = 0; i < denseRows; i++) {
+                        final long ts = i * 1_000L;
+                        final long bits = Double.doubleToRawLongBits(100.0 + i * 0.01);
+                        builder.append(writer, ts, bits);
+                        timestamps.add(ts);
+                        values.add(bits);
+                    }
+                    builder.freeze(writer, KEY, 0L, 0, 0, 0, timestamps.size(), first);
+                    directory.addSegment(50, writer.commit());
+                }
+
+                long lastTimestamp = timestamps.getLast();
+                try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                     LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                     Path dir = new Path()) {
+                    builder.of(first, LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
+                    writer.of(checkpointsDir(dir), 51);
+                    for (int i = 0; i < sparseRows; i++) {
+                        final long ts = lastTimestamp + (i + 1) * sparseStep;
+                        builder.append(writer, ts, nanBits);
+                        timestamps.add(ts);
+                        values.add(nanBits);
+                    }
+                    builder.freeze(writer, KEY, 0L, 0, 0, 0, timestamps.size(), second);
+                    directory.addSegment(51, writer.commit());
+                }
+
+                lastTimestamp = timestamps.getLast();
+                try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                     LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                     Path dir = new Path()) {
+                    builder.of(second, LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
+                    // The drop stops inside the first chunk, so the ring keeps a head
+                    // offset into a covering page the seal never rewrites.
+                    builder.dropHeadRows(dropRows);
+                    for (int i = 0; i < dropRows; i++) {
+                        timestamps.removeIndex(0);
+                        values.removeIndex(0);
+                    }
+                    writer.of(checkpointsDir(dir), 52);
+                    for (int i = 0; i < denseRows; i++) {
+                        final long ts = lastTimestamp + (i + 1) * 1_000L;
+                        final long bits = Double.doubleToRawLongBits(42.5);
+                        builder.append(writer, ts, bits);
+                        timestamps.add(ts);
+                        values.add(bits);
+                    }
+                    builder.freeze(writer, KEY, 0L, 0, 0, 0, timestamps.size(), third);
+                    directory.addSegment(52, writer.commit());
+                }
+
+                // A regular cadence is a linear-prediction long block, a decimal price
+                // series and a repeated value are ALP blocks, and both of the sparse
+                // NaN chunk's pages are raw.
+                assertPageCodecs(
+                        third,
+                        LiveViewCheckpointStateCodec.COVERING_LONG, LiveViewCheckpointStateCodec.COVERING_DOUBLE,
+                        LiveViewCheckpointStateCodec.RAW_64, LiveViewCheckpointStateCodec.RAW_64,
+                        LiveViewCheckpointStateCodec.COVERING_LONG, LiveViewCheckpointStateCodec.COVERING_DOUBLE
+                );
+                assertRestored(third, directory, timestamps, values);
+                try (LiveViewCheckpointRangeRingStateReader reader = new LiveViewCheckpointRangeRingStateReader(configuration);
+                     Path dir = new Path()) {
+                    reader.of(checkpointsDir(dir), directory.reader, third);
+                    Assert.assertEquals(dropRows, reader.getHeadOffset());
+                    Assert.assertEquals(denseRows + sparseRows + denseRows - dropRows, reader.getRowCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testChunksSpanningManySegmentsMapEachSegmentOncePerBinding() throws Exception {
         // A cadence seal appends each boundary's rows as a fresh chunk in that
         // boundary's own data segment and carries the older chunks forward by
@@ -247,6 +345,55 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                     LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_DOUBLE,
                     LiveViewCheckpointRangeRingStateReader.DEQUE_DOUBLE_VALUE_PAGE_KIND,
                     false
+            );
+        });
+    }
+
+    @Test
+    public void testDequeRingsSelectCodecPerValueStream() throws Exception {
+        // A max deque's snapshot is a strictly decreasing value run, and the codec its
+        // value page lands under follows those words rather than the deque page kind: a
+        // narrow long run and a whole-number double run both compress, while a run
+        // spanning the whole 64-bit range and a run of denormals both fall back to raw
+        // because the covering block would be longer than the payload it describes.
+        assertMemoryLeak(() -> {
+            final int rows = LiveViewCheckpointStateCodec.CHUNK_ROWS + 5;
+            // A stride wide enough that one full chunk spans more than 2^63 and packs
+            // no narrower than 64 bits, while the whole run still fits the range.
+            final long stride = 3_000_000_000_000_000L;
+            final LongList timestamps = new LongList();
+            final LongList narrowLongs = new LongList();
+            final LongList wideLongs = new LongList();
+            final LongList wholeDoubles = new LongList();
+            final LongList denormalDoubles = new LongList();
+            for (int i = 0; i < rows; i++) {
+                timestamps.add(i * 1_000L);
+                narrowLongs.add(rows - i);
+                wideLongs.add(Long.MAX_VALUE - i * stride);
+                wholeDoubles.add(Double.doubleToRawLongBits(rows - i));
+                // No decimal transform in the ALP tables reproduces a denormal: every
+                // candidate exponent rounds it to zero, so every value is an exception.
+                denormalDoubles.add(Double.doubleToRawLongBits((rows - i) * Double.MIN_VALUE));
+            }
+            assertValueCodecSelection(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_LONG,
+                    LiveViewCheckpointRangeRingStateReader.DEQUE_LONG_VALUE_PAGE_KIND,
+                    84, timestamps, narrowLongs, LiveViewCheckpointStateCodec.COVERING_LONG
+            );
+            assertValueCodecSelection(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_LONG,
+                    LiveViewCheckpointRangeRingStateReader.DEQUE_LONG_VALUE_PAGE_KIND,
+                    85, timestamps, wideLongs, LiveViewCheckpointStateCodec.RAW_64
+            );
+            assertValueCodecSelection(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_DOUBLE,
+                    LiveViewCheckpointRangeRingStateReader.DEQUE_DOUBLE_VALUE_PAGE_KIND,
+                    86, timestamps, wholeDoubles, LiveViewCheckpointStateCodec.COVERING_DOUBLE
+            );
+            assertValueCodecSelection(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_DOUBLE,
+                    LiveViewCheckpointRangeRingStateReader.DEQUE_DOUBLE_VALUE_PAGE_KIND,
+                    87, timestamps, denormalDoubles, LiveViewCheckpointStateCodec.RAW_64
             );
         });
     }
@@ -513,6 +660,58 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWideDecimalRingsSelectCodecPerWordStream() throws Exception {
+        // A wide decimal's value page is one flattened word stream, so its codec follows
+        // those words: a run whose high words repeat and whose low words stay in a
+        // narrow range compresses under flattened FoR, while a run whose words span the
+        // whole 64-bit range packs no narrower than raw and falls back to it. The deque
+        // kinds carry the same payload, so they must select the same way the value-ring
+        // kinds do.
+        assertMemoryLeak(() -> {
+            assertWideCodecSelection(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128,
+                    LiveViewCheckpointRangeRingStateReader.DECIMAL128_VALUE_PAGE_KIND,
+                    90, true, LiveViewCheckpointStateCodec.COVERING_LONG
+            );
+            assertWideCodecSelection(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128,
+                    LiveViewCheckpointRangeRingStateReader.DECIMAL128_VALUE_PAGE_KIND,
+                    91, false, LiveViewCheckpointStateCodec.RAW_64
+            );
+            assertWideCodecSelection(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL256,
+                    LiveViewCheckpointRangeRingStateReader.DECIMAL256_VALUE_PAGE_KIND,
+                    92, true, LiveViewCheckpointStateCodec.COVERING_LONG
+            );
+            assertWideCodecSelection(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL256,
+                    LiveViewCheckpointRangeRingStateReader.DECIMAL256_VALUE_PAGE_KIND,
+                    93, false, LiveViewCheckpointStateCodec.RAW_64
+            );
+            assertWideCodecSelection(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_DECIMAL128,
+                    LiveViewCheckpointRangeRingStateReader.DEQUE_DECIMAL128_VALUE_PAGE_KIND,
+                    94, true, LiveViewCheckpointStateCodec.COVERING_LONG
+            );
+            assertWideCodecSelection(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_DECIMAL128,
+                    LiveViewCheckpointRangeRingStateReader.DEQUE_DECIMAL128_VALUE_PAGE_KIND,
+                    95, false, LiveViewCheckpointStateCodec.RAW_64
+            );
+            assertWideCodecSelection(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_DECIMAL256,
+                    LiveViewCheckpointRangeRingStateReader.DEQUE_DECIMAL256_VALUE_PAGE_KIND,
+                    96, true, LiveViewCheckpointStateCodec.COVERING_LONG
+            );
+            assertWideCodecSelection(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_DECIMAL256,
+                    LiveViewCheckpointRangeRingStateReader.DEQUE_DECIMAL256_VALUE_PAGE_KIND,
+                    97, false, LiveViewCheckpointStateCodec.RAW_64
+            );
+        });
+    }
+
+    @Test
     public void testWideDecimalRingsShareChunksAndRoundTripRawWords() throws Exception {
         // A DECIMAL128/DECIMAL256 ring spends two or four raw 64-bit words per row.
         // The chunk row cap shrinks by the same factor so one chunk's value page still
@@ -674,6 +873,31 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Asserts {@code entry} holds exactly the given per-page format-1 codec tags, in
+     * page order, and that no page stores more bytes than the payload it decodes to.
+     */
+    private static void assertPageCodecs(LiveViewCheckpointPartitionMapEntry entry, int... expectedCodecs) {
+        Assert.assertEquals(expectedCodecs.length, entry.getStatePageCount());
+        for (int i = 0; i < expectedCodecs.length; i++) {
+            final LiveViewCheckpointStatePageRef ref = entry.getStatePageRef(i);
+            Assert.assertEquals("page " + i + " codec", expectedCodecs[i], ref.getCodec());
+            assertPageDoesNotExpand(ref, i);
+        }
+    }
+
+    /**
+     * Asserts one page kept the hard invariant of the format: raw always participates
+     * in selection and wins ties, so a stored page never exceeds its decoded payload.
+     */
+    private static void assertPageDoesNotExpand(LiveViewCheckpointStatePageRef ref, int index) {
+        Assert.assertTrue(
+                "page " + index + " stored " + ref.getStoredLength()
+                        + " bytes for a " + ref.getDecodedLength() + "-byte payload",
+                ref.getStoredLength() <= ref.getDecodedLength()
+        );
+    }
+
     private static void assertRefEquals(LiveViewCheckpointStatePageRef expected, LiveViewCheckpointStatePageRef actual) {
         Assert.assertEquals(expected.getSegmentId(), actual.getSegmentId());
         Assert.assertEquals(expected.getOffset(), actual.getOffset());
@@ -744,6 +968,103 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             });
             Assert.assertEquals(expectedTimestamps.size(), index[0]);
         }
+    }
+
+    /**
+     * Seals one {@code valueKind} partition from {@code timestamps} and
+     * {@code wordStream} - which holds one row's value words consecutively - then
+     * asserts every value page landed under {@code expectedValueCodec}, that every
+     * page stayed within the payload it decodes to, and that the ring walks back
+     * against the oracle. The row count spills past the width's chunk cap, so the
+     * assertions cover the partial tail chunk as well as the full one.
+     */
+    private static void assertValueCodecSelection(
+            int valueKind,
+            int expectedPageKind,
+            long segmentId,
+            LongList timestamps,
+            LongList wordStream,
+            int expectedValueCodec
+    ) {
+        final int words = LiveViewCheckpointRangeRingStateReader.valueWords(valueKind);
+        final LiveViewCheckpointPartitionMapEntry root = new LiveViewCheckpointPartitionMapEntry();
+        try (Catalogue directory = new Catalogue()) {
+            try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                 LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                 Path dir = new Path()) {
+                builder.ofEmpty(valueKind, words);
+                writer.of(checkpointsDir(dir), segmentId);
+                for (int i = 0, n = timestamps.size(); i < n; i++) {
+                    final long timestamp = timestamps.getQuick(i);
+                    switch (words) {
+                        case 1 -> builder.append(writer, timestamp, wordStream.getQuick(i));
+                        case 2 -> builder.append(
+                                writer, timestamp,
+                                wordStream.getQuick(2 * i), wordStream.getQuick(2 * i + 1)
+                        );
+                        default -> builder.append(
+                                writer, timestamp,
+                                wordStream.getQuick(4 * i), wordStream.getQuick(4 * i + 1),
+                                wordStream.getQuick(4 * i + 2), wordStream.getQuick(4 * i + 3)
+                        );
+                    }
+                }
+                builder.freeze(writer, KEY, 0L, 0, 0, 0, timestamps.size(), root);
+                directory.addSegment(segmentId, writer.commit());
+            }
+            Assert.assertTrue(
+                    "expected the run to span more than one chunk, got " + root.getStatePageCount() + " pages",
+                    root.getStatePageCount() > 2
+            );
+            for (int i = 0, n = root.getStatePageCount(); i < n; i++) {
+                final LiveViewCheckpointStatePageRef ref = root.getStatePageRef(i);
+                assertPageDoesNotExpand(ref, i);
+                if ((i & 1) == 0) {
+                    Assert.assertEquals(
+                            LiveViewCheckpointRangeRingStateReader.TIMESTAMP_PAGE_KIND, ref.getPageKind()
+                    );
+                } else {
+                    Assert.assertEquals(expectedPageKind, ref.getPageKind());
+                    Assert.assertEquals("value page " + i + " codec", expectedValueCodec, ref.getCodec());
+                }
+            }
+            if (words == 1) {
+                assertRestored(root, directory, timestamps, wordStream);
+            } else {
+                assertWideRestored(root, directory, timestamps, wordStream, words);
+            }
+        }
+    }
+
+    /**
+     * Drives one wide-decimal ring of {@code valueKind} over two chunks and asserts
+     * its flattened word stream selected {@code expectedValueCodec}. A narrow run
+     * repeats the high word and keeps the rest a few thousand apart; a wide run puts
+     * both ends of the 64-bit range in every row, so every chunk - the partial tail
+     * included - forces a 64-bit width.
+     */
+    private static void assertWideCodecSelection(
+            int valueKind,
+            int expectedPageKind,
+            long segmentId,
+            boolean narrow,
+            int expectedValueCodec
+    ) {
+        final int words = LiveViewCheckpointRangeRingStateReader.valueWords(valueKind);
+        final int rows = LiveViewCheckpointRangeRingStateReader.maxChunkRows(valueKind) + 5;
+        final LongList timestamps = new LongList();
+        final LongList wordStream = new LongList();
+        for (int i = 0; i < rows; i++) {
+            timestamps.add(i * 1_000L);
+            for (int w = 0; w < words; w++) {
+                if (narrow) {
+                    wordStream.add(w == 0 ? 0 : i + w);
+                } else {
+                    wordStream.add((w & 1) == 0 ? Long.MIN_VALUE + i : Long.MAX_VALUE - i);
+                }
+            }
+        }
+        assertValueCodecSelection(valueKind, expectedPageKind, segmentId, timestamps, wordStream, expectedValueCodec);
     }
 
     private static void assertWideRestored(
