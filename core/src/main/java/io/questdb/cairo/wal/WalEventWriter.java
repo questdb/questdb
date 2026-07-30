@@ -578,6 +578,17 @@ class WalEventWriter implements Closeable {
     }
 
     /**
+     * Advisory writeback drain: push the page-cache-dirty ranges to the device and WAIT. No device flush,
+     * no metadata journalled -- the caller's per-file {@code fdatasync} is still the barrier.
+     */
+    void syncFlushDrain() {
+        eventMem.syncFlushDrain();
+        eventChecksumMem.syncFlushDrain();
+        eventIndexMem.syncFlushDrain();
+    }
+
+
+    /**
      * Rewrites the last data record in the event file. This is used when a symbol
      * column is added after the event was already written (e.g., during segment roll
      * in addColumn). The method jumps back to the start of the last event, resets

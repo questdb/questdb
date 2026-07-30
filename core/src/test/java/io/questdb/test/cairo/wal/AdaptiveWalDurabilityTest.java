@@ -79,6 +79,10 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
      * <p>We do a "warmup" insert first (to pre-allocate all file pages so that no page-extension
      * fdatasyncs occur during the measurement commit). Then we reset the fdatasync log and do
      * the measurement insert, capturing only the per-commit durability fdatasyncs.
+     *
+     * <p>Runs at the default {@code W=50ms}, so the writeback DRAIN
+     * ({@code cairo.wal.commit.writeback.drain}) is active: this therefore also pins that the drain moves
+     * no barrier — the fdatasync order below must survive it.
      */
     @Test
     public void testAdaptiveFdatasyncOrderDataBeforeEventsBeforeSequencer() throws Exception {
@@ -1108,7 +1112,6 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     static class FdatasyncOrderFacade extends TestFilesFacadeImpl {
         private final Map<Long, String> fdToPath = new HashMap<>();
         private final List<String> fdatasyncOrder = new ArrayList<>();
-
         public List<String> getFdatasyncOrder() {
             return fdatasyncOrder;
         }

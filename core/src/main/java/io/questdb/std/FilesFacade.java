@@ -115,6 +115,21 @@ public interface FilesFacade {
         return Os.isLinux();
     }
 
+    /**
+     * Whether {@link #syncFileRange(long, long, long, int)} is worth issuing against {@code root}.
+     * <p>
+     * {@code sync_file_range} is a Linux page-cache optimisation: it starts (and optionally waits for)
+     * writeback WITHOUT journalling any metadata, so it is only ever ADVISORY -- callers must still take a
+     * real barrier afterwards. On ZFS the page-cache model does not match (durability is a txg commit), so
+     * the call buys nothing and is skipped rather than risking the known mmap interactions.
+     *
+     * @param root a path on the filesystem in question
+     * @return {@code true} if a drain pass is likely to help
+     */
+    default boolean isSyncFileRangeEffective(CharSequence root) {
+        return Os.isLinux();
+    }
+
     long getDirSize(Path path);
 
     long getDiskFreeSpace(LPSZ path);

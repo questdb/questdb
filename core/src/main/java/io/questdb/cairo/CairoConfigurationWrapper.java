@@ -1605,6 +1605,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isWalCommitWritebackDrainEnabled() {
+        return getDelegate().isWalCommitWritebackDrainEnabled();
+    }
+
+    @Override
     public boolean isCairoMetadataCacheSnapshotOrdered() {
         return getDelegate().isCairoMetadataCacheSnapshotOrdered();
     }

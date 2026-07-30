@@ -1122,6 +1122,27 @@ public interface CairoConfiguration {
         return true;
     }
 
+    /**
+     * Whether an ADAPTIVE WAL commit drains writeback across its whole segment before taking barriers.
+     * <p>
+     * The commit already msyncs every column and {@code _event} file to the page cache and then
+     * {@code fdatasync}s each one. Those fdatasyncs each do writeback AND a journal force, serially. This
+     * inserts one {@code sync_file_range(WRITE|WAIT_AFTER)} pass between the two, so the device writes every
+     * file back concurrently and the fdatasyncs that follow are left with little more than the journal
+     * force. Measured on XFS/NVMe, 13 files at the real commit size: 2.5 ms -> 1.7 ms.
+     *
+     * <p>Purely ADVISORY: {@code sync_file_range} journals NO metadata, so it can never be the barrier --
+     * every file still gets its own {@code fdatasync}, which is what journals the extent conversions an
+     * {@code ftruncate}-preallocated mmap append creates. Relying on it as a barrier is the documented
+     * ext4 data-loss trap. Because it is advisory, a filesystem where it does nothing (ZFS, gated by
+     * {@link io.questdb.std.FilesFacade#isSyncFileRangeEffective(CharSequence)}) simply loses the speedup.
+     *
+     * @return {@code true} if the drain pass should run
+     */
+    default boolean isWalCommitWritebackDrainEnabled() {
+        return true;
+    }
+
     boolean isCairoMetadataCacheSnapshotOrdered();
 
     /**

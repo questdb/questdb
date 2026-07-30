@@ -2384,6 +2384,33 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     column.sync(async);
                 }
             }
+            // WRITEBACK DRAIN (advisory, no barrier moved). Each fdatasync below does writeback AND a
+            // journal force, serially, so N files cost N serialised writebacks. One
+            // sync_file_range(WRITE|WAIT_AFTER) pass first lets the device write every file back
+            // concurrently, leaving each fdatasync with little more than its journal force.
+            //
+            // NOT a durability step: sync_file_range journals NO metadata, so it can never stand in for a
+            // barrier -- every file still gets its own fdatasync below, which is what journals the extent
+            // conversions this segment's ftruncate-preallocated mmap appends create. (Leaning on it as a
+            // barrier, or on one foreign flush to journal N inodes, is the ext4 trap that cost this
+            // codebase real data -- see BatchedFlushSharedJournalDependencyTest.) Being advisory is also
+            // what makes it safe to skip on a filesystem where it does nothing: ZFS loses the speedup and
+            // nothing else.
+            //
+            // Only under deferDeviceFlush (W>0): events.sync() is then MS_ASYNC, so hoisting it above the
+            // column barriers moves no barrier and the data->events->seq fdatasync order below is intact.
+            // Under W=0 events.sync() IS a barrier and must stay after the column barriers.
+            final boolean drain = commitMode == CommitMode.ADAPTIVE && deferDeviceFlush && drainWriteback();
+            if (drain) {
+                events.sync(commitMode); // MS_ASYNC only: makes the event mappings' pages known-dirty
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    final MemoryMA column = columns.getQuick(i);
+                    if (column != null) {
+                        column.syncFlushDrain();
+                    }
+                }
+                events.syncFlushDrain();
+            }
             // Fail-safe group-commit protocol: every writer makes its private WAL dependencies durable
             // BEFORE sequencing. This prevents a peer's later fdatasync of the shared sequencer from
             // publishing a record whose data/_event is still volatile. W>0 still batches the shared
@@ -2396,11 +2423,22 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     }
                 }
             }
-            events.sync(commitMode);
+            if (!drain) {
+                events.sync(commitMode);
+            }
             if (commitMode == CommitMode.ADAPTIVE && deferDeviceFlush) {
                 events.fdatasync();
             }
         }
+    }
+
+    /**
+     * Whether to run the advisory writeback drain before the commit's barriers. Gated on the filesystem
+     * ({@code sync_file_range} buys nothing on ZFS) and on the operator switch.
+     */
+    private boolean drainWriteback() {
+        return configuration.isWalCommitWritebackDrainEnabled()
+                && ff.isSyncFileRangeEffective(configuration.getDbRoot());
     }
 
     /**

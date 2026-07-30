@@ -67,6 +67,22 @@ public class FilesFacadeImpl implements FilesFacade {
         }
     }
 
+    /**
+     * Linux only, and never on ZFS -- same detection {@link #allowMixedIO(CharSequence)} uses.
+     */
+    @Override
+    public boolean isSyncFileRangeEffective(CharSequence root) {
+        if (root == null || !Os.isLinux()) {
+            return false;
+        }
+        try (Path path = new Path()) {
+            path.of(root);
+            final long fsStatus = Files.getFileSystemStatus(path.$());
+            path.seekZ();
+            return fsStatus < 0 && Math.abs(fsStatus) != ZFS_MAGIC_NUMBER;
+        }
+    }
+
     @Override
     public long append(long fd, long buf, long len) {
         return Files.append(fd, buf, len);

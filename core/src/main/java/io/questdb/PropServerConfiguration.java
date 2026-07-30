@@ -243,6 +243,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean adaptiveEpochFlushOnClose;
     // Raw value of cairo.adaptive.epoch.column.sync.batched (operator override / safety valve), default true.
     private final boolean adaptiveEpochColumnSyncBatchedProp;
+    private final boolean walCommitWritebackDrain;
     private final String confRoot;
     // Whether to run the live ext4 fast_commit detection (production only). Mirrors
     // loadAdditionalConfigurations: true for the real server, false for the test harness, so unit
@@ -1575,6 +1576,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.adaptiveRecoveryRollForwardEnabled = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, true);
             this.adaptiveEpochFlushOnClose = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, true);
             this.adaptiveEpochColumnSyncBatchedProp = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, true);
+            this.walCommitWritebackDrain = getBoolean(properties, env, PropertyKey.CAIRO_WAL_COMMIT_WRITEBACK_DRAIN, true);
             this.detectFastCommit = loadAdditionalConfigurations;
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
             this.defaultSymbolCacheFlag = getBoolean(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, true);
@@ -5311,6 +5313,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
                 return cached == 1;
             }
+        }
+
+        @Override
+        public boolean isWalCommitWritebackDrainEnabled() {
+            return walCommitWritebackDrain;
         }
 
         @Override

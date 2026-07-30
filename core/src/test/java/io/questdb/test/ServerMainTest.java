@@ -742,6 +742,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.unordered.page.frame.reduce.queue.capacity\tQDB_CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +
                                     "cairo.vector.aggregate.queue.capacity\tQDB_CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.volumes\tQDB_CAIRO_VOLUMES\t\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.commit.writeback.drain\tQDB_CAIRO_WAL_COMMIT_WRITEBACK_DRAIN\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.enabled\tQDB_CAIRO_WAL_APPLY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.look.ahead.txn.count\tQDB_CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT\t200\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.table.time.quota\tQDB_CAIRO_WAL_APPLY_TABLE_TIME_QUOTA\t1000\tdefault\tfalse\tfalse\n" +

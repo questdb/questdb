@@ -47,6 +47,10 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_JIT_MODE("cairo.sql.jit.mode"),
     CAIRO_COMMIT_MODE("cairo.commit.mode"),
     CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED("cairo.adaptive.epoch.column.sync.batched"),
+    // Drain writeback (sync_file_range) across the whole WAL segment BEFORE taking the per-file
+    // fdatasync barriers, so the device works on every file at once. Advisory only; every barrier
+    // stays. Default true. See WalWriter.syncIfRequired0.
+    CAIRO_WAL_COMMIT_WRITEBACK_DRAIN("cairo.wal.commit.writeback.drain"),
     // Min interval between adaptive durable epochs per table (ms). Under CommitMode.ADAPTIVE the apply
     // worker fires a durable epoch at most this often, right after an apply batch commits while it
     // still holds the writer. 0 => every batch; NEGATIVE => epochs disabled. See ApplyWal2TableJob.
