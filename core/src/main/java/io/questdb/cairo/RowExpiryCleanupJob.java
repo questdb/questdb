@@ -65,7 +65,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
  * policy (EXPIRE ROWS is materialized-view-only). The read-time filter (see {@code SqlParser}) already hides
  * expired rows from every query, so this job is <b>best-effort</b>: correctness never depends on it, it only
  * frees disk space. For each policied view it processes non-active <b>logical</b> partitions and reclaims via
- * {@link WalWriter#commitWithParams} with {@code WAL_DEDUP_MODE_REPLACE_RANGE}:
+ * a sequencer-fenced {@link WalWriter#commitWithParamsIfSeqTxn} with {@code WAL_DEDUP_MODE_REPLACE_RANGE}:
  * <ul>
  *     <li>a fully-expired partition is wiped by an <i>empty</i> REPLACE_RANGE (a pure delete that removes the
  *         whole logical partition), and</li>
@@ -174,7 +174,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     }
 
     /**
-     * Physically reclaims expired rows from a single policied object, in place (no copy, no populate).
+     * Physically reclaims expired rows from a single policied object (a fully-expired partition is a pure-delete wipe; a partial one is compacted by copying its survivors).
      * Snapshots non-active LOGICAL partition totals from a reader, classifies each as DROP/REPLACE/SKIP
      * via the keep-filter, then compacts via REPLACE_RANGE and batch-drops fully expired partitions.
      * <p>
@@ -384,7 +384,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // Baseline on the reader's own applied txn (readerSeqTxn), NOT a fresh txnTracker.getSeqTxn() here: the
         // survivor scan and the authoritative predicate both came from that reader snapshot, so any policy
         // change or write that applied after the reader opened advances the sequencer past this baseline and
-        // trips the per-commit gate below (the C1 mid-sweep window). A fresh getSeqTxn() would instead adopt
+        // trips the per-commit gate below (the mid-sweep window). A fresh getSeqTxn() would instead adopt
         // the post-reader sequencer state and could let a stale-predicate wipe commit.
         long expectedSeqTxn = isWal ? readerSeqTxn : 0;
         // For WAL, only attempt racy reclamation when the writer is still caught up to the reader snapshot (no
@@ -412,7 +412,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         RecordToRowCopier survivorCopier = null;
         int selectTsIndex = -1;
         WalWriter walWriter = null;
-        // M1: bound every survivor query on this sweep to the MAT_VIEW_REFRESH per-workload memory budget.
+        // Bound every survivor query on this sweep to the MAT_VIEW_REFRESH per-workload memory budget.
         // A bound tracker makes an oversized scalar survivor query trip the configured limit and DEFER to a
         // later sweep. EXPIRE ROWS is materialized-view-only, so cleanup shares the mat-view refresh budget,
         // exactly as MatViewRefreshJob binds its own tracker before running inner SQL.
@@ -554,7 +554,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 cleanupCompiler = Misc.free(cleanupCompiler);
                 walWriter = Misc.free(walWriter);
             } finally {
-                // Always release the sweep's memory tracker (M1): clear the context slot, then recycle the
+                // Always release the sweep's memory tracker: clear the context slot, then recycle the
                 // tracker to the provider pool so its used-bytes counter resets before the next sweep binds
                 // a fresh one.
                 sqlExecutionContext.setMemoryTracker(null);

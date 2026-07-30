@@ -167,8 +167,9 @@ public class SqlParser {
     private int digit;
     // Track tables currently being wrapped by the row-expiry filter, so the synthetic inner
     // "SELECT * FROM t WHERE ..." resolves "t" as a plain table instead of recursing forever.
-    // Case-sensitive: QuestDB table names are case-sensitive, so case-distinct sibling tables/views
-    // must each be guarded independently (a LowerCase set would wrongly conflate "T" and "t").
+    // The key is the caller's own spelling of the name, re-emitted verbatim into the synthetic inner query,
+    // so the recursion guard matches on that exact spelling. A case-folding set is unnecessary: the table
+    // registry is case-insensitive, so case-distinct sibling tables/views cannot exist in the first place.
     private final CharSequenceHashSet expiringTablesBeingExpanded = new CharSequenceHashSet();
     // The execution context of the current parse, consulted for the PER-TABLE read-filter decision
     // (the mat-view refresh context keeps the filter on every table except the base). Null when parse()
@@ -1410,9 +1411,9 @@ public class SqlParser {
         }
         final MetadataCache metadataCache = cairoEngine.getMetadataCache();
         final boolean isUpdatePending = metadataCache.isExpiryPolicyUpdatePending(tableToken);
-        // During SET/DROP the cache deliberately retains P0 until authoritative _meta/_txn publish P1. Bypass
-        // that stale entry while the transition is pending. A concurrent mark after this check advances the
-        // policy epoch, so the compiler rejects and reparses any decision made here against P0.
+        // During SET/DROP the cache deliberately retains the previous policy until the authoritative _meta/_txn
+        // publish the new one. Bypass that stale entry while the transition is pending. A concurrent mark after
+        // this check advances the policy epoch, so the compiler rejects and reparses any decision made here.
         if (!isUpdatePending) {
             try (MetadataCacheReader metadataRO = metadataCache.readLock()) {
                 final CairoTable table = metadataRO.getTable(tableToken);
@@ -1448,8 +1449,9 @@ public class SqlParser {
             return predicate;
         } catch (CairoException e) {
             if (metadataCache.isExpiryPolicyUpdatePending(tableToken)) {
-                // Failing open while P0 is intentionally bypassed could permanently bind no-policy to P1.
-                // Propagate the transient failure; callers may retry, but they must not expose rows silently.
+                // Failing open while the previous policy is intentionally bypassed could permanently bind a
+                // no-policy plan to the new policy. Propagate the transient failure; callers may retry, but they
+                // must not expose rows silently.
                 throw e;
             }
             // Table concurrently dropped/renamed, or its metadata is briefly unavailable: treat as no policy.

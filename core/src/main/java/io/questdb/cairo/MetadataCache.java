@@ -1058,8 +1058,8 @@ public class MetadataCache implements QuietCloseable {
                     final int tableId = table.getTableToken().getTableId();
                     tableIds.add(tableId);
                     if (!pendingExpiryPolicyIds.contains(tableId)) {
-                        // Cleanup must not act on P0 after a replacement SET or DROP starts. Hydration or
-                        // cancellation republishes the authoritative policy after clearing the pending ID.
+                        // Cleanup must not act on the superseded policy once a replacement SET or DROP starts.
+                        // Hydration or cancellation republishes the authoritative policy after clearing the pending ID.
                         tables.add(table);
                     }
                 }
