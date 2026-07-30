@@ -31,11 +31,12 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.Misc;
 
-public class LatestByValueDeferredIndexedRowCursorFactory implements FunctionBasedRowCursorFactory {
+public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFactory {
     private final int columnIndex;
     private final LatestByValueIndexedRowCursor cursor = new LatestByValueIndexedRowCursor();
     private final Function symbolFunc;
@@ -65,11 +66,6 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements FunctionBas
             }
         }
         return EmptyRowCursor.INSTANCE;
-    }
-
-    @Override
-    public Function getFunction() {
-        return symbolFunc;
     }
 
     @Override
