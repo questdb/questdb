@@ -25,12 +25,12 @@
 package io.questdb.test.mp;
 
 import io.questdb.mp.continuation.DelayHeap;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -62,7 +62,7 @@ public class DelayHeapTest {
         Assert.assertEquals(10, heap.size());
         heap.clear();
         Assert.assertEquals(0, heap.size());
-        Assert.assertEquals(0, heap.toArray().length);
+        Assert.assertEquals(0, heap.toList().size());
     }
 
     @Test(timeout = 10_000)
@@ -221,6 +221,34 @@ public class DelayHeapTest {
     }
 
     @Test(timeout = 5_000)
+    public void testOfferThrowPreservesHeap() {
+        final DelayHeap<TestEntry> heap = new DelayHeap<>();
+        final long now = System.nanoTime();
+        final ObjList<TestEntry> entries = new ObjList<>();
+        for (int i = 0; i < 7; i++) {
+            final TestEntry entry = new TestEntry("e" + i, now + i);
+            entries.add(entry);
+            heap.offer(entry);
+        }
+
+        final TestEntry failingEntry = new TestEntry("failing", now - 1);
+        failingEntry.failComparisonAt = 2;
+        try {
+            heap.offer(failingEntry);
+            Assert.fail("expected comparison failure");
+        } catch (TestComparisonException expected) {
+            Assert.assertEquals("test comparison failure", expected.getMessage());
+        }
+
+        Assert.assertEquals(-1, failingEntry.getHeapIndex());
+        Assert.assertEquals(entries.size(), heap.size());
+        for (int i = 0, n = entries.size(); i < n; i++) {
+            Assert.assertSame(entries.getQuick(i), heap.poll());
+        }
+        Assert.assertEquals(0, heap.size());
+    }
+
+    @Test(timeout = 5_000)
     public void testTakeBlocksUntilOffer() throws InterruptedException {
         DelayHeap<TestEntry> heap = new DelayHeap<>();
         AtomicReference<TestEntry> result = new AtomicReference<>();
@@ -366,19 +394,24 @@ public class DelayHeapTest {
     }
 
     @Test(timeout = 5_000)
-    public void testToArrayMatchesContents() {
+    public void testToListMatchesContents() {
         DelayHeap<TestEntry> heap = new DelayHeap<>();
-        TestEntry[] in = {
-                TestEntry.future("a", 100L),
-                TestEntry.future("b", 200L),
-                TestEntry.future("c", 50L),
-        };
-        for (TestEntry e : in) heap.offer(e);
-        Object[] out = heap.toArray();
-        Assert.assertEquals(in.length, out.length);
-        Set<TestEntry> outSet = new HashSet<>(Arrays.asList((TestEntry[]) Arrays.copyOf(out, out.length, TestEntry[].class)));
-        Assert.assertEquals(in.length, outSet.size());
-        for (TestEntry e : in) {
+        final ObjList<TestEntry> in = new ObjList<>();
+        in.add(TestEntry.future("a", 100L));
+        in.add(TestEntry.future("b", 200L));
+        in.add(TestEntry.future("c", 50L));
+        for (int i = 0, n = in.size(); i < n; i++) {
+            heap.offer(in.getQuick(i));
+        }
+        final ObjList<TestEntry> out = heap.toList();
+        Assert.assertEquals(in.size(), out.size());
+        final Set<TestEntry> outSet = new HashSet<>();
+        for (int i = 0, n = out.size(); i < n; i++) {
+            outSet.add(out.getQuick(i));
+        }
+        Assert.assertEquals(in.size(), outSet.size());
+        for (int i = 0, n = in.size(); i < n; i++) {
+            final TestEntry e = in.getQuick(i);
             Assert.assertTrue("missing " + e.id, outSet.contains(e));
         }
     }
@@ -390,9 +423,12 @@ public class DelayHeapTest {
      * Helpers using a fixed delay value would never expire and
      * {@link DelayHeap#take} would loop on a stale {@code wait(delay)}.
      */
-    private static final class TestEntry implements Delayed {
+    private static final class TestEntry implements DelayHeap.Entry {
         final long deadlineNanos;
         final String id;
+        private int comparisonCount;
+        private int failComparisonAt = -1;
+        private int heapIndex = -1;
 
         TestEntry(String id, long deadlineNanos) {
             this.id = id;
@@ -405,6 +441,9 @@ public class DelayHeapTest {
 
         @Override
         public int compareTo(@NotNull Delayed o) {
+            if (++comparisonCount == failComparisonAt) {
+                throw new TestComparisonException("test comparison failure");
+            }
             // Compare deadlines directly rather than going through getDelay twice,
             // which would call System.nanoTime() at two different instants and could
             // give an inconsistent ordering for entries with close deadlines.
@@ -420,8 +459,24 @@ public class DelayHeapTest {
         }
 
         @Override
+        public int getHeapIndex() {
+            return heapIndex;
+        }
+
+        @Override
+        public void setHeapIndex(int heapIndex) {
+            this.heapIndex = heapIndex;
+        }
+
+        @Override
         public String toString() {
             return id + "@" + deadlineNanos;
+        }
+    }
+
+    private static final class TestComparisonException extends RuntimeException {
+        private TestComparisonException(String message) {
+            super(message);
         }
     }
 }

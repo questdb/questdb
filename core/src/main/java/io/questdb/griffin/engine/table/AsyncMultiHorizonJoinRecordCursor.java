@@ -222,7 +222,7 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                     postAggregationStartedCounter
             );
             if (postAggregationCircuitBreaker.checkIfTripped()) {
-                throwTimeoutException();
+                throwInterruptionException();
             }
             shardedCursor.of(shards);
             mapCursor = shardedCursor;
@@ -280,12 +280,8 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
         }
     }
 
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
-        }
+    private void throwInterruptionException() {
+        throw frameSequence.buildInterruptionException();
     }
 
     void of(UnorderedPageFrameSequence<AsyncMultiHorizonJoinAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {

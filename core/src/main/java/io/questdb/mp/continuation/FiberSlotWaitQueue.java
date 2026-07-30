@@ -37,11 +37,15 @@ public final class FiberSlotWaitQueue {
     }
 
     public synchronized SourceRegistrationResult register(FiberSlotWaitRegistration registration) {
-        if (registration.queue != null || !registration.markQueued()) {
+        if (registration.queue != null) {
+            return SourceRegistrationResult.NOT_ACCEPTED;
+        }
+        registration.queue = this;
+        if (!registration.markQueued()) {
+            registration.queue = null;
             return SourceRegistrationResult.NOT_ACCEPTED;
         }
         registration.prevQueue = tail;
-        registration.queue = this;
         if (tail == null) {
             head = registration;
         } else {

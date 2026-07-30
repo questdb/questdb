@@ -137,7 +137,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             }
 
             if (!allFramesActive) {
-                throwTimeoutException();
+                throwInterruptionException();
             }
 
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
@@ -237,7 +237,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         }
 
         if (!allFramesActive) {
-            throwTimeoutException();
+            throwInterruptionException();
         }
         return false;
     }
@@ -321,7 +321,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             collectCursor(false);
 
             if (!allFramesActive) {
-                throwTimeoutException();
+                throwInterruptionException();
             }
         }
     }
@@ -412,7 +412,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             if (th instanceof CairoException ce) {
                 if (ce.isInterruption() || ce.isCancellation()) {
                     LOG.error().$("filter error [ex=").$safe(ce.getFlyweightMessage()).I$();
-                    throwTimeoutException();
+                    throwInterruptionException();
                 } else {
                     LOG.error().$("filter error [ex=").$(th).I$();
                     throw ce;
@@ -432,12 +432,8 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         return hasDescendingOrder ? (frameRowCount - frameRowIndex - 1) : frameRowIndex;
     }
 
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
-        }
+    private void throwInterruptionException() {
+        throw frameSequence.buildInterruptionException();
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {

@@ -33,16 +33,22 @@ import io.questdb.std.QuietCloseable;
 final class PageFrameFiberTaskPool implements QuietCloseable {
     private final ObjList<PageFrameFiberTask> allTasks = new ObjList<>();
     private final int capacity;
+    private final PageFrameReduceDispatcher dispatcher;
     private final CairoEngine engine;
     private final ObjList<PageFrameFiberTask> freeTasks = new ObjList<>();
     private int createdCount;
     private boolean isClosed;
 
-    PageFrameFiberTaskPool(CairoEngine engine, int capacity) {
+    PageFrameFiberTaskPool(
+            CairoEngine engine,
+            int capacity,
+            PageFrameReduceDispatcher dispatcher
+    ) {
         if (capacity < 1) {
             throw new IllegalArgumentException("page frame fiber task capacity must be positive");
         }
         this.capacity = capacity;
+        this.dispatcher = dispatcher;
         this.engine = engine;
     }
 
@@ -96,7 +102,7 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         }
         PageFrameFiberTask task = null;
         try {
-            task = new PageFrameFiberTask(engine, this);
+            task = new PageFrameFiberTask(engine, this, dispatcher);
             allTasks.add(task);
             createdCount++;
             return task;

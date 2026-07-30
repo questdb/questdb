@@ -33,29 +33,30 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.concurrent.atomic.LongAdder;
 
 public final class FiberRuntime {
     private static final long ADMISSION_OPEN = Long.MIN_VALUE;
     private static final long ADMISSION_PERMIT_MASK = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(FiberRuntime.class);
+    private volatile @Nullable Runnable afterProcessForTesting;
     private final AtomicLong admission = new AtomicLong(ADMISSION_OPEN);
     private final @Nullable Runnable beforeFiberAcquireForTesting;
-    private final AtomicLong budgetExhaustionCount = new AtomicLong();
+    private final LongAdder budgetExhaustionCount = new LongAdder();
     private final FiberEventWaitQueue capacityWaitQueue;
     private final SOCountDownLatch closedLatch = new SOCountDownLatch(1);
     private final FiberPool fiberPool;
     private final AtomicInteger finalizerCount = new AtomicInteger();
-    private final AtomicLong inlineSuspendViolationCount = new AtomicLong();
+    private final LongAdder inlineSuspendViolationCount = new LongAdder();
     private volatile boolean isPoolQuiesced;
-    private final AtomicLongArray launchCounts = new AtomicLongArray(LaunchResult.COUNT);
+    private final ObjList<LongAdder> launchCounts = new ObjList<>(LaunchResult.COUNT);
     private final int maxLiveFiberCount;
-    private final AtomicLong mountCount = new AtomicLong();
-    private final AtomicInteger mountedCount = new AtomicInteger();
+    private final LongAdder mountCount = new LongAdder();
+    private final LongAdder mountedCount = new LongAdder();
     private final AtomicInteger outstandingTaskCount = new AtomicInteger();
     private final ObjList<FiberRuntimeQuiesceListener> quiesceListeners = new ObjList<>();
     private final FiberRunQueue runQueue;
-    private final AtomicLong saturationCount = new AtomicLong();
+    private final LongAdder saturationCount = new LongAdder();
     private volatile FiberRuntimeState state = FiberRuntimeState.OPEN;
 
     public FiberRuntime(int retainedFiberCount) {
@@ -100,6 +101,9 @@ public final class FiberRuntime {
                 this,
                 beforeWaitFireForTesting
         );
+        for (int i = 0; i < LaunchResult.COUNT; i++) {
+            launchCounts.add(new LongAdder());
+        }
     }
 
     public int awaitCapacity() {
@@ -194,17 +198,19 @@ public final class FiberRuntime {
                 break;
             }
             attempts++;
-            process(fiber, fiber.getOutcomeScratch(), false);
+            if (process(fiber, fiber.getOutcomeScratch(), false)) {
+                finishProcessingAfterUnmount(fiber);
+            }
         }
         if (attempts == attemptBudget && runQueue.depth() > 0) {
-            budgetExhaustionCount.incrementAndGet();
+            budgetExhaustionCount.increment();
         }
         tryClose();
         return attempts;
     }
 
     public long getBudgetExhaustionCount() {
-        return budgetExhaustionCount.get();
+        return budgetExhaustionCount.sum();
     }
 
     public int getCreatedFiberCount() {
@@ -216,11 +222,11 @@ public final class FiberRuntime {
     }
 
     public long getInlineSuspendViolationCount() {
-        return inlineSuspendViolationCount.get();
+        return inlineSuspendViolationCount.sum();
     }
 
     public long getLaunchCount(LaunchResult result) {
-        return launchCounts.get(result.ordinal());
+        return launchCounts.getQuick(result.ordinal()).sum();
     }
 
     public int getLiveFiberCount() {
@@ -232,11 +238,11 @@ public final class FiberRuntime {
     }
 
     public long getMountCount() {
-        return mountCount.get();
+        return mountCount.sum();
     }
 
     public int getMountedCount() {
-        return mountedCount.get();
+        return mountedCount.intValue();
     }
 
     public int getOutstandingTaskCount() {
@@ -265,12 +271,11 @@ public final class FiberRuntime {
     }
 
     public long getSaturationCount() {
-        return saturationCount.get();
+        return saturationCount.sum();
     }
 
     public void initializeCarrier() {
         SuspensionScope.initializeCarrier();
-        Fiber.initializeCarrier();
     }
 
     public boolean isCurrentFiberOwned() {
@@ -329,18 +334,21 @@ public final class FiberRuntime {
             }
             final int claim = task.claim(taskIncarnation);
             switch (claim) {
-                case FiberTask.CLAIM_LAUNCHED:
+                case FiberTask.CLAIM_LAUNCHED -> {
                     reservedFiber.stageAndRequestRun(task);
                     reservedFiber = null;
                     isReserved = false;
                     return record(LaunchResult.LAUNCHED);
-                case FiberTask.CLAIM_ALREADY_OWNED:
-                case FiberTask.CLAIM_SIGNALLED:
+                }
+                case FiberTask.CLAIM_ALREADY_OWNED, FiberTask.CLAIM_SIGNALLED -> {
                     return record(LaunchResult.ALREADY_OWNED);
-                case FiberTask.CLAIM_STALE:
+                }
+                case FiberTask.CLAIM_STALE -> {
                     return record(LaunchResult.STALE_INCARNATION);
-                default:
+                }
+                default -> {
                     return record(LaunchResult.TERMINAL);
+                }
             }
         } catch (Throwable e) {
             if (isReserved) {
@@ -387,24 +395,17 @@ public final class FiberRuntime {
                 } else {
                     final int claim = task.claim(taskIncarnation);
                     switch (claim) {
-                        case FiberTask.CLAIM_LAUNCHED:
+                        case FiberTask.CLAIM_LAUNCHED -> {
                             if (reservedFiber.stageForDirectMountOrRequestRun(task)) {
                                 directFiber = reservedFiber;
                             }
                             reservedFiber = null;
                             isReserved = false;
                             result = LaunchResult.LAUNCHED;
-                            break;
-                        case FiberTask.CLAIM_ALREADY_OWNED:
-                        case FiberTask.CLAIM_SIGNALLED:
-                            result = LaunchResult.ALREADY_OWNED;
-                            break;
-                        case FiberTask.CLAIM_STALE:
-                            result = LaunchResult.STALE_INCARNATION;
-                            break;
-                        default:
-                            result = LaunchResult.TERMINAL;
-                            break;
+                        }
+                        case FiberTask.CLAIM_ALREADY_OWNED, FiberTask.CLAIM_SIGNALLED -> result = LaunchResult.ALREADY_OWNED;
+                        case FiberTask.CLAIM_STALE -> result = LaunchResult.STALE_INCARNATION;
+                        default -> result = LaunchResult.TERMINAL;
                     }
                 }
             }
@@ -425,7 +426,9 @@ public final class FiberRuntime {
             releaseAdmission();
         }
         if (directFiber != null) {
-            process(directFiber, directFiber.getOutcomeScratch(), true);
+            if (process(directFiber, directFiber.getOutcomeScratch(), true)) {
+                finishProcessingAfterUnmount(directFiber);
+            }
         }
         return record(result);
     }
@@ -456,6 +459,11 @@ public final class FiberRuntime {
     }
 
     @TestOnly
+    public void setAfterProcessForTesting(@Nullable Runnable afterProcessForTesting) {
+        this.afterProcessForTesting = afterProcessForTesting;
+    }
+
+    @TestOnly
     public void setRunQueueDepthForTesting(int depth) {
         runQueue.setDepthForTesting(depth);
     }
@@ -474,7 +482,7 @@ public final class FiberRuntime {
             while (true) {
                 final int count = outstandingTaskCount.get();
                 if (count >= maxLiveFiberCount) {
-                    saturationCount.incrementAndGet();
+                    saturationCount.increment();
                     return null;
                 }
                 if (outstandingTaskCount.compareAndSet(count, count + 1)) {
@@ -490,7 +498,7 @@ public final class FiberRuntime {
             if (fiber != null) {
                 isReserved = false;
             } else {
-                saturationCount.incrementAndGet();
+                saturationCount.increment();
             }
             return fiber;
         } finally {
@@ -521,7 +529,7 @@ public final class FiberRuntime {
     }
 
     void onInlineSuspendViolation() {
-        inlineSuspendViolationCount.incrementAndGet();
+        inlineSuspendViolationCount.increment();
     }
 
     void releaseAdmission() {
@@ -617,17 +625,10 @@ public final class FiberRuntime {
         finalizerCount.incrementAndGet();
         try {
             switch (outcome.type) {
-                case Fiber.OUTCOME_ABANDONED:
-                    completeAbandoned(task, true);
-                    break;
-                case Fiber.OUTCOME_DONE:
-                    completeDone(task);
-                    break;
-                case Fiber.OUTCOME_ERROR:
-                    completeError(task, outcome.error);
-                    break;
-                default:
-                    throw new IllegalStateException("missing fiber task outcome");
+                case Fiber.OUTCOME_ABANDONED -> completeAbandoned(task, true);
+                case Fiber.OUTCOME_DONE -> completeDone(task);
+                case Fiber.OUTCOME_ERROR -> completeError(task, outcome.error);
+                default -> throw new IllegalStateException("missing fiber task outcome");
             }
         } catch (Throwable th) {
             LOG.error().$("fiber task finalization failed [error=").$(th).I$();
@@ -680,6 +681,25 @@ public final class FiberRuntime {
         }
     }
 
+    private void finishProcessingAfterUnmount(Fiber fiber) {
+        try {
+            fiber.finishProcessing();
+        } catch (Throwable th) {
+            LOG.critical().$("fiber notification finalization failed [error=").$(th).I$();
+            final Fiber.Outcome outcome = fiber.getOutcomeScratch();
+            outcome.clear();
+            if (handleDriverFailure(fiber, outcome, true, th)) {
+                try {
+                    fiber.finishTerminatedProcessing();
+                } catch (Throwable notificationError) {
+                    LOG.critical().$("fiber terminal notification finalization failed [error=")
+                            .$(notificationError).I$();
+                }
+            }
+            outcome.clear();
+        }
+    }
+
     private boolean handleDriverFailure(
             Fiber fiber,
             Fiber.Outcome outcome,
@@ -725,33 +745,24 @@ public final class FiberRuntime {
         return true;
     }
 
-    private void process(Fiber fiber, Fiber.Outcome outcome, boolean isDirectMount) {
+    private boolean process(Fiber fiber, Fiber.Outcome outcome, boolean isDirectMount) {
         if (!isDirectMount && !fiber.beginProcessing()) {
             LOG.critical().$("fiber queue invariant failed [state=").$(fiber.getExecutionState()).I$();
-            return;
+            return false;
         }
         boolean hasFiberOwnership = true;
         boolean isTerminated = false;
         outcome.clear();
         try {
             if (!fiber.beginMount()) {
-                throw new IllegalStateException(
-                        "fiber mount state invariant failed [state=" + fiber.getExecutionState() + ']'
-                );
+                throw mountInvariantFailed(fiber.getExecutionState());
             }
-            mountedCount.incrementAndGet();
-            mountCount.incrementAndGet();
+            mountedCount.increment();
+            mountCount.increment();
             try {
                 fiber.runMounted();
-            } catch (IllegalStateException e) {
-                LOG.critical().$("fiber mount failed [error=").$(e).I$();
-                if (fiber.isDone() || !fiber.transitionMountedToRunnable()) {
-                    throw e;
-                }
-                fiber.requestRun();
-                return;
             } finally {
-                mountedCount.decrementAndGet();
+                mountedCount.decrement();
             }
             if (fiber.isDone()) {
                 fiber.takeOutcome(outcome);
@@ -779,28 +790,19 @@ public final class FiberRuntime {
             isTerminated = handleDriverFailure(fiber, outcome, hasFiberOwnership, th);
         } finally {
             outcome.clear();
-            try {
-                if (isTerminated) {
+            if (isTerminated) {
+                try {
                     fiber.finishTerminatedProcessing();
-                } else {
-                    fiber.finishProcessing();
-                }
-            } catch (Throwable th) {
-                LOG.critical().$("fiber notification finalization failed [error=").$(th).I$();
-                if (!isTerminated
-                        && (hasFiberOwnership || fiber.getExecutionState() == Fiber.EXECUTION_RUNNABLE)) {
-                    isTerminated = handleDriverFailure(fiber, outcome, true, th);
-                    if (isTerminated) {
-                        try {
-                            fiber.finishTerminatedProcessing();
-                        } catch (Throwable notificationError) {
-                            LOG.critical().$("fiber terminal notification finalization failed [error=")
-                                    .$(notificationError).I$();
-                        }
-                    }
+                } catch (Throwable th) {
+                    LOG.critical().$("fiber terminal notification finalization failed [error=").$(th).I$();
                 }
             }
         }
+        final Runnable hook = afterProcessForTesting;
+        if (hook != null) {
+            hook.run();
+        }
+        return !isTerminated;
     }
 
     private LaunchResult preflight(FiberTask task, long taskIncarnation) {
@@ -825,7 +827,7 @@ public final class FiberRuntime {
     }
 
     private LaunchResult record(LaunchResult result) {
-        launchCounts.incrementAndGet(result.ordinal());
+        launchCounts.getQuick(result.ordinal()).increment();
         return result;
     }
 
@@ -859,6 +861,10 @@ public final class FiberRuntime {
             state = FiberRuntimeState.CLOSED;
             closedLatch.countDown();
         }
+    }
+
+    private static IllegalStateException mountInvariantFailed(int state) {
+        return new IllegalStateException("fiber mount state invariant failed [state=" + state + ']');
     }
 
     private static void notifyDone(FiberTask task) {

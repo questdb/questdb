@@ -33,6 +33,8 @@ public abstract class FiberTask {
     public static final int SIGNAL_DISCONNECT = 3;
     public static final int SIGNAL_READY = 1;
     public static final int STATE_ARMING = 2;
+    public static final int STATE_ARMING_CANCELLED = 4;
+    public static final int STATE_ARMING_DISCONNECTED = 5;
     public static final int STATE_ARMING_SIGNALLED = 3;
     public static final int STATE_CANCELLED = 7;
     public static final int STATE_DONE = 6;
@@ -50,8 +52,6 @@ public abstract class FiberTask {
     static final int PARK_RELAUNCH = 1;
     private static final long MAX_INCARNATION = Long.MAX_VALUE >>> STATE_SHIFT;
     private static final long SCHEDULE_STATE_OFFSET = Unsafe.getFieldOffset(FiberTask.class, "scheduleState");
-    private static final int STATE_ARMING_CANCELLED = 4;
-    private static final int STATE_ARMING_DISCONNECTED = 5;
     private static final long STATE_MASK = 7;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long scheduleState = pack(1);
@@ -93,7 +93,7 @@ public abstract class FiberTask {
 
     public final void reopen() {
         if (!tryReopen()) {
-            throw new IllegalStateException("cannot reopen non-terminal fiber task [state=" + state(scheduleState) + ']');
+            throw nonTerminalReopen(state(scheduleState));
         }
     }
 
@@ -188,8 +188,20 @@ public abstract class FiberTask {
         return scheduleState >>> STATE_SHIFT;
     }
 
+    private static IllegalStateException invalidArmingState(int state) {
+        return new IllegalStateException("invalid fiber task arming state [state=" + state + ']');
+    }
+
+    private static IllegalArgumentException invalidSignal(int reason) {
+        return new IllegalArgumentException("invalid Axis-A signal [reason=" + reason + ']');
+    }
+
     private static boolean isArmingState(int state) {
         return state >= STATE_ARMING && state <= STATE_ARMING_DISCONNECTED;
+    }
+
+    private static IllegalStateException nonTerminalReopen(int state) {
+        return new IllegalStateException("cannot reopen non-terminal fiber task [state=" + state + ']');
     }
 
     private static long pack(long incarnation) {
@@ -201,7 +213,7 @@ public abstract class FiberTask {
             case SIGNAL_READY -> STATE_ARMING_SIGNALLED;
             case SIGNAL_CANCEL -> STATE_ARMING_CANCELLED;
             case SIGNAL_DISCONNECT -> STATE_ARMING_DISCONNECTED;
-            default -> throw new IllegalArgumentException("invalid Axis-A signal [reason=" + reason + ']');
+            default -> throw invalidSignal(reason);
         };
     }
 
@@ -348,7 +360,7 @@ public abstract class FiberTask {
                     targetState = STATE_CANCELLED;
                     yield PARK_DISCONNECT;
                 }
-                default -> throw new IllegalStateException("invalid fiber task arming state [state=" + state + ']');
+                default -> throw invalidArmingState(state);
             };
             if (Unsafe.cas(this, SCHEDULE_STATE_OFFSET, current, withState(current, targetState))) {
                 return result;
@@ -356,5 +368,5 @@ public abstract class FiberTask {
         }
     }
 
-    protected abstract boolean runStep() throws BackpressureSignal;
+    protected abstract boolean runStep();
 }

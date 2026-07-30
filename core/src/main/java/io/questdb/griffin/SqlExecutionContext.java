@@ -199,6 +199,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     int getSharedQueryWorkerCount();
 
+    @NotNull
     SqlExecutionCircuitBreaker getSimpleCircuitBreaker();
 
     default int getTableStatus(Path path, CharSequence tableName) {

@@ -74,6 +74,33 @@ public class SqlExecutionContextFiberRandomTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testFiberRandomsUseExecutionContextClocks() throws Exception {
+        setCurrentMicros(1_234);
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            try (SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(AllowAllSecurityContext.INSTANCE)) {
+                final RandomTask task = new RandomTask(executionContext);
+                Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertEquals(1_234_000, task.random.getSeed0());
+                Assert.assertEquals(1_234, task.random.getSeed1());
+                Assert.assertEquals(1_234_000, task.asyncRandom.getSeed0());
+                Assert.assertEquals(1_234, task.asyncRandom.getSeed1());
+            } finally {
+                runtime.beginQuiesce();
+                final long deadline = System.nanoTime() + 1_000_000_000L;
+                while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
+                    runtime.drain(1);
+                }
+                Assert.assertTrue(runtime.awaitClosed(deadline));
+                runtime.closeAfterDrained();
+            }
+        });
+    }
+
     private static class RandomTask extends FiberTask {
         private final SqlExecutionContextImpl executionContext;
         private Rnd asyncRandom;

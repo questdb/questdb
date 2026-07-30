@@ -37,6 +37,10 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+
 import static io.questdb.cairo.TableUtils.WAL_2_TABLE_WRITE_REASON;
 
 public class WalApplyFiberJobTest extends AbstractCairoTest {
@@ -120,6 +124,69 @@ public class WalApplyFiberJobTest extends AbstractCairoTest {
             } finally {
                 close(runtime, job);
             }
+        });
+    }
+
+    @Test
+    public void testDroppedTaskCannotRebindBeforeEviction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wal_fiber_drop (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            execute("INSERT INTO wal_fiber_drop VALUES (42, '2026-01-01T00:00:00.000000Z')");
+
+            final TableToken tableToken = engine.verifyTableName("wal_fiber_drop");
+            final CountDownLatch beforeEvict = new CountDownLatch(1);
+            final CountDownLatch continueEviction = new CountDownLatch(1);
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final FiberRuntime runtime = new FiberRuntime(2);
+            final WalApplyFiberJob job = new WalApplyFiberJob(engine, 0, runtime);
+            Thread processor = null;
+            int outstandingWhileEvictionBlocked = -1;
+            try {
+                job.setBeforeEvictForTesting(() -> {
+                    beforeEvict.countDown();
+                    try {
+                        continueEviction.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                });
+
+                Assert.assertTrue(job.run(Job.RUNNING_STATUS));
+                execute("DROP TABLE wal_fiber_drop");
+                Assert.assertTrue(engine.notifyWalTxnCommitted(tableToken));
+
+                processor = new Thread(() -> {
+                    try {
+                        runtime.initializeCarrier();
+                        runtime.drain(1);
+                    } catch (Throwable th) {
+                        error.set(th);
+                    }
+                });
+                processor.start();
+                Assert.assertTrue(beforeEvict.await(10, TimeUnit.SECONDS));
+
+                Assert.assertTrue(job.run(Job.RUNNING_STATUS));
+                outstandingWhileEvictionBlocked = runtime.getOutstandingTaskCount();
+                continueEviction.countDown();
+                processor.join(10_000);
+
+                Assert.assertFalse(processor.isAlive());
+                Assert.assertNull(error.get());
+                job.setBeforeEvictForTesting(null);
+                drain(job, runtime);
+                Assert.assertEquals(0, job.getTaskCount());
+                close(runtime);
+            } finally {
+                continueEviction.countDown();
+                if (processor != null) {
+                    processor.join(10_000);
+                }
+                close(runtime, job);
+            }
+            Assert.assertEquals(0, outstandingWhileEvictionBlocked);
         });
     }
 

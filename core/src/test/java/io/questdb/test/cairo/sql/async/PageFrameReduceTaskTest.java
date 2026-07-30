@@ -27,6 +27,7 @@ package io.questdb.test.cairo.sql.async;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.std.MemoryTag;
@@ -100,6 +101,20 @@ public class PageFrameReduceTaskTest extends AbstractTest {
     }
 
     @Test
+    public void testAsyncQueryErrorStatePreservesBrokenConnection() {
+        final AsyncQueryErrorState error = new AsyncQueryErrorState();
+        error.setError(CairoException.queryDisconnected(42));
+
+        final CairoException exception = (CairoException) error.buildException();
+        Assert.assertEquals(
+                SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION,
+                exception.getInterruptionReason()
+        );
+        Assert.assertFalse(exception.isCancellation());
+        Assert.assertTrue(exception.isInterruption());
+    }
+
+    @Test
     public void testAsyncQueryErrorStateUnexpectedExceptionBecomesCairoException() {
         final AsyncQueryErrorState error = new AsyncQueryErrorState();
         error.setError(new IllegalStateException("broken reducer"));
@@ -112,18 +127,19 @@ public class PageFrameReduceTaskTest extends AbstractTest {
     }
 
     @Test
-    public void testBuildErrorPreservesInterruptionForTimeout() throws Exception {
+    public void testBuildErrorPreservesBrokenConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             PageFrameReduceTask task = new PageFrameReduceTask(configuration, MemoryTag.NATIVE_DEFAULT);
             try {
-                task.setErrorMsg(CairoException.queryTimedOut());
-                RuntimeException re = task.buildError();
-                Assert.assertTrue(re instanceof CairoException);
-                CairoException ce = (CairoException) re;
-                Assert.assertTrue("timeout should set isInterruption", ce.isInterruption());
-                Assert.assertFalse("timeout should not set isCancellation", ce.isCancellation());
-                Assert.assertFalse("timeout should not set isOutOfMemory", ce.isOutOfMemory());
+                task.setErrorMsg(CairoException.queryDisconnected(42));
+                final CairoException exception = (CairoException) task.buildError();
+                Assert.assertEquals(
+                        SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION,
+                        exception.getInterruptionReason()
+                );
+                Assert.assertFalse(exception.isCancellation());
+                Assert.assertTrue(exception.isInterruption());
             } finally {
                 Misc.free(task);
             }
@@ -142,6 +158,25 @@ public class PageFrameReduceTaskTest extends AbstractTest {
                 CairoException ce = (CairoException) re;
                 Assert.assertTrue("cancellation should set isInterruption", ce.isInterruption());
                 Assert.assertTrue("cancellation should set isCancellation", ce.isCancellation());
+            } finally {
+                Misc.free(task);
+            }
+        });
+    }
+
+    @Test
+    public void testBuildErrorPreservesInterruptionForTimeout() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            PageFrameReduceTask task = new PageFrameReduceTask(configuration, MemoryTag.NATIVE_DEFAULT);
+            try {
+                task.setErrorMsg(CairoException.queryTimedOut());
+                RuntimeException re = task.buildError();
+                Assert.assertTrue(re instanceof CairoException);
+                CairoException ce = (CairoException) re;
+                Assert.assertTrue("timeout should set isInterruption", ce.isInterruption());
+                Assert.assertFalse("timeout should not set isCancellation", ce.isCancellation());
+                Assert.assertFalse("timeout should not set isOutOfMemory", ce.isOutOfMemory());
             } finally {
                 Misc.free(task);
             }

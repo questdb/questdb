@@ -41,6 +41,7 @@ import org.jetbrains.annotations.Nullable;
 final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(PageFrameFiberTask.class);
     private final SqlExecutionCircuitBreakerWrapper circuitBreaker;
+    private final PageFrameReduceDispatcher dispatcher;
     private long orderedCursor = -1;
     private PageFrameSequence<?> orderedFrameSequence;
     private PageFrameReduceTask orderedReduceTask;
@@ -51,11 +52,16 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private UnorderedPageFrameSequence<?> unorderedFrameSequence;
     private int workerId = -1;
 
-    PageFrameFiberTask(CairoEngine engine, PageFrameFiberTaskPool pool) {
+    PageFrameFiberTask(
+            CairoEngine engine,
+            PageFrameFiberTaskPool pool,
+            PageFrameReduceDispatcher dispatcher
+    ) {
         this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(
                 engine,
                 engine.getConfiguration().getCircuitBreakerConfiguration()
         );
+        this.dispatcher = dispatcher;
         this.pool = pool;
         this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     }
@@ -195,14 +201,18 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     }
 
     private void completeOwnership() {
-        if (orderedFrameSequence != null) {
-            try {
-                orderedSubSeq.done(orderedCursor);
-            } finally {
-                orderedFrameSequence.getReduceFinishedCounter().incrementAndGet();
+        try {
+            if (orderedFrameSequence != null) {
+                try {
+                    orderedSubSeq.done(orderedCursor);
+                } finally {
+                    orderedFrameSequence.getReduceFinishedCounter().incrementAndGet();
+                }
+            } else if (unorderedFrameSequence != null) {
+                unorderedFrameSequence.getDoneLatch().countDown();
             }
-        } else if (unorderedFrameSequence != null) {
-            unorderedFrameSequence.getDoneLatch().countDown();
+        } finally {
+            dispatcher.signalProgress();
         }
     }
 

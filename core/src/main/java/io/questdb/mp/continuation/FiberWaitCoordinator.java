@@ -33,6 +33,7 @@ public final class FiberWaitCoordinator {
     public static final int REASON_CAPACITY = 6;
     public static final int REASON_CANCEL = 4;
     public static final int REASON_NONE = 0;
+    public static final int REASON_PROGRESS = 7;
     public static final int REASON_SHUTDOWN = 3;
     public static final int REASON_SLOT = 5;
     public static final int REASON_TIMER = 1;
@@ -266,8 +267,9 @@ public final class FiberWaitCoordinator {
             if (state == STATE_BUILDING) {
                 if (pendingReason == REASON_NONE) {
                     pendingReason = reason;
+                    return true;
                 }
-                return true;
+                return false;
             }
             if (state == STATE_ARMED) {
                 state = STATE_FIRING;

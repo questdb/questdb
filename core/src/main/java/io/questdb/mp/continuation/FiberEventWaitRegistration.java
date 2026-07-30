@@ -65,16 +65,17 @@ public final class FiberEventWaitRegistration extends FiberWaitRegistrationNode<
         return result;
     }
 
-    void fire(int reason) {
+    boolean fire(int reason) {
         if (Unsafe.cas(this, STATE_OFFSET, STATE_FIRING, STATE_FREE)) {
             final long token = this.token;
             try {
-                coordinator.fire(token, reason);
+                return coordinator.fire(token, reason);
             } finally {
                 clear();
                 coordinator.release(this);
             }
         }
+        return false;
     }
 
     boolean markFiring() {

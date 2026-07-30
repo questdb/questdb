@@ -108,8 +108,7 @@ public class HttpServer implements Closeable {
         HttpRequestProcessorSelectorFactory selectorFactory = null;
         try {
             FiberRuntime fiberRuntime = null;
-            if (configuration instanceof HttpFullFatServerConfiguration serverConfiguration
-                    && serverConfiguration.isFiberEnabled()
+            if (configuration instanceof HttpFullFatServerConfiguration
                     && networkSharedPool.isFiberHost()) {
                 fiberRuntime = networkSharedPool.getFiberRuntime();
             }
@@ -140,7 +139,9 @@ public class HttpServer implements Closeable {
             networkSharedPool.assign(new AcceptGatedJob(dispatcher, acceptOpen));
             networkSharedPool.assign(new AcceptGatedJob(rescheduleContext, acceptOpen));
             for (int i = 0; i < workerCount; i++) {
-                HttpRequestProcessorSelectorImpl selector = selectorFactory.getSelectorByWorker(i);
+                final HttpRequestProcessorSelectorImpl selector = fiberRuntime == null
+                        ? selectorFactory.getSelectorByWorker(i)
+                        : null;
                 networkSharedPool.assign(i, new HttpRequestJob(
                         this,
                         dispatcher,
@@ -509,16 +510,18 @@ public class HttpServer implements Closeable {
             final FiberRuntime runtime = fiberRuntime;
             if (runtime != null) {
                 boolean useful = false;
-                final Fiber fiber = runtime.tryReserveFiber();
-                if (fiber != null) {
-                    reservedFiber = fiber;
-                    try {
-                        useful = dispatcher.processIOQueue(processor);
-                    } finally {
-                        final Fiber unusedFiber = reservedFiber;
-                        reservedFiber = null;
-                        if (unusedFiber != null) {
-                            runtime.releaseReservedFiber(unusedFiber);
+                if (dispatcher.hasPendingIOEvents()) {
+                    final Fiber fiber = runtime.tryReserveFiber();
+                    if (fiber != null) {
+                        reservedFiber = fiber;
+                        try {
+                            useful = dispatcher.processIOQueue(processor);
+                        } finally {
+                            final Fiber unusedFiber = reservedFiber;
+                            reservedFiber = null;
+                            if (unusedFiber != null) {
+                                runtime.releaseReservedFiber(unusedFiber);
+                            }
                         }
                     }
                 }
@@ -548,6 +551,7 @@ public class HttpServer implements Closeable {
                     || result == LaunchResult.TERMINAL) {
                 return true;
             }
+            context.abandonRetry();
             dispatcher.disconnect(
                     context,
                     result == LaunchResult.QUIESCING

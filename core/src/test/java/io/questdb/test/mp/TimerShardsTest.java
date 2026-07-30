@@ -297,6 +297,7 @@ public class TimerShardsTest {
 
     private static final class TestEntry implements DelayedFireable {
         private final long deadlineMillis;
+        private int heapIndex = -1;
         private final Runnable onExpire;
         private final Runnable onShutdown;
 
@@ -319,6 +320,16 @@ public class TimerShardsTest {
         @Override
         public long getDelay(@NotNull TimeUnit unit) {
             return unit.convert(deadlineMillis - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+        }
+
+        @Override
+        public int getHeapIndex() {
+            return heapIndex;
+        }
+
+        @Override
+        public void setHeapIndex(int heapIndex) {
+            this.heapIndex = heapIndex;
         }
 
         @Override

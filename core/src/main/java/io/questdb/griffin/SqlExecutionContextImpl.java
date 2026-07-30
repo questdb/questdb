@@ -232,7 +232,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             if (fiber == null || !Fiber.isMounted()) {
                 throw new IllegalStateException("fiber async random requires a mounted fiber");
             }
-            return fiber.getAsyncRandom();
+            return fiber.getAsyncRandom(nanoClock, microClock);
         }
         return SharedRandom.getAsyncRandom(cairoConfiguration);
     }
@@ -338,7 +338,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             if (fiber == null || !Fiber.isMounted()) {
                 throw new IllegalStateException("fiber random requires a mounted fiber");
             }
-            return fiber.getRandom();
+            return fiber.getRandom(nanoClock, microClock);
         }
         return SharedRandom.getRandom(cairoConfiguration);
     }
@@ -364,7 +364,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
+    public @NotNull SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
         return simpleCircuitBreaker;
     }
 

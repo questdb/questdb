@@ -29,6 +29,7 @@ public final class FiberEventWaitQueue {
     private volatile boolean isClosed;
     private final int reason;
     private FiberEventWaitRegistration tail;
+    private volatile int waiterCount;
 
     public FiberEventWaitQueue(int reason) {
         if (reason <= FiberWaitCoordinator.REASON_NONE) {
@@ -38,15 +39,22 @@ public final class FiberEventWaitQueue {
     }
 
     public void fire() {
-        final FiberEventWaitRegistration registration;
-        synchronized (this) {
-            registration = head;
-            if (registration == null || !registration.markFiring()) {
+        while (true) {
+            final FiberEventWaitRegistration registration;
+            if (waiterCount == 0) {
                 return;
             }
-            unlink(registration);
+            synchronized (this) {
+                registration = head;
+                if (registration == null || !registration.markFiring()) {
+                    return;
+                }
+                unlink(registration);
+            }
+            if (registration.fire(reason)) {
+                return;
+            }
         }
-        registration.fire(reason);
     }
 
     public void fireAll() {
@@ -56,23 +64,29 @@ public final class FiberEventWaitQueue {
     public SourceRegistrationResult register(FiberEventWaitRegistration registration) {
         final boolean isFiring;
         synchronized (this) {
-            if (registration.queue != null || !registration.markQueued()) {
+            if (registration.queue != null) {
+                return SourceRegistrationResult.NOT_ACCEPTED;
+            }
+            registration.queue = this;
+            if (!registration.markQueued()) {
+                registration.queue = null;
                 return SourceRegistrationResult.NOT_ACCEPTED;
             }
             isFiring = isClosed;
             if (isFiring) {
+                registration.queue = null;
                 if (!registration.markFiring()) {
                     return SourceRegistrationResult.NOT_ACCEPTED;
                 }
             } else {
                 registration.prevQueue = tail;
-                registration.queue = this;
                 if (tail == null) {
                     head = registration;
                 } else {
                     tail.nextQueue = registration;
                 }
                 tail = registration;
+                waiterCount++;
             }
         }
         if (isFiring) {
@@ -154,5 +168,6 @@ public final class FiberEventWaitQueue {
         registration.nextQueue = null;
         registration.prevQueue = null;
         registration.queue = null;
+        waiterCount--;
     }
 }

@@ -259,7 +259,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
             LOG.error().$("negative limit filter error [ex=").$(e).I$();
             if (e instanceof CairoException ce) {
                 if (ce.isInterruption()) {
-                    throwTimeoutException();
+                    throwInterruptionException();
                 } else {
                     throw ce;
                 }
@@ -273,16 +273,12 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
         }
 
         if (!allFramesActive) {
-            throwTimeoutException();
+            throwInterruptionException();
         }
     }
 
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
-        }
+    private void throwInterruptionException() {
+        throw frameSequence.buildInterruptionException();
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) {

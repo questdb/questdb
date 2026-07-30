@@ -186,6 +186,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.selectCache = selectCache;
     }
 
+    public void abandonRetry() {
+        pendingRetry = false;
+        receivedBytes = 0;
+    }
+
     // called when returning the context back to a pool (=connection closed)
     @Override
     public void clear() {

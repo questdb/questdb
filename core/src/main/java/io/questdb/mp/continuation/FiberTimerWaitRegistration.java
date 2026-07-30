@@ -44,6 +44,7 @@ public final class FiberTimerWaitRegistration extends FiberWaitRegistrationNode<
     private MillisecondClock clock;
     private final FiberWaitCoordinator coordinator;
     private long deadlineMillis;
+    private int heapIndex = -1;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile int state = STATE_FREE;
     private TimerShards timerShards;
@@ -88,6 +89,11 @@ public final class FiberTimerWaitRegistration extends FiberWaitRegistrationNode<
             throw new IllegalStateException("timer clock is not configured");
         }
         return unit.convert(deadlineMillis - clock.getTicks(), TimeUnit.MILLISECONDS);
+    }
+
+    @Override
+    public int getHeapIndex() {
+        return heapIndex;
     }
 
     public SourceRegistrationResult register() {
@@ -141,6 +147,11 @@ public final class FiberTimerWaitRegistration extends FiberWaitRegistrationNode<
     @TestOnly
     public void setClockForTesting(MillisecondClock clock) {
         this.clock = clock;
+    }
+
+    @Override
+    public void setHeapIndex(int heapIndex) {
+        this.heapIndex = heapIndex;
     }
 
     @Override

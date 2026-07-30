@@ -26,6 +26,7 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
@@ -36,8 +37,7 @@ public final class AsyncQueryErrorState {
     private final StringSink errorMessage = new StringSink();
     private int errorMessagePosition;
     private volatile boolean hasError;
-    private boolean isCancelled;
-    private boolean isInterrupted;
+    private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
     private boolean isOutOfMemory;
 
     public synchronized RuntimeException buildException() {
@@ -52,8 +52,7 @@ public final class AsyncQueryErrorState {
             default -> CairoException.critical(errno)
                     .position(errorMessagePosition)
                     .put(errorMessage)
-                    .setCancellation(isCancelled)
-                    .setInterruption(isInterrupted)
+                    .setInterruptionReason(interruptionReason)
                     .setOutOfMemory(isOutOfMemory);
         };
     }
@@ -63,8 +62,7 @@ public final class AsyncQueryErrorState {
         errorKind = AsyncQueryErrorKind.KIND_NONE;
         errorMessage.clear();
         errorMessagePosition = 0;
-        isCancelled = false;
-        isInterrupted = false;
+        interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
         isOutOfMemory = false;
         hasError = false;
     }
@@ -83,8 +81,7 @@ public final class AsyncQueryErrorState {
             errno = e.getErrno();
             errorMessage.put(e.getFlyweightMessage());
             errorMessagePosition = e.getPosition();
-            isCancelled = e.isCancellation();
-            isInterrupted = e.isInterruption();
+            interruptionReason = e.getInterruptionReason();
             isOutOfMemory = e.isOutOfMemory();
         } else if (th instanceof FlyweightMessageContainer e) {
             errorMessage.put(e.getFlyweightMessage());

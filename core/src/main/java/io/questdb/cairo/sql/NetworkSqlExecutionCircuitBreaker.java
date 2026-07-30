@@ -283,7 +283,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         testCancelled();
         lastConnectionCheckTime = now;
         if (testConnection(fd)) {
-            throw CairoException.nonCritical().put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
+            throw CairoException.queryDisconnected(fd);
         }
     }
 
@@ -299,7 +299,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         // query, so the probe fires at most once per window for the whole query - a big CROSS JOIN small
         // that re-scans the slave once per master row can no longer turn into one syscall per master row.
         if (testConnectionTimeThrottled(now, fd)) {
-            throw CairoException.nonCritical().put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
+            throw CairoException.queryDisconnected(fd);
         }
     }
 

@@ -28,42 +28,46 @@ import io.questdb.std.CarrierLocal;
 import org.jetbrains.annotations.Nullable;
 
 public final class SuspensionScope {
-    private static final CarrierLocal<FiberCancellationSignal> CANCELLATION_SIGNAL = new CarrierLocal<>();
-    private static final CarrierLocal<Mode> CURRENT = new CarrierLocal<>();
+    private static final CarrierLocal<CarrierScope> SCOPE = CarrierLocal.withInitial(CarrierScope::new);
 
     public static @Nullable Mode enter(Mode mode) {
-        final Mode previous = CURRENT.get();
-        CURRENT.set(mode);
+        final CarrierScope scope = SCOPE.get();
+        final Mode previous = scope.mode;
+        scope.mode = mode;
         return previous;
     }
 
     public static @Nullable FiberCancellationSignal enterCancellationSignal(
             @Nullable FiberCancellationSignal cancellationSignal
     ) {
-        final FiberCancellationSignal previous = CANCELLATION_SIGNAL.get();
-        CANCELLATION_SIGNAL.set(cancellationSignal);
+        final CarrierScope scope = SCOPE.get();
+        final FiberCancellationSignal previous = scope.cancellationSignal;
+        scope.cancellationSignal = cancellationSignal;
         return previous;
     }
 
     public static @Nullable FiberCancellationSignal getCancellationSignal() {
-        return CANCELLATION_SIGNAL.get();
+        return SCOPE.get().cancellationSignal;
     }
 
     public static @Nullable Mode getMode() {
-        return CURRENT.get();
+        return SCOPE.get().mode;
     }
 
     public static void initializeCarrier() {
-        CANCELLATION_SIGNAL.get();
-        CURRENT.get();
+        SCOPE.get();
     }
 
     public static void restore(@Nullable Mode mode) {
-        CURRENT.set(mode);
+        SCOPE.get().mode = mode;
     }
 
     public static void restoreCancellationSignal(@Nullable FiberCancellationSignal cancellationSignal) {
-        CANCELLATION_SIGNAL.set(cancellationSignal);
+        SCOPE.get().cancellationSignal = cancellationSignal;
+    }
+
+    static CarrierScope scope() {
+        return SCOPE.get();
     }
 
     private SuspensionScope() {
@@ -73,5 +77,11 @@ public final class SuspensionScope {
         BLOCKING,
         FIBER,
         FORBIDDEN
+    }
+
+    static final class CarrierScope {
+        FiberCancellationSignal cancellationSignal;
+        Fiber fiber;
+        Mode mode;
     }
 }

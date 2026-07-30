@@ -132,10 +132,10 @@ public class PGFiberTest extends BasePGTest {
     }
 
     @Test
-    public void testFiberModeRequiresLocalFlagAndFiberHostPool() throws Exception {
+    public void testResolvedWorkerPoolModeControlsFiberExecution() throws Exception {
         assertMemoryLeak(() -> {
             assertQueryExecutionMode(false, WorkerPoolMode.LEGACY, false);
-            assertQueryExecutionMode(false, WorkerPoolMode.FIBER_HOST, false);
+            assertQueryExecutionMode(false, WorkerPoolMode.FIBER_HOST, true);
             assertQueryExecutionMode(true, WorkerPoolMode.LEGACY, false);
             assertQueryExecutionMode(true, WorkerPoolMode.FIBER_HOST, true);
         });

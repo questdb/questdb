@@ -24,16 +24,15 @@
 
 package io.questdb.mp.continuation;
 
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import jdk.internal.vm.Continuation;
 import jdk.internal.vm.ContinuationScope;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
-
-import java.util.concurrent.atomic.AtomicLong;
 
 public final class Fiber implements FiberWaitCoordinator.Target {
     public static final int YIELD_FREE = 0;
@@ -52,7 +51,6 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     static final int OUTCOME_ERROR = 3;
     static final int OUTCOME_NONE = 0;
     static final int OUTCOME_PARKED = 1;
-    private static final CarrierLocal<Fiber> CURRENT = new CarrierLocal<>();
     private static final long EXECUTION_STATE_MASK = (1L << EXECUTION_STATE_BITS) - 1;
     private static final long EXECUTION_STATE_OFFSET = Unsafe.getFieldOffset(Fiber.class, "executionState");
     private static final long EXECUTION_TOKEN_MASK = -1L >>> EXECUTION_STATE_BITS;
@@ -61,7 +59,6 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private static final int NOTIFICATION_QUEUED = 1;
     private static final int NOTIFICATION_RESIGNAL = 3;
     private static final long NOTIFICATION_STATE_OFFSET = Unsafe.getFieldOffset(Fiber.class, "notificationState");
-    private static final AtomicLong RANDOM_SEED = new AtomicLong(System.nanoTime());
     private static final long RETIREMENT_STATE_OFFSET = Unsafe.getFieldOffset(Fiber.class, "retirementState");
     private static final ContinuationScope SCOPE = new ContinuationScope("questdb-fiber");
     private static final long WAIT_ADMISSION_OFFSET = Unsafe.getFieldOffset(Fiber.class, "waitAdmission");
@@ -74,6 +71,9 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private FiberTask assignedTask;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long executionState = packExecutionState(0, EXECUTION_FREE);
+    private boolean isAsyncRandomInitialized;
+    private boolean isRandomInitialized;
+    private volatile boolean isShutdown;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile int notificationState = NOTIFICATION_IDLE;
     private Throwable outcomeError;
@@ -82,28 +82,21 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private int registryIndex = -1;
     @SuppressWarnings("unused")
     private volatile int retirementState;
-    private volatile boolean shutdown;
     @SuppressWarnings("unused")
     private volatile int waitAdmission;
     private int yieldReason = YIELD_WAIT;
 
     Fiber(FiberPool pool, @Nullable Runnable beforeWaitFireForTesting) {
-        final long asyncSeed = RANDOM_SEED.getAndAdd(0x9e3779b97f4a7c15L);
-        final long randomSeed = RANDOM_SEED.getAndAdd(0x9e3779b97f4a7c15L);
         this.continuation = new Continuation(SCOPE, this::taskRunnerLoop);
-        this.fiberAsyncRandom = new Rnd(asyncSeed, asyncSeed ^ 0xd1b54a32d192ed03L);
-        this.fiberRandom = new Rnd(randomSeed, randomSeed ^ 0x94d049bb133111ebL);
+        this.fiberAsyncRandom = new Rnd();
+        this.fiberRandom = new Rnd();
         this.pool = pool;
         this.waitCoordinator = new FiberWaitCoordinator(this, beforeWaitFireForTesting);
     }
 
     @Nullable
     public static Fiber current() {
-        return CURRENT.get();
-    }
-
-    public static void initializeCarrier() {
-        CURRENT.get();
+        return SuspensionScope.scope().fiber;
     }
 
     public static boolean isMounted() {
@@ -192,11 +185,25 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         }
     }
 
-    public Rnd getAsyncRandom() {
+    public Rnd getAsyncRandom(NanosecondClock nanosecondClock, MicrosecondClock microsecondClock) {
+        if (!isAsyncRandomInitialized) {
+            fiberAsyncRandom.reset(
+                    nanosecondClock.getTicks(),
+                    microsecondClock.getTicks()
+            );
+            isAsyncRandomInitialized = true;
+        }
         return fiberAsyncRandom;
     }
 
-    public Rnd getRandom() {
+    public Rnd getRandom(NanosecondClock nanosecondClock, MicrosecondClock microsecondClock) {
+        if (!isRandomInitialized) {
+            fiberRandom.reset(
+                    nanosecondClock.getTicks(),
+                    microsecondClock.getTicks()
+            );
+            isRandomInitialized = true;
+        }
         return fiberRandom;
     }
 
@@ -254,6 +261,18 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return executionState >>> EXECUTION_STATE_BITS;
     }
 
+    private static IllegalStateException invalidNotificationState(int state) {
+        return new IllegalStateException("invalid fiber notification state [state=" + state + ']');
+    }
+
+    private static IllegalStateException invalidTerminatedNotificationState(int state) {
+        return new IllegalStateException("invalid terminated fiber notification state [state=" + state + ']');
+    }
+
+    private static IllegalStateException invalidWaitState(int state) {
+        return new IllegalStateException("invalid fiber wait state [state=" + state + ']');
+    }
+
     private static long packExecutionState(long token, int state) {
         return (token << EXECUTION_STATE_BITS) | state;
     }
@@ -261,7 +280,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private static boolean suspend() {
         final boolean isSuspended = Continuation.yield(SCOPE);
         if (!isSuspended) {
-            final Fiber fiber = CURRENT.get();
+            final Fiber fiber = current();
             if (fiber != null) {
                 fiber.onSuspendRefused();
             }
@@ -290,10 +309,9 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private void rollbackUnpublished(FiberTask task) {
         if (assignedTask != task
                 || executionState != packExecutionState(0, EXECUTION_RUNNABLE)
-                || notificationState != NOTIFICATION_QUEUED) {
+                || notificationState != NOTIFICATION_IDLE) {
             throw new IllegalStateException("fiber cannot roll back unpublished task");
         }
-        notificationState = NOTIFICATION_IDLE;
         assignedTask = null;
         executionState = packExecutionState(0, EXECUTION_RESERVED);
     }
@@ -307,7 +325,6 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         Throwable error = null;
         try {
             isDone = task.runStep();
-        } catch (BackpressureSignal ignore) {
         } catch (Throwable th) {
             error = th;
         }
@@ -318,7 +335,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     private void taskRunnerLoop() {
-        while (!shutdown) {
+        while (!isShutdown) {
             if (assignedTask == null) {
                 yieldReason = YIELD_FREE;
                 if (!suspend()) {
@@ -387,14 +404,14 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                         pool.enqueue(this);
                         return;
                     } catch (Throwable th) {
-                        if (!Unsafe.cas(this, NOTIFICATION_STATE_OFFSET, NOTIFICATION_QUEUED, NOTIFICATION_PROCESSING)) {
+                        if (!Unsafe.cas(this, NOTIFICATION_STATE_OFFSET, NOTIFICATION_QUEUED, NOTIFICATION_RESIGNAL)) {
                             throw new IllegalStateException("fiber enqueue failure rollback failed", th);
                         }
                         throw th;
                     }
                 }
             } else {
-                throw new IllegalStateException("invalid fiber notification state [state=" + state + ']');
+                throw invalidNotificationState(state);
             }
         }
     }
@@ -403,7 +420,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         while (true) {
             final int state = notificationState;
             if (state != NOTIFICATION_PROCESSING && state != NOTIFICATION_RESIGNAL) {
-                throw new IllegalStateException("invalid terminated fiber notification state [state=" + state + ']');
+                throw invalidTerminatedNotificationState(state);
             }
             if (Unsafe.cas(this, NOTIFICATION_STATE_OFFSET, state, NOTIFICATION_IDLE)) {
                 return;
@@ -466,7 +483,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     void prepareDriverFailure() {
-        shutdown = true;
+        isShutdown = true;
         try {
             waitCoordinator.quarantine();
         } finally {
@@ -475,7 +492,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     void prepareShutdown() {
-        shutdown = true;
+        isShutdown = true;
         waitCoordinator.shutdown();
         if (transitionFreeToRunnable()) {
             requestRun();
@@ -486,7 +503,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         while (true) {
             final long current = executionState;
             final int state = executionState(current);
-            if (state == EXECUTION_PARKING || state == EXECUTION_MOUNTED) {
+            if (state == EXECUTION_PARKING) {
                 if (Unsafe.cas(this, EXECUTION_STATE_OFFSET, current, withExecutionState(current, EXECUTION_WAITING))) {
                     return;
                 }
@@ -496,7 +513,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                     return;
                 }
             } else {
-                throw new IllegalStateException("invalid fiber wait state [state=" + state + ']');
+                throw invalidWaitState(state);
             }
         }
     }
@@ -517,7 +534,14 @@ public final class Fiber implements FiberWaitCoordinator.Target {
             final int state = notificationState;
             if (state == NOTIFICATION_IDLE) {
                 if (Unsafe.cas(this, NOTIFICATION_STATE_OFFSET, NOTIFICATION_IDLE, NOTIFICATION_QUEUED)) {
-                    pool.enqueue(this);
+                    try {
+                        pool.enqueue(this);
+                    } catch (Throwable th) {
+                        if (!Unsafe.cas(this, NOTIFICATION_STATE_OFFSET, NOTIFICATION_QUEUED, NOTIFICATION_IDLE)) {
+                            throw new IllegalStateException("fiber enqueue failure rollback failed", th);
+                        }
+                        throw th;
+                    }
                     return;
                 }
             } else if (state == NOTIFICATION_PROCESSING) {
@@ -527,7 +551,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
             } else if (state == NOTIFICATION_QUEUED || state == NOTIFICATION_RESIGNAL) {
                 return;
             } else {
-                throw new IllegalStateException("invalid fiber notification state [state=" + state + ']');
+                throw invalidNotificationState(state);
             }
         }
     }
@@ -554,18 +578,19 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     void runMounted() {
-        final Fiber previous = CURRENT.get();
-        final FiberCancellationSignal previousCancellationSignal = SuspensionScope.enterCancellationSignal(
-                assignedTask != null ? assignedTask.getCancellationSignal() : null
-        );
-        final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.FIBER);
-        CURRENT.set(this);
+        final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        final Fiber previousFiber = scope.fiber;
+        final FiberCancellationSignal previousCancellationSignal = scope.cancellationSignal;
+        final SuspensionScope.Mode previousMode = scope.mode;
+        scope.cancellationSignal = assignedTask != null ? assignedTask.getCancellationSignal() : null;
+        scope.fiber = this;
+        scope.mode = SuspensionScope.Mode.FIBER;
         try {
             continuation.run();
         } finally {
-            CURRENT.set(previous);
-            SuspensionScope.restore(previousMode);
-            SuspensionScope.restoreCancellationSignal(previousCancellationSignal);
+            scope.cancellationSignal = previousCancellationSignal;
+            scope.fiber = previousFiber;
+            scope.mode = previousMode;
         }
     }
 
@@ -651,18 +676,6 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 return false;
             }
             if (Unsafe.cas(this, EXECUTION_STATE_OFFSET, current, packExecutionState(0, EXECUTION_FREE))) {
-                return true;
-            }
-        }
-    }
-
-    boolean transitionMountedToRunnable() {
-        while (true) {
-            final long current = executionState;
-            if (executionState(current) != EXECUTION_MOUNTED) {
-                return false;
-            }
-            if (Unsafe.cas(this, EXECUTION_STATE_OFFSET, current, withExecutionState(current, EXECUTION_RUNNABLE))) {
                 return true;
             }
         }

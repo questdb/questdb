@@ -89,64 +89,70 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
      */
     public int acquireSlot(int workerId, SqlExecutionCircuitBreaker sqlCircuitBreaker) {
         workerId = normalizeSlotStart(workerId);
+        int slot = tryAcquireSlot(workerId);
+        if (slot > -1) {
+            countDownTestAcquireLatch();
+            return slot;
+        }
+        final SuspensionScope.Mode mode = SuspensionScope.getMode();
+        if (mode == SuspensionScope.Mode.FIBER) {
+            final int fiberSlot = awaitSlot(workerId);
+            if (fiberSlot > -1) {
+                try {
+                    sqlCircuitBreaker.statefulThrowExceptionIfTripped();
+                } catch (Throwable th) {
+                    releaseSlot(fiberSlot);
+                    throw th;
+                }
+                countDownTestAcquireLatch();
+                return fiberSlot;
+            }
+            sqlCircuitBreaker.statefulThrowExceptionIfTripped();
+            throw CairoException.nonCritical().put("query aborted").setInterruption(true);
+        }
+        if (mode == SuspensionScope.Mode.FORBIDDEN) {
+            throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
+        }
         while (true) {
-            final int slot = tryAcquireSlot(workerId);
+            sqlCircuitBreaker.statefulThrowExceptionIfTripped();
+            Os.pause();
+            slot = tryAcquireSlot(workerId);
             if (slot > -1) {
                 countDownTestAcquireLatch();
                 return slot;
             }
-            final SuspensionScope.Mode mode = SuspensionScope.getMode();
-            if (mode == SuspensionScope.Mode.FIBER) {
-                final int fiberSlot = awaitSlot(workerId);
-                if (fiberSlot > -1) {
-                    try {
-                        sqlCircuitBreaker.statefulThrowExceptionIfTripped();
-                    } catch (Throwable th) {
-                        releaseSlot(fiberSlot);
-                        throw th;
-                    }
-                    countDownTestAcquireLatch();
-                    return fiberSlot;
-                }
-                sqlCircuitBreaker.statefulThrowExceptionIfTripped();
-                throw CairoException.nonCritical().put("query aborted").setInterruption(true);
-            }
-            if (mode == SuspensionScope.Mode.FORBIDDEN) {
-                throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
-            }
-            sqlCircuitBreaker.statefulThrowExceptionIfTripped();
-            Os.pause();
         }
     }
 
     public int acquireSlot(int carrierId, ExecutionCircuitBreaker circuitBreaker) {
         carrierId = normalizeSlotStart(carrierId);
-        while (true) {
-            final int slot = tryAcquireSlot(carrierId);
-            if (slot > -1) {
+        int slot = tryAcquireSlot(carrierId);
+        if (slot > -1) {
+            countDownTestAcquireLatch();
+            return slot;
+        }
+        final SuspensionScope.Mode mode = SuspensionScope.getMode();
+        if (mode == SuspensionScope.Mode.FIBER) {
+            final int fiberSlot = awaitSlot(carrierId);
+            if (fiberSlot > -1 && !circuitBreaker.checkIfTripped()) {
                 countDownTestAcquireLatch();
-                return slot;
+                return fiberSlot;
             }
-            final SuspensionScope.Mode mode = SuspensionScope.getMode();
-            if (mode == SuspensionScope.Mode.FIBER) {
-                final int fiberSlot = awaitSlot(carrierId);
-                if (fiberSlot > -1) {
-                    if (circuitBreaker.checkIfTripped()) {
-                        releaseSlot(fiberSlot);
-                        break;
-                    }
-                    countDownTestAcquireLatch();
-                    return fiberSlot;
-                }
-                break;
+            if (fiberSlot > -1) {
+                releaseSlot(fiberSlot);
             }
+        } else {
             if (mode == SuspensionScope.Mode.FORBIDDEN) {
                 throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
             }
-            if (circuitBreaker.checkIfTripped()) {
-                break;
+            while (!circuitBreaker.checkIfTripped()) {
+                Os.pause();
+                slot = tryAcquireSlot(carrierId);
+                if (slot > -1) {
+                    countDownTestAcquireLatch();
+                    return slot;
+                }
             }
-            Os.pause();
         }
         throw CairoException.nonCritical().put("query aborted").setInterruption(true);
     }

@@ -32,13 +32,17 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberEventWaitQueue;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeQuiesceListener;
 import io.questdb.mp.continuation.FiberWaitCoordinator;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -53,17 +57,29 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
     private static final int QUIESCE_DRAINING = 2;
     private static final int QUIESCE_OPEN = 0;
     private static final int QUIESCE_REQUESTED = 1;
-    private volatile boolean isClosed;
     private final MessageBus messageBus;
+    private final AtomicLong progressVersion = new AtomicLong();
+    private final FiberEventWaitQueue progressWaitQueue =
+            new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
     private final AtomicLong publicationAdmission = new AtomicLong(PUBLICATION_OPEN);
     private final AtomicInteger quiesceState = new AtomicInteger(QUIESCE_OPEN);
     private final FiberRuntime runtime;
     private final PageFrameFiberTaskPool taskPool;
+    private final MillisecondClock timerClock;
+    private final long timerIntervalMillis;
+    private final TimerShards timerShards;
+    private volatile boolean isClosed;
 
     public PageFrameReduceDispatcher(CairoEngine engine, MessageBus messageBus, FiberRuntime runtime) {
         this.messageBus = messageBus;
         this.runtime = runtime;
-        this.taskPool = new PageFrameFiberTaskPool(engine, runtime.getMaxLiveFiberCount());
+        this.taskPool = new PageFrameFiberTaskPool(engine, runtime.getMaxLiveFiberCount(), this);
+        this.timerClock = engine.getConfiguration().getMillisecondClock();
+        this.timerIntervalMillis = Math.max(
+                1,
+                engine.getConfiguration().getQueryContinuationWakeIntervalMillis()
+        );
+        this.timerShards = engine.getTimerShards();
         try {
             runtime.registerQuiesceListener(this);
         } catch (Throwable th) {
@@ -72,11 +88,58 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
         }
     }
 
+    public int awaitProgress(
+            long observedVersion,
+            @Nullable FiberCancellationSignal cancellationSignal
+    ) {
+        if (quiesceState.get() != QUIESCE_OPEN) {
+            return FiberWaitCoordinator.REASON_SHUTDOWN;
+        }
+        if (!Fiber.isMounted()) {
+            return FiberWaitCoordinator.REASON_NONE;
+        }
+        final Fiber fiber = Fiber.current();
+        if (fiber == null) {
+            return FiberWaitCoordinator.REASON_NONE;
+        }
+        final long token;
+        try {
+            token = fiber.beginWaitBuild(cancellationSignal == null ? 2 : 3);
+        } catch (IllegalStateException e) {
+            if (quiesceState.get() != QUIESCE_OPEN) {
+                return FiberWaitCoordinator.REASON_SHUTDOWN;
+            }
+            throw e;
+        }
+        final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
+        try {
+            if (!coordinator.armEvent(token, progressWaitQueue)) {
+                throw new IllegalStateException("page frame progress wait registration failed");
+            }
+            if (cancellationSignal != null && !coordinator.armCancellation(token, cancellationSignal)) {
+                throw new IllegalStateException("page frame progress cancellation registration failed");
+            }
+            if (!coordinator.armTimer(token, timerShards, timerClock, timerIntervalMillis)) {
+                return FiberWaitCoordinator.REASON_SHUTDOWN;
+            }
+            if (quiesceState.get() != QUIESCE_OPEN) {
+                return FiberWaitCoordinator.REASON_SHUTDOWN;
+            }
+            if (progressVersion.get() != observedVersion) {
+                return FiberWaitCoordinator.REASON_PROGRESS;
+            }
+            return fiber.suspendWait(token);
+        } finally {
+            coordinator.teardownWait(token);
+        }
+    }
+
     @Override
     public void beginQuiesce() {
         if (!quiesceState.compareAndSet(QUIESCE_OPEN, QUIESCE_REQUESTED)) {
             return;
         }
+        progressWaitQueue.shutdown();
         while (true) {
             final long current = publicationAdmission.get();
             if ((current & PUBLICATION_OPEN) == 0
@@ -109,6 +172,9 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
             MCSequence subSeq,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
+        if (!hasPendingTasks(subSeq)) {
+            return true;
+        }
         final Fiber fiber = reserveFiber(stealingFrameSequence != null && !stealingFrameSequence.isActive());
         if (fiber == null) {
             return true;
@@ -147,6 +213,9 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
             MCSequence subSeq,
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
+        if (!hasPendingTasks(subSeq)) {
+            return true;
+        }
         final Fiber fiber = reserveFiber(stealingFrameSequence != null && !stealingFrameSequence.isActive());
         if (fiber == null) {
             return true;
@@ -164,6 +233,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
                 final long frameSequenceId = reduceTask.getFrameSequenceId();
                 reduceTask.clear();
                 subSeq.done(cursor);
+                signalProgress();
                 if (frameSequenceId != frameSequence.getId()) {
                     LOG.error()
                             .$("skipping stale task [expected=").$(frameSequence.getId())
@@ -189,6 +259,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
     @TestOnly
     public int getCreatedTaskCount() {
         return taskPool.getCreatedCount();
+    }
+
+    public long getProgressVersion() {
+        return progressVersion.get();
     }
 
     @Override
@@ -237,6 +311,49 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
         }
     }
 
+    boolean awaitProgress(
+            long observedVersion,
+            @Nullable FiberCancellationSignal cancellationSignal,
+            @Nullable SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        final int reason = awaitProgress(observedVersion, cancellationSignal);
+        return switch (reason) {
+            case FiberWaitCoordinator.REASON_ABORTED ->
+                    throw new IllegalStateException("fiber refused page frame progress suspension");
+            case FiberWaitCoordinator.REASON_CANCEL -> {
+                if (circuitBreaker != null) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                }
+                yield false;
+            }
+            case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> false;
+            case FiberWaitCoordinator.REASON_PROGRESS -> true;
+            case FiberWaitCoordinator.REASON_TIMER -> {
+                if (circuitBreaker != null) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                }
+                yield true;
+            }
+            default -> throw new IllegalStateException(
+                    "unexpected page frame progress wait reason [reason=" + reason + ']'
+            );
+        };
+    }
+
+    void signalProgress() {
+        progressVersion.incrementAndGet();
+        progressWaitQueue.fire();
+    }
+
+    private static boolean hasPendingTasks(MCSequence subSeq) {
+        final long next = subSeq.current() + 1;
+        return subSeq.getBarrier().availableIndex(next) >= next;
+    }
+
+    private static IllegalStateException launchFailed(LaunchResult result) {
+        return new IllegalStateException("page frame fiber launch failed [result=" + result + ']');
+    }
+
     private boolean drainOrdered(RingQueue<PageFrameReduceTask> queue, MCSequence subSeq) {
         while (true) {
             final long cursor = subSeq.next();
@@ -248,6 +365,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
                     subSeq.done(cursor);
                 } finally {
                     frameSequence.getReduceFinishedCounter().incrementAndGet();
+                    signalProgress();
                 }
             } else if (cursor == -1) {
                 return true;
@@ -281,6 +399,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
                 final long frameSequenceId = task.getFrameSequenceId();
                 task.clear();
                 subSeq.done(cursor);
+                signalProgress();
                 if (frameSequenceId == frameSequence.getId()) {
                     frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
                     frameSequence.getDoneLatch().countDown();
@@ -301,7 +420,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
             task.abortBeforeLaunch();
         }
         if (result != LaunchResult.LAUNCHED && result != LaunchResult.QUIESCING) {
-            throw new IllegalStateException("page frame fiber launch failed [result=" + result + ']');
+            throw launchFailed(result);
         }
     }
 
@@ -338,4 +457,5 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
             }
         }
     }
+
 }

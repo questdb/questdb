@@ -39,12 +39,14 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Os;
 import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 public final class WalApplyFiberJob implements Closeable, Job {
     private static final Log LOG = LogFactory.getLog(WalApplyFiberJob.class);
+    private volatile @Nullable Runnable beforeEvictForTesting;
     private final CairoEngine engine;
     private final WalApplyExecutorPool executorPool;
     private volatile boolean isClosed;
@@ -99,7 +101,7 @@ public final class WalApplyFiberJob implements Closeable, Job {
             return false;
         }
         if (runtime.state() != FiberRuntimeState.OPEN) {
-            return drainOne();
+            return false;
         }
         if (!hasNotification()) {
             return false;
@@ -195,23 +197,27 @@ public final class WalApplyFiberJob implements Closeable, Job {
         }
     }
 
+    @TestOnly
+    public void setBeforeEvictForTesting(@Nullable Runnable beforeEvictForTesting) {
+        this.beforeEvictForTesting = beforeEvictForTesting;
+    }
+
+    void evict(WalApplyFiberTask task) {
+        final Runnable hook = beforeEvictForTesting;
+        if (hook != null) {
+            hook.run();
+        }
+        tasks.remove(task.getTableDirName(), task);
+    }
+
     private synchronized WalApplyFiberTask createTask(TableToken tableToken) {
         final String dirName = tableToken.getDirName();
         WalApplyFiberTask task = tasks.get(dirName);
         if (task == null) {
-            task = new WalApplyFiberTask(engine, runtime, executorPool, tableToken);
+            task = new WalApplyFiberTask(engine, this, runtime, executorPool, tableToken);
             tasks.put(dirName, task);
         }
         return task;
-    }
-
-    private boolean drainOne() {
-        final long cursor = nextCursor();
-        if (cursor < 0) {
-            return false;
-        }
-        subSeq.done(cursor);
-        return true;
     }
 
     private WalApplyFiberTask getTask(TableToken tableToken) {

@@ -196,6 +196,12 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     }
 
     @Override
+    public boolean hasPendingIOEvents() {
+        final long next = ioEventSubSeq.current() + 1;
+        return ioEventSubSeq.getBarrier().availableIndex(next) >= next;
+    }
+
+    @Override
     public boolean isListening() {
         return listening;
     }

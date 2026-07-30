@@ -67,7 +67,8 @@ public final class PGConnectionFiberTask extends FiberTask {
     private static final int EVENT_READ = 1;
     private static final long EVENT_READY = 4;
     private static final int EVENT_SHIFT = 3;
-    private static final int EVENT_WRITE = 2;
+    // 2 is EVENT_RERUN in the HTTP twin of this encoding
+    private static final int EVENT_WRITE = 3;
     private static final Log LOG = LogFactory.getLog(PGConnectionFiberTask.class);
     private static final long MAX_EVENT_INCARNATION = Long.MAX_VALUE >>> EVENT_SHIFT;
     private static final int NO_DISCONNECT = -1;
@@ -91,8 +92,7 @@ public final class PGConnectionFiberTask extends FiberTask {
         final int eventAction = switch (operation) {
             case IOOperation.READ -> EVENT_READ;
             case IOOperation.WRITE -> EVENT_WRITE;
-            default ->
-                    throw new IllegalArgumentException("unsupported PG fiber operation [operation=" + operation + ']');
+            default -> throw unsupportedOperation(operation);
         };
         return launchEvent(runtime, null, getIncarnation(), eventAction);
     }
@@ -102,8 +102,7 @@ public final class PGConnectionFiberTask extends FiberTask {
         final int eventAction = switch (operation) {
             case IOOperation.READ -> EVENT_READ;
             case IOOperation.WRITE -> EVENT_WRITE;
-            default ->
-                    throw new IllegalArgumentException("unsupported PG fiber operation [operation=" + operation + ']');
+            default -> throw unsupportedOperation(operation);
         };
         return launchEvent(runtime, fiber, getIncarnation(), eventAction);
     }
@@ -111,7 +110,7 @@ public final class PGConnectionFiberTask extends FiberTask {
     @TestOnly
     public void setReadyEventForTesting(long incarnation) {
         if (incarnation < 1 || incarnation > MAX_EVENT_INCARNATION) {
-            throw new IllegalArgumentException("PG task incarnation is out of range [incarnation=" + incarnation + ']');
+            throw incarnationOutOfRangeArgument(incarnation);
         }
         stagedEvent = (incarnation << EVENT_SHIFT) | EVENT_READ | EVENT_READY;
     }
@@ -125,7 +124,7 @@ public final class PGConnectionFiberTask extends FiberTask {
         boolean isReservationConsumed = fiber == null;
         try {
             if (taskIncarnation < 1 || taskIncarnation > MAX_EVENT_INCARNATION) {
-                throw new IllegalStateException("PG task incarnation is out of range [incarnation=" + taskIncarnation + ']');
+                throw incarnationOutOfRangeState(taskIncarnation);
             }
             final long pendingEvent = (taskIncarnation << EVENT_SHIFT) | eventAction;
             while (true) {
@@ -232,6 +231,18 @@ public final class PGConnectionFiberTask extends FiberTask {
             }
             return result;
         }
+    }
+
+    private static IllegalArgumentException incarnationOutOfRangeArgument(long incarnation) {
+        return new IllegalArgumentException("PG task incarnation is out of range [incarnation=" + incarnation + ']');
+    }
+
+    private static IllegalStateException incarnationOutOfRangeState(long taskIncarnation) {
+        return new IllegalStateException("PG task incarnation is out of range [incarnation=" + taskIncarnation + ']');
+    }
+
+    private static IllegalArgumentException unsupportedOperation(int operation) {
+        return new IllegalArgumentException("unsupported PG fiber operation [operation=" + operation + ']');
     }
 
     private int takeEvent() {

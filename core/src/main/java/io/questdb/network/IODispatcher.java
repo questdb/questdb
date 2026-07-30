@@ -64,6 +64,10 @@ public interface IODispatcher<C extends IOContext<C>> extends Closeable, Job {
 
     int getPort();
 
+    default boolean hasPendingIOEvents() {
+        return true;
+    }
+
     boolean isListening();
 
     boolean processIOQueue(IORequestProcessor<C> processor);

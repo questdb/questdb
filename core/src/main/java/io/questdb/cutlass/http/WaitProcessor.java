@@ -122,7 +122,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
     public boolean launchReruns(FiberRuntime runtime, RetryLauncher launcher) {
         boolean useful = false;
 
-        while (true) {
+        while (hasPendingReruns()) {
             final Fiber fiber = runtime.tryReserveFiber();
             if (fiber == null) {
                 return useful;
@@ -141,11 +141,12 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
                 useful = true;
                 if (retry.isRetryCurrent(taskIncarnation)) {
                     launcher.launch(fiber, retry, taskIncarnation);
-                    return true;
+                    continue;
                 }
             }
             runtime.releaseReservedFiber(fiber);
         }
+        return useful;
     }
 
     @Override
@@ -241,6 +242,11 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
         // 'exponentialWaitMultiplier' times wait time starting until it is 'maxWaitCapMs' sec
         final long totalWait = lastRunTimestamp - waitStartTimestamp;
         return Math.min(maxWaitCapMs, Math.max(4L, (long) (totalWait * exponentialWaitMultiplier))) + lastRunTimestamp;
+    }
+
+    private boolean hasPendingReruns() {
+        final long next = outSubSequence.current() + 1;
+        return outSubSequence.getBarrier().availableIndex(next) >= next;
     }
 
     // Process incoming queue and put it on priority queue with next timestamp to rerun

@@ -342,6 +342,49 @@ public class FiberRuntimeTest {
     }
 
     @Test
+    public void testEarlyReadyQueuesOnlyAfterProcessorReturns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(2);
+            final CountDownLatch processorFinishing = new CountDownLatch(1);
+            final CountDownLatch releaseProcessor = new CountDownLatch(1);
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final EarlyReadyTask task = new EarlyReadyTask(runtime);
+            runtime.setAfterProcessForTesting(() -> {
+                processorFinishing.countDown();
+                try {
+                    releaseProcessor.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+            });
+
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            final Thread processor = new Thread(() -> {
+                try {
+                    runtime.initializeCarrier();
+                    runtime.drain(1);
+                } catch (Throwable th) {
+                    error.set(th);
+                }
+            });
+            processor.start();
+            Assert.assertTrue(processorFinishing.await(10, TimeUnit.SECONDS));
+            final int queuedWhileProcessing = runtime.getQueuedCount();
+            runtime.setAfterProcessForTesting(null);
+            releaseProcessor.countDown();
+            processor.join(10_000);
+
+            Assert.assertFalse(processor.isAlive());
+            Assert.assertNull(error.get());
+            Assert.assertEquals(1, runtime.drain(8));
+            Assert.assertTrue(task.isDone());
+            close(runtime);
+            Assert.assertEquals(0, queuedWhileProcessing);
+        });
+    }
+
+    @Test
     public void testEarlyReadyRelaunchesAfterUnmount() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(2);
@@ -421,6 +464,32 @@ public class FiberRuntimeTest {
                 }
                 close(runtime);
             }
+        });
+    }
+
+    @Test
+    public void testInitialEnqueueFailureRollsBackReservation() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final EnqueueFailureTask task = new EnqueueFailureTask();
+            task.runtime = runtime;
+            fillRunQueueForTesting(runtime);
+
+            Assert.assertEquals(LaunchResult.TERMINAL, runtime.launch(task));
+            Assert.assertTrue(task.isDone());
+            Assert.assertEquals(12, task.callbackOrder);
+            Assert.assertEquals("fiber ring is full", task.error.getMessage());
+            Assert.assertEquals(0, runtime.getMountedCount());
+            Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+            Assert.assertEquals(0, runtime.getQueuedCount());
+
+            final OneShotTask replacement = new OneShotTask();
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(replacement));
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertTrue(replacement.isDone());
+            Assert.assertEquals(1, runtime.getCreatedFiberCount());
+
+            close(runtime);
         });
     }
 

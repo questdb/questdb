@@ -171,6 +171,9 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
         if (!task.isAvailable()) {
             return false;
         }
+        if (!hasPendingRequests()) {
+            return false;
+        }
         Fiber fiber = runtime.tryReserveFiber();
         if (fiber == null) {
             return runtime.state() == FiberRuntimeState.OPEN
@@ -261,6 +264,11 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             return CopyExportRequestTask.Status.CANCELLED;
         }
         return CopyExportRequestTask.classifyFailureStatus(circuitBreaker);
+    }
+
+    private boolean hasPendingRequests() {
+        final long next = subSeq.current() + 1;
+        return subSeq.getBarrier().availableIndex(next) >= next;
     }
 
     private void processRequest(int carrierId) {

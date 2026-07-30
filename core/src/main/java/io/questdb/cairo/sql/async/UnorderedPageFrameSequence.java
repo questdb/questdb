@@ -47,6 +47,7 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.FlyweightMessageContainer;
@@ -59,7 +60,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -70,15 +70,15 @@ import java.util.concurrent.atomic.AtomicLong;
  * Designed for factories that don't need ordered results (GROUP BY, top-K).
  */
 public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Closeable {
+    private static final int CANCEL_REASON_UNSET = -1;
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
-    private final AtomicInteger cancelReason = new AtomicInteger(SqlExecutionCircuitBreaker.STATE_OK);
+    private final AtomicInteger cancelReason = new AtomicInteger(CANCEL_REASON_UNSET);
     private final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
     private final MillisecondClock clock;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final StringSink errorMsg = new StringSink();
     private final LongList frameRowCounts = new LongList();
-    private final AtomicBoolean isValid = new AtomicBoolean(true);
     private final MessageBus messageBus;
     private final MPSequence reducePubSeq;
     private final RingQueue<UnorderedPageFrameReduceTask> reduceQueue;
@@ -94,9 +94,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private int frameCount;
     private PageFrameCursor frameCursor;
     private long id;
-    private boolean isCancelled;
+    private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
     private boolean isClosing;
-    private boolean isInterrupted;
     private boolean isOutOfMemory;
     private boolean isReadyToDispatch;
     private boolean isUninterruptible;
@@ -143,11 +142,23 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             return;
         }
         // Wait for all queued frames to complete.
-        while (!doneLatch.done(queuedCount)) {
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        while (true) {
+            final long observedProgress = dispatcher != null && Fiber.isMounted()
+                    ? dispatcher.getProgressVersion()
+                    : 0;
+            if (doneLatch.done(queuedCount)) {
+                break;
+            }
             if (stealWork()) {
                 workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+            } else if (dispatcher != null && Fiber.isMounted()) {
+                if (!awaitProgress(dispatcher, observedProgress, true)) {
+                    Os.pause();
+                }
+            } else {
+                Os.pause();
             }
-            Os.pause();
         }
     }
 
@@ -167,16 +178,26 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             default -> CairoException.critical(errno)
                     .position(errorMessagePosition)
                     .put(errorMsg)
-                    .setCancellation(isCancelled)
-                    .setInterruption(isInterrupted)
+                    .setInterruptionReason(interruptionReason)
                     .setOutOfMemory(isOutOfMemory);
         };
     }
 
+    public CairoException buildInterruptionException() {
+        final int reason = getCancelReason();
+        if (reason == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
+            return CairoException.queryCancelled();
+        }
+        if (reason == SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION) {
+            return CairoException.queryDisconnected(getCircuitBreaker().getFd());
+        }
+        return CairoException.queryTimedOut();
+    }
+
     public void cancel(int reason) {
-        isValid.compareAndSet(true, false);
-        cancelReason.set(reason);
-        cancellationSignal.cancel();
+        if (cancelReason.compareAndSet(CANCEL_REASON_UNSET, reason)) {
+            cancellationSignal.cancel();
+        }
     }
 
     @Override
@@ -221,83 +242,115 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         // Phase 1: Dispatch all frames.
         // The try/finally ensures queuedCount is set even if reduceLocally() throws,
         // so that await() in close() properly drains in-flight tasks.
+        final boolean hasPublication = dispatcher == null || dispatcher.tryAcquirePublication();
         try {
-            DISPATCH:
-            for (int i = 0; i < frameCount; i++) {
-                while (true) {
-                    final long cursor;
-                    if (dispatcher == null) {
-                        cursor = reducePubSeq.next();
+            if (!hasPublication) {
+                cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+            } else {
+                DISPATCH:
+                for (int i = 0; i < frameCount; i++) {
+                    while (true) {
+                        if (!isActive()) {
+                            break DISPATCH;
+                        }
+                        final long observedProgress = dispatcher != null && Fiber.isMounted()
+                                ? dispatcher.getProgressVersion()
+                                : 0;
+                        final long cursor = reducePubSeq.next();
                         if (cursor > -1) {
                             reduceQueue.get(cursor).of(this, i);
                             reducePubSeq.done(cursor);
-                        }
-                    } else {
-                        if (!dispatcher.tryAcquirePublication()) {
-                            cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
-                            break DISPATCH;
-                        }
-                        try {
-                            cursor = reducePubSeq.next();
-                            if (cursor > -1) {
-                                reduceQueue.get(cursor).of(this, i);
-                                reducePubSeq.done(cursor);
+                            queued++;
+                            break;
+                        } else if (cursor == -1) {
+                            if (dispatcher != null) {
+                                if (!stealWork()) {
+                                    if (hasCircuitBreakerInterruptionBeenSuperseded(
+                                            workStealCircuitBreaker,
+                                            false
+                                    )) {
+                                        break DISPATCH;
+                                    }
+                                    if (Fiber.isMounted()) {
+                                        if (!awaitProgress(dispatcher, observedProgress, false)) {
+                                            Os.pause();
+                                        }
+                                        continue;
+                                    }
+                                    reduceLocally(i);
+                                    localCount++;
+                                    break;
+                                }
+                                continue;
                             }
-                        } finally {
-                            dispatcher.releasePublication();
-                        }
-                    }
-                    if (cursor > -1) {
-                        queued++;
-                        break;
-                    } else if (cursor == -1) {
-                        if (dispatcher != null) {
-                            if (!stealWork()) {
-                                Os.pause();
+                            if (workStealingStrategy.shouldSteal(localCount)) {
+                                if (stealWork()) {
+                                    workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+                                }
+                                continue;
                             }
-                            continue;
+                            // Reduce locally as fallback.
+                            reduceLocally(i);
+                            localCount++;
+                            break;
+                        } else {
+                            Os.pause();
                         }
-                        if (workStealingStrategy.shouldSteal(localCount)) {
-                            if (stealWork()) {
-                                workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
-                            }
-                            continue;
-                        }
-                        // Reduce locally as fallback.
-                        reduceLocally(i);
-                        localCount++;
-                        break;
-                    } else {
-                        Os.pause();
                     }
                 }
             }
         } finally {
             this.queuedCount = queued;
+            if (hasPublication && dispatcher != null) {
+                dispatcher.releasePublication();
+            }
         }
 
         // Phase 2: Wait for all queued frames to complete.
         final SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
-        while (!doneLatch.done(queued)) {
+        while (true) {
+            final long observedProgress = dispatcher != null && Fiber.isMounted()
+                    ? dispatcher.getProgressVersion()
+                    : 0;
+            if (doneLatch.done(queued)) {
+                break;
+            }
             if (!isActive()) {
                 break;
             }
-            if (!isUninterruptible) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            if (!isUninterruptible
+                    && hasCircuitBreakerInterruptionBeenSuperseded(circuitBreaker, true)) {
+                break;
             }
             if (stealWork()) {
                 workStealCircuitBreaker.init(circuitBreaker);
+            } else if (dispatcher != null && Fiber.isMounted()) {
+                if (!awaitProgress(dispatcher, observedProgress, false)) {
+                    Os.pause();
+                }
+            } else {
+                Os.pause();
             }
-            Os.pause();
         }
 
         // If we exited early due to cancellation, still wait for in-flight tasks
         // to complete to avoid data races with setError().
-        while (!doneLatch.done(queued)) {
+        while (true) {
+            final long observedProgress = dispatcher != null && Fiber.isMounted()
+                    ? dispatcher.getProgressVersion()
+                    : 0;
+            if (doneLatch.done(queued)) {
+                break;
+            }
             if (stealWork()) {
                 workStealCircuitBreaker.init(circuitBreaker);
+            } else if (dispatcher != null && Fiber.isMounted()) {
+                if (!awaitProgress(dispatcher, observedProgress, true)) {
+                    Os.pause();
+                }
+            } else {
+                Os.pause();
             }
-            Os.pause();
         }
 
         // Phase 3: Check for errors.
@@ -305,18 +358,14 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             if (isOutOfMemory) {
                 throw CairoException.nonCritical().setOutOfMemory(true).put(errorMsg);
             }
-            if (isCancelled) {
+            if (interruptionReason == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
                 throw CairoException.queryCancelled();
             }
             throw buildError();
         }
 
-        if (!isActive()) {
-            if (cancelReason.get() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-                throw CairoException.queryCancelled();
-            } else {
-                throw CairoException.queryTimedOut();
-            }
+        if (!isActive() && getCancelReason() != SqlExecutionCircuitBreaker.STATE_OK) {
+            throw buildInterruptionException();
         }
     }
 
@@ -325,7 +374,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     }
 
     public int getCancelReason() {
-        return cancelReason.get();
+        final int reason = cancelReason.get();
+        return reason == CANCEL_REASON_UNSET ? SqlExecutionCircuitBreaker.STATE_OK : reason;
     }
 
     public FiberCancellationSignal getCancellationSignal() {
@@ -392,7 +442,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     }
 
     public boolean isActive() {
-        return isValid.get();
+        return cancelReason.get() == CANCEL_REASON_UNSET;
     }
 
     public boolean isUninterruptible() {
@@ -419,9 +469,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
 
             id = ID_SEQ.incrementAndGet();
-            isValid.set(true);
             cancellationSignal.reset();
-            cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
+            cancelReason.set(CANCEL_REASON_UNSET);
             doneLatch.reset();
             reduceStartedCounter.set(0);
             workStealingStrategy.of(reduceStartedCounter);
@@ -429,8 +478,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             errorMessagePosition = 0;
             errno = CairoException.NON_CRITICAL;
             errorKind = AsyncQueryErrorKind.KIND_NONE;
-            isCancelled = false;
-            isInterrupted = false;
+            interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
             isOutOfMemory = false;
 
             atom.init(frameCursor, executionContext);
@@ -512,8 +560,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             errorMsg.put(e.getFlyweightMessage());
             errorMessagePosition = e.getPosition();
             errno = e.getErrno();
-            isCancelled = e.isCancellation();
-            isInterrupted = e.isInterruption();
+            interruptionReason = e.getInterruptionReason();
             isOutOfMemory = e.isOutOfMemory();
             cancel(e.getInterruptionReason());
         } else if (th instanceof FlyweightMessageContainer fmc) {
@@ -530,6 +577,33 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             }
             cancel(SqlExecutionCircuitBreaker.STATE_OK);
         }
+    }
+
+    private boolean awaitProgress(
+            PageFrameReduceDispatcher dispatcher,
+            long observedProgress,
+            boolean isDraining
+    ) {
+        final boolean hasProgress;
+        try {
+            hasProgress = dispatcher.awaitProgress(
+                    observedProgress,
+                    isDraining || isUninterruptible ? null : SuspensionScope.getCancellationSignal(),
+                    isDraining || isUninterruptible ? null : sqlExecutionContext.getCircuitBreaker()
+            );
+        } catch (CairoException e) {
+            if (isInterruptionSuperseded(e)) {
+                return false;
+            }
+            throw e;
+        }
+        if (!hasProgress && !isDraining) {
+            if (hasNonInterruptionWon(SqlExecutionCircuitBreaker.STATE_CANCELLED)) {
+                return false;
+            }
+            throw buildInterruptionException();
+        }
+        return hasProgress;
     }
 
     private void buildAddressCache() {
@@ -549,8 +623,46 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         frameAddressCache.freezeCoveredReaders();
     }
 
+    private boolean hasCircuitBreakerInterruptionBeenSuperseded(
+            SqlExecutionCircuitBreaker circuitBreaker,
+            boolean isTimeThrottled
+    ) {
+        try {
+            if (isTimeThrottled) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            } else {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+            }
+            return false;
+        } catch (CairoException e) {
+            if (isInterruptionSuperseded(e)) {
+                return true;
+            }
+            throw e;
+        }
+    }
+
     private boolean hasError() {
         return !errorMsg.isEmpty();
+    }
+
+    private boolean hasNonInterruptionWon(int interruptionReason) {
+        cancel(interruptionReason);
+        return cancelReason.get() == SqlExecutionCircuitBreaker.STATE_OK;
+    }
+
+    private boolean isInterruptionSuperseded(CairoException exception) {
+        final int interruptionReason = exception.getInterruptionReason();
+        if (interruptionReason == SqlExecutionCircuitBreaker.STATE_OK) {
+            return false;
+        }
+        if (hasNonInterruptionWon(interruptionReason)) {
+            return true;
+        }
+        if (getCancelReason() != interruptionReason) {
+            throw buildInterruptionException();
+        }
+        return false;
     }
 
     private void reduceLocally(int frameIndex) {

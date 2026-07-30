@@ -77,11 +77,15 @@ public final class FiberWalWaitQueue {
     }
 
     public synchronized SourceRegistrationResult register(FiberWalWaitRegistration registration) {
-        if (registration.queue != null || !registration.markQueued()) {
+        if (registration.queue != null) {
+            return SourceRegistrationResult.NOT_ACCEPTED;
+        }
+        registration.queue = this;
+        if (!registration.markQueued()) {
+            registration.queue = null;
             return SourceRegistrationResult.NOT_ACCEPTED;
         }
         registration.prevList = tail;
-        registration.queue = this;
         if (tail == null) {
             head = registration;
         } else {

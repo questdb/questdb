@@ -276,7 +276,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                 }
 
                 if (!allFramesActive) {
-                    throwTimeoutException();
+                    throwInterruptionException();
                 }
 
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
@@ -380,7 +380,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             if (th instanceof CairoException ce) {
                 if (ce.isInterruption() || ce.isCancellation()) {
                     LOG.error().$("filter error [ex=").$safe(ce.getFlyweightMessage()).I$();
-                    throwTimeoutException();
+                    throwInterruptionException();
                 } else {
                     LOG.error().$("filter error [ex=").$(th).I$();
                     throw ce;
@@ -427,7 +427,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
 
         if (!allFramesActive) {
-            throwTimeoutException();
+            throwInterruptionException();
         }
         return false;
     }
@@ -463,17 +463,13 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
 
         if (!allFramesActive) {
-            throwTimeoutException();
+            throwInterruptionException();
         }
         return false;
     }
 
-    private void throwTimeoutException() {
-        if (masterFrameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
-        }
+    private void throwInterruptionException() {
+        throw masterFrameSequence.buildInterruptionException();
     }
 
     void of(

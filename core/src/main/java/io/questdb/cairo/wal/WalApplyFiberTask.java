@@ -36,6 +36,7 @@ import io.questdb.std.Unsafe;
 
 final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
     private static final int LEASE_BOUND = 1;
+    private static final int LEASE_EVICTED = 2;
     private static final int LEASE_IDLE = 0;
     private static final long LEASE_STATE_OFFSET = Unsafe.getFieldOffset(WalApplyFiberTask.class, "leaseState");
     private static final Log LOG = LogFactory.getLog(WalApplyFiberTask.class);
@@ -48,6 +49,7 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
     private final WalApplyExecutorPool executorPool;
     private boolean isForceRepublish;
     private boolean isReusable;
+    private final WalApplyFiberJob job;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile int leaseState = LEASE_IDLE;
     @SuppressWarnings("FieldMayBeFinal")
@@ -58,12 +60,14 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
 
     WalApplyFiberTask(
             CairoEngine engine,
+            WalApplyFiberJob job,
             FiberRuntime runtime,
             WalApplyExecutorPool executorPool,
             TableToken tableToken
     ) {
         this.engine = engine;
         this.executorPool = executorPool;
+        this.job = job;
         this.runtime = runtime;
         this.tableToken = tableToken;
     }
@@ -84,6 +88,10 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
         }
     }
 
+    String getTableDirName() {
+        return tableToken.getDirName();
+    }
+
     void signal() {
         Unsafe.getAndAddLong(this, REQUEST_VERSION_OFFSET, 1);
     }
@@ -94,9 +102,7 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
         }
         if (getScheduleState() != STATE_IDLE) {
             leaseState = LEASE_IDLE;
-            throw new IllegalStateException(
-                    "idle WAL apply lease has non-idle task [state=" + getScheduleState() + ']'
-            );
+            throw nonIdleTask(getScheduleState());
         }
         this.executor = executor;
         isForceRepublish = false;
@@ -131,22 +137,41 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
         return true;
     }
 
+    private static IllegalStateException nonIdleTask(int state) {
+        return new IllegalStateException("idle WAL apply lease has non-idle task [state=" + state + ']');
+    }
+
     private void releaseLease(boolean isReusable, boolean isForceRepublish) {
         final ApplyWal2TableJob executor = this.executor;
         final long completedVersion = runVersion;
         if (executor == null) {
             throw new IllegalStateException("WAL apply fiber lease has no executor");
         }
+        final boolean isDropped = engine.isWalTableDropped(tableToken.getDirName());
         this.executor = null;
         this.isForceRepublish = false;
         this.isReusable = false;
         runVersion = 0;
         executorPool.release(executor);
-        if (isReusable) {
+        if (isReusable && !isDropped) {
             reopen();
         }
-        if (!Unsafe.cas(this, LEASE_STATE_OFFSET, LEASE_BOUND, LEASE_IDLE)) {
+        if (!Unsafe.cas(
+                this,
+                LEASE_STATE_OFFSET,
+                LEASE_BOUND,
+                isDropped ? LEASE_EVICTED : LEASE_IDLE
+        )) {
             throw new IllegalStateException("WAL apply fiber lease is not bound");
+        }
+        if (isDropped) {
+            job.evict(this);
+            return;
+        }
+        if (engine.isWalTableDropped(tableToken.getDirName())
+                && Unsafe.cas(this, LEASE_STATE_OFFSET, LEASE_IDLE, LEASE_EVICTED)) {
+            job.evict(this);
+            return;
         }
         if (runtime.state() == FiberRuntimeState.OPEN
                 && (isForceRepublish

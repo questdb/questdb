@@ -178,7 +178,7 @@ public final class TimerShards {
             final DelayHeap<DelayedFireable> shard = shards.getQuick(i);
             DelayedFireable entry;
             while ((entry = shard.poll()) != null) {
-                if (entry == PoisonSentinel.INSTANCE) {
+                if (entry instanceof PoisonSentinel) {
                     continue;
                 }
                 try {
@@ -256,7 +256,7 @@ public final class TimerShards {
         running = false;
         for (int i = 0, n = shards.size(); i < n; i++) {
             if (threads.getQuick(i) != null) {
-                shards.getQuick(i).offer(PoisonSentinel.INSTANCE);
+                shards.getQuick(i).offer(new PoisonSentinel());
             }
         }
     }
@@ -267,7 +267,7 @@ public final class TimerShards {
             while (running) {
                 try {
                     DelayedFireable e = shard.take();
-                    if (e == PoisonSentinel.INSTANCE) {
+                    if (e instanceof PoisonSentinel) {
                         return;
                     }
                     if (!running) {
@@ -301,12 +301,13 @@ public final class TimerShards {
     }
 
     /**
-     * Single instance used to wake a {@link DelayHeap#take()} blocked thread when
-     * {@link #halt()} or {@link #shutdown()} runs. Its delay is always negative so the
-     * blocking take returns immediately; both lifecycle hooks are no-ops.
+     * Wakes a {@link DelayHeap#take()} blocked thread when {@link #halt()} or
+     * {@link #shutdown()} runs. Its delay is always negative so the blocking take
+     * returns immediately; both lifecycle hooks are no-ops. The intrusive heap
+     * links an entry into at most one heap, so each shard gets its own instance.
      */
     private static final class PoisonSentinel implements DelayedFireable {
-        static final PoisonSentinel INSTANCE = new PoisonSentinel();
+        private int heapIndex = -1;
 
         @Override
         public int compareTo(@NotNull java.util.concurrent.Delayed o) {
@@ -322,6 +323,16 @@ public final class TimerShards {
         @Override
         public long getDelay(@NotNull TimeUnit unit) {
             return unit.convert(Long.MIN_VALUE / 2, TimeUnit.NANOSECONDS);
+        }
+
+        @Override
+        public int getHeapIndex() {
+            return heapIndex;
+        }
+
+        @Override
+        public void setHeapIndex(int heapIndex) {
+            this.heapIndex = heapIndex;
         }
 
         @Override

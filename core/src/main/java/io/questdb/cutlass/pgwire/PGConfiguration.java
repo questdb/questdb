@@ -96,10 +96,8 @@ public interface PGConfiguration extends IODispatcherConfiguration, WorkerPoolCo
     }
 
     /**
-     * When enabled (the default), connection operations (message parsing, query
-     * execution, result streaming) run as FiberTask instances on pooled fibers instead of
-     * inline in the network worker's job. The actual worker pool must use
-     * {@link WorkerPoolMode#FIBER_HOST}.
+     * Requests {@link WorkerPoolMode#FIBER_HOST} for the PG worker pool. The resolved
+     * worker pool mode controls execution when multiple services share the same pool.
      */
     default boolean isFiberEnabled() {
         return true;

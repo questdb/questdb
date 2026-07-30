@@ -152,6 +152,14 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
         isReschedulePending = true;
     }
 
+    private static IllegalStateException incarnationOutOfRange(long taskIncarnation) {
+        return new IllegalStateException("HTTP task incarnation is out of range [incarnation=" + taskIncarnation + ']');
+    }
+
+    private static IllegalArgumentException unsupportedOperation(int operation) {
+        return new IllegalArgumentException("unsupported HTTP fiber operation [operation=" + operation + ']');
+    }
+
     private void abortPreparedReschedule() {
         if (preparedRescheduleCursor > -1) {
             rescheduleContext.abortPreparedReschedule(preparedRescheduleCursor);
@@ -186,7 +194,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
         boolean isReservationConsumed = fiber == null;
         try {
             if (taskIncarnation < 1 || taskIncarnation > MAX_EVENT_INCARNATION) {
-                throw new IllegalStateException("HTTP task incarnation is out of range [incarnation=" + taskIncarnation + ']');
+                throw incarnationOutOfRange(taskIncarnation);
             }
             final long pendingEvent = (taskIncarnation << EVENT_SHIFT) | eventAction;
             while (true) {
@@ -322,8 +330,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
         final int eventAction = switch (operation) {
             case IOOperation.READ -> EVENT_READ;
             case IOOperation.WRITE -> EVENT_WRITE;
-            default ->
-                    throw new IllegalArgumentException("unsupported HTTP fiber operation [operation=" + operation + ']');
+            default -> throw unsupportedOperation(operation);
         };
         return launchEvent(runtime, null, getIncarnation(), eventAction);
     }
@@ -341,8 +348,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
         final int eventAction = switch (operation) {
             case IOOperation.READ -> EVENT_READ;
             case IOOperation.WRITE -> EVENT_WRITE;
-            default ->
-                    throw new IllegalArgumentException("unsupported HTTP fiber operation [operation=" + operation + ']');
+            default -> throw unsupportedOperation(operation);
         };
         return launchEvent(runtime, fiber, getIncarnation(), eventAction);
     }
@@ -362,6 +368,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
         stagedEvent = 0;
         if (isDisconnectPending) {
             isDisconnectPending = false;
+            context.abandonRetry();
             dispatcher.disconnect(context, disconnectReason);
         }
     }

@@ -33,7 +33,8 @@ public enum LaunchResult {
     STALE_INCARNATION("stale_incarnation"),
     TERMINAL("terminal");
 
-    public static final int COUNT = values().length;
+    private static final LaunchResult[] VALUES = values();
+    public static final int COUNT = VALUES.length;
     private final String metricLabel;
 
     LaunchResult(String metricLabel) {
@@ -41,16 +42,10 @@ public enum LaunchResult {
     }
 
     public static LaunchResult get(int index) {
-        return switch (index) {
-            case 0 -> ALREADY_OWNED;
-            case 1 -> LAUNCHED;
-            case 2 -> QUIESCING;
-            case 3 -> RESOURCE_FAILURE;
-            case 4 -> SATURATED;
-            case 5 -> STALE_INCARNATION;
-            case 6 -> TERMINAL;
-            default -> throw new IndexOutOfBoundsException("invalid launch result index [index=" + index + ']');
-        };
+        if (index < 0 || index >= COUNT) {
+            throw new IndexOutOfBoundsException("invalid launch result index [index=" + index + ']');
+        }
+        return VALUES[index];
     }
 
     public String getMetricLabel() {

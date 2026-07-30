@@ -144,10 +144,9 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
     }
 
     /**
-     * When enabled (the default), connection operations (request parsing, query
-     * execution, result streaming) run as FiberTask instances on pooled fibers instead of
-     * inline in the network worker's job. Applies to the full-fat server only and
-     * requires the actual worker pool to use {@link WorkerPoolMode#FIBER_HOST}.
+     * Requests {@link WorkerPoolMode#FIBER_HOST} for the full-fat HTTP worker pool.
+     * The resolved worker pool mode controls execution when multiple services share
+     * the same pool.
      */
     default boolean isFiberEnabled() {
         return true;
