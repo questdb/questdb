@@ -1933,6 +1933,33 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByInt32KeyKSumKeepsCompensationAcrossNullRows() throws Exception {
+        // A NULL row adds nothing, but running it through the Kahan step assigned a correction for
+        // an addition of zero, wiping the one the slot had pending. 2^53 + 1 rounds back down to
+        // 2^53 and leaves a residual of -1; the second 1.0 recovers it only if the NULL row in
+        // between left it alone. Without that, the group degrades to naive summation and the
+        // second 1.0 disappears too.
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, id int, d double) timestamp(ts) partition by day");
+            execute("""
+                    insert into x values
+                        ('2024-11-08T00:00:00.000000Z', 42, 9007199254740992.0),
+                        ('2024-11-08T01:00:00.000000Z', 42, 1.0),
+                        ('2024-11-08T02:00:00.000000Z', 42, null),
+                        ('2024-11-08T03:00:00.000000Z', 42, 1.0)""");
+
+            assertQuery("select id, ksum(d) from x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            id\tksum
+                            42\t9.007199254740994E15
+                            """);
+        });
+    }
+
+    @Test
     public void testGroupByInt32KeyMaxShortKeepsNegativeValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (k INT, s SHORT, l LONG)");

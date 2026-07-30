@@ -41,6 +41,38 @@ public class RostiTest extends AbstractCairoTest {
     private static final int VALUE_OFFSET = 1;
 
     @Test
+    public void testKeyedIntKSumDoubleMergeCarriesDestinationCompensation() throws Exception {
+        // Each shard holds a Kahan (sum, c) pair standing for sum - c, and merge() folds shard B
+        // into shard A. The step has to subtract A's own pending correction as well as B's:
+        // reading only B's dropped whatever A had accumulated, and ksum reports the running sum
+        // alone, so the loss lands straight in the query result. Every value here is a small
+        // dyadic rational, so the arithmetic is exact.
+        assertMemoryLeak(() -> {
+            final long pRostiA = allocCompensatedSumRosti();
+            try {
+                final long pRostiB = allocCompensatedSumRosti();
+                try {
+                    Assert.assertTrue(Rosti.keyedIntDistinct(pRostiA, Rosti.getInitialValueSlot(pRostiA, 0), 1));
+                    Assert.assertTrue(Rosti.keyedIntDistinct(pRostiB, Rosti.getInitialValueSlot(pRostiB, 0), 1));
+                    // A stands for 8.0 - 0.25, B for 2.0 - 0.5.
+                    seedSingleSlot(pRostiA, VALUE_OFFSET, 8.0, 0.25, 2);
+                    seedSingleSlot(pRostiB, VALUE_OFFSET, 2.0, 0.5, 1);
+
+                    Assert.assertTrue(Rosti.keyedIntKSumDoubleMerge(pRostiA, pRostiB, VALUE_OFFSET));
+
+                    Assert.assertEquals(9.25, readSingleSlotDouble(pRostiA, VALUE_OFFSET), 0.0);
+                    Assert.assertEquals(0.0, readSingleSlotDouble(pRostiA, VALUE_OFFSET + 1), 0.0);
+                    Assert.assertEquals(3, readSingleSlotLong(pRostiA, VALUE_OFFSET + 2));
+                } finally {
+                    Rosti.free(pRostiB);
+                }
+            } finally {
+                Rosti.free(pRostiA);
+            }
+        });
+    }
+
+    @Test
     public void testKeyedIntKSumDoubleWrapUpAddsWholeFoldedCount() throws Exception {
         // valueAtNullCount is the number of column-top page frames the non-keyed accumulator
         // absorbed -- aggregate() bumps it once per frame, not once per row -- so it does not

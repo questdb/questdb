@@ -159,7 +159,11 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
             if (destCount > 0) {
                 final double destSum = destValue.getDouble(valueIndex);
                 final double destC = destValue.getDouble(valueIndex + 1);
-                sum(destValue, srcSum, destSum, destC);
+                // The source shard's total is its sum plus its compensation, and the Neumaier step
+                // folds in the sum alone, so seed it with both corrections. Dropping the source's
+                // lost real value: the branch below, which copies the source wholesale into an
+                // empty destination, has always carried it.
+                sum(destValue, srcSum, destSum, destC + srcValue.getDouble(valueIndex + 1));
                 destValue.putLong(valueIndex + 2, destCount + srcCount);
             } else {
                 destValue.putDouble(valueIndex, srcSum);

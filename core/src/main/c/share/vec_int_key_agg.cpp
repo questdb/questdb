@@ -802,24 +802,28 @@ kIntKSumDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong
         const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
         auto res = find(map, key);
+        if (PREDICT_FALSE(res.first == UL_MAX)) {
+            return JNI_FALSE;
+        }
         auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
-            if (PREDICT_FALSE(res.first == UL_MAX)) {
-                return JNI_FALSE;
-            }
             *reinterpret_cast<int32_t *>(dest) = key;
             *reinterpret_cast<jdouble *>(dest + value_offset) = std::isnan(d) ? 0 : d;
             *reinterpret_cast<jdouble *>(dest + c_offset) = 0.;
             *reinterpret_cast<jlong *>(dest + count_offset) = std::isnan(d) ? 0 : 1;
-        } else {
+        } else if (!std::isnan(d)) {
+            // A NULL row must still reach find() above, so that a group whose rows are all NULL
+            // exists, but it must not run the Kahan step: folding a zero leaves t == sum and
+            // assigns (t - sum) - y == 0 to the compensation, wiping the correction the slot had
+            // pending. One NULL row in a group degraded the rest of it to naive summation.
             const jdouble c = *reinterpret_cast<jdouble *>(dest + c_offset);
             const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
-            const jdouble y = std::isnan(d) ? 0 : d - c; // y = d -c
+            const jdouble y = d - c;
             const jdouble t = sum + y;
 
-            *reinterpret_cast<jdouble *>(dest + c_offset) = t - sum - y;
+            *reinterpret_cast<jdouble *>(dest + c_offset) = (t - sum) - y;
             *reinterpret_cast<jdouble *>(dest + value_offset) = t;
-            *reinterpret_cast<jlong *>(dest + count_offset) += std::isnan(d) ? 0 : 1;
+            *reinterpret_cast<jlong *>(dest + count_offset) += 1;
         }
     }
     return JNI_TRUE;
@@ -1270,22 +1274,27 @@ Java_io_questdb_std_Rosti_keyedIntKSumDoubleMerge(JNIEnv *env, jclass cl, jlong 
             auto count = *reinterpret_cast<jlong *>(src + count_offset);
 
             auto res = find(map_a, key);
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
             // maps must have identical structure to use "shift" from map B on map A
             auto dest = map_a->slots_ + res.first;
             if (PREDICT_FALSE(res.second)) {
-                if (PREDICT_FALSE(res.first == UL_MAX)) {
-                    return JNI_FALSE;
-                }
                 *reinterpret_cast<int32_t *>(dest) = key;
                 *reinterpret_cast<jdouble *>(dest + value_offset) = d;
                 *reinterpret_cast<jdouble *>(dest + c_offset) = cc;
                 *reinterpret_cast<jlong *>(dest + count_offset) = count;
             } else {
                 // do not check for nans in merge, because we can't have them in map
+                const jdouble c = *reinterpret_cast<jdouble *>(dest + c_offset);
                 const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
-                const jdouble y = d - cc; // y = d -c
+                // Both slots hold a (sum, c) pair standing for sum - c, so the Kahan step has to
+                // subtract the DESTINATION's pending correction as well as the source's. Reading
+                // only the source's discarded whatever the destination had accumulated, and the
+                // assignment below then overwrote the field with a correction for one step alone.
+                const jdouble y = (d - cc) - c;
                 const jdouble t = sum + y;
-                *reinterpret_cast<jdouble *>(dest + c_offset) = t - sum - y;
+                *reinterpret_cast<jdouble *>(dest + c_offset) = (t - sum) - y;
                 *reinterpret_cast<jdouble *>(dest + value_offset) = t;
                 *reinterpret_cast<jlong *>(dest + count_offset) += count;
             }
