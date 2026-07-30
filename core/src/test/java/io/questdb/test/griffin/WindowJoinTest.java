@@ -479,6 +479,77 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFalseFilterAsyncAggregateOverSplicedColumns() throws Exception {
+        // Aggregating a spliced null column drives the query through the parallel group-by, which asks
+        // ExtraNullColumnCursorFactory for a PAGE FRAME cursor rather than a record cursor. That cursor
+        // used to hand out the master's column mapping verbatim - one entry per master column, none for
+        // the spliced ones - while reporting the full spliced column count everywhere else, so every
+        // consumer that indexes the mapping by query column read past its end.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cfa_trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE cfa_prices (sym SYMBOL, l LONG, l256 LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO cfa_trades VALUES ('a', '2024-01-01T00:00:00.000000Z'), ('a', '2024-01-01T00:01:00.000000Z')");
+            execute("INSERT INTO cfa_prices VALUES ('a', 7, '0x01', '2024-01-01T00:00:00.000000Z')");
+
+            // SelectedRecordCursorFactory.wrap projects the mapping through columnCrossIndex, so a
+            // projection that keeps a spliced column reads the out-of-range entry first.
+            assertQuery("""
+                    SELECT sum(x), count(x), min(x), max(x) FROM (
+                      SELECT t.ts, sum(p.l) x
+                      FROM cfa_trades t WINDOW JOIN cfa_prices p ON (0 = 1)
+                      RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum\tcount\tmin\tmax
+                            null\t0\tnull\tnull
+                            """);
+
+            // count() over a spliced LONG256 reaches CountLong256GroupByFunction, whose
+            // Long256Impl.isNull does an unchecked cast - the sibling defect in ExtraNullColumnRecord.
+            // It is only reachable from SQL once the page frame cursor stops throwing.
+            assertQuery("""
+                    SELECT count(s) FROM (
+                      SELECT t.ts, sum(p.l256) s
+                      FROM cfa_trades t WINDOW JOIN cfa_prices p ON (0 = 1)
+                      RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+
+            // EXPLAIN builds the same cursor, so the plan was not inspectable either.
+            assertQuery("""
+                    EXPLAIN SELECT count(x) FROM (
+                      SELECT t.ts, sum(p.l) x
+                      FROM cfa_trades t WINDOW JOIN cfa_prices p ON (0 = 1)
+                      RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            QUERY PLAN
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(x)]
+                              filter: null
+                                SelectedRecord
+                                    ExtraNullColumnRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cfa_trades
+                            """);
+        });
+    }
+
+    @Test
     public void testConstantFalseFilterNullPadsDecimalAndVarSizeColumns() throws Exception {
         // A WINDOW JOIN whose ON filter folds to constant false drops the join entirely and wraps the
         // master in ExtraNullColumnCursorFactory, which splices one null column per window aggregate.
@@ -554,6 +625,51 @@ public class WindowJoinTest extends AbstractCairoTest {
                             ts\tfv
                             2024-01-01T00:00:00.000000Z\t
                             2024-01-01T00:01:00.000000Z\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testConstantFalseFilterParquetMasterSplicedColumnsReadNull() throws Exception {
+        // The same truncated column mapping is what PageFrameMemoryPool.resolveParquetColumn consults
+        // to map a query column onto a parquet column. Reading past the mapping picked up a stale slot
+        // that decoded as writer index 0, so on a parquet master partition the spliced NULL column
+        // silently served an unrelated master column's values instead of failing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cfp_trades (a LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE cfp_prices (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO cfp_trades VALUES
+                      (111, '2024-01-01T00:00:00.000000Z'),
+                      (222, '2024-01-01T00:01:00.000000Z'),
+                      (333, '2024-01-02T00:00:00.000000Z')""");
+            execute("INSERT INTO cfp_prices VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            // Only a non-active partition converts, hence the second day.
+            execute("ALTER TABLE cfp_trades CONVERT PARTITION TO PARQUET WHERE ts = '2024-01-01'");
+            assertQuery("SELECT name, isParquet FROM table_partitions('cfp_trades')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            name\tisParquet
+                            2024-01-01\ttrue
+                            2024-01-02\tfalse
+                            """);
+
+            // Every x is NULL - the join was dropped. Before the fix the two parquet rows answered
+            // cfp_trades.a instead, giving sum=333, count=2, min=111, max=222.
+            assertQuery("""
+                    SELECT sum(x), count(x), min(x), max(x) FROM (
+                      SELECT t.ts, sum(p.l) x
+                      FROM cfp_trades t WINDOW JOIN cfp_prices p ON (0 = 1)
+                      RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum\tcount\tmin\tmax
+                            null\t0\tnull\tnull
                             """);
         });
     }
