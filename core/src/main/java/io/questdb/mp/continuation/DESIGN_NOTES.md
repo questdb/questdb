@@ -153,7 +153,7 @@ sequenceDiagram
     C->>T1: runStep()
     opt Task A suspends inside a deep call
         T1->>F: suspendWait(token)
-        C-->>R: Continuation.yield(); unmount
+        C-->>R: Continuation.yield() and unmount
         Note over A,R: Carrier A returns to the plain worker loop
         Note over R,F: A source makes the same Fiber runnable
         B->>R: drain()
