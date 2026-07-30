@@ -81,6 +81,15 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
 
     private static final String SCALAR_PREDICATE = "c3 < 0";
 
+    @Override
+    public void setUp() {
+        super.setUp();
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        // Heavy concurrent apply/refresh/cleanup can briefly hold writer locks under load.
+        setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, "60000");
+        spinLockTimeout = 60_000;
+    }
+
     @Test
     public void testConcurrentCleanup() throws Exception {
         assertMemoryLeak(() -> {
@@ -183,15 +192,6 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
             assertQuery("select count() p from table_partitions('" + view + "')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
             assertQuery("select c2, c3 from " + view + " order by c2").noLeakCheck().returns("c2\tc3\nA\t3.0\nC\t9.0\n");
         });
-    }
-
-    @Override
-    public void setUp() {
-        super.setUp();
-        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
-        // Heavy concurrent apply/refresh/cleanup can briefly hold writer locks under load.
-        setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, "60000");
-        spinLockTimeout = 60_000;
     }
 
     private void assertQueryPatterns(SqlCompiler compiler, String keepSet, String view) throws Exception {

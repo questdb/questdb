@@ -80,6 +80,9 @@ public class MetadataCache implements QuietCloseable {
     private final MetadataCacheReaderImpl cacheReader = new MetadataCacheReaderImpl();
     private final MetadataCacheWriterImpl cacheWriter = new MetadataCacheWriterImpl();
     private final CairoEngine engine;
+    private final Object expiryPolicySnapshotLock = new Object();
+    private final LongHashSet pendingExpiryPolicyIds = new LongHashSet();
+    private final IntLongHashMap pendingExpiryPolicyVersions = new IntLongHashMap();
     private final SimpleReadWriteLock rwLock = new SimpleReadWriteLock();
     private final CharSequenceObjHashMap<CairoTable> tableMap = new CharSequenceObjHashMap<>();
     private ColumnVersionReader columnVersionReader;
@@ -110,11 +113,8 @@ public class MetadataCache implements QuietCloseable {
     // snapshot authoritatively contains both active policy IDs (for lock-free read gating) and active table
     // entries (for cleanup deadline discovery). Metadata updates rebuild it once; startup publishes one batch.
     private volatile ExpiryPolicySnapshot expiryPolicySnapshot = ExpiryPolicySnapshot.EMPTY;
-    private volatile boolean fullyHydrated = false;
-    private final Object expiryPolicySnapshotLock = new Object();
-    private final LongHashSet pendingExpiryPolicyIds = new LongHashSet();
-    private final IntLongHashMap pendingExpiryPolicyVersions = new IntLongHashMap();
     private volatile long expiryPolicyVersion;
+    private volatile boolean fullyHydrated = false;
 
     public MetadataCache(CairoEngine engine) {
         this.engine = engine;

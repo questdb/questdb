@@ -570,6 +570,16 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     }
 
     @TestOnly
+    public long getPolicyDiscoveryCount() {
+        return policyDiscoveryCount;
+    }
+
+    @TestOnly
+    public long getScalarPartitionScanCount() {
+        return scalarPartitionScanCount;
+    }
+
+    @TestOnly
     public boolean runNow() {
         return runSerially();
     }
@@ -792,16 +802,6 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             }
         }
         return 0;
-    }
-
-    @TestOnly
-    public long getPolicyDiscoveryCount() {
-        return policyDiscoveryCount;
-    }
-
-    @TestOnly
-    public long getScalarPartitionScanCount() {
-        return scalarPartitionScanCount;
     }
 
     private void initNow() {
