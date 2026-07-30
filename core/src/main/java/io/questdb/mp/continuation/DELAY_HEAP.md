@@ -94,7 +94,7 @@ sequenceDiagram
             TT->>CO: expire() fires REASON_TIMER
             CO->>RQ: enqueue the runnable fiber
             CB->>RQ: drain
-            CB->>F: mount; suspendWait() returns REASON_TIMER
+            CB->>F: mount and return REASON_TIMER from suspendWait()
         end
         F->>CO: teardownWait(token)
     end
@@ -201,13 +201,13 @@ sequenceDiagram
         CB->>PJ: run PageFrameReduceJob
         PJ->>D: consumeUnordered()
         D->>PQ: subSeq.next() claims a task
-        D->>PQ: clear task; subSeq.done(cursor) releases the slot
+        D->>PQ: clear task and release the slot with subSeq.done(cursor)
         D->>D: signalProgress() increments the version
         D->>CO: fire(token, REASON_PROGRESS)
         CO->>RQ: enqueue the request fiber
         D->>RF: launch the reserved reducer fiber
         CA->>RQ: drain
-        CA->>QF: mount; suspendWait() returns REASON_PROGRESS
+        CA->>QF: mount and return REASON_PROGRESS from suspendWait()
     end
     QF->>CO: teardownWait(token)
     QF->>D: tryAcquirePublication()
@@ -265,7 +265,7 @@ sequenceDiagram
     SQ->>CO: fire(token, REASON_SLOT)
     CO->>RQ: enqueue the reducer fiber
     CB->>RQ: drain
-    CB->>RF: mount; suspendWait() returns REASON_SLOT
+    CB->>RF: mount and return REASON_SLOT from suspendWait()
     RF->>RF: takeSlot() and continue aggregation
     RF->>PL: releaseSlot(slot) in finally
 ```
