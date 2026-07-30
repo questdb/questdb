@@ -748,26 +748,33 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             }
                             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                             long oldSize = Rosti.getAllocMemory(pRostiBig);
-                            if (!vaf.merge(pRostiBig, pRosti[i])) {
+                            // A merge calls find() once per source slot, so it can resize the
+                            // destination successfully and fail on a later resize. Account for the
+                            // growth on both outcomes: skipping it on failure leaves the counter
+                            // below the memory actually held, and resetRostiMemorySize() then
+                            // subtracts from the real size, driving NATIVE_ROSTI negative.
+                            final boolean merged = vaf.merge(pRostiBig, pRosti[i]);
+                            raf.updateMemoryUsage(pRostiBig, oldSize);
+                            if (!merged) {
                                 resetRostiMemorySize();
                                 throw CairoException.nonCritical()
                                         .put("could not merge rosti hash table")
                                         .setOutOfMemory(true);
                             }
-                            raf.updateMemoryUsage(pRostiBig, oldSize);
                         }
 
                         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
 
                         // some wrapUp() methods can increase rosti size
                         long oldSize = Rosti.getAllocMemory(pRostiBig);
-                        if (!vaf.wrapUp(pRostiBig)) {
+                        final boolean wrappedUp = vaf.wrapUp(pRostiBig);
+                        raf.updateMemoryUsage(pRostiBig, oldSize);
+                        if (!wrappedUp) {
                             resetRostiMemorySize();
                             throw CairoException.nonCritical()
                                     .put("could not wrap up rosti hash table")
                                     .setOutOfMemory(true);
                         }
-                        raf.updateMemoryUsage(pRostiBig, oldSize);
                     }
                     circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     for (int i = 0, n = pRosti.length; i < n; i++) {
@@ -784,13 +791,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     for (int j = 0; j < vafCount; j++) {
                         // some wrapUp() methods can increase rosti size (e.g. inserting the null key)
                         long oldSize = Rosti.getAllocMemory(pRostiBig);
-                        if (!vafList.getQuick(j).wrapUp(pRostiBig)) {
+                        final boolean wrappedUp = vafList.getQuick(j).wrapUp(pRostiBig);
+                        raf.updateMemoryUsage(pRostiBig, oldSize);
+                        if (!wrappedUp) {
                             resetRostiMemorySize();
                             throw CairoException.nonCritical()
                                     .put("could not wrap up rosti hash table")
                                     .setOutOfMemory(true);
                         }
-                        raf.updateMemoryUsage(pRostiBig, oldSize);
                     }
                 }
             } catch (Throwable t) {
