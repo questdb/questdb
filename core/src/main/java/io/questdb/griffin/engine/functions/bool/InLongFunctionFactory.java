@@ -537,7 +537,8 @@ public class InLongFunctionFactory implements FunctionFactory {
          */
         private static int dynamicElementKind(int tag) {
             return switch (tag) {
-                case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.TIMESTAMP -> KIND_LONG;
+                case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.TIMESTAMP ->
+                        KIND_LONG;
                 case ColumnType.VARCHAR -> KIND_VARCHAR;
                 case ColumnType.STRING, ColumnType.SYMBOL -> KIND_STR;
                 default -> KIND_NONE;

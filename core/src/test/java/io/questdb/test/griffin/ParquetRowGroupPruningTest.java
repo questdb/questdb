@@ -5281,12 +5281,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testDoubleColumnNearToleranceMagnitudeKeepsJitModeForLaterTests() throws Exception {
         // The tolerance test needs JIT off for its own queries and must hand the mode back
-        // afterwards. A setProperty() override is what leaks across methods - it writes the
-        // class-wide staticOverrides, which only @AfterClass resets, and every later setUp() then
-        // re-primes the execution context from it - so a leaked "off" costs JIT coverage for the
-        // other ~160 tests in this class, including the ones this PR added, and shows up as nothing
-        // at all. Assert the INVARIANT (the callee restores what it found) rather than a literal
-        // mode, so the pin survives a change of the test-configuration default.
+        // afterwards. setJitMode() is what outlives a method: the context is shared by the whole
+        // class and reset() does not touch the mode, so a test that switches it and then throws
+        // would cost JIT coverage for the other ~160 tests in this class - including the ones this
+        // PR added - and show up as nothing at all. Assert the INVARIANT (the callee restores what
+        // it found) rather than a literal mode, so the pin survives a change of the
+        // test-configuration default.
         final int configJitMode = configuration.getSqlJitMode();
         final int contextJitMode = sqlExecutionContext.getJitMode();
         testDoubleColumnNearToleranceMagnitudePushdownNotFalsePruned();
@@ -5319,13 +5319,13 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // JIT/strict-filter pass that drops boundary rows -- is not a stable oracle here. Disable JIT
         // and drive the query through printSql so the inclusive Java filter is the one that runs.
         //
-        // Switch the mode on the execution context, NOT with setProperty(). setProperty() writes the
-        // class-wide staticOverrides, which only @AfterClass resets, so every later setUp() in this
-        // class re-read the disabled mode and silently ran the rest of the class without JIT - and
-        // it did not even switch this test: setUp() primes the shared context from the configuration
-        // BEFORE the body runs, and SqlCodeGenerator reads the mode from the context alone, so these
-        // queries used to run with JIT on regardless of the override.
-        // testDoubleColumnNearToleranceMagnitudeKeepsJitModeForLaterTests pins the handback.
+        // Switch the mode on the execution context, NOT with setProperty(). setProperty() does not
+        // even switch this test: setUp() primes the shared context before the body runs, and
+        // SqlCodeGenerator reads the mode from the context alone, so these queries used to run with
+        // JIT on regardless of the override. It does not reach a later test either -
+        // Cairo#tearDown() resets the overrides after every method - so it is a no-op that reads
+        // like a guarantee. testDoubleColumnNearToleranceMagnitudeKeepsJitModeForLaterTests pins
+        // the handback.
         final int callerJitMode = sqlExecutionContext.getJitMode();
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
         try {
