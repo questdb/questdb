@@ -34,29 +34,56 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
+import io.questdb.std.Rosti;
+import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
  * Verifies the vectorized (rosti) keyed GROUP BY keeps its {@code NATIVE_ROSTI}
- * memory accounting balanced when {@code wrapUp()} grows the map.
+ * memory accounting balanced when inserting the null group grows the map.
  * <p>
- * {@code wrapUp()} inserts the null-key slot for column-top rows. When the live
- * keys have filled the map to its growth threshold, that insert resizes the
- * rosti. The single-worker build path used by the default execution context
- * (one shared query worker) did not record the resize - only the multi-worker
- * merge path bracketed {@code wrapUp()} with {@code updateMemoryUsage()}. The
- * unrecorded growth then made {@code close()}'s reset over-subtract, leaving the
- * {@code NATIVE_ROSTI} tag with a negative net delta at end of run. The query
- * fuzzer's malloc fault injection surfaced this over-free.
+ * {@code GroupByRecordCursorFactory} inserts the null-key slot once, after the drain, for
+ * column-top rows. When the live keys have filled the map to its growth threshold, that
+ * insert resizes the rosti, and the insert is the last operation that can: it runs after
+ * all aggregation, whichever partition order the scan takes. Growth that goes unrecorded
+ * makes {@code close()}'s reset over-subtract, leaving the {@code NATIVE_ROSTI} tag with a
+ * negative net delta at end of run - which is how the query fuzzer's malloc fault injection
+ * surfaced the original over-free in the single-worker build path, where {@code wrapUp()}
+ * was not bracketed with {@code updateMemoryUsage()}.
  */
 public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
 
     @Test
-    public void testColumnTopFrameInsertResizeKeepsNativeRostiBalanced() throws Exception {
-        // The reversed partition order makes the key insert, not wrapUp(), the operation that
-        // grows the map. That growth must be recorded, or close() subtracts more than was added.
+    public void testNullGroupInsertResizeKeepsNativeRostiBalancedColumnTopFirst() throws Exception {
+        final GrowthRecordingRostiAllocFacade facade = new GrowthRecordingRostiAllocFacade();
+        configOverrideRostiAllocFacade(facade);
+        assertMemoryLeak(() -> {
+            for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
+                createColumnTopFirstTable(liveKeys, sqlExecutionContext);
+
+                final String query = "SELECT k, count() FROM tab";
+                assertQuery(query).noLeakCheck().assertsPlanContaining("GroupBy vectorized: true");
+
+                try (RecordCursorFactory factory = select(query)) {
+                    drain(factory, sqlExecutionContext, liveKeys + 1);
+                }
+
+                execute("DROP TABLE tab");
+            }
+            assertHasResized(facade);
+        });
+    }
+
+    @Test
+    public void testNullGroupInsertResizeKeepsNativeRostiBalancedColumnTopLast() throws Exception {
+        // The reversed partition order scans the column-top rows after the live keys have filled
+        // the map. The insert lands at the end of the build either way, so both orders must record
+        // the growth it causes, or close() subtracts more than was added.
+        final GrowthRecordingRostiAllocFacade facade = new GrowthRecordingRostiAllocFacade();
+        configOverrideRostiAllocFacade(facade);
         assertMemoryLeak(() -> {
             for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
                 createColumnTopLastTable(liveKeys, sqlExecutionContext);
@@ -65,37 +92,22 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
                 assertQuery(query).noLeakCheck().assertsPlanContaining("GroupBy vectorized: true");
 
                 try (RecordCursorFactory factory = select(query)) {
-                    drain(factory, sqlExecutionContext);
+                    drain(factory, sqlExecutionContext, liveKeys + 1);
                 }
 
                 execute("DROP TABLE tab");
             }
+            assertHasResized(facade);
         });
     }
 
     @Test
-    public void testWrapUpResizeKeepsNativeRostiBalanced() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
-                createColumnTopTable(liveKeys, sqlExecutionContext);
-
-                final String query = "SELECT k, count() FROM tab";
-                assertQuery(query).noLeakCheck().assertsPlanContaining("GroupBy vectorized: true");
-
-                try (RecordCursorFactory factory = select(query)) {
-                    drain(factory, sqlExecutionContext);
-                }
-
-                execute("DROP TABLE tab");
-            }
-        });
-    }
-
-    @Test
-    public void testWrapUpResizeKeepsNativeRostiBalancedMultiWorker() throws Exception {
+    public void testNullGroupInsertResizeKeepsNativeRostiBalancedMultiWorker() throws Exception {
         // Same boundary sweep, but with a four-worker execution context so the build
         // runs through the multi-worker merge path. Confirms the merge path stays
-        // balanced too.
+        // balanced too, and that the null group survives the merge exactly once.
+        final GrowthRecordingRostiAllocFacade facade = new GrowthRecordingRostiAllocFacade();
+        configOverrideRostiAllocFacade(facade);
         assertMemoryLeak(() -> {
             final int workerCount = 4;
             final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
@@ -115,22 +127,42 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
                     .with(securityContext, bindVariableService, null, -1, circuitBreaker)) {
                 parallelCtx.initNow();
                 for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
-                    createColumnTopTable(liveKeys, parallelCtx);
+                    createColumnTopFirstTable(liveKeys, parallelCtx);
 
                     final String query = "SELECT k, count() FROM tab";
                     try (RecordCursorFactory factory = select(query, parallelCtx)) {
-                        drain(factory, parallelCtx);
+                        drain(factory, parallelCtx, liveKeys + 1);
                     }
 
                     execute("DROP TABLE tab", parallelCtx);
                 }
+                assertHasResized(facade);
             } finally {
-                pool.halt();
+                pool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
             }
         });
     }
 
-    // Like createColumnTopTable, but the column-top partition carries the LATER timestamps, so
+    private static void assertHasResized(GrowthRecordingRostiAllocFacade facade) {
+        Assert.assertTrue("no sweep iteration grew the rosti, so none of them covered the insert "
+                + "resize; the growth threshold moved -- re-derive the liveKeys sweep", facade.hasGrown);
+    }
+
+    // The default 1024 map capacity gives a growth threshold of 896 live keys; at exactly that
+    // count adding the null group resizes the map. The caller sweeps around the boundary so one
+    // iteration lands the resize regardless of small differences in the rosti growth math.
+    private static void createColumnTopFirstTable(int liveKeys, SqlExecutionContext context) throws Exception {
+        execute("CREATE TABLE tab (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
+        // A partition written before k existed: its rows read back as column tops (null keys), so
+        // the build must materialize the null group from row presence alone.
+        execute("INSERT INTO tab SELECT (x * 1000000L)::timestamp, x FROM long_sequence(8)", context);
+        execute("ALTER TABLE tab ADD COLUMN k INT", context);
+        // liveKeys distinct non-null keys in a later partition.
+        execute("INSERT INTO tab SELECT (86400000000L + x * 1000000L)::timestamp, x, x::int " +
+                "FROM long_sequence(" + liveKeys + ")", context);
+    }
+
+    // Like createColumnTopFirstTable, but the column-top partition carries the LATER timestamps, so
     // it is scanned after the live keys have filled the map.
     private static void createColumnTopLastTable(int liveKeys, SqlExecutionContext context) throws Exception {
         execute("CREATE TABLE tab (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
@@ -140,33 +172,36 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
                 "FROM long_sequence(" + liveKeys + ")", context);
     }
 
-    // The default 1024 map capacity gives a growth threshold of 896 live keys; at
-    // exactly that count the null-key insert in wrapUp() resizes. The caller sweeps
-    // around the boundary so one iteration lands the resize regardless of small
-    // differences in the rosti growth math.
-    private static void createColumnTopTable(int liveKeys, SqlExecutionContext context) throws Exception {
-        execute("CREATE TABLE tab (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
-        // A partition written before k existed: its rows read back as column tops
-        // (null keys), so wrapUp() must insert the null-key slot.
-        execute("INSERT INTO tab SELECT (x * 1000000L)::timestamp, x FROM long_sequence(8)", context);
-        execute("ALTER TABLE tab ADD COLUMN k INT", context);
-        // liveKeys distinct non-null keys in a later partition.
-        execute("INSERT INTO tab SELECT (86400000000L + x * 1000000L)::timestamp, x, x::int " +
-                "FROM long_sequence(" + liveKeys + ")", context);
-    }
-
-    private static void drain(RecordCursorFactory factory, SqlExecutionContext context) throws Exception {
+    private static void drain(RecordCursorFactory factory, SqlExecutionContext context, int expectedRowCount) throws Exception {
         final StringSink localSink = new StringSink();
         try (RecordCursor cursor = factory.getCursor(context)) {
             final RecordMetadata metadata = factory.getMetadata();
             final int columnCount = metadata.getColumnCount();
             final Record record = cursor.getRecord();
+            int rowCount = 0;
             while (cursor.hasNext()) {
                 for (int i = 0; i < columnCount; i++) {
                     CursorPrinter.printColumn(record, metadata, i, localSink, false);
                 }
                 localSink.clear();
+                rowCount++;
             }
+            // Balanced accounting over a result that quietly lost the null group would still pass.
+            Assert.assertEquals("live keys plus the null group", expectedRowCount, rowCount);
+        }
+    }
+
+    // Records whether any bracketed rosti operation actually grew the map, so a sweep that stops
+    // straddling the growth threshold fails instead of passing vacuously.
+    private static class GrowthRecordingRostiAllocFacade extends RostiAllocFacadeImpl {
+        private volatile boolean hasGrown;
+
+        @Override
+        public void updateMemoryUsage(long pRosti, long oldSize) {
+            if (Rosti.getAllocMemory(pRosti) != oldSize) {
+                hasGrown = true;
+            }
+            super.updateMemoryUsage(pRosti, oldSize);
         }
     }
 }

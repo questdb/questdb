@@ -59,6 +59,7 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -73,6 +74,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
@@ -85,6 +87,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final ObjectPool<VectorAggregateEntry> entryPool;
     private final PageFrameAddressCache frameAddressCache;
+    // set by any worker that sees a page frame whose key column is a column top; consumed once,
+    // after the drain, to materialize the null group in the rosti that survives the merge
+    private final AtomicBoolean hasNullKeyRows = new AtomicBoolean();
     private final int keyColumnIndex;
     private final AtomicInteger oomCounter = new AtomicInteger();
     private final PerWorkerLocks perWorkerLocks; // used to protect pRosti and VAF's internal slots
@@ -95,6 +100,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int workerCount;
     private RecordCursorFactory base;
     private ObjList<PageFrameMemoryPool> frameMemoryPools; // per worker pools
+    private long pNullKey; // 4 bytes holding the key sentinel, argument of the null group insert
     private long[] pRosti;
     private ObjList<RostiSharedCursor> sharedCursors;
     private ObjList<VectorAggregateFunction> vafList;
@@ -114,6 +120,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         super(metadata);
         try {
             this.workerCount = workerCount;
+            pNullKey = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
             entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
             // columnTypes and functions must align in the following way:
             // columnTypes[0] is the type of key, for now single key is supported
@@ -213,6 +220,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         oomCounter.set(0);
+        hasNullKeyRows.set(false);
         // clear maps
         for (int i = 0, n = pRosti.length; i < n; i++) {
             raf.clear(pRosti[i]);
@@ -387,6 +395,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
         failure = Misc.freeBestEffort(failure, base);
+        if (pNullKey != 0) {
+            pNullKey = Unsafe.free(pNullKey, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+        }
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
         CairoException.rethrowCleanupFailure(failure);
@@ -608,6 +619,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     VectorAggregateEntry.aggregateUnsafe(
                                             workerId,
                                             oomCounter,
+                                            hasNullKeyRows,
                                             frameIndex,
                                             frameRowCount,
                                             keyColumnIndex,
@@ -638,6 +650,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                         startedCounter,
                                         doneLatch,
                                         oomCounter,
+                                        hasNullKeyRows,
                                         raf,
                                         perWorkerLocks,
                                         sharedCircuitBreaker
@@ -698,19 +711,23 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // merge maps only when cursor was fetched successfully
             // otherwise assume error and save CPU cycles
             pRostiBig = pRosti[0];
+            if (pRosti.length > 1) {
+                // due to uneven load distribution some rostis could be much bigger and some empty
+                long size = raf.getSize(pRostiBig);
+                for (int i = 1, n = pRosti.length; i < n; i++) {
+                    long curSize = raf.getSize(pRosti[i]);
+                    if (curSize > size) {
+                        size = curSize;
+                        pRostiBig = pRosti[i];
+                    }
+                }
+            }
+
             try {
+                insertNullKeyConditionally();
+
                 if (pRosti.length > 1) {
                     LOG.debug().$("merging").$();
-
-                    // due to uneven load distribution some rostis could be much bigger and some empty
-                    long size = raf.getSize(pRostiBig);
-                    for (int i = 1, n = pRosti.length; i < n; i++) {
-                        long curSize = raf.getSize(pRosti[i]);
-                        if (curSize > size) {
-                            size = curSize;
-                            pRostiBig = pRosti[i];
-                        }
-                    }
 
                     for (int j = 0; j < vafCount; j++) {
                         final VectorAggregateFunction vaf = vafList.getQuick(j);
@@ -782,6 +799,28 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (!isRostiBuilt) {
                 buildRosti();
                 isRostiBuilt = true;
+            }
+        }
+
+        // Materializes the null group from row presence: page frames whose key column is a column top
+        // hold rows that all belong to that group, while wrapUp() creates it only when the value it
+        // folds in is non-null. Workers only raise the flag; a single insert here, after the drain and
+        // into the rosti that survives the merge, covers every worker and every aggregate.
+        private void insertNullKeyConditionally() {
+            if (!hasNullKeyRows.get()) {
+                return;
+            }
+            // The key sentinel lives in the initial values template. Copy it out rather than hand its
+            // address to the insert: a resize frees the block the template sits in.
+            Unsafe.putInt(pNullKey, Unsafe.getInt(Rosti.getInitialValueSlot(pRostiBig, 0)));
+            final long oldSize = Rosti.getAllocMemory(pRostiBig);
+            final boolean inserted = Rosti.keyedIntDistinct(pRostiBig, pNullKey, 1);
+            // account for the growth before reporting failure, the insert can grow and then fail
+            raf.updateMemoryUsage(pRostiBig, oldSize);
+            if (!inserted) {
+                throw CairoException.nonCritical()
+                        .put("could not insert null key into rosti hash table")
+                        .setOutOfMemory(true);
             }
         }
 

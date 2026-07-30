@@ -1714,6 +1714,29 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByInt32KeyColumnTopNullGroupNotCarriedIntoNextCursor() throws Exception {
+        // The build derives the NULL group from a flag the workers raise, and the same factory can
+        // be executed again after the column-top partition is gone. A flag that survived the first
+        // execution would add a group the data no longer has.
+        assertMemoryLeak(() -> {
+            createColumnTopTable(false, false);
+
+            assertQuery("select id, max(id2) from x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .mutateWith("alter table x drop partition list '2024-11-08'")
+                    .returns("""
+                            id\tmax
+                            null\tnull
+                            42\t42
+                            """, """
+                            id\tmax
+                            42\t42
+                            """);
+        });
+    }
+
+    @Test
     public void testGroupByInt32KeyColumnTopO3AndDuplicateTimestamps() throws Exception {
         // An O3 rewrite of the column-top partition may or may not materialize the column; either
         // way the observable result is one NULL-key group.

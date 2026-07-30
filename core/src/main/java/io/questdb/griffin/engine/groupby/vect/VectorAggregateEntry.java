@@ -37,6 +37,7 @@ import io.questdb.std.RostiAllocFacade;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class VectorAggregateEntry implements Mutable {
@@ -46,6 +47,7 @@ public class VectorAggregateEntry implements Mutable {
     private ObjList<PageFrameMemoryPool> frameMemoryPools;
     private long frameRowCount;
     private VectorAggregateFunction func;
+    private AtomicBoolean hasNullKeyRows;
     private int keyColIndex;
     private AtomicInteger oomCounter;
     private long[] pRosti;
@@ -57,6 +59,7 @@ public class VectorAggregateEntry implements Mutable {
     public static void aggregateUnsafe(
             int workerId,
             @Nullable AtomicInteger oomCounter,
+            @NotNull AtomicBoolean hasNullKeyRows,
             int frameIndex,
             long frameRowCount,
             int keyColIndex,
@@ -97,17 +100,10 @@ public class VectorAggregateEntry implements Mutable {
                 }
             } else {
                 if (pRosti != null && frameRowCount > 0) {
-                    // Every row in this frame has a null key. wrapUp() only creates that group
-                    // when the value it folds in is non-null, so insert it here, from row presence.
-                    final long oldSize = Rosti.getAllocMemory(pRosti[slot]);
-                    if (!Rosti.keyedIntDistinct(pRosti[slot], Rosti.getInitialValueSlot(pRosti[slot], 0), 1)) {
-                        if (oomCounter != null) {
-                            oomCounter.incrementAndGet();
-                        }
-                    }
-                    if (raf != null) {
-                        raf.updateMemoryUsage(pRosti[slot], oldSize);
-                    }
+                    // Every row in this frame has a null key. wrapUp() only creates that group when the
+                    // value it folds in is non-null, so record row presence here; the coordinator
+                    // materializes the group once, in the rosti that survives the merge.
+                    hasNullKeyRows.set(true);
                 }
                 func.aggregate(valueAddress, frameRowCount, slot);
             }
@@ -120,6 +116,7 @@ public class VectorAggregateEntry implements Mutable {
     public void clear() {
         this.frameMemoryPools = null;
         this.func = null;
+        this.hasNullKeyRows = null;
         this.pRosti = null;
         this.startedCounter = null;
         this.doneLatch = null;
@@ -134,6 +131,7 @@ public class VectorAggregateEntry implements Mutable {
 
     public void run(int workerId, Sequence seq, long cursor) {
         AtomicInteger oomCounter = this.oomCounter;
+        AtomicBoolean hasNullKeyRows = this.hasNullKeyRows;
         int frameIndex = this.frameIndex;
         long frameRowCount = this.frameRowCount;
         int keyColIndex = this.keyColIndex;
@@ -151,6 +149,7 @@ public class VectorAggregateEntry implements Mutable {
         aggregate(
                 workerId,
                 oomCounter,
+                hasNullKeyRows,
                 frameIndex,
                 frameRowCount,
                 keyColIndex,
@@ -169,6 +168,7 @@ public class VectorAggregateEntry implements Mutable {
     private static void aggregate(
             int workerId,
             AtomicInteger oomCounter,
+            AtomicBoolean hasNullKeyRows,
             int frameIndex,
             long frameRowCount,
             int keyColIndex,
@@ -193,6 +193,7 @@ public class VectorAggregateEntry implements Mutable {
             aggregateUnsafe(
                     workerId,
                     oomCounter,
+                    hasNullKeyRows,
                     frameIndex,
                     frameRowCount,
                     keyColIndex,
@@ -221,6 +222,7 @@ public class VectorAggregateEntry implements Mutable {
             @NotNull CountDownLatchSPI doneLatch,
             // OOM is not possible when aggregation is not keyed
             @Nullable AtomicInteger oomCounter,
+            @NotNull AtomicBoolean hasNullKeyRows,
             @Nullable RostiAllocFacade raf,
             @NotNull PerWorkerLocks perWorkerLocks,
             @NotNull ExecutionCircuitBreaker circuitBreaker
@@ -235,6 +237,7 @@ public class VectorAggregateEntry implements Mutable {
         this.startedCounter = startedCounter;
         this.doneLatch = doneLatch;
         this.oomCounter = oomCounter;
+        this.hasNullKeyRows = hasNullKeyRows;
         this.raf = raf;
         this.perWorkerLocks = perWorkerLocks;
         this.circuitBreaker = circuitBreaker;

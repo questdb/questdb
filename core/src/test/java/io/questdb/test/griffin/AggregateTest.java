@@ -1673,7 +1673,8 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     // triggers OOM in wrapUp() with multiple workers
-    // some implementations of wrapUp() add null entry and could trigger resize for columns added after table creation (with column tops)
+    // adding the null entry for columns added after table creation (with column tops) can trigger a
+    // resize, and so can the merge that follows it
     @Test
     public void testOOMInRostiWrapUpWithMultipleWorkersResetsAllocatedNativeMemoryToMinSizes() throws Exception {
         final int WORKER_COUNT = 2;
@@ -1683,7 +1684,12 @@ public class AggregateTest extends AbstractCairoTest {
             @Override
             public long getSize(long pRosti) {
                 int currentValue = sizeCounter.incrementAndGet();
-                if (currentValue == WORKER_COUNT + 1) {
+                // The build calls getSize() once per rosti to pick the biggest one, then again per
+                // (aggregate, rosti) to skip empty ones while merging. Arming on the last call of the
+                // first group covers the null-key insert that follows it as well as the merges: when
+                // the frames all landed in one worker the insert is the only allocation left, and when
+                // they were spread out it is the merges that grow the map.
+                if (currentValue == WORKER_COUNT) {
                     Rosti.enableOOMOnMalloc();
                 }
                 return super.getSize(pRosti);

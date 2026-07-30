@@ -66,10 +66,12 @@ public class GroupByVectorizedOomTest extends AbstractOomSweepTest {
     @Test
     public void testColumnTopKeyInsertOomRaisesInsteadOfShortResult() throws Exception {
         assertMemoryLeak(() -> {
-            // The key counts bracket the point where the map must grow, so at least one
-            // iteration allocates while the fault is armed. v is a column top too, so the
-            // key insert is the only operation that can allocate. Unsafe.setRssMemLimit,
+            // The key counts bracket the point where the map must grow, so the sweep straddles the
+            // transition: some iterations resize while the fault is armed and must raise, the rest
+            // complete under it and must return every group. The null group insert runs last, after
+            // all aggregation, so it is the operation the boundary belongs to. Unsafe.setRssMemLimit,
             // used by the other tests in this class, cannot reach rosti's own allocations.
+            boolean hasCompletedArmed = false;
             boolean hasSeenOom = false;
             for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
                 execute("CREATE TABLE tab (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -89,6 +91,7 @@ public class GroupByVectorizedOomTest extends AbstractOomSweepTest {
                             }
                             Assert.assertEquals("short result under a rosti malloc fault: the NULL-key "
                                     + "group went missing instead of the query raising out-of-memory", liveKeys + 1, rowCount);
+                            hasCompletedArmed = true;
                         } catch (CairoException e) {
                             Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
                             hasSeenOom = true;
@@ -112,6 +115,9 @@ public class GroupByVectorizedOomTest extends AbstractOomSweepTest {
             }
             Assert.assertTrue("no sweep iteration faulted a rosti allocation mid-drain; the growth "
                     + "boundary moved -- widen the liveKeys sweep", hasSeenOom);
+            Assert.assertTrue("every sweep iteration faulted, so none of them proved a full result "
+                    + "under an armed fault; the sweep no longer straddles the growth boundary "
+                    + "-- widen the liveKeys sweep", hasCompletedArmed);
         });
     }
 

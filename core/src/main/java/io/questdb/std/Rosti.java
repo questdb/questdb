@@ -368,12 +368,7 @@ public final class Rosti {
 
     public static void updateMemoryUsage(long pRosti, long oldSize) {
         long newSize = Rosti.getAllocMemory(pRosti);
-        // Most calls bracket an operation that did not grow the map. Recording a zero delta is a
-        // no-op, but recordMemAlloc() is an atomic add on a single process-wide counter, so it
-        // still costs a contended write on the vector-aggregate dispatch path.
-        if (newSize != oldSize) {
-            Unsafe.recordMemAlloc(newSize - oldSize, MemoryTag.NATIVE_ROSTI);
-        }
+        Unsafe.recordMemAlloc(newSize - oldSize, MemoryTag.NATIVE_ROSTI);
     }
 
     private static native long alloc(long pKeyTypes, int keyTypeCount, long capacity);

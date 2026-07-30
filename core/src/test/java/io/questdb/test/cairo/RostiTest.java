@@ -290,7 +290,7 @@ public class RostiTest extends AbstractCairoTest {
     ) {
         final long pRosti = allocCompensatedSumRosti();
         try {
-            // The insert VectorAggregateEntry.aggregateUnsafe() performs for a column-top frame.
+            // The insert GroupByRecordCursorFactory performs once when a frame's key column is a column top.
             // A stored NULL int key reaches the same slot through kIntNSumDouble, which is why
             // wrapUp()'s merge branch was already reachable before that insert existed.
             Assert.assertTrue(Rosti.keyedIntDistinct(pRosti, Rosti.getInitialValueSlot(pRosti, 0), 1));
