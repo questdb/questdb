@@ -30,7 +30,9 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.Rnd;
+import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1973,6 +1975,89 @@ public class GroupByTest extends AbstractCairoTest {
                             k\tsum\tmax\tmin
                             1\t30\t-5\t-7
                             """);
+        });
+    }
+
+    @Test
+    public void testGroupByInt32KeyMergesWorkerShardsExactly() throws Exception {
+        // End-to-end cover for the merge step, which only runs when one group's rows land in more
+        // than one worker shard. Nothing pins a row to a shard -- the slot belongs to whichever
+        // pool thread dequeues the task, plus the inline work-stealing path -- so the data is built
+        // so that every aggregate's answer is the same for EVERY possible split, and the facade
+        // below reports whether the run actually fanned out.
+        //
+        // nsum is the one that needs the care. 2^60 and 2^59 have ulps of 256 and 128, so the rows
+        // of 1.0 round away against either and survive only in the Neumaier compensation. Putting
+        // one large value in the first partition and the other in the last gives two shards that
+        // both accumulate a compensation, and at least one of them has to be a merge SOURCE --
+        // the side whose compensation used to be dropped. 2^60 + 2^59 + 256 is exactly one ulp
+        // above 2^60 + 2^59, so the total is exact for every possible split, and the query
+        // subtracts the large part rather than asserting seventeen significant digits.
+        //
+        // sum(i) covers the same merge for the 64-bit accumulator behind a 32-bit column: three
+        // rows of 1_500_000_000 total 4_500_000_000, which is past INT_MAX, so a shard partial read
+        // back as 32 bits would come back short by a multiple of 2^32.
+        final ShardCountingRostiAllocFacade facade = new ShardCountingRostiAllocFacade();
+        configOverrideRostiAllocFacade(facade);
+        assertMemoryLeak(() -> {
+            final int workerCount = 4;
+            final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public String getPoolName() {
+                    return "groupByMerge";
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return workerCount;
+                }
+            });
+            try {
+                WorkerPoolUtils.setupQueryJobs(pool, engine);
+                pool.start(null);
+                try (SqlExecutionContext parallelCtx = new SqlExecutionContextImpl(engine, workerCount)
+                        .with(securityContext, bindVariableService, null, -1, circuitBreaker)) {
+                    parallelCtx.initNow();
+                    execute("create table t (ts timestamp, k int, v long, i int, d double) timestamp(ts) partition by day", parallelCtx);
+                    // One hour apart over 258 rows spans eleven daily partitions, so there are
+                    // plenty of page frames to spread over the four workers.
+                    execute("""
+                            insert into t select (x * 3600 * 1000000L)::timestamp, 42, x,
+                                case when x <= 3 then 1_500_000_000 else 0 end,
+                                case when x = 1 then 1152921504606846976.0
+                                     when x = 258 then 576460752303423488.0
+                                     else 1.0 end
+                            from long_sequence(258)""", parallelCtx);
+
+                    // Repeated because fan-out is up to the scheduler; the answers are asserted on
+                    // every run, so a run that stayed on one shard still checks the result.
+                    for (int i = 0; i < 20 && facade.maxPopulatedShards() < 2; i++) {
+                        assertQuery("select k, nsum(d) - 1729382256910270464.0 nsum from t")
+                                .withContext(parallelCtx)
+                                .noLeakCheck()
+                                .expectSize()
+                                .withPlanContaining("GroupBy vectorized: true")
+                                .returns("""
+                                        k\tnsum
+                                        42\t256.0
+                                        """);
+
+                        assertQuery("select k, sum(v), min(v), max(v), count(), avg(v), sum(i), min(i), max(i) from t")
+                                .withContext(parallelCtx)
+                                .noLeakCheck()
+                                .expectSize()
+                                .withPlanContaining("GroupBy vectorized: true")
+                                .returns("""
+                                        k\tsum\tmin\tmax\tcount\tavg\tsum1\tmin1\tmax1
+                                        42\t33411\t1\t258\t258\t129.5\t4500000000\t0\t1500000000
+                                        """);
+                    }
+                    Assert.assertTrue("every run put all the rows in one shard, so nothing merged",
+                            facade.maxPopulatedShards() > 1);
+                }
+            } finally {
+                pool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+            }
         });
     }
 
@@ -4528,6 +4613,44 @@ public class GroupByTest extends AbstractCairoTest {
                 .expectSize()
                 .withPlanContaining("Async Group By")
                 .returns(expected);
+    }
+
+    // Records which worker shards the build actually populated, so a run that happened to keep
+    // every frame on one of them cannot pass for merge coverage. getSize() is the facade call the
+    // build makes once per shard while picking the biggest one, and only the coordinator makes it.
+    private static class ShardCountingRostiAllocFacade extends RostiAllocFacadeImpl {
+        private final LongHashSet currentBuild = new LongHashSet();
+        private int maxPopulatedShards;
+
+        @Override
+        public void clear(long pRosti) {
+            // getCursor() clears every shard before building, so this is the boundary between one
+            // build and the next. Counting across builds would let two runs that each stayed on a
+            // single shard -- of two different factories -- look like one run that fanned out.
+            foldBuild();
+            super.clear(pRosti);
+        }
+
+        @Override
+        public long getSize(long pRosti) {
+            final long size = super.getSize(pRosti);
+            if (size > 0) {
+                currentBuild.add(pRosti);
+            }
+            return size;
+        }
+
+        private void foldBuild() {
+            if (currentBuild.size() > maxPopulatedShards) {
+                maxPopulatedShards = currentBuild.size();
+            }
+            currentBuild.clear();
+        }
+
+        private int maxPopulatedShards() {
+            foldBuild();
+            return maxPopulatedShards;
+        }
     }
 
     private void createColumnTopTable(boolean isWal, boolean isParquet) throws Exception {
