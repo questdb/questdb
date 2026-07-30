@@ -988,6 +988,17 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 'r';
     }
 
+    public static boolean isHighestKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'h'
+                && (tok.charAt(1) | 32) == 'i'
+                && (tok.charAt(2) | 32) == 'g'
+                && (tok.charAt(3) | 32) == 'h'
+                && (tok.charAt(4) | 32) == 'e'
+                && (tok.charAt(5) | 32) == 's'
+                && (tok.charAt(6) | 32) == 't';
+    }
+
     public static boolean isHorizonKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'h'
@@ -1221,17 +1232,6 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'r'
                 && (tok.charAt(5) | 32) == 'a'
                 && (tok.charAt(6) | 32) == 'l';
-    }
-
-    public static boolean isHighestKeyword(CharSequence tok) {
-        return tok.length() == 7
-                && (tok.charAt(0) | 32) == 'h'
-                && (tok.charAt(1) | 32) == 'i'
-                && (tok.charAt(2) | 32) == 'g'
-                && (tok.charAt(3) | 32) == 'h'
-                && (tok.charAt(4) | 32) == 'e'
-                && (tok.charAt(5) | 32) == 's'
-                && (tok.charAt(6) | 32) == 't';
     }
 
     public static boolean isLatestKeyword(CharSequence tok) {
