@@ -79,7 +79,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * Byte offset of the trailing CRC32 within a slot. The checksum covers
      * {@link #SLOT_CRC_COVERAGE} bytes from the slot base.
      */
-    public static final int SLOT_CRC_OFFSET = 196;
+    public static final int SLOT_CRC_OFFSET = 204;
     /**
      * Bytes of a slot the CRC32 covers: everything from the magic through the
      * last accounting total, excluding the CRC field itself.
@@ -87,7 +87,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public static final int SLOT_CRC_COVERAGE = SLOT_CRC_OFFSET;
     public static final int SLOT_DATA_BYTES_OFFSET = 80;
     public static final int SLOT_DEFINITION_TXN_OFFSET = 24;
-    public static final int SLOT_FORMAT_VERSION = 4;
+    public static final int SLOT_FORMAT_VERSION = 5;
     public static final int SLOT_FORMAT_VERSION_OFFSET = 8;
     public static final int SLOT_GENERATION_OFFSET = 16;
     public static final int SLOT_HISTORY_EPOCH_OFFSET = 32;
@@ -97,7 +97,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * version nibble. A distinctive 8-byte value so a foreign or zeroed slot is
      * rejected before the checksum runs.
      */
-    public static final long SLOT_MAGIC = 0x4C56_544D_4C4E_0004L;
+    public static final long SLOT_MAGIC = 0x4C56_544D_4C4E_0005L;
     /**
      * The magic without its version nibble. A slot matching this under
      * {@link #SLOT_MAGIC_FAMILY_MASK} was written as a timeline superblock by
@@ -128,6 +128,12 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * {@link #SLOT_PENDING_DIRECTORY_SEGMENT_ID_OFFSET}.
      */
     public static final int SLOT_PENDING_DIRECTORY_SEGMENT_PAGES_OFFSET = 188;
+    /**
+     * Byte offset of the count of logical boundaries a retention horizon or a
+     * high-side truncate has retired in this history epoch. See
+     * {@link #retiredCheckpointCount}.
+     */
+    public static final int SLOT_RETIRED_CHECKPOINT_COUNT_OFFSET = 196;
     public static final int SLOT_ROW_POSITION_DELTA_BYTES_OFFSET = 164;
     public static final int SLOT_ROW_POSITION_DELTA_ROOT_REF_OFFSET = 108;
     /**
@@ -141,7 +147,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     /**
      * Fixed size of one slot. The file is exactly {@link #FILE_SIZE} = two slots.
      */
-    public static final int SLOT_SIZE = 200;
+    public static final int SLOT_SIZE = 208;
     public static final int SLOT_TIMELINE_ROOT_REF_OFFSET = 88;
     /**
      * Total size of the {@code _timeline} file: two slots back to back.
@@ -190,6 +196,14 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * exactly once - or zero when there is none.
      */
     public long pendingDirectorySegmentPages;
+    /**
+     * Logical boundaries this history epoch has retired: the prefix a retention
+     * horizon dropped plus the suffix any high-side truncate dropped. Checkpoint
+     * ids are allocated from zero and monotonically, so
+     * {@link #nextCheckpointId} minus this is the number of boundaries the
+     * generation actually holds.
+     */
+    public long retiredCheckpointCount;
     /**
      * The share of {@link #metadataBytes} the persistent row-position difference
      * index wrote. Only a repair with a non-zero suffix delta adds to it, so it
@@ -433,6 +447,12 @@ public class LiveViewCheckpointSuperblock implements Closeable {
                     .put("live view checkpoint seed cursor offset must be non-negative, was ")
                     .put(seedCursorOffset);
         }
+        if (retiredCheckpointCount < 0 || retiredCheckpointCount > nextCheckpointId) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint retired boundary count out of range")
+                    .put(" [retired=").put(retiredCheckpointCount)
+                    .put(", allocated=").put(nextCheckpointId).put(']');
+        }
         if (pendingDirectorySegmentId == Numbers.LONG_NULL
                 ? (pendingDirectorySegmentBytes != 0 || pendingDirectorySegmentPages != 0)
                 : (pendingDirectorySegmentId < 0 || pendingDirectorySegmentBytes <= 0 || pendingDirectorySegmentPages <= 0)) {
@@ -539,6 +559,12 @@ public class LiveViewCheckpointSuperblock implements Closeable {
                 || pendingDirectorySegmentPages <= 0) {
             return false;
         }
+        // A retirement count cannot exceed the ids the epoch ever allocated, or
+        // the live entry count derived from the pair goes negative.
+        final long retiredCheckpointCount = mem.getLong(base + SLOT_RETIRED_CHECKPOINT_COUNT_OFFSET);
+        if (retiredCheckpointCount < 0 || retiredCheckpointCount > mem.getLong(base + SLOT_NEXT_CHECKPOINT_ID_OFFSET)) {
+            return false;
+        }
         // These are authoritative publication coordinates. Reject impossible
         // values during bounded slot validation rather than allowing a
         // valid-CRC corrupt slot to release WAL by looking like "no floor".
@@ -555,6 +581,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         coveredLvSeqTxn = mem.getLong(base + SLOT_COVERED_LV_SEQTXN_OFFSET);
         nextCheckpointId = mem.getLong(base + SLOT_NEXT_CHECKPOINT_ID_OFFSET);
         nextSegmentId = mem.getLong(base + SLOT_NEXT_SEGMENT_ID_OFFSET);
+        retiredCheckpointCount = mem.getLong(base + SLOT_RETIRED_CHECKPOINT_COUNT_OFFSET);
         metadataBytes = mem.getLong(base + SLOT_METADATA_BYTES_OFFSET);
         dataBytes = mem.getLong(base + SLOT_DATA_BYTES_OFFSET);
         logicalStateBytes = mem.getLong(base + SLOT_LOGICAL_STATE_BYTES_OFFSET);
@@ -576,6 +603,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         coveredLvSeqTxn = 0;
         nextCheckpointId = 0;
         nextSegmentId = 0;
+        retiredCheckpointCount = 0;
         metadataBytes = 0;
         dataBytes = 0;
         logicalStateBytes = 0;
@@ -631,6 +659,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         mem.putLong(base + SLOT_COVERED_LV_SEQTXN_OFFSET, coveredLvSeqTxn);
         mem.putLong(base + SLOT_NEXT_CHECKPOINT_ID_OFFSET, nextCheckpointId);
         mem.putLong(base + SLOT_NEXT_SEGMENT_ID_OFFSET, nextSegmentId);
+        mem.putLong(base + SLOT_RETIRED_CHECKPOINT_COUNT_OFFSET, retiredCheckpointCount);
         mem.putLong(base + SLOT_METADATA_BYTES_OFFSET, metadataBytes);
         mem.putLong(base + SLOT_DATA_BYTES_OFFSET, dataBytes);
         mem.putLong(base + SLOT_LOGICAL_STATE_BYTES_OFFSET, logicalStateBytes);

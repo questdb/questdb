@@ -702,6 +702,73 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Retires every checkpoint boundary that has fallen below the
+     * {@code cairo.live.view.checkpoint.retention.micros} event-time horizon,
+     * measured back from the newest sealed boundary. Disabled by default (horizon
+     * zero); when set, this is the only thing that bounds what the checkpoint
+     * store retains, since nothing else ever removes a boundary from below.
+     * <p>
+     * Best-effort, like compaction: a fault abandons the pass and leaves the
+     * published generation byte-identical. It runs on every seal rather than on a
+     * cadence of its own, because the pass costs one {@code O(log N)} probe when
+     * the horizon has nothing to retire, and retiring one boundary per seal keeps
+     * the store's footprint flat instead of sawtoothing.
+     */
+    private void maybeTrimCheckpointTimeline(LiveViewInstance instance) {
+        final long retentionMicros = engine.getConfiguration().getLiveViewCheckpointRetentionMicros();
+        if (retentionMicros <= 0) {
+            return;
+        }
+        if (checkpointTimelineStoreWriter == null) {
+            return;
+        }
+        final long headMaxTs = instance.getHeadCheckpointMaxTs();
+        // A head this process has not sealed carries no timestamp, and a horizon
+        // wider than the timestamp domain has no floor to compute.
+        if (headMaxTs == Numbers.LONG_NULL || headMaxTs < Long.MIN_VALUE + retentionMicros) {
+            return;
+        }
+        final long floorTs = headMaxTs - retentionMicros;
+        try (Path checkpointsDir = new Path()) {
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            // Retention retires boundaries of a timeline this node published, so it
+            // runs on whichever role that node currently holds - see
+            // appendCheckpointTimelineRoot for why the role read lock outlives the
+            // read-only refusal it used to carry.
+            final Lock roleLock = engine.getRoleSwitchReadLock();
+            roleLock.lock();
+            final LiveViewCheckpointTimelineStoreWriter.RetentionResult result;
+            try {
+                result = checkpointTimelineStoreWriter.publishTruncateBelow(
+                        checkpointsDir,
+                        instance.getLiveViewToken().getTableId(),
+                        0,
+                        floorTs,
+                        true
+                );
+            } finally {
+                roleLock.unlock();
+            }
+            if (result.isPublished()) {
+                instance.recordCheckpointTimelineWalPurgeFloor(result.getWalPurgeFloor());
+                instance.recordCheckpointTimelineStats(result.getStats());
+                LOG.debug().$("retired live view checkpoint boundaries below the retention horizon [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", floorTs=").$ts(floorTs)
+                        .$(", retired=").$(result.getRetiredBoundaryCount())
+                        .$(", generation=").$(result.getGeneration()).I$();
+            }
+        } catch (Throwable t) {
+            LOG.error().$("could not apply live view checkpoint retention horizon [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", floorTs=").$ts(floorTs)
+                    .$(", error=").$(t).I$();
+        }
+    }
+
+    /**
      * Opens the repair capture one localized, finitely converging rebuild publishes
      * its range splice through, and fills the session's boundary schedule with the
      * logical boundaries in {@code [C, H)} that rebuild has to re-version.
@@ -6008,6 +6075,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // generation untouched. Gated on an actual seal because its cadence is configured in
         // seals: a skipped boundary or a failed write added no roots and left nothing to repack.
         if (sealed) {
+            // Retention runs first so compaction walks the roots that survive it
+            // rather than the ones about to retire.
+            maybeTrimCheckpointTimeline(instance);
             maybeCompactCheckpointTimeline(instance);
         }
         return sealed;

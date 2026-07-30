@@ -811,7 +811,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // reach it. Applied per root because repeated references inside one
             // root count once per side.
             final LongList removedSegmentIds = new LongList();
-            final long[] droppedAccumulators = new long[1]; // {logicalStateBytes}
+            final long[] droppedAccumulators = new long[2]; // {logicalStateBytes, boundaryCount}
             timelineReader.range(oldTimelineRoot, floorTimestamp, Long.MAX_VALUE, entry -> {
                 oldCheckpointRoot.of(checkpointsDir, entry.rootRef);
                 if (oldCheckpointRoot.getCheckpointId() != entry.checkpointId
@@ -827,6 +827,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
                 directoryWriter.applyRootReferenceChanges(removedSegmentIds, emptySegmentIds, generation);
                 droppedAccumulators[0] = checkedAdd(droppedAccumulators[0], entry.logicalStateBytes);
+                droppedAccumulators[1]++;
             });
 
             long nextSegmentId = skipPublishedSegmentIds(checkpointsDir, superblock.nextSegmentId);
@@ -862,6 +863,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             superblock.nextSegmentId = nextSegmentId;
             superblock.metadataBytes = checkedAdd(superblock.metadataBytes, metadataBytesAdded);
             superblock.logicalStateBytes = checkedAdd(superblock.logicalStateBytes, -droppedAccumulators[0]);
+            superblock.retiredCheckpointCount = checkedAdd(superblock.retiredCheckpointCount, droppedAccumulators[1]);
             // A truncate leaves no mid-sweep resume point behind.
             superblock.seedCursorOffset = Numbers.LONG_NULL;
             carryPendingDirectorySegment(directoryWriter, superblock, directorySegmentId);
@@ -873,6 +875,194 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
             return new TruncateResult(
                     generation,
+                    metadataBytesAdded,
+                    metaStore.getWalPurgeFloor(),
+                    new LiveViewCheckpointTimelineStats().of(superblock, metadataBytesAdded)
+            );
+        }
+    }
+
+    /**
+     * Retires every logical boundary below {@code floorTimestamp} and publishes a
+     * new generation over the surviving suffix. This is the retention horizon -
+     * the mirror of {@link #publishTruncate}, and the only publication that bounds
+     * how much retained state a continuously sealing view accumulates.
+     * <p>
+     * The retired roots release the data and boundary-metadata segments they
+     * referenced, which retire at this generation for the purge job to reclaim,
+     * and the logical state total sheds their contribution. The row-position delta
+     * index is pruned in step: a difference keyed to a retired boundary still
+     * applies to every surviving one, so the discarded prefix sum folds into the
+     * first surviving key rather than being deleted with it.
+     * <p>
+     * Unlike a high-side truncate this publication moves nothing the runtime
+     * depends on. The head boundary, the checkpoint id space, both watermarks and
+     * the seed sweep's resume cursor all carry forward untouched, so no repair
+     * marker is needed and a crash before the next seal leaves the previous
+     * generation intact. What it does cost is reach: an out-of-order correction
+     * below the horizon can no longer resume from a sealed anchor, and takes
+     * whichever disposition {@link LiveViewCheckpointRepairPlan} prices cheaper -
+     * for a view whose every function localizes, that costs nothing at all.
+     *
+     * @return a result whose {@link RetentionResult#isPublished()} is false when
+     * the horizon retires nothing - no valid generation, or no boundary below the
+     * floor - or when it would retire every boundary, which is refused because the
+     * view would be left with no head to restore from. Retention is maintenance, so
+     * having nothing to do is an outcome rather than an error
+     */
+    public RetentionResult publishTruncateBelow(
+            @Transient @NotNull Path checkpointsDir,
+            long definitionTxn,
+            long historyEpoch,
+            long floorTimestamp,
+            boolean primaryOwner
+    ) {
+        if (!primaryOwner) {
+            throw CairoException.critical(0).put("replica must not publish a live view checkpoint timeline");
+        }
+        try (
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration);
+                LiveViewCheckpointTimelineReader timelineReader = new LiveViewCheckpointTimelineReader(configuration);
+                LiveViewCheckpointRoot oldCheckpointRoot = new LiveViewCheckpointRoot(configuration);
+                LiveViewCheckpointSegmentDirectoryWriter directoryWriter = new LiveViewCheckpointSegmentDirectoryWriter(configuration);
+                LiveViewCheckpointTimelineWriter timelineWriter = new LiveViewCheckpointTimelineWriter(configuration);
+                LiveViewCheckpointRowPositionDeltaWriter deltaWriter = new LiveViewCheckpointRowPositionDeltaWriter(configuration)
+        ) {
+            metaStore.of(checkpointsDir);
+            timelineReader.of(checkpointsDir);
+            timelineWriter.of(checkpointsDir);
+            deltaWriter.of(checkpointsDir);
+            directoryWriter.of(checkpointsDir);
+
+            if (!metaStore.isValid()) {
+                return RetentionResult.NOT_PUBLISHED;
+            }
+            final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
+            if (superblock.definitionTxn != definitionTxn || superblock.historyEpoch != historyEpoch) {
+                throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                        .put("live view checkpoint retention definition identity mismatch");
+            }
+
+            final LiveViewCheckpointPageRef oldTimelineRoot = copy(superblock.timelineRootRef);
+            final LiveViewCheckpointPageRef oldDeltaRoot = copy(superblock.rowPositionDeltaRootRef);
+            final LiveViewCheckpointPageRef oldDirectoryRoot = copy(superblock.segmentDirectoryRootRef);
+
+            // No boundary below the floor: the horizon has not caught up with the
+            // history yet, so publish nothing.
+            final LiveViewCheckpointTimelineEntry probe = new LiveViewCheckpointTimelineEntry();
+            if (!timelineReader.predecessor(oldTimelineRoot, floorTimestamp, probe)) {
+                return RetentionResult.NOT_PUBLISHED;
+            }
+            // The oldest boundary the horizon keeps. Refusing when there is none
+            // is what stops a floor above the head from emptying the timeline: a
+            // view with no boundary at all restores by rebuilding from its
+            // START FROM, which is not what a retention pass is for.
+            final LiveViewCheckpointTimelineEntry firstKept = new LiveViewCheckpointTimelineEntry();
+            if (!timelineReader.successor(oldTimelineRoot, floorTimestamp, firstKept)) {
+                return RetentionResult.NOT_PUBLISHED;
+            }
+
+            final long generation = checkedIncrement(superblock.generation, "generation");
+            directoryWriter.begin(oldDirectoryRoot);
+            registerPendingDirectorySegment(directoryWriter, superblock);
+
+            // Release every root below the floor: each drops the data and
+            // boundary-metadata segments it referenced, so a segment no surviving
+            // root names retires at this generation for the purge job to reclaim
+            // once no reader can reach it. Applied per root because repeated
+            // references inside one root count once per side.
+            final LongList removedSegmentIds = new LongList();
+            final long[] retiredAccumulators = new long[2]; // {logicalStateBytes, boundaryCount}
+            timelineReader.range(oldTimelineRoot, Long.MIN_VALUE, floorTimestamp, entry -> {
+                oldCheckpointRoot.of(checkpointsDir, entry.rootRef);
+                if (oldCheckpointRoot.getCheckpointId() != entry.checkpointId
+                        || oldCheckpointRoot.getMaxTimestamp() != entry.maxTimestamp
+                        || oldCheckpointRoot.getDefinitionTxn() != definitionTxn) {
+                    throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                            .put("live view checkpoint retention root identity mismatch [checkpointId=")
+                            .put(entry.checkpointId).put(']');
+                }
+                removedSegmentIds.clear();
+                for (int s = 0, n = oldCheckpointRoot.getSegmentIdCount(); s < n; s++) {
+                    removedSegmentIds.add(oldCheckpointRoot.getSegmentId(s));
+                }
+                directoryWriter.applyRootReferenceChanges(removedSegmentIds, emptySegmentIds, generation);
+                retiredAccumulators[0] = checkedAdd(retiredAccumulators[0], entry.logicalStateBytes);
+                retiredAccumulators[1]++;
+            });
+
+            long nextSegmentId = skipPublishedSegmentIds(checkpointsDir, superblock.nextSegmentId);
+            final long timelineSegmentId = nextSegmentId++;
+            final LiveViewCheckpointPageRef newTimelineRoot = new LiveViewCheckpointPageRef();
+            final boolean survived = timelineWriter.truncateBelow(oldTimelineRoot, floorTimestamp, timelineSegmentId, newTimelineRoot);
+            // The successor probe above proved a suffix key exists at the floor.
+            assert survived;
+            long metadataBytesAdded = timelineWriter.getLastSegmentBytes();
+            registerMetadataSegment(
+                    directoryWriter,
+                    timelineSegmentId,
+                    timelineWriter.getLastSegmentBytes(),
+                    timelineWriter.getLastSegmentPageCount()
+            );
+            directoryWriter.releaseMetadataPages(timelineWriter.getLastReleasedSegmentIds(), generation);
+
+            // Prune the delta index to the same horizon, folding the discarded
+            // prefix sum into the first surviving key so every surviving
+            // effectivePosition lookup answers exactly what it answered before.
+            nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            final long deltaSegmentId = nextSegmentId;
+            final LiveViewCheckpointPageRef newDeltaRoot = new LiveViewCheckpointPageRef();
+            deltaWriter.pruneBelow(
+                    oldDeltaRoot,
+                    firstKept.maxTimestamp,
+                    firstKept.checkpointId,
+                    deltaSegmentId,
+                    newDeltaRoot
+            );
+            final long rowPositionDeltaBytesAdded = deltaWriter.getLastSegmentBytes();
+            if (rowPositionDeltaBytesAdded > 0) {
+                nextSegmentId++;
+                metadataBytesAdded = checkedAdd(metadataBytesAdded, rowPositionDeltaBytesAdded);
+                registerMetadataSegment(
+                        directoryWriter,
+                        deltaSegmentId,
+                        rowPositionDeltaBytesAdded,
+                        deltaWriter.getLastSegmentPageCount()
+                );
+            }
+            directoryWriter.releaseMetadataPages(deltaWriter.getLastReleasedSegmentIds(), generation);
+
+            nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            final long directorySegmentId = nextSegmentId++;
+            final LiveViewCheckpointPageRef newDirectoryRoot = new LiveViewCheckpointPageRef();
+            directoryWriter.publish(directorySegmentId, generation, newDirectoryRoot);
+            metadataBytesAdded = checkedAdd(metadataBytesAdded, directoryWriter.getLastSegmentBytes());
+            if (testFailureStage == TEST_FAIL_AFTER_METADATA_PUBLISH) {
+                throw CairoException.critical(0).put("test failure after live view checkpoint metadata publication");
+            }
+
+            superblock.generation = generation;
+            // Both watermarks carry forward unchanged: this publication moves no
+            // coordinate, and section 6.1 of the retention design turns on that -
+            // the WAL purge floor is generation-scoped, so retiring the oldest
+            // boundary must not release base WAL a restart still needs.
+            superblock.nextSegmentId = nextSegmentId;
+            superblock.metadataBytes = checkedAdd(superblock.metadataBytes, metadataBytesAdded);
+            superblock.rowPositionDeltaBytes = checkedAdd(superblock.rowPositionDeltaBytes, rowPositionDeltaBytesAdded);
+            superblock.logicalStateBytes = checkedAdd(superblock.logicalStateBytes, -retiredAccumulators[0]);
+            superblock.retiredCheckpointCount = checkedAdd(superblock.retiredCheckpointCount, retiredAccumulators[1]);
+            // The seed cursor carries forward, unlike in a high-side truncate: a
+            // retention pass drops boundaries the sweep is long past, so whatever
+            // mid-sweep resume point the generation held is still the right one.
+            carryPendingDirectorySegment(directoryWriter, superblock, directorySegmentId);
+            copy(newTimelineRoot, superblock.timelineRootRef);
+            copy(newDeltaRoot, superblock.rowPositionDeltaRootRef);
+            copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
+            metaStore.publish();
+
+            return new RetentionResult(
+                    generation,
+                    retiredAccumulators[1],
                     metadataBytesAdded,
                     metaStore.getWalPurgeFloor(),
                     new LiveViewCheckpointTimelineStats().of(superblock, metadataBytesAdded)
@@ -1947,6 +2137,78 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         public long getWalPurgeFloor() {
             return walPurgeFloor;
+        }
+    }
+
+    /**
+     * Result of one retention-horizon publication. When {@link #isPublished()} is
+     * false the horizon retired nothing - or would have retired everything, which
+     * is refused - and nothing was published; every other field is unset.
+     */
+    public static final class RetentionResult {
+        static final RetentionResult NOT_PUBLISHED = new RetentionResult(-1, 0, 0, -1, null, false);
+        private final long generation;
+        private final long metadataBytesAdded;
+        private final boolean published;
+        private final long retiredBoundaryCount;
+        private final LiveViewCheckpointTimelineStats stats;
+        private final long walPurgeFloor;
+
+        private RetentionResult(
+                long generation,
+                long retiredBoundaryCount,
+                long metadataBytesAdded,
+                long walPurgeFloor,
+                LiveViewCheckpointTimelineStats stats,
+                boolean published
+        ) {
+            this.generation = generation;
+            this.retiredBoundaryCount = retiredBoundaryCount;
+            this.metadataBytesAdded = metadataBytesAdded;
+            this.walPurgeFloor = walPurgeFloor;
+            this.stats = stats;
+            this.published = published;
+        }
+
+        private RetentionResult(
+                long generation,
+                long retiredBoundaryCount,
+                long metadataBytesAdded,
+                long walPurgeFloor,
+                LiveViewCheckpointTimelineStats stats
+        ) {
+            this(generation, retiredBoundaryCount, metadataBytesAdded, walPurgeFloor, stats, true);
+        }
+
+        public long getGeneration() {
+            return generation;
+        }
+
+        public long getMetadataBytesAdded() {
+            return metadataBytesAdded;
+        }
+
+        /**
+         * @return logical boundaries this publication retired
+         */
+        public long getRetiredBoundaryCount() {
+            return retiredBoundaryCount;
+        }
+
+        /**
+         * @return the shape of the generation this retention pass committed, or
+         * null when nothing was published
+         */
+        public LiveViewCheckpointTimelineStats getStats() {
+            return stats;
+        }
+
+        public long getWalPurgeFloor() {
+            return walPurgeFloor;
+        }
+
+        public boolean isPublished() {
+            return published;
         }
     }
 

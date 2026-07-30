@@ -363,6 +363,44 @@ final class LiveViewCheckpointTimelineNode {
     }
 
     /**
+     * Drops the prefix, retaining only the records from {@code from} onward and
+     * shifting them down to index zero. Used by a prefix truncation, which
+     * removes a contiguous run of the lowest keys (leaf entries or internal
+     * children). The vacated tail slots keep their stale values, but
+     * {@link #writeTo} and every accessor honor {@link #count}.
+     */
+    void retainSuffix(int from) {
+        assert from >= 0 && from <= count;
+        if (from == 0) {
+            return;
+        }
+        final int kept = count - from;
+        if (leaf) {
+            for (int i = 0; i < kept; i++) {
+                final int src = from + i;
+                entryMaxTimestamp[i] = entryMaxTimestamp[src];
+                entryCheckpointId[i] = entryCheckpointId[src];
+                entryCreatedLvSeqTxn[i] = entryCreatedLvSeqTxn[src];
+                entryBaseRowPosition[i] = entryBaseRowPosition[src];
+                entryLogicalStateBytes[i] = entryLogicalStateBytes[src];
+                entryRootSegmentId[i] = entryRootSegmentId[src];
+                entryRootOffset[i] = entryRootOffset[src];
+                entryRootLength[i] = entryRootLength[src];
+            }
+        } else {
+            for (int i = 0; i < kept; i++) {
+                final int src = from + i;
+                childMinMaxTimestamp[i] = childMinMaxTimestamp[src];
+                childMinCheckpointId[i] = childMinCheckpointId[src];
+                childSegmentId[i] = childSegmentId[src];
+                childOffset[i] = childOffset[src];
+                childLength[i] = childLength[src];
+            }
+        }
+        count = kept;
+    }
+
+    /**
      * Updates child {@code i}'s minimum key and subtree reference. Used by append,
      * where a child's minimum can drop when a new global minimum is inserted.
      */

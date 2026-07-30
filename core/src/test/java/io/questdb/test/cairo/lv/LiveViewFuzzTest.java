@@ -594,6 +594,24 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFuzzCheckpointRetentionHorizon() throws Exception {
+        // O3 plus restarts under a short checkpoint retention horizon, so most of
+        // the sealed boundaries retire while the fuzz is still ingesting. The
+        // recompute oracle is unchanged - retention moves no coordinate - so what
+        // this pins is that a restart still restores from the head the horizon left,
+        // and that an out-of-order correction below the horizon lands on the same
+        // answer whether its window functions localize it or rebuild the history.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS, 1 + rnd.nextLong(5_000_000));
+        assertMemoryLeak(() -> {
+            for (int v = 0; v < variantCount(); v++) {
+                runFuzz(rnd, v, 140, true, true, false, rnd.nextBoolean());
+            }
+        });
+    }
+
+    @Test
     public void testFuzzParquetBase() throws Exception {
         // Differential fuzz over a base whose settled partitions are converted to
         // PARQUET while an incremental live view maintains itself off it. The

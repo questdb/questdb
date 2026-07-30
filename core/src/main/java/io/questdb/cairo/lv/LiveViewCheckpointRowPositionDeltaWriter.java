@@ -42,16 +42,21 @@ import java.io.Closeable;
  * reference; the caller commits the generation by publishing that root as
  * {@code rowPositionDeltaRootRef} in a superblock slot.
  * <p>
- * The sole mutation is {@link #suffixAdd}: an O3 repair's suffix range-add over
+ * The primary mutation is {@link #suffixAdd}: an O3 repair's suffix range-add over
  * {@code [H, +inf)} is one difference-array point add at the breakpoint key
  * {@code H} - {@code diff[H] += delta}. It path-copies the {@code O(log N)} spine,
  * accumulating into an existing breakpoint or inserting a new one (splitting nodes
  * that overflow), and reuses every untouched subtree by its existing page reference.
  * Each ancestor's stored subtree sum for the descended child is updated to the
  * child's recomputed sum, so a later {@link LiveViewCheckpointRowPositionDeltaReader#prefixSum}
- * stays correct without walking the suffix. Metadata pages are immutable and never
- * rewritten in place, so a reader of the prior generation keeps walking the old
- * paths. The instance is reusable across mutations and is not thread safe.
+ * stays correct without walking the suffix.
+ * <p>
+ * {@link #pruneBelow} is the retention horizon's counterpart: it discards every
+ * breakpoint below the first surviving timeline key and folds their sum into that
+ * key, so the index shrinks with the timeline while every surviving lookup keeps
+ * reporting the prefix sum it reported before. Metadata pages are immutable and
+ * never rewritten in place, so a reader of the prior generation keeps walking the
+ * old paths. The instance is reusable across mutations and is not thread safe.
  */
 public class LiveViewCheckpointRowPositionDeltaWriter implements Closeable {
 
@@ -60,10 +65,16 @@ public class LiveViewCheckpointRowPositionDeltaWriter implements Closeable {
     private final int leafCapacity;
     private final LiveViewCheckpointRowPositionDeltaReader reader;
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
+    private LiveViewCheckpointRowPositionDeltaNode[] dropPool = new LiveViewCheckpointRowPositionDeltaNode[0];
     private long lastSegmentBytes;
     private int lastSegmentPageCount;
     private LiveViewCheckpointRowPositionDeltaNode[] leftPool = new LiveViewCheckpointRowPositionDeltaNode[0];
     private final LiveViewCheckpointRowPositionDeltaNode newRootBuilder = new LiveViewCheckpointRowPositionDeltaNode();
+    private boolean probeHasEntryAtOrAbove;
+    private boolean probeHasEntryBelow;
+    private final LiveViewCheckpointRowPositionDeltaNode probeNode = new LiveViewCheckpointRowPositionDeltaNode();
+    private long probeSumBelow;
+    private long prunedSum;
     private final LongList releasedSegmentIds = new LongList();
     private AddResult[] resultPool = new AddResult[0];
     private LiveViewCheckpointRowPositionDeltaNode[] rightPool = new LiveViewCheckpointRowPositionDeltaNode[0];
@@ -121,6 +132,68 @@ public class LiveViewCheckpointRowPositionDeltaWriter implements Closeable {
     public void of(@Transient @NotNull Path checkpointsDir) {
         this.checkpointsDir.of(checkpointsDir);
         reader.of(checkpointsDir);
+    }
+
+    /**
+     * Discards every breakpoint below key {@code (floorMaxTimestamp,
+     * floorCheckpointId)} - the first timeline key a retention horizon keeps -
+     * and folds their combined difference into that key, filling
+     * {@code newRootOut} with the new tree root.
+     * <p>
+     * Deleting those breakpoints outright would be wrong: each difference applies
+     * to the whole later suffix, so a breakpoint keyed to a retired boundary still
+     * contributes to every surviving one. Folding the discarded prefix sum into
+     * the floor key leaves
+     * {@link LiveViewCheckpointRowPositionDeltaReader#prefixSum} returning exactly
+     * what it returned before, for every key at or above the floor. The fold
+     * accumulates into an existing breakpoint at the floor key when there is one
+     * and inserts a new one otherwise.
+     * <p>
+     * All new pages land in a new metadata segment {@code newSegmentId}, which must
+     * be unused. A tree with nothing below the floor is left alone: {@code newRootOut}
+     * receives {@code oldRoot}, no segment is written, and this returns false. A
+     * prune that discards every breakpoint for a combined difference of zero empties
+     * the tree, leaving {@code newRootOut} null and again writing no segment.
+     *
+     * @return true when the prune changed the tree
+     */
+    public boolean pruneBelow(
+            @NotNull LiveViewCheckpointPageRef oldRoot,
+            long floorMaxTimestamp,
+            long floorCheckpointId,
+            long newSegmentId,
+            @NotNull LiveViewCheckpointPageRef newRootOut
+    ) {
+        releasedSegmentIds.clear();
+        lastSegmentBytes = 0;
+        lastSegmentPageCount = 0;
+        if (oldRoot.isNull()) {
+            newRootOut.clear();
+            return false;
+        }
+        probeBelow(oldRoot, floorMaxTimestamp, floorCheckpointId);
+        if (!probeHasEntryBelow) {
+            newRootOut.of(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength());
+            return false;
+        }
+        if (!probeHasEntryAtOrAbove && probeSumBelow == 0) {
+            // Everything the tree holds sits below the floor and cancels out, so
+            // there is nothing to fold forward. Release the lot and publish a null
+            // root rather than open a segment for an empty tree.
+            releaseSubtreeRec(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength(), 0);
+            newRootOut.clear();
+            return true;
+        }
+        beginSegment(newSegmentId);
+        prunedSum = 0;
+        final boolean survived = pruneRec(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength(), floorMaxTimestamp, floorCheckpointId, 0);
+        commitSegment();
+        // The probe proved either a surviving breakpoint or a non-zero prefix sum
+        // to fold into the floor key, so the recursion always keeps one.
+        assert survived;
+        final AddResult root = resultAt(0);
+        newRootOut.of(root.leftRef.getSegmentId(), root.leftRef.getOffset(), root.leftRef.getLength());
+        return true;
     }
 
     /**
@@ -197,6 +270,18 @@ public class LiveViewCheckpointRowPositionDeltaWriter implements Closeable {
         lastSegmentBytes = segmentWriter.commit();
     }
 
+    private LiveViewCheckpointRowPositionDeltaNode dropAt(int depth) {
+        if (depth >= dropPool.length) {
+            dropPool = growNodes(dropPool, depth + 1);
+        }
+        LiveViewCheckpointRowPositionDeltaNode node = dropPool[depth];
+        if (node == null) {
+            node = new LiveViewCheckpointRowPositionDeltaNode();
+            dropPool[depth] = node;
+        }
+        return node;
+    }
+
     private void finishNode(LiveViewCheckpointRowPositionDeltaNode node, AddResult res, int depth, boolean leaf) {
         final int capacity = leaf ? leafCapacity : internalCapacity;
         if (node.count() <= capacity) {
@@ -232,6 +317,134 @@ public class LiveViewCheckpointRowPositionDeltaWriter implements Closeable {
             leftPool[depth] = node;
         }
         return node;
+    }
+
+    /**
+     * Read-only probe of what a prune at {@code (maxTimestamp, checkpointId)}
+     * would find: whether the tree holds a breakpoint below the floor, whether it
+     * holds one at or above it, and the sum of the differences below. One
+     * root-to-leaf descent answers all three, which lets
+     * {@link #pruneBelow} refuse a prune that would discard nothing and take the
+     * empty-tree disposition without opening a segment for it.
+     */
+    private void probeBelow(LiveViewCheckpointPageRef rootRef, long maxTimestamp, long checkpointId) {
+        probeHasEntryAtOrAbove = false;
+        probeHasEntryBelow = false;
+        probeSumBelow = 0;
+        long seg = rootRef.getSegmentId();
+        long off = rootRef.getOffset();
+        long len = rootRef.getLength();
+        while (true) {
+            reader.openAndDecode(seg, off, len, probeNode);
+            if (probeNode.isLeaf()) {
+                final int firstKept = probeNode.leafInsertPosition(maxTimestamp, checkpointId);
+                for (int i = 0; i < firstKept; i++) {
+                    probeSumBelow += probeNode.entryDiff[i];
+                }
+                probeHasEntryBelow |= firstKept > 0;
+                probeHasEntryAtOrAbove |= firstKept < probeNode.count();
+                return;
+            }
+            // Every child left of the descent child holds only keys below that
+            // child's minimum, which is at or below the query key; every child
+            // right of it holds only keys strictly above it.
+            final int ci = probeNode.childIndexFor(maxTimestamp, checkpointId);
+            for (int i = 0; i < ci; i++) {
+                probeSumBelow += probeNode.childSubtreeSum[i];
+            }
+            probeHasEntryBelow |= ci > 0;
+            probeHasEntryAtOrAbove |= ci < probeNode.count() - 1;
+            seg = probeNode.childSegmentId[ci];
+            off = probeNode.childOffset[ci];
+            len = probeNode.childLength[ci];
+        }
+    }
+
+    /**
+     * Prunes the subtree rooted at {@code (seg, off, len)} to keys at or above the
+     * floor, accumulating every discarded difference into {@link #prunedSum} on
+     * the way down and folding the total into the floor key at the leaf. Writes
+     * the surviving nodes bottom-up and leaves the result in {@link #resultAt}
+     * ({@code depth}); the boolean says whether anything survived. A node that
+     * keeps exactly one child returns that child's reference directly (inline
+     * collapse), so no single-child internal node is ever written.
+     */
+    private boolean pruneRec(long seg, long off, long len, long floorTs, long floorId, int depth) {
+        final LiveViewCheckpointRowPositionDeltaNode node = leftAt(depth);
+        reader.openAndDecode(seg, off, len, node);
+        // A descended node is always written back, so decoding one is exactly what
+        // supersedes the page holding it.
+        releasedSegmentIds.add(seg);
+        final AddResult res = resultAt(depth);
+        if (node.isLeaf()) {
+            final int firstKept = node.leafInsertPosition(floorTs, floorId);
+            for (int i = 0; i < firstKept; i++) {
+                prunedSum += node.entryDiff[i];
+            }
+            node.retainSuffix(firstKept);
+            if (node.count() > 0
+                    && node.entryMaxTimestamp[0] == floorTs
+                    && node.entryCheckpointId[0] == floorId) {
+                node.addToLeafDiffAt(0, prunedSum);
+            } else if (prunedSum != 0) {
+                node.insertEntryAt(0, floorTs, floorId, prunedSum);
+            }
+            prunedSum = 0;
+            if (node.count() == 0) {
+                return false;
+            }
+            finishNode(node, res, depth, true);
+            return true;
+        }
+        final int straddle = node.childIndexFor(floorTs, floorId);
+        // Every child left of the descent holds only keys below the floor: their
+        // differences fold into the floor key and their pages are released whole,
+        // which costs what the prune discards.
+        for (int i = 0; i < straddle; i++) {
+            prunedSum += node.childSubtreeSum[i];
+            releaseSubtreeRec(node.childSegmentId[i], node.childOffset[i], node.childLength[i], depth + 1);
+        }
+        final boolean straddleSurvived = pruneRec(node.childSegmentId[straddle], node.childOffset[straddle], node.childLength[straddle], floorTs, floorId, depth + 1);
+        if (!straddleSurvived && straddle + 1 >= node.count()) {
+            return false;
+        }
+        if (straddleSurvived) {
+            final AddResult child = resultAt(depth + 1);
+            node.setChildEntry(straddle, child.leftMinTs, child.leftMinId, child.leftSubtreeSum, child.leftRef.getSegmentId(), child.leftRef.getOffset(), child.leftRef.getLength());
+            if (child.split) {
+                node.insertChildAt(straddle + 1, child.rightMinTs, child.rightMinId, child.rightSubtreeSum, child.rightRef.getSegmentId(), child.rightRef.getOffset(), child.rightRef.getLength());
+            }
+        }
+        node.retainSuffix(straddleSurvived ? straddle : straddle + 1);
+        if (node.count() == 1) {
+            // Sole surviving child: promote it as this subtree's root by
+            // reference, writing no new internal page.
+            res.leftRef.of(node.childSegmentId[0], node.childOffset[0], (int) node.childLength[0]);
+            res.leftMinTs = node.childMinMaxTimestamp[0];
+            res.leftMinId = node.childMinCheckpointId[0];
+            res.leftSubtreeSum = node.childSubtreeSum[0];
+            res.split = false;
+            return true;
+        }
+        finishNode(node, res, depth, false);
+        return true;
+    }
+
+    /**
+     * Releases every page of the subtree at {@code (seg, off, len)}, which a prune
+     * is discarding whole. The walk uses its own node pool, so it can run beside a
+     * {@link #pruneRec} descent at the same depth.
+     */
+    private void releaseSubtreeRec(long seg, long off, long len, int depth) {
+        final LiveViewCheckpointRowPositionDeltaNode node = dropAt(depth);
+        reader.openAndDecode(seg, off, len, node);
+        releasedSegmentIds.add(seg);
+        if (node.isLeaf()) {
+            return;
+        }
+        for (int i = 0, n = node.count(); i < n; i++) {
+            releaseSubtreeRec(node.childSegmentId[i], node.childOffset[i], node.childLength[i], depth + 1);
+        }
     }
 
     private AddResult resultAt(int depth) {

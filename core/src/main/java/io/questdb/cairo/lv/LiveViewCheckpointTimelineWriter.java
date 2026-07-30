@@ -56,6 +56,11 @@ import java.io.Closeable;
  *     compact, and reuses every prefix subtree below the floor. This is the
  *     preserve-the-prefix half of an EOF or predecessor-resume out-of-order
  *     repair: the tail roots go, the long-term anchors stay.</li>
+ *     <li>{@link #truncateBelow} is its mirror: it drops every entry whose
+ *     {@code maxTimestamp} is strictly below a floor - the lowest-key prefix -
+ *     and keeps the surviving suffix by page reference, under the same spine
+ *     copy and single-child collapse. This is the retention horizon: the oldest
+ *     boundaries retire, the head and its recent neighbours stay.</li>
  * </ul>
  * Metadata pages are immutable and never rewritten in place, so a reader of the
  * prior generation keeps walking the old paths. The instance is reusable across
@@ -78,6 +83,7 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     private InsertResult[] resultPool = new InsertResult[0];
     private LiveViewCheckpointTimelineNode[] rightPool = new LiveViewCheckpointTimelineNode[0];
     private LiveViewCheckpointPageRef[] spliceRefPool = new LiveViewCheckpointPageRef[0];
+    private TruncateBelowResult[] truncateBelowResultPool = new TruncateBelowResult[0];
     private LiveViewCheckpointPageRef[] truncateRefPool = new LiveViewCheckpointPageRef[0];
 
     public LiveViewCheckpointTimelineWriter(@NotNull CairoConfiguration configuration) {
@@ -247,6 +253,58 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
         // A prefix key exists (predecessor above), so the recursion always keeps it.
         assert survived;
         final LiveViewCheckpointPageRef rootRef = truncateRefAt(0);
+        newRootOut.of(rootRef.getSegmentId(), rootRef.getOffset(), rootRef.getLength());
+        return true;
+    }
+
+    /**
+     * Drops every entry whose {@code maxTimestamp} is strictly below
+     * {@code floor} (a contiguous prefix of the key space) and fills
+     * {@code newRootOut} with the truncated tree root, reusing every surviving
+     * suffix subtree by its existing page reference and path-copying only the
+     * boundary spine. A subtree that collapses to a single surviving child is
+     * promoted by reference rather than wrapped in a one-child internal node, so
+     * the published tree stays as compact as an append would leave it. A
+     * surviving child that lost its own lowest keys gets its stored minimum key
+     * raised to match, because navigation reads that minimum rather than the
+     * subtree below it.
+     * <p>
+     * Returns true when a non-empty suffix survived; returns false - leaving
+     * {@code newRootOut} untouched - when {@code floor} is above every key so the
+     * whole tree drops, which a retention horizon must refuse rather than publish
+     * a timeline with no head to restore from. When {@code floor} is at or below
+     * every key nothing is dropped and {@code oldRoot} is reused as-is without
+     * writing a segment.
+     */
+    public boolean truncateBelow(
+            @NotNull LiveViewCheckpointPageRef oldRoot,
+            long floor,
+            long newSegmentId,
+            @NotNull LiveViewCheckpointPageRef newRootOut
+    ) {
+        releasedSegmentIds.clear();
+        if (oldRoot.isNull()) {
+            return false;
+        }
+        // Nothing below the floor: the tree is unchanged, reuse it without
+        // rewriting the left spine into a new segment.
+        if (!reader.predecessor(oldRoot, floor, scratchEntry)) {
+            newRootOut.of(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength());
+            lastSegmentBytes = 0;
+            lastSegmentPageCount = 0;
+            return true;
+        }
+        // Nothing at or above the floor: the whole tree drops. Return without
+        // opening a segment so an empty truncation leaves no orphan page behind.
+        if (!reader.successor(oldRoot, floor, scratchEntry)) {
+            return false;
+        }
+        beginSegment(newSegmentId);
+        final boolean survived = truncateBelowRec(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength(), floor, 0);
+        commitSegment();
+        // A suffix key exists (successor above), so the recursion always keeps it.
+        assert survived;
+        final LiveViewCheckpointPageRef rootRef = truncateBelowResultAt(0).ref;
         newRootOut.of(rootRef.getSegmentId(), rootRef.getOffset(), rootRef.getLength());
         return true;
     }
@@ -436,6 +494,97 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
         writePage(node, spliceRefAt(depth));
     }
 
+    /**
+     * Truncates the subtree rooted at {@code (seg, off, len)} to keys at or above
+     * {@code floor}, writing the surviving nodes bottom-up. On a non-empty result
+     * the survivor's page reference and new minimum key are left in
+     * {@link #truncateBelowResultAt} ({@code depth}); the boolean says whether
+     * anything survived. A node that keeps exactly one child returns that child's
+     * reference directly (inline collapse), so no single-child internal node is
+     * ever written.
+     */
+    private boolean truncateBelowRec(long seg, long off, long len, long floor, int depth) {
+        final LiveViewCheckpointTimelineNode node = leftAt(depth);
+        reader.openAndDecode(seg, off, len, node);
+        releasedSegmentIds.add(seg);
+        final TruncateBelowResult res = truncateBelowResultAt(depth);
+        if (node.isLeaf()) {
+            final int firstKept = node.leafLowerBoundByTimestamp(floor);
+            if (firstKept == node.count()) {
+                return false;
+            }
+            node.retainSuffix(firstKept);
+            writePage(node, res.ref);
+            res.minTs = node.entryMaxTimestamp[0];
+            res.minId = node.entryCheckpointId[0];
+            return true;
+        }
+        // Every child above the straddle holds only keys at or above the floor
+        // and is kept by reference; the straddling child is the last one whose
+        // subtree minimum is below the floor; every earlier child holds only keys
+        // under it and is dropped.
+        final int count = node.count();
+        final int straddle = node.internalLowerBoundByTimestamp(floor) - 1;
+        // A dropped subtree is never descended into, so its pages have to be
+        // walked to be released. The walk costs what the truncate discards.
+        releaseSubtrees(node, 0, Math.max(straddle, 0), depth + 1);
+        if (straddle < 0) {
+            // Every child minimum sits at or above the floor, so this subtree
+            // loses nothing. The entry point descends only into a child whose
+            // minimum is below the floor, so this is defensive.
+            writePage(node, res.ref);
+            res.minTs = node.childMinMaxTimestamp[0];
+            res.minId = node.childMinCheckpointId[0];
+            return true;
+        }
+        final boolean straddleSurvived = truncateBelowRec(node.childSegmentId[straddle], node.childOffset[straddle], node.childLength[straddle], floor, depth + 1);
+        final int firstKeptChild = straddleSurvived ? straddle : straddle + 1;
+        final int keptChildren = count - firstKeptChild;
+        if (keptChildren == 0) {
+            return false;
+        }
+        if (keptChildren == 1) {
+            // Sole surviving child: promote it as this subtree's root by
+            // reference, writing no new internal page.
+            if (straddleSurvived) {
+                final TruncateBelowResult child = truncateBelowResultAt(depth + 1);
+                res.ref.of(child.ref.getSegmentId(), child.ref.getOffset(), child.ref.getLength());
+                res.minTs = child.minTs;
+                res.minId = child.minId;
+            } else {
+                res.ref.of(node.childSegmentId[count - 1], node.childOffset[count - 1], (int) node.childLength[count - 1]);
+                res.minTs = node.childMinMaxTimestamp[count - 1];
+                res.minId = node.childMinCheckpointId[count - 1];
+            }
+            return true;
+        }
+        if (straddleSurvived) {
+            // The straddle child shed its lowest keys, so the minimum this node
+            // stores beside it moves up with them.
+            final TruncateBelowResult child = truncateBelowResultAt(depth + 1);
+            node.setChildEntry(straddle, child.minTs, child.minId, child.ref.getSegmentId(), child.ref.getOffset(), child.ref.getLength());
+        }
+        node.retainSuffix(firstKeptChild);
+        writePage(node, res.ref);
+        res.minTs = node.childMinMaxTimestamp[0];
+        res.minId = node.childMinCheckpointId[0];
+        return true;
+    }
+
+    private TruncateBelowResult truncateBelowResultAt(int depth) {
+        if (depth >= truncateBelowResultPool.length) {
+            final TruncateBelowResult[] grown = new TruncateBelowResult[depth + 1];
+            System.arraycopy(truncateBelowResultPool, 0, grown, 0, truncateBelowResultPool.length);
+            truncateBelowResultPool = grown;
+        }
+        TruncateBelowResult res = truncateBelowResultPool[depth];
+        if (res == null) {
+            res = new TruncateBelowResult();
+            truncateBelowResultPool[depth] = res;
+        }
+        return res;
+    }
+
     private LiveViewCheckpointPageRef truncateRefAt(int depth) {
         if (depth >= truncateRefPool.length) {
             final LiveViewCheckpointPageRef[] grown = new LiveViewCheckpointPageRef[depth + 1];
@@ -536,5 +685,17 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
         long rightMinId;
         long rightMinTs;
         boolean split;
+    }
+
+    /**
+     * Per-recursion-level carrier for a {@link #truncateBelowRec} result: the
+     * surviving subtree's page reference and its new minimum key. The parent
+     * needs the minimum because a prefix truncation raises it, and navigation
+     * reads the minimum a parent stores rather than the subtree below it.
+     */
+    private static final class TruncateBelowResult {
+        long minId;
+        long minTs;
+        final LiveViewCheckpointPageRef ref = new LiveViewCheckpointPageRef();
     }
 }
