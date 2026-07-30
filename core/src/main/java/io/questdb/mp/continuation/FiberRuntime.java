@@ -41,7 +41,6 @@ public final class FiberRuntime {
     private static final long ADMISSION_PERMIT_MASK = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(FiberRuntime.class);
     private final AtomicLong admission = new AtomicLong(ADMISSION_OPEN);
-    private volatile @Nullable Runnable afterProcessForTesting;
     private final @Nullable Runnable beforeFiberAcquireForTesting;
     private final LongAdder budgetExhaustionCount = new LongAdder();
     private final FiberEventWaitQueue capacityWaitQueue;
@@ -50,7 +49,6 @@ public final class FiberRuntime {
     private final AtomicInteger finalizerCount = new AtomicInteger();
     private final LongAdder inlineSuspendViolationCount = new LongAdder();
     private final AtomicBoolean isInlineSuspendViolationLogged = new AtomicBoolean();
-    private volatile boolean isPoolQuiesced;
     private final ObjList<LongAdder> launchCounts = new ObjList<>(LaunchResult.COUNT);
     private final int maxLiveFiberCount;
     private final LongAdder mountCount = new LongAdder();
@@ -59,6 +57,8 @@ public final class FiberRuntime {
     private final ObjList<FiberRuntimeQuiesceListener> quiesceListeners = new ObjList<>();
     private final FiberRunQueue runQueue;
     private final LongAdder saturationCount = new LongAdder();
+    private volatile @Nullable Runnable afterProcessForTesting;
+    private volatile boolean isPoolQuiesced;
     private volatile FiberRuntimeState state = FiberRuntimeState.OPEN;
 
     public FiberRuntime(int retainedFiberCount) {
@@ -328,71 +328,6 @@ public final class FiberRuntime {
 
     public LaunchResult launchReservedDirect(Fiber fiber, FiberTask task, long taskIncarnation) {
         return launchReserved(fiber, task, taskIncarnation, true);
-    }
-
-    private LaunchResult launchReserved(
-            Fiber fiber,
-            FiberTask task,
-            long taskIncarnation,
-            boolean isDirectMountAllowed
-    ) {
-        if (fiber.isForeignTo(this)) {
-            throw new IllegalArgumentException("fiber reservation does not belong to this runtime");
-        }
-        if (!fiber.isReserved()) {
-            throw new IllegalArgumentException("fiber is not reserved");
-        }
-        if (!acquireAdmission()) {
-            releaseReservedFiber(fiber);
-            return record(LaunchResult.QUIESCING);
-        }
-        Fiber directFiber = null;
-        Fiber reservedFiber = fiber;
-        boolean isReserved = true;
-        LaunchResult result;
-        try {
-            // claim() folds the incarnation, ownership and terminal checks into its CAS loop
-            final int claim = task.claim(taskIncarnation);
-            switch (claim) {
-                case FiberTask.CLAIM_LAUNCHED -> {
-                    if (isDirectMountAllowed) {
-                        if (reservedFiber.stageForDirectMountOrRequestRun(task)) {
-                            directFiber = reservedFiber;
-                        }
-                    } else {
-                        reservedFiber.stageAndRequestRun(task);
-                    }
-                    reservedFiber = null;
-                    isReserved = false;
-                    result = LaunchResult.LAUNCHED;
-                }
-                case FiberTask.CLAIM_ALREADY_OWNED, FiberTask.CLAIM_SIGNALLED ->
-                        result = LaunchResult.ALREADY_OWNED;
-                case FiberTask.CLAIM_STALE -> result = LaunchResult.STALE_INCARNATION;
-                default -> result = LaunchResult.TERMINAL;
-            }
-        } catch (Throwable e) {
-            if (isReserved) {
-                terminalError(task, e);
-                isReserved = false;
-            }
-            result = LaunchResult.TERMINAL;
-        } finally {
-            if (reservedFiber != null) {
-                reservedFiber.releaseReservation();
-                fiberPool.release(reservedFiber);
-            }
-            if (isReserved) {
-                releaseTaskSlot();
-            }
-            releaseAdmission();
-        }
-        if (directFiber != null) {
-            if (process(directFiber, directFiber.getOutcomeScratch(), true)) {
-                finishProcessingAfterUnmount(directFiber);
-            }
-        }
-        return record(result);
     }
 
     public synchronized void registerQuiesceListener(FiberRuntimeQuiesceListener listener) {
@@ -684,6 +619,70 @@ public final class FiberRuntime {
             }
         }
         return true;
+    }
+
+    private LaunchResult launchReserved(
+            Fiber fiber,
+            FiberTask task,
+            long taskIncarnation,
+            boolean isDirectMountAllowed
+    ) {
+        if (fiber.isForeignTo(this)) {
+            throw new IllegalArgumentException("fiber reservation does not belong to this runtime");
+        }
+        if (!fiber.isReserved()) {
+            throw new IllegalArgumentException("fiber is not reserved");
+        }
+        if (!acquireAdmission()) {
+            releaseReservedFiber(fiber);
+            return record(LaunchResult.QUIESCING);
+        }
+        Fiber directFiber = null;
+        Fiber reservedFiber = fiber;
+        boolean isReserved = true;
+        LaunchResult result;
+        try {
+            // claim() folds the incarnation, ownership and terminal checks into its CAS loop
+            final int claim = task.claim(taskIncarnation);
+            switch (claim) {
+                case FiberTask.CLAIM_LAUNCHED -> {
+                    if (isDirectMountAllowed) {
+                        if (reservedFiber.stageForDirectMountOrRequestRun(task)) {
+                            directFiber = reservedFiber;
+                        }
+                    } else {
+                        reservedFiber.stageAndRequestRun(task);
+                    }
+                    reservedFiber = null;
+                    isReserved = false;
+                    result = LaunchResult.LAUNCHED;
+                }
+                case FiberTask.CLAIM_ALREADY_OWNED, FiberTask.CLAIM_SIGNALLED -> result = LaunchResult.ALREADY_OWNED;
+                case FiberTask.CLAIM_STALE -> result = LaunchResult.STALE_INCARNATION;
+                default -> result = LaunchResult.TERMINAL;
+            }
+        } catch (Throwable e) {
+            if (isReserved) {
+                terminalError(task, e);
+                isReserved = false;
+            }
+            result = LaunchResult.TERMINAL;
+        } finally {
+            if (reservedFiber != null) {
+                reservedFiber.releaseReservation();
+                fiberPool.release(reservedFiber);
+            }
+            if (isReserved) {
+                releaseTaskSlot();
+            }
+            releaseAdmission();
+        }
+        if (directFiber != null) {
+            if (process(directFiber, directFiber.getOutcomeScratch(), true)) {
+                finishProcessingAfterUnmount(directFiber);
+            }
+        }
+        return record(result);
     }
 
     private LaunchResult preflight(FiberTask task, long taskIncarnation) {

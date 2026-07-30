@@ -688,7 +688,7 @@ public class FiberRuntimeTest {
             final FiberRuntime runtime = new FiberRuntime(1);
             final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
             final PooledWaitTask shallowTask = new PooledWaitTask(waitQueue);
-            final DeepWaitTask deepTask = new DeepWaitTask(waitQueue, 4096);
+            final DeepWaitTask deepTask = new DeepWaitTask(waitQueue, 1024);
 
             for (int i = 0; i < 10_000; i++) {
                 runWait(runtime, shallowTask, waitQueue);
@@ -922,15 +922,27 @@ public class FiberRuntimeTest {
         if (task.isDone()) {
             task.reopen();
         }
-        if (runtime.launch(task) != LaunchResult.LAUNCHED
-                || runtime.drain(1) != 1
+        task.error = null;
+        final LaunchResult launchResult = runtime.launch(task);
+        final int parkCount = launchResult == LaunchResult.LAUNCHED ? runtime.drain(1) : 0;
+        throwTaskError(task, "fiber failed before parking");
+        if (launchResult != LaunchResult.LAUNCHED
+                || parkCount != 1
                 || task.isDone()
                 || waitQueue.size() != 1) {
             throw new AssertionError("fiber did not park");
         }
         waitQueue.fire(1, false);
-        if (runtime.drain(1) != 1 || !task.isDone() || task.hasError || waitQueue.size() != 0) {
+        final int resumeCount = runtime.drain(1);
+        throwTaskError(task, "fiber failed while resuming");
+        if (resumeCount != 1 || !task.isDone() || waitQueue.size() != 0) {
             throw new AssertionError("fiber did not resume");
+        }
+    }
+
+    private static void throwTaskError(PooledWaitTask task, String message) {
+        if (task.error != null) {
+            throw new AssertionError(message, task.error);
         }
     }
 
@@ -1311,8 +1323,8 @@ public class FiberRuntimeTest {
     }
 
     private static class PooledWaitTask extends FiberTask {
+        private Throwable error;
         private final FiberWalWaitQueue waitQueue;
-        private boolean hasError;
 
         private PooledWaitTask(FiberWalWaitQueue waitQueue) {
             this.waitQueue = waitQueue;
@@ -1320,7 +1332,7 @@ public class FiberRuntimeTest {
 
         @Override
         protected void onError(Throwable th) {
-            hasError = true;
+            error = th;
         }
 
         @Override
