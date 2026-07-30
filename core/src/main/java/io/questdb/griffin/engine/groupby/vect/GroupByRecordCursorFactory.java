@@ -163,6 +163,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         Unsafe.putInt(Rosti.getInitialValueSlot(pRosti[i], 0), SymbolTable.VALUE_IS_NULL);
                         break;
                     default:
+                        // Only INT and SYMBOL reach the vectorized keyed group by, and both are
+                        // stored as a 32-bit key. Anything else would leave the null-key sentinel
+                        // at whatever the template held, which the null group is then built from.
+                        throw CairoException.critical(0)
+                                .put("unexpected vectorized group by key type [type=")
+                                .put(ColumnType.nameOf(columnTypes.getColumnType(0)))
+                                .put(']');
                 }
 
                 // configure map with default values

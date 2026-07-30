@@ -588,6 +588,8 @@ kIntSumLong256WrapUp(jlong pRosti, jint valueOffset, jlong n0, jlong n1, jlong n
     const auto count_offset = map->value_offsets_[valueOffset + 1];
     const auto shift = map->slot_size_shift_;
 
+    // Populate the null key before the sweep below, not after: the sweep is what turns an
+    // untouched group into NULL, and a group this populate creates has a real value to keep.
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
@@ -953,20 +955,26 @@ static jboolean kIntSumLongWrapUp(jlong pRosti, jint valueOffset, jlong valueAtN
 // (AvgLongVectorAggregateFunction.aggregate() gates on Numbers.isFinite), and saturating the
 // 128-bit form would need a sum past 2^127, i.e. around 2^64 rows. They exist so the cast
 // below can never be UB, not because any query is expected to hit them.
+// Hex floats, so the bounds read as the powers of two they are rather than as digit strings
+// a reader has to count.
+constexpr jdouble TWO_POW_63 = 0x1p63;
+constexpr jdouble TWO_POW_127 = 0x1p127;
+
+// Only the two specializations below are meant to exist; anything else is a caller mistake
+// rather than something to resolve at link time.
 template<typename T>
-static T double_to_accumulator(jdouble d);
+static T double_to_accumulator(jdouble d) = delete;
 
 template<>
 jlong double_to_accumulator<jlong>(jdouble d) {
     if (PREDICT_FALSE(std::isnan(d))) {
         return 0;
     }
-    constexpr jdouble TWO_POW_63 = 9223372036854775808.0;
     if (d >= TWO_POW_63) {
-        return 0x7fffffffffffffffLL;
+        return L_MAX;
     }
     if (d < -TWO_POW_63) {
-        return -0x7fffffffffffffffLL - 1;
+        return L_MIN;
     }
     return static_cast<jlong>(d);
 }
@@ -976,16 +984,14 @@ long128_t double_to_accumulator<long128_t>(jdouble d) {
     if (PREDICT_FALSE(std::isnan(d))) {
         return long128_t(0);
     }
-    constexpr jdouble TWO_POW_63 = 9223372036854775808.0;
     if (d >= -TWO_POW_63 && d < TWO_POW_63) {
         return long128_t(static_cast<int64_t>(d));
     }
-    constexpr jdouble TWO_POW_127 = 170141183460469231731687303715884105728.0;
     if (d >= TWO_POW_127) {
-        return long128_t(0x7fffffffffffffffLL, 0xffffffffffffffffULL);
+        return long128_t(L_MAX, UL_MAX);
     }
     if (d < -TWO_POW_127) {
-        return long128_t(-0x7fffffffffffffffLL - 1, 0);
+        return long128_t(L_MIN, 0);
     }
     // Exact here: d's ulp is at least 1024, so neither the scaling nor the subtraction rounds.
     // Scaling by a power-of-two literal rather than ldexp(): GCC does not fold a
@@ -1132,6 +1138,8 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
     const auto count_offset = map->value_offsets_[valueOffset + 1];
     const auto shift = map->slot_size_shift_;
 
+    // Populate the null key before the sweep below, not after: the sweep is what turns an
+    // untouched group into NULL, and a group this populate creates has a real value to keep.
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
@@ -1453,6 +1461,8 @@ Java_io_questdb_std_Rosti_keyedIntNSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
     const auto count_offset = map->value_offsets_[valueOffset + 2];
     const auto shift = map->slot_size_shift_;
 
+    // Populate the null key before the sweep below, not after: the sweep is what turns an
+    // untouched group into NULL, and a group this populate creates has a real value to keep.
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
@@ -1920,7 +1930,6 @@ Java_io_questdb_std_Rosti_keyedIntMinIntWrapUp(JNIEnv *env, jclass cl, jlong pRo
                                                jint valueAtNull) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
-    const auto slots = map->slots_;
 
     if (valueAtNull > I_MIN) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];

@@ -1253,8 +1253,6 @@ public class GroupByTest extends AbstractCairoTest {
         });
     }
 
-
-
     @Test
     public void testGroupByInt32KeyColumnTop() throws Exception {
         // Reproduces https://github.com/questdb/questdb/issues/5150
@@ -1614,7 +1612,7 @@ public class GroupByTest extends AbstractCairoTest {
                         .with(securityContext, bindVariableService, null, -1, circuitBreaker)) {
                     parallelCtx.initNow();
                     execute("create table t (ts timestamp, v long) timestamp(ts) partition by day", parallelCtx);
-                    execute("insert into t select (x * 86400000000L)::timestamp, x from long_sequence(4)", parallelCtx);
+                    execute("insert into t select (x * 86_400_000_000L)::timestamp, x from long_sequence(4)", parallelCtx);
                     execute("alter table t add column id int", parallelCtx);
                     execute("alter table t add column v2 long", parallelCtx);
                     execute("insert into t select ((x + 4) * 86400000000L)::timestamp, x + 4, 42, x + 4 from long_sequence(4)", parallelCtx);
@@ -1808,7 +1806,7 @@ public class GroupByTest extends AbstractCairoTest {
             execute("alter table x add column vl long");
             execute("alter table x add column vd double");
             execute("alter table x add column l2 long256");
-            execute("insert into x values ('2025-11-08T00:00:00.000000Z', 42, 2, 20, 2.5, cast(2 as long256))");
+            execute("insert into x values ('2025-11-08T00:00:00.000000Z', 42, 2, 20, 2.5, 2::long256)");
 
             assertQuery("select id, sum(vi), sum(vl), sum(vd), avg(vi), avg(vl), avg(vd), ksum(vd), nsum(vd), sum(l2), count(vi) from x order by id")
                     .noLeakCheck()
@@ -1837,9 +1835,9 @@ public class GroupByTest extends AbstractCairoTest {
         // The sum/avg families in one query: each must return what it returns alone.
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, vi int, vl long, vd double, l2 long256) timestamp(ts) partition by day");
-            execute("insert into x values ('2024-11-08T06:54:47.803364Z', 1, 10, 1.5, cast(1 as long256))");
+            execute("insert into x values ('2024-11-08T06:54:47.803364Z', 1, 10, 1.5, 1::long256)");
             execute("alter table x add column id int");
-            execute("insert into x values ('2025-11-08T00:00:00.000000Z', 2, 20, 2.5, cast(2 as long256), 42)");
+            execute("insert into x values ('2025-11-08T00:00:00.000000Z', 2, 20, 2.5, 2::long256, 42)");
 
             assertQuery("select id, sum(vi), sum(vl), sum(vd), avg(vi), avg(vl), avg(vd), ksum(vd), nsum(vd), sum(l2), count(vi), count() from x order by id")
                     .noLeakCheck()
@@ -2022,7 +2020,7 @@ public class GroupByTest extends AbstractCairoTest {
                     // One hour apart over 258 rows spans eleven daily partitions, so there are
                     // plenty of page frames to spread over the four workers.
                     execute("""
-                            insert into t select (x * 3600 * 1000000L)::timestamp, 42, x,
+                            insert into t select (x * 3600 * 1_000_000L)::timestamp, 42, x,
                                 case when x <= 3 then 1_500_000_000 else 0 end,
                                 case when x = 1 then 1152921504606846976.0
                                      when x = 258 then 576460752303423488.0
@@ -4416,7 +4414,6 @@ public class GroupByTest extends AbstractCairoTest {
                     "WHERE (tab.created) IS NOT NULL " +
                     "GROUP BY tab.created " +
                     "ORDER BY dateadd('h', 1, tab.created)";
-
 
             assertQuery(query)
                     .noLeakCheck()

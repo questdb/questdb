@@ -62,7 +62,7 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
         configOverrideRostiAllocFacade(facade);
         assertMemoryLeak(() -> {
             for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
-                createColumnTopFirstTable(liveKeys, sqlExecutionContext);
+                createColumnTopTable(liveKeys, true, sqlExecutionContext);
 
                 final String query = "SELECT k, count() FROM tab";
                 assertQuery(query).noLeakCheck().assertsPlanContaining("GroupBy vectorized: true");
@@ -86,7 +86,7 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
         configOverrideRostiAllocFacade(facade);
         assertMemoryLeak(() -> {
             for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
-                createColumnTopLastTable(liveKeys, sqlExecutionContext);
+                createColumnTopTable(liveKeys, false, sqlExecutionContext);
 
                 final String query = "SELECT k, count() FROM tab";
                 assertQuery(query).noLeakCheck().assertsPlanContaining("GroupBy vectorized: true");
@@ -127,7 +127,7 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
                     .with(securityContext, bindVariableService, null, -1, circuitBreaker)) {
                 parallelCtx.initNow();
                 for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
-                    createColumnTopFirstTable(liveKeys, parallelCtx);
+                    createColumnTopTable(liveKeys, true, parallelCtx);
 
                     final String query = "SELECT k, count() FROM tab";
                     try (RecordCursorFactory factory = select(query, parallelCtx)) {
@@ -151,25 +151,19 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
     // The default 1024 map capacity gives a growth threshold of 896 live keys; at exactly that
     // count adding the null group resizes the map. The caller sweeps around the boundary so one
     // iteration lands the resize regardless of small differences in the rosti growth math.
-    private static void createColumnTopFirstTable(int liveKeys, SqlExecutionContext context) throws Exception {
+    //
+    // isColumnTopFirst puts the partition written before k existed at the EARLIER timestamps, so
+    // its column-top rows are scanned before the live keys fill the map; false scans them after.
+    // Either way the null group is materialized from row presence alone.
+    private static void createColumnTopTable(int liveKeys, boolean isColumnTopFirst, SqlExecutionContext context) throws Exception {
+        final long columnTopDay = isColumnTopFirst ? 0 : 86_400_000_000L;
+        final long liveKeysDay = isColumnTopFirst ? 86_400_000_000L : 0;
         execute("CREATE TABLE tab (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
-        // A partition written before k existed: its rows read back as column tops (null keys), so
-        // the build must materialize the null group from row presence alone.
-        execute("INSERT INTO tab SELECT (x * 1000000L)::timestamp, x FROM long_sequence(8)", context);
+        execute("INSERT INTO tab SELECT (" + columnTopDay + " + x * 1_000_000L)::timestamp, x FROM long_sequence(8)", context);
         execute("ALTER TABLE tab ADD COLUMN k INT", context);
-        // liveKeys distinct non-null keys in a later partition.
-        execute("INSERT INTO tab SELECT (86400000000L + x * 1000000L)::timestamp, x, x::int " +
-                "FROM long_sequence(" + liveKeys + ")", context);
-    }
-
-    // Like createColumnTopFirstTable, but the column-top partition carries the LATER timestamps, so
-    // it is scanned after the live keys have filled the map.
-    private static void createColumnTopLastTable(int liveKeys, SqlExecutionContext context) throws Exception {
-        execute("CREATE TABLE tab (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
-        execute("INSERT INTO tab SELECT (86400000000L + x * 1000000L)::timestamp, x FROM long_sequence(8)", context);
-        execute("ALTER TABLE tab ADD COLUMN k INT", context);
-        execute("INSERT INTO tab SELECT (x * 1000000L)::timestamp, x, x::int " +
-                "FROM long_sequence(" + liveKeys + ")", context);
+        execute("""
+                INSERT INTO tab SELECT (%d + x * 1_000_000L)::timestamp, x, x::int
+                FROM long_sequence(%d)""".formatted(liveKeysDay, liveKeys), context);
     }
 
     private static void drain(RecordCursorFactory factory, SqlExecutionContext context, int expectedRowCount) throws Exception {

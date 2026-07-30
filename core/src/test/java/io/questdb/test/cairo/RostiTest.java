@@ -250,7 +250,7 @@ public class RostiTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             boolean hasResizedInWrapUp = false;
             for (int liveKeys = 8; liveKeys <= 20; liveKeys++) {
-                hasResizedInWrapUp |= assertSweepNullsEmptyGroupsAcrossResize(liveKeys);
+                hasResizedInWrapUp |= assertSweepNullsEmptyGroupsAndReportResize(liveKeys);
             }
             // Only one point in the sweep puts the resize inside wrapUp(); above it the inserts
             // resize first. Fail loudly rather than silently degenerate if the growth math moves.
@@ -437,7 +437,7 @@ public class RostiTest extends AbstractCairoTest {
         }
     }
 
-    private static boolean assertSweepNullsEmptyGroupsAcrossResize(int liveKeys) {
+    private static boolean assertSweepNullsEmptyGroupsAndReportResize(int liveKeys) {
         final ArrayColumnTypes types = new ArrayColumnTypes();
         types.add(ColumnType.INT);      // key
         types.add(ColumnType.LONG);     // sum
