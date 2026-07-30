@@ -26,12 +26,21 @@ package io.questdb.test.metrics;
 
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
+import io.questdb.metrics.QueryTrace;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.metrics.QueryTracingJob.*;
 
@@ -41,6 +50,67 @@ public class QueryTracingTest extends AbstractCairoTest {
     public void setup() throws SqlException {
         node1.getConfigurationOverrides().setProperty(PropertyKey.QUERY_TRACING_ENABLED, true);
         engine.execute("DROP TABLE IF EXISTS '" + TABLE_NAME + "'");
+    }
+
+    @Test
+    public void testJobRecoversAfterAcquireFailure() throws Exception {
+        final AtomicBoolean isMkdirsFailing = new AtomicBoolean(true);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (isMkdirsFailing.get() && Utf8s.containsAscii(path, TABLE_NAME)) {
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            try (QueryTracingJob job = new QueryTracingJob(engine)) {
+                enqueueTrace("SELECT 1");
+                job.run();
+                Assert.assertNull(engine.getTableTokenIfExists(TABLE_NAME));
+
+                // clear the injected failure and step past the backoff
+                isMkdirsFailing.set(false);
+                setCurrentMicros(currentMicros + 2 * Micros.SECOND_MICROS);
+                enqueueTrace("SELECT 2");
+                job.run();
+
+                final TableToken token = engine.getTableTokenIfExists(TABLE_NAME);
+                Assert.assertNotNull(token);
+            }
+            assertQuery("SELECT " + COLUMN_QUERY_TEXT + " FROM '" + TABLE_NAME + "'")
+                    .expectSize()
+                    .returns(COLUMN_QUERY_TEXT + "\nSELECT 2\n");
+        });
+    }
+
+    @Test
+    public void testJobSurvivesWriterAcquireFailure() throws Exception {
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Utf8s.containsAscii(path, TABLE_NAME)) {
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            // the constructor must not throw even though the table cannot be created
+            try (QueryTracingJob job = new QueryTracingJob(engine)) {
+                for (int i = 0; i < 4; i++) {
+                    enqueueTrace("SELECT " + i);
+                    Assert.assertFalse(job.run());
+                }
+                // the queue must be drained even though nothing could be written,
+                // otherwise it grows without bound
+                Assert.assertFalse(engine.getMessageBus().getQueryTraceQueue().tryDequeue(new QueryTrace()));
+                Assert.assertNull(engine.getTableTokenIfExists(TABLE_NAME));
+            }
+        });
     }
 
     @Test
@@ -76,5 +146,27 @@ public class QueryTracingTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    @Test
+    public void testTableNotCreatedWithoutTraces() throws Exception {
+        // the table is created on the first trace, never at construction time. this is what makes
+        // the hot-reloadable query.tracing.enabled flag gate the table: no traces are enqueued
+        // while it is off, so nothing is ever created
+        assertMemoryLeak(() -> {
+            try (QueryTracingJob job = new QueryTracingJob(engine)) {
+                Assert.assertFalse(job.run());
+                Assert.assertNull(engine.getTableTokenIfExists(TABLE_NAME));
+            }
+        });
+    }
+
+    private static void enqueueTrace(String queryText) {
+        final QueryTrace queryTrace = new QueryTrace();
+        queryTrace.timestamp = currentMicros;
+        queryTrace.queryText = queryText;
+        queryTrace.principal = "admin";
+        queryTrace.executionNanos = 1_000L;
+        engine.getMessageBus().getQueryTraceQueue().enqueue(queryTrace);
     }
 }

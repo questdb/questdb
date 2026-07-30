@@ -27,6 +27,7 @@ package io.questdb.test;
 import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.PropBootstrapConfiguration;
+import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
@@ -39,6 +40,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.metrics.QueryTracingJob;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.ConcurrentIntHashMap;
 import io.questdb.std.Files;
@@ -293,6 +295,20 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 serverMain.start();
                 int port = serverMain.getPgWireServerPort();
                 Assert.assertTrue(port > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testQueryTraceTableNotCreatedWhenTracingDisabled() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false");
+            }})) {
+                serverMain.start();
+                // the tracing job acquires its writer on the first trace, and no trace is ever
+                // enqueued while tracing is off, so the table is never created
+                Assert.assertNull(serverMain.getEngine().getTableTokenIfExists(QueryTracingJob.TABLE_NAME));
             }
         });
     }
@@ -1229,6 +1245,24 @@ public class ServerMainTest extends AbstractBootstrapTest {
                             actualSink
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testStartsWithOrphanQueryTraceDir() throws Exception {
+        assertMemoryLeak(() -> {
+            // a table directory with no _txn file reports TABLE_RESERVED, so the registry scan
+            // never adopts it while CREATE still trips over it on disk. the tracing job used to
+            // acquire its writer in its constructor, which made that fatal to startup - forever
+            try (Path path = new Path()) {
+                path.of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat(QueryTracingJob.TABLE_NAME).slash();
+                Assert.assertEquals(0, Files.mkdirs(path, 509));
+            }
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "true");
+            }})) {
+                serverMain.start();
             }
         });
     }
