@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.groupby.vect;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractOomSweepTest;
 import org.junit.Assert;
@@ -61,6 +62,58 @@ public class GroupByVectorizedOomTest extends AbstractOomSweepTest {
     // The faulting allocations here are 128 B and larger, so a 64-byte step lands inside every one of
     // their windows many times over.
     private static final int ROSTI_BUILD_SLACK_STEP = 64;
+
+    @Test
+    public void testColumnTopKeyInsertOomRaisesInsteadOfShortResult() throws Exception {
+        assertMemoryLeak(() -> {
+            // The key counts bracket the point where the map must grow, so at least one
+            // iteration allocates while the fault is armed. v is a column top too, so the
+            // key insert is the only operation that can allocate. Unsafe.setRssMemLimit,
+            // used by the other tests in this class, cannot reach rosti's own allocations.
+            boolean hasSeenOom = false;
+            for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
+                execute("CREATE TABLE tab (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO tab SELECT (86400000000L + x * 1000000L)::timestamp FROM long_sequence(8)");
+                execute("ALTER TABLE tab ADD COLUMN k INT");
+                execute("ALTER TABLE tab ADD COLUMN v LONG");
+                execute("INSERT INTO tab SELECT (x * 1000000L)::timestamp, x::int, x FROM long_sequence(" + liveKeys + ")");
+                final String query = "SELECT k, max(v) FROM tab";
+
+                try (RecordCursorFactory factory = select(query)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Rosti.enableOOMOnMalloc();
+                        try {
+                            int rowCount = 0;
+                            while (cursor.hasNext()) {
+                                rowCount++;
+                            }
+                            Assert.assertEquals("short result under a rosti malloc fault: the NULL-key "
+                                    + "group went missing instead of the query raising out-of-memory", liveKeys + 1, rowCount);
+                        } catch (CairoException e) {
+                            Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
+                            hasSeenOom = true;
+                        } finally {
+                            Rosti.disableOOMOnMalloc();
+                        }
+                    }
+                }
+
+                try (RecordCursorFactory factory = select(query)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        int rowCount = 0;
+                        while (cursor.hasNext()) {
+                            rowCount++;
+                        }
+                        Assert.assertEquals(liveKeys + 1, rowCount);
+                    }
+                }
+
+                execute("DROP TABLE tab");
+            }
+            Assert.assertTrue("no sweep iteration faulted a rosti allocation mid-drain; the growth "
+                    + "boundary moved -- widen the liveKeys sweep", hasSeenOom);
+        });
+    }
 
     @Test
     public void testVectorizedGroupByCleansUpWhenCursorRunsOutOfMemory() throws Exception {

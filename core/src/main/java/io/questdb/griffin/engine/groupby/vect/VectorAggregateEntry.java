@@ -96,6 +96,19 @@ public class VectorAggregateEntry implements Mutable {
                     raf.updateMemoryUsage(pRosti[slot], oldSize);
                 }
             } else {
+                if (pRosti != null && frameRowCount > 0) {
+                    // Every row in this frame has a null key. wrapUp() only creates that group
+                    // when the value it folds in is non-null, so insert it here, from row presence.
+                    final long oldSize = Rosti.getAllocMemory(pRosti[slot]);
+                    if (!Rosti.keyedIntDistinct(pRosti[slot], Rosti.getInitialValueSlot(pRosti[slot], 0), 1)) {
+                        if (oomCounter != null) {
+                            oomCounter.incrementAndGet();
+                        }
+                    }
+                    if (raf != null) {
+                        raf.updateMemoryUsage(pRosti[slot], oldSize);
+                    }
+                }
                 func.aggregate(valueAddress, frameRowCount, slot);
             }
         } finally {

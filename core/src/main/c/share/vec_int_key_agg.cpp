@@ -26,6 +26,7 @@
 #include "rosti.h"
 #include <functional>
 #include <cstdlib>
+#include <cmath>
 
 #define HOUR_MICROS  3600000000L
 #define HOUR_NANOS  3600000000000L
@@ -347,7 +348,11 @@ static jboolean kIntMaxShort(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
             *reinterpret_cast<jlong *>(pVal) = val;
         } else {
             const jlong old = *reinterpret_cast<jlong *>(pVal);
-            *reinterpret_cast<jlong *>(pVal) = MAX(val, (jshort) old);
+            if (old != L_MIN) {
+                *reinterpret_cast<jlong *>(pVal) = MAX(val, (jshort) old);
+            } else {
+                *reinterpret_cast<jlong *>(pVal) = val;
+            }
         }
     }
     return JNI_TRUE;
@@ -579,19 +584,6 @@ kIntSumLong256WrapUp(jlong pRosti, jint valueOffset, jlong n0, jlong n1, jlong n
     const auto shift = map->slot_size_shift_;
     const auto slots = map->slots_;
 
-    for (size_t i = 0; i < capacity; i++) {
-        ctrl_t c = ctrl[i];
-        if (c > -1) {
-            const auto src = slots + (i << shift);
-            auto count = *reinterpret_cast<jlong *>(src + count_offset);
-            long256_t &srcv = *reinterpret_cast<long256_t *>(src + value_offset);
-            if (PREDICT_FALSE(count == 0)) {
-                srcv = long256_t(L_MIN, L_MIN, L_MIN, L_MIN);
-            }
-        }
-    }
-
-    // populate null value
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
@@ -610,6 +602,18 @@ kIntSumLong256WrapUp(jlong pRosti, jint valueOffset, jlong n0, jlong n1, jlong n
             long256_t valueAtNull(n0, n1, n2, n3);
             dst += valueAtNull;
             *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
+        }
+    }
+
+    for (size_t i = 0; i < capacity; i++) {
+        ctrl_t c = ctrl[i];
+        if (c > -1) {
+            const auto src = slots + (i << shift);
+            auto count = *reinterpret_cast<jlong *>(src + count_offset);
+            long256_t &srcv = *reinterpret_cast<long256_t *>(src + value_offset);
+            if (PREDICT_FALSE(count == 0)) {
+                srcv = long256_t(L_MIN, L_MIN, L_MIN, L_MIN);
+            }
         }
     }
     return JNI_TRUE;
@@ -891,18 +895,8 @@ static jboolean kIntSumLongWrapUp(jlong pRosti, jint valueOffset, jlong valueAtN
     const auto shift = map->slot_size_shift_;
     const auto slots = map->slots_;
 
-    for (size_t i = 0; i < capacity; i++) {
-        ctrl_t c = ctrl[i];
-        if (c > -1) {
-            const auto src = slots + (i << shift);
-            auto count = *reinterpret_cast<jlong *>(src + count_offset);
-            if (PREDICT_FALSE(count == 0)) {
-                *reinterpret_cast<jlong *>(src + value_offset) = L_MIN;
-            }
-        }
-    }
-
-    // populate null value
+    // Populate before the sweep: the sweep NULLs every slot whose count is still 0, and the
+    // null-key slot may already exist with count 0.
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
@@ -920,7 +914,61 @@ static jboolean kIntSumLongWrapUp(jlong pRosti, jint valueOffset, jlong valueAtN
             *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
         }
     }
+
+    for (size_t i = 0; i < capacity; i++) {
+        ctrl_t c = ctrl[i];
+        if (c > -1) {
+            const auto src = slots + (i << shift);
+            auto count = *reinterpret_cast<jlong *>(src + count_offset);
+            if (PREDICT_FALSE(count == 0)) {
+                *reinterpret_cast<jlong *>(src + value_offset) = L_MIN;
+            }
+        }
+    }
     return JNI_TRUE;
+}
+
+// A plain double-to-int cast is UB outside the destination range, which avg(long) sums
+// legitimately exceed -- that range is why its accumulator is 128 bits wide.
+template<typename T>
+static T double_to_accumulator(jdouble d);
+
+template<>
+jlong double_to_accumulator<jlong>(jdouble d) {
+    if (PREDICT_FALSE(std::isnan(d))) {
+        return 0;
+    }
+    constexpr jdouble TWO_POW_63 = 9223372036854775808.0;
+    if (d >= TWO_POW_63) {
+        return 0x7fffffffffffffffLL;
+    }
+    if (d < -TWO_POW_63) {
+        return -0x7fffffffffffffffLL - 1;
+    }
+    return static_cast<jlong>(d);
+}
+
+template<>
+long128_t double_to_accumulator<long128_t>(jdouble d) {
+    if (PREDICT_FALSE(std::isnan(d))) {
+        return long128_t(0);
+    }
+    constexpr jdouble TWO_POW_63 = 9223372036854775808.0;
+    if (d >= -TWO_POW_63 && d < TWO_POW_63) {
+        return long128_t(static_cast<int64_t>(d));
+    }
+    constexpr jdouble TWO_POW_127 = 170141183460469231731687303715884105728.0;
+    if (d >= TWO_POW_127) {
+        return long128_t(0x7fffffffffffffffLL, 0xffffffffffffffffULL);
+    }
+    if (d < -TWO_POW_127) {
+        return long128_t(-0x7fffffffffffffffLL - 1, 0);
+    }
+    // Exact here: d's ulp is at least 1024, so neither the scaling nor the subtraction rounds.
+    const jdouble hi_d = std::floor(std::ldexp(d, -64));
+    const auto hi = static_cast<int64_t>(hi_d);
+    const auto lo = static_cast<uint64_t>(d - std::ldexp(hi_d, 64));
+    return long128_t(hi, lo);
 }
 
 template<typename T>
@@ -945,10 +993,10 @@ static jboolean kIntAvgLongWrapUp(jlong pRosti, jint valueOffset, jdouble valueA
                 return JNI_FALSE;
             }
             *reinterpret_cast<int32_t *>(dest) = nullKey;
-            *reinterpret_cast<jdouble *>(dest + value_offset) = valueAtNull;
+            *reinterpret_cast<T *>(dest + value_offset) = double_to_accumulator<T>(valueAtNull);
             *reinterpret_cast<jlong *>(dest + count_offset) = valueAtNullCount;
         } else {
-            *reinterpret_cast<jdouble *>(dest + value_offset) += valueAtNull;
+            *reinterpret_cast<T *>(dest + value_offset) += double_to_accumulator<T>(valueAtNull);
             *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
         }
     }
@@ -1059,18 +1107,6 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
     const auto shift = map->slot_size_shift_;
     const auto slots = map->slots_;
 
-    for (size_t i = 0; i < capacity; i++) {
-        ctrl_t c = ctrl[i];
-        if (c > -1) {
-            const auto src = slots + (i << shift);
-            auto count = *reinterpret_cast<jlong *>(src + count_offset);
-            if (PREDICT_FALSE(count == 0)) {
-                *reinterpret_cast<jdouble *>(src + value_offset) = D_NAN;
-            }
-        }
-    }
-
-    // populate null value
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
@@ -1086,6 +1122,17 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
         } else {
             *reinterpret_cast<jdouble *>(dest + value_offset) += valueAtNull;
             *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
+        }
+    }
+
+    for (size_t i = 0; i < capacity; i++) {
+        ctrl_t c = ctrl[i];
+        if (c > -1) {
+            const auto src = slots + (i << shift);
+            auto count = *reinterpret_cast<jlong *>(src + count_offset);
+            if (PREDICT_FALSE(count == 0)) {
+                *reinterpret_cast<jdouble *>(src + value_offset) = D_NAN;
+            }
         }
     }
     return JNI_TRUE;
@@ -1352,20 +1399,6 @@ Java_io_questdb_std_Rosti_keyedIntNSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
     const auto shift = map->slot_size_shift_;
     const auto slots = map->slots_;
 
-    for (size_t i = 0; i < capacity; i++) {
-        ctrl_t c = ctrl[i];
-        if (c > -1) {
-            const auto src = slots + (i << shift);
-            auto count = *reinterpret_cast<jlong *>(src + count_offset);
-            if (PREDICT_FALSE(count == 0)) {
-                *reinterpret_cast<jdouble *>(src + value_offset) = D_NAN;
-            } else {
-                *reinterpret_cast<jdouble *>(src + value_offset) += *reinterpret_cast<jdouble *>(src + c_offset);
-            }
-        }
-    }
-
-    // populate null value
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
@@ -1388,7 +1421,20 @@ Java_io_questdb_std_Rosti_keyedIntNSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
                 *reinterpret_cast<jdouble *>(dest + c_offset) += (valueAtNull - t) + sum;
             }
             *reinterpret_cast<jdouble *>(dest + value_offset) = t;
-            *reinterpret_cast<jlong *>(dest + count_offset) += 1;
+            *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
+        }
+    }
+
+    for (size_t i = 0; i < capacity; i++) {
+        ctrl_t c = ctrl[i];
+        if (c > -1) {
+            const auto src = slots + (i << shift);
+            auto count = *reinterpret_cast<jlong *>(src + count_offset);
+            if (PREDICT_FALSE(count == 0)) {
+                *reinterpret_cast<jdouble *>(src + value_offset) = D_NAN;
+            } else {
+                *reinterpret_cast<jdouble *>(src + value_offset) += *reinterpret_cast<jdouble *>(src + c_offset);
+            }
         }
     }
     return JNI_TRUE;
@@ -2161,7 +2207,7 @@ Java_io_questdb_std_Rosti_keyedIntMinShortWrapUp(JNIEnv *env, jclass cl, jlong p
             *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
         } else {
             const jlong old = *reinterpret_cast<jlong *>(dest + value_offset);
-            if (accumulatedValue > old) {
+            if (old == L_MIN || accumulatedValue < old) {
                 *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
             }
         }
@@ -2216,10 +2262,12 @@ Java_io_questdb_std_Rosti_keyedIntMaxShortWrapUp(
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
         } else {
-            *reinterpret_cast<jlong *>(dest + value_offset) = MAX(
-                    (jshort) accumulatedValue,
-                    *reinterpret_cast<jshort *>(dest + value_offset)
-            );
+            const jlong old = *reinterpret_cast<jlong *>(dest + value_offset);
+            if (old == L_MIN) {
+                *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
+            } else {
+                *reinterpret_cast<jlong *>(dest + value_offset) = MAX((jlong) accumulatedValue, old);
+            }
         }
     }
     return JNI_TRUE;

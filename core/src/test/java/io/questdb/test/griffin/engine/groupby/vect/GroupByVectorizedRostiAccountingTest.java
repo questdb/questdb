@@ -55,6 +55,27 @@ import org.junit.Test;
 public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
 
     @Test
+    public void testColumnTopFrameInsertResizeKeepsNativeRostiBalanced() throws Exception {
+        // The reversed partition order makes the key insert, not wrapUp(), the operation that
+        // grows the map. That growth must be recorded, or close() subtracts more than was added.
+        assertMemoryLeak(() -> {
+            for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
+                createColumnTopLastTable(liveKeys, sqlExecutionContext);
+
+                final String query = "SELECT k, count() FROM tab";
+                printSql("EXPLAIN " + query);
+                TestUtils.assertContains(sink, "GroupBy vectorized: true");
+
+                try (RecordCursorFactory factory = select(query)) {
+                    drain(factory, sqlExecutionContext);
+                }
+
+                execute("DROP TABLE tab");
+            }
+        });
+    }
+
+    @Test
     public void testWrapUpResizeKeepsNativeRostiBalanced() throws Exception {
         assertMemoryLeak(() -> {
             for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
@@ -110,6 +131,16 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
                 pool.halt();
             }
         });
+    }
+
+    // Like createColumnTopTable, but the column-top partition carries the LATER timestamps, so
+    // it is scanned after the live keys have filled the map.
+    private static void createColumnTopLastTable(int liveKeys, SqlExecutionContext context) throws Exception {
+        execute("CREATE TABLE tab (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
+        execute("INSERT INTO tab SELECT (86400000000L + x * 1000000L)::timestamp, x FROM long_sequence(8)", context);
+        execute("ALTER TABLE tab ADD COLUMN k INT", context);
+        execute("INSERT INTO tab SELECT (x * 1000000L)::timestamp, x, x::int " +
+                "FROM long_sequence(" + liveKeys + ")", context);
     }
 
     // The default 1024 map capacity gives a growth threshold of 896 live keys; at
