@@ -1,8 +1,7 @@
 # Fiber runtime notes
 
-The repository-level architecture is documented in
-`QUERY_TASK_FIBER_DESIGN.md`. This file records implementation invariants for
-the classes in this package.
+This file records implementation invariants for the classes in this
+package.
 
 ## Scheduler boundary
 
@@ -11,11 +10,11 @@ the classes in this package.
 jobs. A `LEGACY` pool owns no runtime.
 
 Only `Fiber` mounts a continuation. Production code must not wrap a
-`Worker`, `Job`, or page-frame reducer in `WorkerContinuation`.
+`Worker`, `Job`, or page-frame reducer in its own continuation.
 
-`WorkerContinuation.current()` identifies the mounted fiber for SQL
-suspension gateways. Code outside a mounted fiber receives no implicit
-suspension permission.
+`Fiber.current()` identifies the mounted fiber for SQL suspension
+gateways. Code outside a mounted fiber receives no implicit suspension
+permission.
 
 ## Task ownership
 
@@ -112,4 +111,3 @@ before reuse.
 
 - `CARRIER_LOCAL.md` explains carrier-keyed state across fiber migration.
 - `DELAY_HEAP.md` explains the timer heap and its continuation-safety rules.
-- `QUERY_TASK_FIBER_DESIGN_ZH.md` is the Chinese architecture document.
