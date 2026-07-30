@@ -1346,7 +1346,14 @@ public class MetadataCache implements QuietCloseable {
             final String tableName = tableToken.getTableName();
             final CairoTable entry = tableMap.get(tableName);
             if (entry != null && !tableToken.equals(entry.getTableToken())) {
-                return; // stale token must not remove a newer table's cache or pending-policy state
+                // Stale token: a newer table already holds this name (drop+recreate race). Leave the newer
+                // table's cache entry alone, but still release THIS (old) id's pending expiry mark. The clear
+                // is keyed by the old id, which is never reused, so it cannot touch the newer table's state.
+                // Skipping it would strand the mark and keep mayHaveExpiryPolicy() stuck true forever.
+                if (clearPendingExpiryPolicy(tableToken.getTableId())) {
+                    publishActiveExpiryPolicySnapshot();
+                }
+                return;
             }
             if (entry != null) {
                 tableMap.remove(tableName);
