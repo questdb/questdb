@@ -671,9 +671,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     public boolean isExpiryCleanupMonotonic(
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
-            CharSequence source,
-            CharSequence predicate,
-            CharSequence timestampColumn
+            CharSequence predicate
     ) {
         if (predicate == null) {
             return false;

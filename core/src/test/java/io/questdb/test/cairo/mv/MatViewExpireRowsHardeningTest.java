@@ -349,7 +349,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "query is not allowed here");
                 }
                 Assert.assertFalse("subquery predicate must never classify monotonic", compiler.isExpiryCleanupMonotonic(
-                        sqlExecutionContext, metadata, "y", "s IN (SELECT s FROM blk)", "ts"));
+                        sqlExecutionContext, metadata, "s IN (SELECT s FROM blk)"));
             }
 
             execute("CREATE TABLE xns (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
@@ -360,7 +360,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 Assert.assertTrue(compiler.validateExpiryPredicateOnMetadata(
                         sqlExecutionContext, metadata, "now() > ts", 0).isMonotonic());
                 Assert.assertTrue(compiler.isExpiryCleanupMonotonic(
-                        sqlExecutionContext, metadata, "xns", "now() > ts", "ts"));
+                        sqlExecutionContext, metadata, "now() > ts"));
             }
         });
     }

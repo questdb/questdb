@@ -83,16 +83,13 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * <p>
      * The check is conservative — any doubt (parse/bind issue, a non-deterministic function it cannot prove
      * monotonic) returns false, so cleanup is SKIPPED and the authoritative read filter alone enforces
-     * retention. Disk is not reclaimed for such a policy, but query results stay correct. {@code source} is the
-     * FROM source used to validate a window predicate (a quoted table name, or a parenthesised defining SELECT
-     * for a not-yet-created view); {@code metadata} is used to bind scalar predicates.
+     * retention. Disk is not reclaimed for such a policy, but query results stay correct. {@code metadata} is
+     * used to bind scalar predicates.
      */
     boolean isExpiryCleanupMonotonic(
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
-            CharSequence source,
-            CharSequence predicate,
-            CharSequence timestampColumn
+            CharSequence predicate
     );
 
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
