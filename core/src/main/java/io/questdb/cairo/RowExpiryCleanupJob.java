@@ -449,6 +449,13 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                         } else {
                             LOG.info().$("deferred expired-rows partition wipe; table changed concurrently [table=")
                                     .$safe(tableName).$(", partitionTs=").$ts(floorTs).I$();
+                            // Fence rejected: an external txn advanced the sequencer past our reader-snapshot
+                            // baseline. expectedSeqTxn is intentionally not re-read (a fresh baseline could
+                            // commit a stale-predicate wipe), and sequencer txns only move forward, so every
+                            // remaining partition is a certain rejection. Stop the sweep instead of paying a
+                            // count scan + survivor copy + event fsync + openNewSegment for each one; the next
+                            // sweep opens a fresh reader and re-baselines.
+                            break;
                         }
                     } else if (racyOpsAllowed && boundsAction == ACTION_UNKNOWN) {
                         if (isScalarGenerationCacheEnabled
@@ -478,6 +485,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                             } else {
                                 LOG.info().$("deferred expired-rows partition wipe; table changed concurrently [table=")
                                         .$safe(tableName).$(", partitionTs=").$ts(floorTs).I$();
+                                // Fence rejected; every remaining partition would reject the same way. Stop the
+                                // sweep (see the bounds-wipe branch above); the next sweep re-baselines.
+                                break;
                             }
                         } else if (action == ACTION_REPLACE) {
                             if (walWriter == null) {
@@ -508,6 +518,10 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                                     tableName, timestampType, floorTs, nextFloorTs, txnTracker, expectedSeqTxn)) {
                                 expectedSeqTxn++; // our REPLACE commit advanced the sequencer by exactly one txn
                                 isWorkDone = true;
+                            } else {
+                                // Fence rejected; every remaining partition would reject too. Stop the sweep
+                                // (replacePartition already logged the deferral); the next sweep re-baselines.
+                                break;
                             }
                         } else if (isScalarGenerationCacheEnabled) {
                             rememberScalarPartitionGeneration(tableToken, predicate, i);
