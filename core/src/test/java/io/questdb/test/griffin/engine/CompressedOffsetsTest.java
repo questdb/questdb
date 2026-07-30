@@ -37,7 +37,7 @@ public class CompressedOffsetsTest {
         // offset, so a consumer walked 8GB below its heap. Unlike OrderedMap there is no +1 bias,
         // so offset 0 legitimately compresses to 0 and only -1 is reserved as a sentinel.
         final long chainValueSize = 12;
-        final long maxHeapSize = (Integer.toUnsignedLong(-1) - 1) << 2; // (2^32 - 2) * 4
+        final long maxHeapSize = CompressedOffsets.MAX_ALIGNED4_HEAP_SIZE; // (2^32 - 2) * 4
         final long lastSignedOffset = ((long) Integer.MAX_VALUE) << 2;  // compresses to Integer.MAX_VALUE
         final long firstUnsignedOffset = (1L << 31) << 2;               // compresses to Integer.MIN_VALUE
         final long lastValueOffset = maxHeapSize - chainValueSize;      // last offset a value can start at
@@ -74,7 +74,7 @@ public class CompressedOffsetsTest {
         // rather than chain values. Same unsigned contract as the 4-byte pair, twice the reach:
         // reading a top-bit-set offset as signed put every node accessor 32GB below the heap.
         final long blockSize = 24;
-        final long maxKeyHeapSize = (Integer.toUnsignedLong(-1) - 1) << 3; // (2^32 - 2) * 8
+        final long maxKeyHeapSize = CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE; // (2^32 - 2) * 8
         final long lastSignedOffset = ((long) Integer.MAX_VALUE) << 3;     // compresses to Integer.MAX_VALUE
         final long firstUnsignedOffset = (1L << 31) << 3;                  // compresses to Integer.MIN_VALUE
         final long lastBlockOffset = maxKeyHeapSize - blockSize;           // last offset a block can start at
@@ -110,7 +110,7 @@ public class CompressedOffsetsTest {
         // every legal offset - including 0 itself - has to compress to something else. Reading a
         // top-bit-set offset as signed put the probe, rehash and merge scans 16GB below the heap.
         final long entrySize = 16;
-        final long maxHeapSize = (Integer.toUnsignedLong(-1) - 1) << 3; // (2^32 - 2) * 8
+        final long maxHeapSize = CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE; // (2^32 - 2) * 8
         final long lastSignedOffset = (Integer.MAX_VALUE - 1L) << 3;    // compresses to Integer.MAX_VALUE
         final long firstUnsignedOffset = ((long) Integer.MAX_VALUE) << 3; // compresses to Integer.MIN_VALUE
         final long lastEntryOffset = maxHeapSize - entrySize;           // last offset an entry can start at
@@ -134,6 +134,30 @@ public class CompressedOffsetsTest {
         Assert.assertTrue(CompressedOffsets.compressBiased8(lastSignedOffset) > 0);
         Assert.assertTrue(CompressedOffsets.compressBiased8(firstUnsignedOffset) < 0);
         Assert.assertTrue(CompressedOffsets.compressBiased8(lastEntryOffset) < 0);
+    }
+
+    @Test
+    public void testHeapCeilingsAreTheLastSafeHeapSizes() {
+        // The two ceilings OrderedMap, AbstractRedBlackTree and PropServerConfiguration reject an
+        // initial page against. What makes an oversized page unsafe rather than merely wasteful is
+        // that one step past each ceiling every encoding collides with a value the consumers reserve:
+        // the aligned pairs produce their -1 chain-end/empty-block sentinel, and the biased trio
+        // wraps to 0, the marker a probe reads as "no entry in this slot". Pinned by literal so the
+        // expectation does not restate the shift the constants are derived with.
+        Assert.assertEquals(17_179_869_176L, CompressedOffsets.MAX_ALIGNED4_HEAP_SIZE);
+        Assert.assertEquals(34_359_738_352L, CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE);
+
+        // At the ceiling nothing has collided yet: an entry may still start there and round trip.
+        Assert.assertEquals(-2, CompressedOffsets.compressAligned4(CompressedOffsets.MAX_ALIGNED4_HEAP_SIZE));
+        Assert.assertEquals(-2, CompressedOffsets.compressAligned8(CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE));
+        Assert.assertEquals(-1, CompressedOffsets.compressBiased8(CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE));
+        Assert.assertFalse(CompressedOffsets.isEmptyBiased8(CompressedOffsets.compressBiased8(CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE)));
+
+        // One alignment step past it, all three do.
+        Assert.assertEquals(-1, CompressedOffsets.compressAligned4(CompressedOffsets.MAX_ALIGNED4_HEAP_SIZE + 4));
+        Assert.assertEquals(-1, CompressedOffsets.compressAligned8(CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE + 8));
+        Assert.assertTrue(CompressedOffsets.isEmptyBiased8(
+                CompressedOffsets.compressBiased8(CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE + 8)));
     }
 
     @Test

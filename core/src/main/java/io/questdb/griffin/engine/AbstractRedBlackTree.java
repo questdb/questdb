@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
@@ -55,9 +56,9 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     private static final long CHAIN_VALUE_SIZE = 12;
     // Upper bound enforced by the compressed-offset encoding (offsets are 8-byte-aligned and
     // stored as 32-bit ints), independent of any user-supplied byte cap.
-    private static final long MAX_KEY_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
+    private static final long MAX_KEY_HEAP_SIZE_LIMIT = CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE;
     // Same bound for the value heap, whose offsets are 4-byte-aligned.
-    private static final long MAX_VALUE_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 2;
+    private static final long MAX_VALUE_HEAP_SIZE_LIMIT = CompressedOffsets.MAX_ALIGNED4_HEAP_SIZE;
     private static final long OFFSET_COLOUR = 12;
     // offset to last reference in value chain (kept to avoid having to traverse whole chain on each addition)
     private static final long OFFSET_LAST_REF = 20;
@@ -100,6 +101,12 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         assert keyPageSize >= BLOCK_SIZE;
         // value page must hold at least one chain entry (config rejects sub-block sizes).
         assert valuePageSize >= CHAIN_VALUE_SIZE;
+        // The growth budgets below are clamped to the encoding ceilings, but the initial page is
+        // allocated raw, and growKeyHeap()/growValueHeap() only run once it fills. An oversized
+        // initial page therefore hands out truncated offsets for everything in its top region with
+        // no guard in between, so reject it here, before either malloc.
+        validatePageSize("key", keyPageSize, MAX_KEY_HEAP_SIZE_LIMIT);
+        validatePageSize("value", valuePageSize, MAX_VALUE_HEAP_SIZE_LIMIT);
         keyHeapSize = initialKeyHeapSize = keyPageSize;
         maxKeyHeapSize = Math.min(Math.max(maxKeyHeapBytes, keyPageSize), MAX_KEY_HEAP_SIZE_LIMIT);
         this.keyHeapConfigKey = keyHeapConfigKey;
@@ -168,6 +175,20 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
 
     public long size() {
         return (keyHeapPos - keyHeapStart) / BLOCK_SIZE;
+    }
+
+    // Reports the offending page size and the ceiling but not the property that carries it: the
+    // config keys this class holds name the max-bytes budgets, not the page sizes.
+    // PropServerConfiguration validates the page-size properties at startup, where the name is
+    // known; this guard also covers the embedded callers that never read a property file.
+    private static void validatePageSize(String heapName, long pageSize, long ceiling) {
+        if (pageSize > ceiling) {
+            throw CairoException.nonCritical()
+                    .put("RedBlackTree ").put(heapName).put(" page size exceeds compressed offset addressable range [pageBytes=")
+                    .put(pageSize)
+                    .put(", maxAddressable=").put(ceiling)
+                    .put(']');
+        }
     }
 
     /**

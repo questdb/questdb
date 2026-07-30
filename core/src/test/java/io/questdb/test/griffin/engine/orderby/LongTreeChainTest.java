@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.orderby;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LongTreeChain;
@@ -37,6 +38,29 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class LongTreeChainTest extends AbstractCairoTest {
+
+    @Test
+    public void testConstructorAcceptsPagesAtTheCompressedOffsetCeilings() throws Exception {
+        // The other half of testConstructorRejectsPagesAboveCompressedOffsetCeilings: a page sized
+        // exactly at its ceiling is legal, because the last block or chain entry it can hold still
+        // starts below the first offset that collides with the sentinel. This is what makes the
+        // guard `>` rather than `>=`. openOnInit == false keeps it allocation-free.
+        assertMemoryLeak(() -> {
+            try (
+                    LongTreeChain chain = new LongTreeChain(
+                            CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE,
+                            Long.MAX_VALUE,
+                            CompressedOffsets.MAX_ALIGNED4_HEAP_SIZE,
+                            Long.MAX_VALUE,
+                            PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                            PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(),
+                            false
+                    )
+            ) {
+                Assert.assertEquals(0, chain.size());
+            }
+        });
+    }
 
     @Test
     public void testConstructorFailureFreesKeyHeap() throws Exception {
@@ -62,6 +86,60 @@ public class LongTreeChainTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "size=1024");
             } finally {
                 Unsafe.setRssMemLimit(savedLimit);
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorRejectsPagesAboveCompressedOffsetCeilings() throws Exception {
+        // The max-bytes budgets are clamped to the encoding ceilings, but the page sizes were copied
+        // into the initial heap sizes and allocated raw. growKeyHeap()/growValueHeap() carry the only
+        // range checks and neither runs until the oversized page fills, so allocateBlock() and
+        // appendValue() handed out truncated offsets inside it - and once a block offset reaches the
+        // all-ones encoding it is indistinguishable from the EMPTY sentinel the accessors branch on.
+        //
+        // openOnInit == false makes both halves allocation-free: the guard has to reject a 32GB page
+        // without the test ever asking for one.
+        assertMemoryLeak(() -> {
+            try {
+                new LongTreeChain(
+                        CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE + 8,
+                        Long.MAX_VALUE,
+                        128 * 1024,
+                        Long.MAX_VALUE,
+                        PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                        PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(),
+                        false
+                ).close();
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "RedBlackTree key page size exceeds compressed offset addressable range "
+                                + "[pageBytes=34359738360, maxAddressable=34359738352]"
+                );
+            }
+
+            // The value chain is 4-byte scaled, so its ceiling is half the key heap's. A page between
+            // the two is legal for the key heap and not for the value heap, which is what keeps the
+            // two guards from collapsing into one bound.
+            try {
+                new LongTreeChain(
+                        128 * 1024,
+                        Long.MAX_VALUE,
+                        CompressedOffsets.MAX_ALIGNED4_HEAP_SIZE + 4,
+                        Long.MAX_VALUE,
+                        PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                        PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(),
+                        false
+                ).close();
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "RedBlackTree value page size exceeds compressed offset addressable range "
+                                + "[pageBytes=17179869180, maxAddressable=17179869176]"
+                );
             }
         });
     }

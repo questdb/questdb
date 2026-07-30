@@ -102,10 +102,9 @@ import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
  */
 public class OrderedMap implements Map, Reopenable {
     static final long VAR_KEY_HEADER_SIZE = 4;
-    // The largest byte offset a compressed offset can encode: offsets are unsigned 32-bit,
-    // shifted by +1 and 8-byte scaled, so this is (2^32 - 2) * 8. Note that it is 16 bytes
-    // below 2^35, i.e. not a power of two, hence resize() has to clamp to it.
-    private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
+    // The largest heap the biased compressed offsets address. Note that it is 16 bytes below 2^35,
+    // i.e. not a power of two, hence resize() has to clamp to it rather than reject an overshoot.
+    private static final long MAX_HEAP_SIZE = CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE;
     private static final int MIN_KEY_CAPACITY = 16;
 
     private final OrderedMapCursor cursor;
@@ -242,7 +241,7 @@ public class OrderedMap implements Map, Reopenable {
             this.maxHeapSize = Math.min(maxHeapSize, MAX_HEAP_SIZE);
             initialHeapSize = heapSize;
             this.loadFactor = loadFactor;
-            validateBatchAddressable(heapSize);
+            validateHeapAddressable(heapSize);
             final int computedKeyCapacity = Math.max(Numbers.ceilPow2((int) (keyCapacity / loadFactor)), MIN_KEY_CAPACITY);
             this.initialKeyCapacity = computedKeyCapacity;
             nResizes = 0;
@@ -619,13 +618,27 @@ public class OrderedMap implements Map, Reopenable {
         return isEmptySlot(srcRawOffset) ? 0 : srcMap.heapAddr + decompressOffset(srcRawOffset);
     }
 
-    private static void validateBatchAddressable(long sizeBytes) {
-        // A silent truncation here would feed corrupted offsets into every batched
-        // probe; fail loudly instead of producing wrong aggregation results.
-        if (sizeBytes > Map.BATCH_OFFSET_MASK) {
+    /**
+     * Rejects a heap no compressed offset can address. Two encodings index this heap: the biased
+     * offsets in the hash table, bounded by {@code MAX_HEAP_SIZE}, and the offset field of a batched
+     * probe result, bounded by {@link Map#BATCH_OFFSET_MASK}. The former is far the tighter of the
+     * two - 32GB against 512GB - so it is the one that binds; the assert keeps that ordering honest
+     * if either constant ever moves.
+     * <p>
+     * Both allocation sites route through here. Checking only the batch bound let the constructor
+     * allocate an initial page up to 512GB: entries starting above the 32GB mark then compressed to
+     * a truncated offset or to the empty-slot encoding, so a probe aliased an earlier entry or read
+     * a live one as empty. resize() clamps to the ceiling and so cannot reach that state, but it
+     * validates too, for the same reason the constructor does.
+     */
+    private static void validateHeapAddressable(long sizeBytes) {
+        assert MAX_HEAP_SIZE <= Map.BATCH_OFFSET_MASK;
+        // A silent truncation here would feed corrupted offsets into every probe; fail loudly
+        // instead of producing wrong aggregation results.
+        if (sizeBytes > MAX_HEAP_SIZE) {
             throw CairoException.nonCritical()
-                    .put("OrderedMap heap size exceeds batched probe addressable range [heapBytes=").put(sizeBytes)
-                    .put(", maxAddressable=").put(Map.BATCH_OFFSET_MASK)
+                    .put("OrderedMap heap size exceeds compressed offset addressable range [heapBytes=").put(sizeBytes)
+                    .put(", maxAddressable=").put(MAX_HEAP_SIZE)
                     .put(']');
         }
     }
@@ -997,7 +1010,7 @@ public class OrderedMap implements Map, Reopenable {
         if (kCapacity > maxHeapSize) {
             kCapacity = maxHeapSize;
         }
-        validateBatchAddressable(kCapacity);
+        validateHeapAddressable(kCapacity);
         long kAddr = Unsafe.realloc(heapAddr, heapSize, kCapacity, heapMemoryTag, memoryTracker);
 
         this.heapSize = kCapacity;

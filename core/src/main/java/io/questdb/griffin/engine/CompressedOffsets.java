@@ -47,6 +47,20 @@ package io.questdb.griffin.engine;
  * emptiness sentinel lives here so a test can pin it at the boundary without a 16GB heap.
  */
 public final class CompressedOffsets {
+    /**
+     * The largest heap {@link #compressAligned4(long)} addresses: {@code (2^32 - 2) * 4}. One step
+     * below the all-ones encoding that consumers reserve as their chain-end sentinel, so no offset
+     * inside a heap of this size can collide with it. A heap allocated above this silently truncates
+     * the offsets of everything in its top region, which is why both the tree constructor and the
+     * configuration validation reject such a page rather than wait for the heap to fill.
+     */
+    public static final long MAX_ALIGNED4_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 2;
+    /**
+     * The largest heap {@link #compressAligned8(long)} and {@link #compressBiased8(long)} address:
+     * {@code (2^32 - 2) * 8}. Both encodings share the bound - the bias moves which encoding is
+     * reserved, not how far the 32 bits reach. See {@link #MAX_ALIGNED4_HEAP_SIZE}.
+     */
+    public static final long MAX_ALIGNED8_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
 
     private CompressedOffsets() {
     }

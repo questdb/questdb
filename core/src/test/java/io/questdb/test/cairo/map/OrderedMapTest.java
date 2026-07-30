@@ -49,6 +49,7 @@ import io.questdb.cairo.map.MapValueMergeFunction;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.std.BinarySequence;
@@ -828,6 +829,55 @@ public class OrderedMapTest extends AbstractCairoTest {
                 Assert.assertTrue(keyCapacityBefore > map.getKeyCapacity());
                 Assert.assertTrue(memUsedBefore > Unsafe.getMemUsed());
                 Assert.assertTrue(areaSizeBefore > map.getHeapSize());
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorRejectsHeapAboveCompressedOffsetCeiling() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // resize() clamps to the ceiling, but the initial page was allocated raw and only
+            // checked against BATCH_OFFSET_MASK, which sits 16x higher. A page above the ceiling
+            // therefore reached the heap intact and every entry starting past the 32GB mark
+            // compressed to a truncated offset or to the empty-slot encoding, so a probe aliased an
+            // earlier entry or read a live one as empty. Nothing in the map ran before that: the
+            // growth guard only fires once the oversized page fills.
+            //
+            // openOnInit == false keeps both halves allocation-free, so the boundary can be pinned
+            // exactly rather than approached with a 32GB malloc.
+            try (
+                    OrderedMap map = new OrderedMap(
+                            CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE,
+                            new SingleColumnType(ColumnType.LONG),
+                            new SingleColumnType(ColumnType.LONG),
+                            16,
+                            0.5,
+                            Integer.MAX_VALUE,
+                            false
+                    )
+            ) {
+                // A page at the ceiling is accepted: the last entry it can hold still starts below
+                // the first offset that collides. This is what makes the guard `>` and not `>=`.
+                Assert.assertEquals(0, map.size());
+            }
+
+            try {
+                new OrderedMap(
+                        CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE + 8,
+                        new SingleColumnType(ColumnType.LONG),
+                        new SingleColumnType(ColumnType.LONG),
+                        16,
+                        0.5,
+                        Integer.MAX_VALUE,
+                        false
+                ).close();
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "OrderedMap heap size exceeds compressed offset addressable range "
+                                + "[heapBytes=34359738360, maxAddressable=34359738352]"
+                );
             }
         });
     }

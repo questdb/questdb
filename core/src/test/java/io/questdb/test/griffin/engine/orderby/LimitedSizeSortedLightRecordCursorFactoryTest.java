@@ -27,6 +27,8 @@ package io.questdb.test.griffin.engine.orderby;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain;
+import io.questdb.griffin.engine.orderby.LimitedSizePartiallySortedLightRecordCursor;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -120,6 +122,57 @@ public class LimitedSizeSortedLightRecordCursorFactoryTest extends AbstractCairo
         });
     }
 
+    @Test
+    public void testFirstNRequestsLimitedIterationAndLastNDoesNot() throws Exception {
+        // The other half of the re-bind contract the two tests above cover through their results.
+        // of() asks the base cursor to expect a limited iteration only for first-N; on an
+        // AsyncFilteredRecordCursor that call caps in-flight page-frame dispatch, which is wrong for
+        // a last-N scan that has to drain the base in full to reach the tail it returns.
+        //
+        // Neither the rows nor the plan can show this: expectLimitedIteration() changes dispatch, not
+        // the selected rows, and the queries above put no async filter under the cursor. So drive the
+        // cursor directly with a base that records the call, and re-bind it the way a cached plan does.
+        assertMemoryLeak(() -> {
+            final LimitedSizeLongTreeChain chain = new LimitedSizeLongTreeChain(
+                    configuration.getSqlSortKeyPageSize(),
+                    configuration.getSqlSortKeyMaxBytes(),
+                    configuration.getSqlSortLightValuePageSize(),
+                    configuration.getSqlSortLightValueMaxBytes(),
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(),
+                    false
+            );
+            try {
+                // rankMaps is null for a non-symbol sort key, exactly as the factory builds it here.
+                final LimitedSizePartiallySortedLightRecordCursor cursor =
+                        new LimitedSizePartiallySortedLightRecordCursor(chain, new TestRecordComparator(), 0, null);
+                try {
+                    final CountingRecordCursor base = new CountingRecordCursor(1, 2, 3, 4, 5);
+
+                    // updateLimits() always runs ahead of of(), so of() reads a freshly derived flag.
+                    cursor.updateLimits(true, 3, 0, 0);
+                    cursor.of(base, sqlExecutionContext);
+                    Assert.assertEquals(1, base.expectLimitedIterationCount);
+
+                    // Same cursor, re-bound to last-N: the call must not be repeated.
+                    cursor.updateLimits(false, 3, 0, 2);
+                    cursor.of(base, sqlExecutionContext);
+                    Assert.assertEquals(1, base.expectLimitedIterationCount);
+
+                    // And back to first-N, so the flag is shown to track updateLimits rather than
+                    // latch on the first execution.
+                    cursor.updateLimits(true, 3, 0, 0);
+                    cursor.of(base, sqlExecutionContext);
+                    Assert.assertEquals(2, base.expectLimitedIterationCount);
+                } finally {
+                    cursor.close();
+                }
+            } finally {
+                chain.close();
+            }
+        });
+    }
+
     private static void assertFactoryChainContains(RecordCursorFactory factory, Class<?> expected) {
         for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
             if (expected.isInstance(f)) {
@@ -143,5 +196,23 @@ public class LimitedSizeSortedLightRecordCursorFactoryTest extends AbstractCairo
         planSink.clear();
         planSink.of(factory, sqlExecutionContext);
         TestUtils.assertContains(planSink.getSink(), "Sort light " + limits + " partiallySorted: true");
+    }
+
+    /**
+     * Counts {@link RecordCursor#expectLimitedIteration()} calls. The real base an
+     * {@code AsyncFilteredRecordCursor} turns that call into a dispatch cap, which no result or plan
+     * assertion can observe; counting it here is the observation.
+     */
+    private static class CountingRecordCursor extends TestRecordCursor {
+        int expectLimitedIterationCount;
+
+        CountingRecordCursor(long... values) {
+            super(values);
+        }
+
+        @Override
+        public void expectLimitedIteration() {
+            expectLimitedIterationCount++;
+        }
     }
 }
