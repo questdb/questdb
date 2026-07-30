@@ -528,14 +528,24 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 }
             }
         } finally {
-            walWriter = Misc.free(walWriter);
-            selectFactory = Misc.free(selectFactory);
-            countFactory = Misc.free(countFactory);
-            cleanupCompiler = Misc.free(cleanupCompiler);
-            // Release the sweep's memory tracker (M1): clear the context slot, then recycle the tracker to the
-            // provider pool so its used-bytes counter resets before the next sweep binds a fresh one.
-            sqlExecutionContext.setMemoryTracker(null);
-            memoryTracker.close();
+            try {
+                // Free the survivor-scan factories and compiler before releasing the memory tracker: the
+                // provider pool re-inits the tracker and asserts used == 0, so all memory charged to it must
+                // be released first. The WAL writer goes last, because for a dropped table returnToPool()
+                // returns false and WalWriter.close() runs doClose(), whose sequencer notification and file
+                // I/O can throw CairoException; Misc.free only catches IOException, so a throw here must not
+                // strand the memory-tracker release in the inner finally below.
+                selectFactory = Misc.free(selectFactory);
+                countFactory = Misc.free(countFactory);
+                cleanupCompiler = Misc.free(cleanupCompiler);
+                walWriter = Misc.free(walWriter);
+            } finally {
+                // Always release the sweep's memory tracker (M1): clear the context slot, then recycle the
+                // tracker to the provider pool so its used-bytes counter resets before the next sweep binds
+                // a fresh one.
+                sqlExecutionContext.setMemoryTracker(null);
+                memoryTracker.close();
+            }
         }
         return isWorkDone;
     }
