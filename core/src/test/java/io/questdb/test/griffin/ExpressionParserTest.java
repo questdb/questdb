@@ -786,7 +786,10 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
         assertFail("count(distinct *)", 6, "count(distinct *) is not supported");
         assertFail("count(distinct ", 6, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"distinct\"");
-        assertFail("notcount(distinct foo)", 18, "dangling literal");
+        // 'distinct' misused as a grouping-parenthesis modifier or inside a non-aggregate
+        // function gets a targeted, actionable error rather than the opaque "dangling literal"
+        assertFail("(distinct foo)", 1, "'distinct' is not allowed here");
+        assertFail("notcount(distinct foo)", 9, "'distinct' is not allowed here");
         assertFail("count(distinct(foo, bar))", 23, "count distinct aggregation supports a single column only");
         assertFail("count(DISTINCT(foo, bar))", 23, "count distinct aggregation supports a single column only");
         assertFail("count(distinct (foo, bar))", 24, "count distinct aggregation supports a single column only"); // with an extra space
@@ -1570,8 +1573,8 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("string_agg bar distinct foo", "foo(bar(string_agg), distinct)");
 
         assertFail("string_agg(distinct)", 11, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"distinct\"");
-        assertFail("notcount(distinct foo, ',')", 18, "dangling literal");
-        assertFail("notcount(distinct foo)", 18, "dangling literal");
+        assertFail("notcount(distinct foo, ',')", 9, "'distinct' is not allowed here");
+        assertFail("notcount(distinct foo)", 9, "'distinct' is not allowed here");
     }
 
     @Test
