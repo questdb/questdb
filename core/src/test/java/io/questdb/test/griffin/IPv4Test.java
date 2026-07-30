@@ -554,14 +554,14 @@ public class IPv4Test extends AbstractCairoTest {
                     .returns("""
                             ip
                             1.206.96.238
-                            
+
                             1.98.173.21
                             1.15.250.138
-                            
+
                             1.132.76.40
                             1.180.20.236
                             1.230.95.15
-                            
+
                             1.140.132.196
                             """);
         });
@@ -586,14 +586,14 @@ public class IPv4Test extends AbstractCairoTest {
                     .returns("""
                             ip
                             0.0.0.19
-                            
+
                             0.0.0.2
                             0.0.0.43
-                            
+
                             0.0.0.49
                             0.0.0.73
                             0.0.0.4
-                            
+
                             0.0.0.17
                             """);
         });
@@ -1368,7 +1368,7 @@ public class IPv4Test extends AbstractCairoTest {
                         
                         0.0.0.1
                         0.0.0.1
-                        
+
                         0.0.0.8
                         0.0.0.16
                         0.0.0.1
@@ -1377,10 +1377,10 @@ public class IPv4Test extends AbstractCairoTest {
                         0.0.0.2
                         
                         0.0.0.8
-                        
-                        
+
+
                         0.0.0.8
-                        
+
                         0.0.0.18
                         
                         
@@ -1389,11 +1389,11 @@ public class IPv4Test extends AbstractCairoTest {
                         0.0.0.4
                         
                         0.0.0.1
-                        
+
                         0.0.0.2
                         0.0.0.4
                         
-                        
+
                         
                         0.0.0.4
                         
@@ -1418,7 +1418,7 @@ public class IPv4Test extends AbstractCairoTest {
                         
                         
                         0.0.0.4
-                        
+
                         0.0.0.16
                         0.0.0.2
                         0.0.0.18
@@ -1437,7 +1437,7 @@ public class IPv4Test extends AbstractCairoTest {
                         0.0.0.14
                         0.0.0.1
                         0.0.0.6
-                        
+
                         0.0.0.8
                         0.0.0.16
                         0.0.0.2
@@ -2394,7 +2394,7 @@ public class IPv4Test extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             ip
-                            
+
                             0.0.0.5
                             0.0.0.5
                             0.0.0.4
@@ -2407,7 +2407,7 @@ public class IPv4Test extends AbstractCairoTest {
                             0.0.0.4
                             
                             0.0.0.5
-                            
+
                             0.0.0.4
                             """);
         });
@@ -2422,7 +2422,7 @@ public class IPv4Test extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             ip
-                            
+
                             0.0.0.5
                             0.0.0.5
                             0.0.0.4
@@ -2435,7 +2435,7 @@ public class IPv4Test extends AbstractCairoTest {
                             0.0.0.4
                             
                             0.0.0.5
-                            
+
                             0.0.0.4
                             """);
         });
@@ -2466,10 +2466,10 @@ public class IPv4Test extends AbstractCairoTest {
                             
                             
                             
-                            
-                            
-                            
-                            
+
+
+
+
                             """);
         });
     }
@@ -2880,26 +2880,26 @@ public class IPv4Test extends AbstractCairoTest {
                         0.0.0.4
                         0.0.0.3
                         0.0.0.15
-                        
+
                         0.0.0.8
                         
                         
                         
                         0.0.0.4
-                        
+
                         0.0.0.11
                         0.0.0.9
                         0.0.0.3
                         0.0.0.14
-                        
+
                         0.0.0.6
                         0.0.0.3
                         0.0.0.1
-                        
+
                         0.0.0.15
-                        
+
                         0.0.0.10
-                        
+
                         0.0.0.15
                         0.0.0.8
                         0.0.0.12
@@ -2932,12 +2932,12 @@ public class IPv4Test extends AbstractCairoTest {
                         0.0.0.13
                         0.0.0.13
                         0.0.0.1
-                        
+
                         0.0.0.1
                         
                         
                         0.0.0.5
-                        
+
                         0.0.0.12
                         
                         0.0.0.5
@@ -3039,13 +3039,13 @@ public class IPv4Test extends AbstractCairoTest {
                         0.0.3.110
                         0.0.7.110
                         0.0.0.250
-                        
+
                         0.0.6.110
-                        
+
                         0.0.2.106
                         0.0.4.150
                         0.0.7.246
-                        
+
                         0.0.6.77
                         0.0.6.124
                         0.0.6.88

@@ -174,6 +174,67 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateWidthConsistencyAcrossWidenedReads() throws Exception {
+        // A DATE json_extract expression must carry ONE value, as DateFunction does: getTimestamp
+        // converts the declared millisecond value to microseconds, getLong hands it back unchanged
+        // and getDouble widens it. The base class derived each width from its own native parse, so
+        // one DATE expression carried three values. A DATE taken from a JSON number read its
+        // milliseconds AS microseconds through getTimestamp, so hour() saw 43.2 seconds where the
+        // projection showed noon; a DATE taken from a JSON string read NULL through getLong and
+        // getDouble, because those retry the JSON numeric path the string never satisfied.
+        // Each json column is paired with a DATE column holding the same value - the control is what
+        // the declared type is required to mean.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE j (id INT, d DATE, text VARCHAR)");
+            execute("""
+                    INSERT INTO j VALUES
+                      (1, '1970-01-01T12:00:00.000Z'::date, '{"a":43200000}'),
+                      (2, '1970-01-01T00:00:00.005Z'::date, '{"a":"1970-01-01T00:00:00.005Z"}'),
+                      (3, '1970-01-01T00:00:00.002Z'::date, '{"a":2.5}'),
+                      (4, null, '{"a":"abc"}')""");
+
+            // h reads getTimestamp through hour(N) - DATE promotes to TIMESTAMP with no cast function
+            // in between. l reads getLong through *(LL), which wins because * has no DATE or TIMESTAMP
+            // overload. dd reads getDouble through cast(Md).
+            assertQuery("""
+                    SELECT id,
+                      json_extract(text,'$.a')::date v,
+                      hour(json_extract(text,'$.a')::date) h,
+                      hour(d) h_control,
+                      json_extract(text,'$.a')::date * 1 l,
+                      d * 1 l_control,
+                      json_extract(text,'$.a')::date::double dd,
+                      d::double dd_control
+                    FROM j ORDER BY id""")
+                    .expectSize()
+                    .returns("""
+                            id\tv\th\th_control\tl\tl_control\tdd\tdd_control
+                            1\t1970-01-01T12:00:00.000Z\t12\t12\t43200000\t43200000\t4.32E7\t4.32E7
+                            2\t1970-01-01T00:00:00.005Z\t0\t0\t5\t5\t5.0\t5.0
+                            3\t1970-01-01T00:00:00.002Z\t0\t0\t2\t2\t2.0\t2.0
+                            4\t\tnull\tnull\tnull\tnull\tnull\tnull
+                            """);
+
+            // An explicit cast resolves on the argument's own tag, not by overload distance, so it
+            // reaches getFloat even though FLOAT is absent from DATE's overload set. ::real is the
+            // spelling that gets there - SqlParser.rewritePgCast maps ::float to DOUBLE.
+            assertQuery("""
+                    SELECT id,
+                      json_extract(text,'$.a')::date::real rr,
+                      d::real rr_control
+                    FROM j ORDER BY id""")
+                    .expectSize()
+                    .returns("""
+                            id\trr\trr_control
+                            1\t4.32E7\t4.32E7
+                            2\t5.0\t5.0
+                            3\t2.0\t2.0
+                            4\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testDouble() throws Exception {
         testScenarios(ColumnType.DOUBLE);
     }
@@ -363,6 +424,87 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
     @Test
     public void testTimestamp() throws Exception {
         testScenarios(ColumnType.TIMESTAMP);
+    }
+
+    @Test
+    public void testTimestampWidthConsistencyAcrossWidenedReads() throws Exception {
+        // A TIMESTAMP json_extract expression must carry ONE value, as TimestampFunction does:
+        // getDate divides by the driver's millisecond factor, getLong hands the value back unchanged
+        // and getDouble widens it. The base class derived each width from its own native parse, so a
+        // TIMESTAMP taken from a JSON number read its microseconds AS milliseconds through getDate,
+        // and one taken from a JSON string read NULL through getLong and getDouble because those
+        // retry the JSON numeric path. Each json column is paired with a TIMESTAMP column holding the
+        // same value - the control is what the declared type is required to mean.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE j (id INT, ts TIMESTAMP, tsn TIMESTAMP_NS, text VARCHAR)");
+            execute("""
+                    INSERT INTO j VALUES
+                      (1, '1970-01-01T00:00:00.005000Z'::timestamp, '1970-01-01T00:00:00.000005000Z'::timestamp_ns, '{"a":5000}'),
+                      (2, '1970-01-01T00:00:05.000000Z'::timestamp, '1970-01-01T00:00:00.005000000Z'::timestamp_ns, '{"a":5000000}'),
+                      (3, '1970-01-01T00:00:00.000005Z'::timestamp, '1970-01-01T00:00:00.000005000Z'::timestamp_ns, '{"a":"1970-01-01T00:00:00.000005Z"}'),
+                      (4, null, null, '{"a":"abc"}')""");
+
+            // dt reads getDate through cast(Nm), l reads getLong through *(LL) - which wins because *
+            // has no TIMESTAMP overload - and dd reads getDouble through cast(Nd).
+            assertQuery("""
+                    SELECT id,
+                      json_extract(text,'$.a')::timestamp v,
+                      json_extract(text,'$.a')::timestamp::date dt,
+                      ts::date dt_control,
+                      json_extract(text,'$.a')::timestamp * 1 l,
+                      ts * 1 l_control,
+                      json_extract(text,'$.a')::timestamp::double dd,
+                      ts::double dd_control
+                    FROM j ORDER BY id""")
+                    .expectSize()
+                    .returns("""
+                            id\tv\tdt\tdt_control\tl\tl_control\tdd\tdd_control
+                            1\t1970-01-01T00:00:00.005000Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.005Z\t5000\t5000\t5000.0\t5000.0
+                            2\t1970-01-01T00:00:05.000000Z\t1970-01-01T00:00:05.000Z\t1970-01-01T00:00:05.000Z\t5000000\t5000000\t5000000.0\t5000000.0
+                            3\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\t5\t5\t5.0\t5.0
+                            4\t\t\t\tnull\tnull\tnull\tnull
+                            """);
+
+            // The nanosecond variant divides by a different factor to reach DATE, so it pins that the
+            // promoted read scales the declared type's own value rather than assuming a fixed unit.
+            // Row 2 is the discriminator: the same JSON number 5000000 is 5 seconds as a microsecond
+            // TIMESTAMP and 5 milliseconds as a nanosecond one, so its DATE differs by 1000x.
+            assertQuery("""
+                    SELECT id,
+                      json_extract(text,'$.a')::timestamp_ns v,
+                      json_extract(text,'$.a')::timestamp_ns::date dt,
+                      tsn::date dt_control,
+                      json_extract(text,'$.a')::timestamp_ns::double dd,
+                      tsn::double dd_control
+                    FROM j ORDER BY id""")
+                    .expectSize()
+                    .returns("""
+                            id\tv\tdt\tdt_control\tdd\tdd_control
+                            1\t1970-01-01T00:00:00.000005000Z\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\t5000.0\t5000.0
+                            2\t1970-01-01T00:00:00.005000000Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.005Z\t5000000.0\t5000000.0
+                            3\t1970-01-01T00:00:00.000005000Z\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\t5000.0\t5000.0
+                            4\t\t\t\tnull\tnull
+                            """);
+
+            // An explicit cast resolves on the argument's own tag, not by overload distance. rr goes
+            // through cast(Nf) and reaches getFloat even though FLOAT is absent from TIMESTAMP's
+            // overload set; tn goes through cast(Nn), the precision change, which reads getLong.
+            assertQuery("""
+                    SELECT id,
+                      json_extract(text,'$.a')::timestamp::real rr,
+                      ts::real rr_control,
+                      json_extract(text,'$.a')::timestamp::timestamp_ns tn,
+                      ts::timestamp_ns tn_control
+                    FROM j ORDER BY id""")
+                    .expectSize()
+                    .returns("""
+                            id\trr\trr_control\ttn\ttn_control
+                            1\t5000.0\t5000.0\t1970-01-01T00:00:00.005000000Z\t1970-01-01T00:00:00.005000000Z
+                            2\t5000000.0\t5000000.0\t1970-01-01T00:00:05.000000000Z\t1970-01-01T00:00:05.000000000Z
+                            3\t5.0\t5.0\t1970-01-01T00:00:00.000005000Z\t1970-01-01T00:00:00.000005000Z
+                            4\tnull\tnull\t\t
+                            """);
+        });
     }
 
     @Test

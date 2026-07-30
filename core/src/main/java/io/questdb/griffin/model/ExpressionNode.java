@@ -38,6 +38,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Objects;
 
@@ -331,6 +332,30 @@ public class ExpressionNode implements Mutable, Sinkable {
         return this;
     }
 
+    /**
+     * Whether {@link #cacheConstantFold} built this node's LONG-width fold - for a CONSTANT leaf,
+     * whether it parsed the token; for a binary pair, whether it combined its children's folds.
+     * Meaningful only once {@link #isConstantExpression} is set. Exposed because the one
+     * optimization in {@link #reassociateConstants} that a rendered tree cannot show - marking a
+     * CONSTANT argument of an n-ary node without parsing its token - is observable only through the
+     * fold cache.
+     */
+    @TestOnly
+    public boolean isConstFoldLongValid() {
+        return isConstFoldLongValid;
+    }
+
+    /**
+     * Whether this node is marked widening, which closes {@link #isReassociationSafe}'s guard for
+     * every operator except concatenation - {@code ||} short-circuits to safe before reading this.
+     * Meaningful only once {@link #isConstantExpression} is set. An n-ary argument that skipped the
+     * fold reads {@code true} because {@link #reassociateConstants} fails it closed.
+     */
+    @TestOnly
+    public boolean isConstFoldWidening() {
+        return isConstFoldWidening;
+    }
+
     public boolean isWildcard() {
         return type == LITERAL && Chars.endsWith(token, '*');
     }
@@ -423,6 +448,8 @@ public class ExpressionNode implements Mutable, Sinkable {
                     // no valid long fold", which isReassociationSafe answers "safe to regroup" for -
                     // the opposite of what a real integer or quoted leaf gets. Marking it widening
                     // keeps the guard shut if a future caller ever does read it.
+                    // ConstantReassociationTest#testNaryConstantArgsSkipFoldParsing pins this arm;
+                    // restoring the cacheConstantFold() call here turns it red.
                     arg.isConstFoldWidening = true;
                 } else {
                     arg.reassociateConstants(cairoSqlLegacyOperatorPrecedence);

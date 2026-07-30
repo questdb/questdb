@@ -85,12 +85,19 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
         final int maxSize = configuration.getStrFunctionMaxBufferLength();
         // A json_extract expression carries exactly one value per row, so every read of it has to
         // derive from its declared width rather than parse the JSON again at the width being read.
-        // SHORT, INT, LONG and FLOAT each get a one-value variant for that. BOOLEAN, DOUBLE and IPv4
-        // keep the base because they promote to nothing wider.
-        // DATE and TIMESTAMP still keep the base and still have the defect - both promote to LONG and
-        // DOUBLE (see ColumnType's overload table), where the base re-parses. Closing those two needs
-        // a decision the narrow types did not: DATE is milliseconds and TIMESTAMP is micros or nanos,
-        // so their reads at LONG width have to agree on a unit, not just on a number.
+        // SHORT, INT, LONG, FLOAT, DATE and TIMESTAMP each get a one-value variant for that.
+        // DOUBLE keeps the base because it promotes to nothing wider - every CastDoubleTo* reads
+        // getDouble(). IPv4 keeps it for a different reason: every CastIPv4To* reads getIPv4(), and
+        // although its overload row does carry STRING and VARCHAR, IPv4Function throws on getStrA
+        // and getVarcharA, so there is no reference behaviour at string width to disagree with.
+        // BOOLEAN keeps the base and still has the defect. cast(Tl) reads getLong(), which
+        // BooleanFunction derives from getBool() as 1/0, so ::boolean prints false for {"x":1} while
+        // ::boolean::long reads the base's independent parse and answers 1. That one is pre-existing
+        // and untouched here - it needs its own variant.
+        // The unit question DATE and TIMESTAMP raise - DATE is milliseconds and TIMESTAMP is micros or
+        // nanos, so a read at another width has to agree on a unit and not just on a number - is
+        // answered the way DateFunction and TimestampFunction already answer it: the promoted read
+        // scales the declared type's own value, LONG carrying the declared unit unchanged.
         switch (ColumnType.tagOf(targetType)) {
             case ColumnType.SHORT:
                 return new JsonExtractShortFunction(targetType, json, path, maxSize);
@@ -100,6 +107,10 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
                 return new JsonExtractLongFunction(targetType, json, path, maxSize);
             case ColumnType.FLOAT:
                 return new JsonExtractFloatFunction(targetType, json, path, maxSize);
+            case ColumnType.DATE:
+                return new JsonExtractDateFunction(targetType, json, path, maxSize);
+            case ColumnType.TIMESTAMP:
+                return new JsonExtractTimestampFunction(targetType, json, path, maxSize);
             default:
                 return new JsonExtractFunction(targetType, json, path, maxSize);
         }

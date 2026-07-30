@@ -101,28 +101,28 @@ public class SqlJitCompilerWideningBenchmark {
         final String countQuery = "select count(*) from " + TABLE_NAME + " where " + filter;
         final long expectedCount = javaFilterCount(countQuery);
 
-        final boolean jitShouldBeEnabled;
+        final boolean isJitExpected;
         switch (jitMode) {
             case SIMD:
                 ctx.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-                jitShouldBeEnabled = true;
+                isJitExpected = true;
                 break;
             case SCALAR:
                 ctx.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
-                jitShouldBeEnabled = true;
+                isJitExpected = true;
                 break;
             case DISABLED:
                 ctx.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                jitShouldBeEnabled = false;
+                isJitExpected = false;
                 break;
             default:
                 throw new IllegalStateException("unsupported JIT mode: " + jitMode);
         }
 
         rowIdFactory = compiler.compile(rowIdQuery, ctx).getRecordCursorFactory();
-        assertJitUsage("row-id", rowIdFactory, jitShouldBeEnabled);
+        assertJitUsage("row-id", rowIdFactory, isJitExpected);
         countFactory = compiler.compile(countQuery, ctx).getRecordCursorFactory();
-        assertJitUsage("count-only", countFactory, jitShouldBeEnabled);
+        assertJitUsage("count-only", countFactory, isJitExpected);
 
         final long rowIdCount = countRows(rowIdFactory, ctx);
         final long countOnlyCount = readCount(countFactory, ctx);
@@ -155,11 +155,11 @@ public class SqlJitCompilerWideningBenchmark {
         return countRows(rowIdFactory, ctx);
     }
 
-    private static void assertJitUsage(String path, RecordCursorFactory factory, boolean expected) {
-        if (factory.usesCompiledFilter() != expected) {
+    private static void assertJitUsage(String path, RecordCursorFactory factory, boolean isJitExpected) {
+        if (factory.usesCompiledFilter() != isJitExpected) {
             throw new IllegalStateException(
                     "unexpected JIT usage [path=" + path +
-                            ", expected=" + expected +
+                            ", expected=" + isJitExpected +
                             ", actual=" + factory.usesCompiledFilter() + ']'
             );
         }

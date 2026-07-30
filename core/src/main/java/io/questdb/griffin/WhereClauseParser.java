@@ -616,10 +616,10 @@ public final class WhereClauseParser implements Mutable {
 
         // Process the inner predicate recursively
         final boolean isNestedAndOffset = isInsideAndOffset;
-        boolean extracted;
+        boolean isExtracted;
         isInsideAndOffset = true;
         try {
-            extracted = removeAndIntrinsics(
+            isExtracted = removeAndIntrinsics(
                     timestampDriver,
                     translator,
                     tempModel,
@@ -651,7 +651,7 @@ public final class WhereClauseParser implements Mutable {
             return true;
         }
 
-        if (extracted || tempModel.hasIntervalFilters()) {
+        if (isExtracted || tempModel.hasIntervalFilters()) {
             // Merge directly from the temp model without allocating an intermediate RuntimeIntervalModel.
             // This applies the offset to each interval boundary using the timestamp driver's add method,
             // which correctly handles variable-length units like months and years. Consume the predicate
@@ -665,7 +665,7 @@ public final class WhereClauseParser implements Mutable {
                     ? Long.MAX_VALUE
                     : timestampDriver.getMaxDesignatedTimestamp();
             if (model.mergeIntervalModelWithAddMethod(tempModel, addMethod, offsetValue, isInjective, shiftInputCeiling)) {
-                if (extracted && isInjective) {
+                if (isExtracted && isInjective) {
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }

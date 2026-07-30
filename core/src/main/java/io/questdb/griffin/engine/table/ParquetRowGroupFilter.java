@@ -366,15 +366,15 @@ public final class ParquetRowGroupFilter {
                             break;
                         case ColumnType.TIMESTAMP: {
                             if (opType == PushdownFilterExtractor.OP_EQ) {
-                                boolean allCompatible = true;
+                                boolean isAllCompatible = true;
                                 for (int j = 0; j < valueCount; j++) {
                                     int vType = valueFunctions.getQuick(j).getType();
                                     if (!ColumnType.isTimestamp(vType) && vType != ColumnType.DATE) {
-                                        allCompatible = false;
+                                        isAllCompatible = false;
                                         break;
                                     }
                                 }
-                                if (!allCompatible) {
+                                if (!isAllCompatible) {
                                     supported = false;
                                     break;
                                 }

@@ -536,9 +536,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (cached != NOT_CACHED) {
             return cached != 0;
         }
-        final boolean result = containsFloatExpression0(node);
-        containsFloatCache.put(node, result ? 1 : 0);
-        return result;
+        final boolean hasFloatExpression = containsFloatExpression0(node);
+        containsFloatCache.put(node, hasFloatExpression ? 1 : 0);
+        return hasFloatExpression;
     }
 
     private boolean containsFloatExpression0(ExpressionNode node) {
@@ -585,9 +585,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (cached != NOT_CACHED) {
             return cached != 0;
         }
-        final boolean result = requiresWideLaneArithmetic0(node);
-        requiresWideLaneArithCache.put(node, result ? 1 : 0);
-        return result;
+        final boolean isWideLaneArithmeticRequired = requiresWideLaneArithmetic0(node);
+        requiresWideLaneArithCache.put(node, isWideLaneArithmeticRequired ? 1 : 0);
+        return isWideLaneArithmeticRequired;
     }
 
     private boolean requiresWideLaneArithmetic0(ExpressionNode node) {
@@ -639,9 +639,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (cached != NOT_CACHED) {
             return cached != 0;
         }
-        final boolean result = containsNarrowIntegerValue0(node);
-        containsNarrowIntCache.put(node, result ? 1 : 0);
-        return result;
+        final boolean hasNarrowIntegerValue = containsNarrowIntegerValue0(node);
+        containsNarrowIntCache.put(node, hasNarrowIntegerValue ? 1 : 0);
+        return hasNarrowIntegerValue;
     }
 
     private boolean containsNarrowIntegerValue0(ExpressionNode node) {
@@ -1237,18 +1237,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
         int position = node.position;
         CharSequence token = node.token;
-        boolean negate = false;
+        boolean isNegated = false;
         // Check for the negation case
         if (node.type == ExpressionNode.OPERATION) {
             ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;
             if (nextNode != null) {
                 position = nextNode.position;
                 token = nextNode.token;
-                negate = true;
+                isNegated = true;
             }
         }
 
-        serializeConstant(offset, position, token, negate,
+        serializeConstant(offset, position, token, isNegated,
                 isI64WidenLeaf(node) || i64WidenConstants.contains(node),
                 narrowKeptConstants.contains(node), intWidthNullElements.contains(node));
     }

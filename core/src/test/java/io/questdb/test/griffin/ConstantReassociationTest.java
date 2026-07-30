@@ -315,6 +315,62 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNaryConstantArgsSkipFoldParsing() throws Exception {
+        // reassociateConstants marks a CONSTANT argument of an n-ary node constant WITHOUT building
+        // its fold cache. isReassociationSafe is the cache's only reader and only ever receives an
+        // operand of a binary pair, which an args slot never is, so IN (1, ..., 10_000) parses no
+        // tokens instead of ten thousand - and a LONG-range element skips a guaranteed-failing
+        // parseInt whose NumericException fills a stack trace under -ea, which is how the tests run.
+        //
+        // The skip leaves the rendered tree byte-identical, which is all
+        // testReassociationMultiParamsMixedLiteralKinds can observe - restoring the cacheConstantFold
+        // call would keep that test green. The fold-cache state is the only thing that tells the two
+        // apart, so it is what this test asserts.
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            ExpressionTreeBuilder listener = new ExpressionTreeBuilder();
+            compiler.testParseExpression("l in (1, 5_000_000_000, null)", listener);
+            ExpressionNode node = listener.poll();
+            assert node != null;
+            node.reassociateConstants(false);
+
+            int constantArgs = 0;
+            for (int i = 0; i < node.paramCount; i++) {
+                final ExpressionNode arg = node.args.getQuick(i);
+                if (arg.type != ExpressionNode.CONSTANT) {
+                    continue;
+                }
+                constantArgs++;
+                Assert.assertTrue("args constant must carry the mark: " + arg.token, arg.isConstantExpression);
+                // The two integer tokens carry this one: cacheConstantFold parses both (parseInt
+                // takes 1, parseLong takes 5_000_000_000) and sets it true, so false here is proof
+                // no parse ran. 'null' cannot - it is not integer-shaped either way.
+                Assert.assertFalse("args constant must skip the parse: " + arg.token, arg.isConstFoldLongValid());
+                // Fail closed. All three tokens carry this one, but 'null' is the only one that
+                // carries it ALONE: cacheConstantFold classifies an unquoted non-numeric token as
+                // non-widening, i.e. safe to regroup. The skip has to say the opposite, so a future
+                // reader of the unbuilt cache refuses rather than trusting a cleared default.
+                Assert.assertTrue("args constant must fail closed: " + arg.token, arg.isConstFoldWidening());
+            }
+            Assert.assertEquals("expected three CONSTANT args", 3, constantArgs);
+        }
+
+        // Contrast: a binary pair's operands ARE on isReassociationSafe's route, so they keep the
+        // fold. Without this the assertions above would also pass if reassociateConstants stopped
+        // caching altogether.
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            ExpressionTreeBuilder listener = new ExpressionTreeBuilder();
+            compiler.testParseExpression("1 + 5_000_000_000", listener);
+            ExpressionNode node = listener.poll();
+            assert node != null;
+            node.reassociateConstants(false);
+            Assert.assertTrue(node.lhs.isConstFoldLongValid());
+            Assert.assertTrue(node.rhs.isConstFoldLongValid());
+            Assert.assertFalse(node.lhs.isConstFoldWidening());
+            Assert.assertFalse(node.rhs.isConstFoldWidening());
+        }
+    }
+
+    @Test
     public void testNoReassociationForNonConstantSubtree() throws Exception {
         // Reassociation is only applied to constant subtrees, so if the subtree contains a non-constant node, it should be left unchanged.
         assertReassociation("1 + (a + b)", "1 + (a + b)");
