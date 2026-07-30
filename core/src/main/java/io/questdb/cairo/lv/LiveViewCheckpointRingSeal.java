@@ -60,11 +60,13 @@ import java.io.Closeable;
  * <p>
  * Two things that arithmetic understates. It prices a row at its <em>raw</em>
  * width, but what sharing avoids re-writing is the <em>encoded</em> width:
- * {@link LiveViewCheckpointStateCodec} delta-of-delta encodes timestamps and XOR
- * encodes DOUBLE values, so a well-compressing ring saves far fewer bytes per
- * shared row than 16 - near enough to the 80 that a chunk costs for the margin to
- * matter. LONG and DECIMAL value pages store raw, so for those the figure holds as
- * written. And a large frame does <em>not</em> share almost everything: past
+ * {@link LiveViewCheckpointStateCodec} FoR-encodes timestamps and integer value
+ * words and ALP-encodes DOUBLE values, so a well-compressing ring saves far fewer
+ * bytes per shared row than 16 - regularly spaced timestamps and a narrow-range
+ * LONG or DECIMAL column both cost a fraction of a byte a row, which leaves the
+ * 80 that a chunk costs dominating. Only an incompressible column stores raw and
+ * makes the figure hold as written. And a large frame does <em>not</em> share
+ * almost everything: past
  * {@link #MAX_LIVE_CHUNKS} times the codec's chunk row count - about one million
  * live rows for a one-word ring - {@code chunkCap} can never be met, so every seal
  * re-images the whole ring for that partition key. Above roughly 134 million live

@@ -83,16 +83,19 @@ public class LiveViewCheckpointDataSegmentTest extends AbstractCairoTest {
                     Unsafe.putLong(doubleAddress + (long) i * Long.BYTES, Double.doubleToRawLongBits(42.5));
                 }
 
-                timestampCodec = LiveViewCheckpointStateCodec.selectTimestampCodec(timestampAddress, rowCount);
-                doubleCodec = LiveViewCheckpointStateCodec.selectDoubleCodec(doubleAddress, rowCount);
-                Assert.assertEquals(LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT, timestampCodec);
-                Assert.assertEquals(LiveViewCheckpointStateCodec.DOUBLE_XOR, doubleCodec);
-
                 writer.of(checkpointsDir(dir), 13);
-                LiveViewCheckpointStateCodec.encodeTimestamps(writer.beginPage(), timestampAddress, rowCount, timestampCodec);
+                timestampCodec = LiveViewCheckpointStateCodec.encodeTimestamps(
+                        writer.beginPage(), source, timestampAddress, rowCount
+                );
                 writer.endPage(timestampRef, rowCount * Long.BYTES, PAGE_KIND, timestampCodec, rowCount, 0);
-                LiveViewCheckpointStateCodec.encodeDoubles(writer.beginPage(), doubleAddress, rowCount, doubleCodec);
+                doubleCodec = LiveViewCheckpointStateCodec.encodeDoubles(
+                        writer.beginPage(), source, doubleAddress, rowCount
+                );
                 writer.endPage(doubleRef, rowCount * Long.BYTES, PAGE_KIND + 1, doubleCodec, rowCount, 0);
+                // A regular cadence and a constant value both compress, so the
+                // stored pages are far shorter than the rows they carry.
+                Assert.assertEquals(LiveViewCheckpointStateCodec.COVERING_LONG, timestampCodec);
+                Assert.assertEquals(LiveViewCheckpointStateCodec.COVERING_DOUBLE, doubleCodec);
                 fileLength = writer.commit();
             }
 
@@ -102,13 +105,14 @@ public class LiveViewCheckpointDataSegmentTest extends AbstractCairoTest {
                 reader.of(checkpointsDir(dir), 13, fileLength);
 
                 reader.openPage(timestampRef, PAGE_KIND, timestampCodec, 0, rowCount, rowCount * Long.BYTES);
-                final int timestampBytes = LiveViewCheckpointStateCodec.decodeTimestamps(
+                final int timestampBytes = LiveViewCheckpointStateCodec.decodeLongs(
                         reader.getPageAddress(),
                         reader.getPageStoredLength(),
                         timestampCodec,
                         rowCount,
                         target.timestampsAddress(),
-                        LiveViewCheckpointStateCodec.CHUNK_ROWS
+                        LiveViewCheckpointStateCodec.CHUNK_ROWS,
+                        target
                 );
                 reader.assertFullyConsumed(timestampBytes, rowCount * Long.BYTES, rowCount);
 
@@ -119,7 +123,8 @@ public class LiveViewCheckpointDataSegmentTest extends AbstractCairoTest {
                         doubleCodec,
                         rowCount,
                         target.valuesAddress(),
-                        LiveViewCheckpointStateCodec.CHUNK_ROWS
+                        LiveViewCheckpointStateCodec.CHUNK_ROWS,
+                        target
                 );
                 reader.assertFullyConsumed(doubleBytes, rowCount * Long.BYTES, rowCount);
 

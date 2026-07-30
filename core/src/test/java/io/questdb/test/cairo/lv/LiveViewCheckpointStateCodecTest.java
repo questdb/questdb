@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.idx.CoveringCompressor;
 import io.questdb.cairo.lv.LiveViewCheckpointStateCodec;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.vm.Vm;
@@ -43,66 +44,100 @@ import java.util.Arrays;
 
 public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
 
+    private static final int CHUNK_ROWS = LiveViewCheckpointStateCodec.CHUNK_ROWS;
+    // One page large enough to hold any encoded chunk contiguously, which is what
+    // lets a test read an encoded page back through a single address.
+    private static final int SINK_PAGE_SIZE = 1024 * 1024;
+
     @Test
-    public void testAdaptiveFallbackAndSavingThreshold() throws Exception {
+    public void testCorruptCoveringDoublePagesAreRejected() throws Exception {
         assertMemoryLeak(() -> {
-            try (LiveViewCheckpointStateCodec.Scratch scratch = new LiveViewCheckpointStateCodec.Scratch(null)) {
-                final long timestampAddress = scratch.timestampsAddress();
-                for (int i = 0; i < LiveViewCheckpointStateCodec.CHUNK_ROWS; i++) {
-                    Unsafe.putLong(timestampAddress + (long) i * Long.BYTES, 1_000_000L + i * 1_000L);
+            final long[] values = new long[256];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = Double.doubleToRawLongBits(100.0 + i);
+            }
+            try (LiveViewCheckpointStateCodec.Scratch scratch = new LiveViewCheckpointStateCodec.Scratch(null);
+                 MemoryCARW encoded = sink()) {
+                final long source = scratch.valuesAddress();
+                put(source, values);
+                final int codec = LiveViewCheckpointStateCodec.encodeDoubles(encoded, scratch, source, values.length);
+                Assert.assertEquals(LiveViewCheckpointStateCodec.COVERING_DOUBLE, codec);
+                final int storedLength = (int) encoded.getAppendOffset();
+
+                // Every rejection is the checked covering decoder's, relabelled by
+                // the adapter rather than swallowed.
+                assertDoubleDecodeFails(encoded, storedLength - 1, codec, values.length, "block length mismatch");
+                assertDoubleDecodeFails(encoded, storedLength, codec, values.length - 1, "block count mismatch");
+                assertDoubleDecodeFails(encoded, CoveringCompressor.DOUBLE_HEADER_SIZE - 1, codec, values.length,
+                        "truncated block header");
+
+                // An ALP exponent outside the power tables and an impossible bit
+                // width are both caught before a single value is decoded.
+                final byte exponent = encoded.getByte(4);
+                encoded.putByte(4, (byte) 100);
+                assertDoubleDecodeFails(encoded, storedLength, codec, values.length, "invalid ALP exponent");
+                encoded.putByte(4, exponent);
+                final byte bitWidth = encoded.getByte(6);
+                encoded.putByte(6, (byte) 65);
+                assertDoubleDecodeFails(encoded, storedLength, codec, values.length, "invalid bit width");
+                encoded.putByte(6, bitWidth);
+
+                // The page is intact again, so it must still decode exactly.
+                try (LiveViewCheckpointStateCodec.Scratch target = new LiveViewCheckpointStateCodec.Scratch(null)) {
+                    Assert.assertEquals(storedLength, LiveViewCheckpointStateCodec.decodeDoubles(
+                            encoded.addressOf(0), storedLength, codec, values.length,
+                            target.valuesAddress(), CHUNK_ROWS, target
+                    ));
+                    assertBitsEqual(values, target.valuesAddress());
                 }
-                Assert.assertEquals(
-                        LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT,
-                        LiveViewCheckpointStateCodec.selectTimestampCodec(
-                                timestampAddress,
-                                LiveViewCheckpointStateCodec.CHUNK_ROWS
-                        )
-                );
-
-                // A decreasing stream and a mathematically positive delta that
-                // overflows signed long arithmetic must both select raw.
-                put(timestampAddress, 10, 9);
-                Assert.assertEquals(
-                        LiveViewCheckpointStateCodec.TIMESTAMP_RAW_64,
-                        LiveViewCheckpointStateCodec.selectTimestampCodec(timestampAddress, 2)
-                );
-                put(timestampAddress, Long.MIN_VALUE, Long.MAX_VALUE);
-                Assert.assertEquals(
-                        LiveViewCheckpointStateCodec.TIMESTAMP_RAW_64,
-                        LiveViewCheckpointStateCodec.selectTimestampCodec(timestampAddress, 2)
-                );
-
-                final long doubleAddress = scratch.valuesAddress();
-                final Rnd rnd = new Rnd(0x1234, 0x5678);
-                for (int i = 0; i < LiveViewCheckpointStateCodec.CHUNK_ROWS; i++) {
-                    Unsafe.putLong(doubleAddress + (long) i * Long.BYTES, rnd.nextLong());
-                }
-                Assert.assertEquals(
-                        LiveViewCheckpointStateCodec.DOUBLE_RAW_64,
-                        LiveViewCheckpointStateCodec.selectDoubleCodec(doubleAddress, LiveViewCheckpointStateCodec.CHUNK_ROWS)
-                );
-
-                for (int i = 0; i < 64; i++) {
-                    Unsafe.putLong(doubleAddress + (long) i * Long.BYTES, Double.doubleToRawLongBits(42.5));
-                }
-                Assert.assertEquals(
-                        LiveViewCheckpointStateCodec.DOUBLE_XOR,
-                        LiveViewCheckpointStateCodec.selectDoubleCodec(doubleAddress, 64)
-                );
-
-                // Even a smaller encoded stream stays raw until it saves the
-                // 16-byte floor required by the format.
-                Assert.assertEquals(
-                        LiveViewCheckpointStateCodec.DOUBLE_RAW_64,
-                        LiveViewCheckpointStateCodec.selectDoubleCodec(doubleAddress, 2)
-                );
             }
         });
     }
 
     @Test
-    public void testAllDoubleBitPatternsRoundTripExactly() throws Exception {
+    public void testCorruptCoveringLongPagesAreRejected() throws Exception {
         assertMemoryLeak(() -> {
+            final long[] values = new long[128];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = 1_000_000L + i * 7L;
+            }
+            try (LiveViewCheckpointStateCodec.Scratch scratch = new LiveViewCheckpointStateCodec.Scratch(null);
+                 MemoryCARW encoded = sink()) {
+                final long source = scratch.timestampsAddress();
+                put(source, values);
+                final int codec = LiveViewCheckpointStateCodec.encodeTimestamps(encoded, scratch, source, values.length);
+                Assert.assertEquals(LiveViewCheckpointStateCodec.COVERING_LONG, codec);
+                final int storedLength = (int) encoded.getAppendOffset();
+
+                assertLongDecodeFails(encoded, storedLength + 1, codec, values.length, "block length mismatch");
+                assertLongDecodeFails(encoded, storedLength, codec, values.length + 1, "block count mismatch");
+                assertLongDecodeFails(encoded, CoveringCompressor.LONG_HEADER_SIZE - 1, codec, values.length,
+                        "truncated block header");
+
+                // The top bit alone is not the linear-prediction flag, so the byte
+                // reads as a plain block of impossible width.
+                final byte flags = encoded.getByte(4);
+                encoded.putByte(4, (byte) 0x80);
+                assertLongDecodeFails(encoded, storedLength, codec, values.length, "invalid bit width");
+                encoded.putByte(4, flags);
+
+                try (LiveViewCheckpointStateCodec.Scratch target = new LiveViewCheckpointStateCodec.Scratch(null)) {
+                    Assert.assertEquals(storedLength, LiveViewCheckpointStateCodec.decodeLongs(
+                            encoded.addressOf(0), storedLength, codec, values.length,
+                            target.timestampsAddress(), CHUNK_ROWS, target
+                    ));
+                    assertBitsEqual(values, target.timestampsAddress());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDoubleBitPatternsRoundTripExactly() throws Exception {
+        assertMemoryLeak(() -> {
+            // ALP stores whatever it cannot transform bit-exactly as an exception,
+            // so a NaN payload, an infinity and a signed zero must come back
+            // verbatim whichever codec the page ends up under.
             final long[] bits = {
                     0L,
                     Long.MIN_VALUE,
@@ -120,287 +155,68 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
                     0x3ff0_0000_0000_0000L,
                     0xbff0_0000_0000_0000L
             };
-            assertDoubleRoundTrip(bits, LiveViewCheckpointStateCodec.DOUBLE_RAW_64);
-            assertDoubleRoundTrip(bits, LiveViewCheckpointStateCodec.DOUBLE_XOR);
-        });
-    }
-
-    @Test
-    public void testBoundarySizesAndDuplicateTimestamps() throws Exception {
-        assertMemoryLeak(() -> {
-            final int[] sizes = {0, 1, 2, LiveViewCheckpointStateCodec.CHUNK_ROWS - 1, LiveViewCheckpointStateCodec.CHUNK_ROWS};
-            for (int size : sizes) {
-                final long[] timestamps = new long[size];
-                final long[] doubles = new long[size];
+            assertDoubleRoundTrip(bits, -1);
+            for (int size : new int[]{0, 1, 2, CHUNK_ROWS - 1, CHUNK_ROWS}) {
+                final long[] prices = new long[size];
                 for (int i = 0; i < size; i++) {
-                    timestamps[i] = 100 + (i / 3) * 7L;
-                    doubles[i] = Double.doubleToRawLongBits(100.0 + (i / 5) * 0.25);
+                    prices[i] = Double.doubleToRawLongBits(100.0 + (i % 997) * 0.01);
                 }
-                assertTimestampRoundTrip(timestamps, LiveViewCheckpointStateCodec.TIMESTAMP_RAW_64);
-                assertTimestampRoundTrip(timestamps, LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT);
-                assertDoubleRoundTrip(doubles, LiveViewCheckpointStateCodec.DOUBLE_RAW_64);
-                assertDoubleRoundTrip(doubles, LiveViewCheckpointStateCodec.DOUBLE_XOR);
+                assertDoubleRoundTrip(prices, -1);
             }
         });
     }
 
     @Test
-    public void testCorruptDoubleStreamsAreRejected() throws Exception {
+    public void testDoubleSelectionByExactSize() throws Exception {
         assertMemoryLeak(() -> {
-            try (LiveViewCheckpointStateCodec.Scratch scratch = new LiveViewCheckpointStateCodec.Scratch(null);
-                 MemoryCARW encoded = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                final long target = scratch.valuesAddress();
+            // A constant decimal double transforms to one repeated ALP word, so the
+            // whole chunk costs its 19-byte header and no packed bits at all.
+            final long[] constant = new long[CHUNK_ROWS];
+            Arrays.fill(constant, Double.doubleToRawLongBits(42.5));
+            assertDoubleSelection(constant, LiveViewCheckpointStateCodec.COVERING_DOUBLE, 19);
 
-                assertDoubleDecodeFails(encoded, target, 99, 0, "unknown double codec");
-                assertDoubleDecodeFails(encoded, target, LiveViewCheckpointStateCodec.DOUBLE_RAW_64, -1, "row count out of bounds");
-                assertDoubleDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.DOUBLE_RAW_64,
-                        LiveViewCheckpointStateCodec.CHUNK_ROWS + 1,
-                        "row count out of bounds"
-                );
-
-                encoded.putLong(7);
-                assertDoubleDecodeFails(encoded, target, LiveViewCheckpointStateCodec.DOUBLE_RAW_64, 2, "raw double page length");
-
-                encoded.truncate();
-                encoded.putLong(7);
-                encoded.putByte((byte) 0x01); // nonzero control + reuse control
-                assertDoubleDecodeFails(encoded, target, LiveViewCheckpointStateCodec.DOUBLE_XOR, 2, "missing window");
-
-                encoded.truncate();
-                encoded.putLong(7);
-                encoded.putByte((byte) 0xff); // nonzero + new + leading=63
-                encoded.putByte((byte) 0x02); // significant bits=2 => impossible window
-                assertDoubleDecodeFails(encoded, target, LiveViewCheckpointStateCodec.DOUBLE_XOR, 2, "window out of bounds");
-
-                final long[] values = new long[32];
-                Arrays.fill(values, Double.doubleToRawLongBits(3.5));
-                final int validLength = encodeDoubles(encoded, scratch, values, LiveViewCheckpointStateCodec.DOUBLE_XOR);
-                encoded.putByte((byte) 0);
-                assertDoubleDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.DOUBLE_XOR,
-                        values.length,
-                        "trailing bytes"
-                );
-
-                encoded.jumpTo(validLength);
-                final byte last = encoded.getByte(validLength - 1L);
-                encoded.putByte(validLength - 1L, (byte) (last | 0x80));
-                assertDoubleDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.DOUBLE_XOR,
-                        values.length,
-                        "padding bits"
-                );
-
-                encoded.jumpTo(validLength - 1L);
-                assertDoubleDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.DOUBLE_XOR,
-                        values.length,
-                        "truncated double XOR"
-                );
-
-                try {
-                    LiveViewCheckpointStateCodec.decodeDoubles(
-                            encoded.addressOf(0),
-                            validLength,
-                            LiveViewCheckpointStateCodec.DOUBLE_XOR,
-                            values.length,
-                            target,
-                            values.length - 1
-                    );
-                    Assert.fail("expected target capacity rejection");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "target capacity");
-                }
+            // A decimal price series transforms to 18-bit ALP words with a handful
+            // of values the transform cannot reproduce exactly: 19 header bytes,
+            // 9216 packed bytes and 43 exceptions at 12 bytes each.
+            final long[] prices = new long[CHUNK_ROWS];
+            for (int i = 0; i < prices.length; i++) {
+                prices[i] = Double.doubleToRawLongBits(100.0 + i * 0.01);
             }
+            assertDoubleSelection(prices, LiveViewCheckpointStateCodec.COVERING_DOUBLE,
+                    CoveringCompressor.DOUBLE_HEADER_SIZE + (CHUNK_ROWS * 18) / 8 + 43 * (Integer.BYTES + Double.BYTES));
+
+            // A repeated NaN payload is what ALP cannot represent at all: every
+            // value becomes an exception, which is longer than storing raw. This is
+            // the regression the bespoke XOR codec used to win, and does not any
+            // more.
+            final long[] nans = new long[CHUNK_ROWS];
+            Arrays.fill(nans, 0x7ff8_dead_beef_1234L);
+            assertDoubleSelection(nans, LiveViewCheckpointStateCodec.RAW_64, CHUNK_ROWS * Long.BYTES);
         });
     }
 
     @Test
-    public void testCorruptTimestampStreamsAreRejected() throws Exception {
+    public void testLongSelectionByExactSize() throws Exception {
         assertMemoryLeak(() -> {
-            try (LiveViewCheckpointStateCodec.Scratch scratch = new LiveViewCheckpointStateCodec.Scratch(null);
-                 MemoryCARW encoded = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                final long target = scratch.timestampsAddress();
+            final long[] constant = new long[CHUNK_ROWS];
+            Arrays.fill(constant, -12345L);
+            assertLongSelection(constant, LiveViewCheckpointStateCodec.COVERING_LONG,
+                    CoveringCompressor.LONG_HEADER_SIZE);
 
-                assertTimestampDecodeFails(encoded, target, 99, 0, "unknown timestamp codec");
-                assertTimestampDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.TIMESTAMP_RAW_64,
-                        -1,
-                        "row count out of bounds"
-                );
-
-                encoded.putLong(7);
-                assertTimestampDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.TIMESTAMP_RAW_64,
-                        2,
-                        "raw timestamp page length"
-                );
-
-                encoded.truncate();
-                encoded.putLong(7);
-                encoded.putByte((byte) 0x80);
-                assertTimestampDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT,
-                        2,
-                        "truncated LEB128"
-                );
-
-                encoded.putByte((byte) 0);
-                assertTimestampDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT,
-                        2,
-                        "non-canonical LEB128"
-                );
-
-                // Padding a value out over several bytes is the same corruption as
-                // padding it out over two, however many of the extra bytes carry
-                // payload bits.
-                encoded.truncate();
-                encoded.putLong(7);
-                encoded.putByte((byte) 0x81);
-                encoded.putByte((byte) 0x82);
-                encoded.putByte((byte) 0x00);
-                assertTimestampDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT,
-                        2,
-                        "non-canonical LEB128"
-                );
-
-                encoded.truncate();
-                encoded.putLong(Long.MAX_VALUE);
-                encoded.putByte((byte) 1);
-                assertTimestampDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT,
-                        2,
-                        "timestamp arithmetic overflow"
-                );
-
-                encoded.truncate();
-                encoded.putLong(0);
-                encoded.putByte((byte) 0); // first delta
-                encoded.putByte((byte) 1); // ZigZag(-1), making the next delta negative
-                assertTimestampDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT,
-                        3,
-                        "sequence decreases"
-                );
-
-                encoded.truncate();
-                encoded.putLong(0);
-                encoded.putByte((byte) 1);
-                encoded.putByte((byte) 0);
-                assertTimestampDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT,
-                        2,
-                        "trailing bytes"
-                );
-
-                encoded.truncate();
-                encoded.putLong(0);
-                for (int i = 0; i < 9; i++) {
-                    encoded.putByte((byte) 0x80);
-                }
-                encoded.putByte((byte) 0x02);
-                assertTimestampDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT,
-                        2,
-                        "overflows 64 bits"
-                );
-
-                // A value that keeps asking for another byte past the tenth is the
-                // same overflow, and rejecting it is what bounds the decoder's scan.
-                encoded.truncate();
-                encoded.putLong(0);
-                for (int i = 0; i < 12; i++) {
-                    encoded.putByte((byte) 0x80);
-                }
-                assertTimestampDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT,
-                        2,
-                        "overflows 64 bits"
-                );
-
-                // A delta-of-delta that carries the running delta past Long.MAX_VALUE is
-                // a distinct rejection from one that drags it below zero: the first
-                // overflows the accumulator, the second decodes exactly and decreases.
-                encoded.truncate();
-                encoded.putLong(0);
-                for (int i = 0; i < 8; i++) {
-                    encoded.putByte((byte) 0xff); // first delta = Long.MAX_VALUE
-                }
-                encoded.putByte((byte) 0x7f);
-                encoded.putByte((byte) 0x02); // ZigZag(1), taking the delta past the top
-                assertTimestampDecodeFails(
-                        encoded,
-                        target,
-                        LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT,
-                        3,
-                        "timestamp delta arithmetic overflow"
-                );
+            final long[] narrow = new long[CHUNK_ROWS];
+            for (int i = 0; i < narrow.length; i++) {
+                narrow[i] = i % 1024;
             }
-        });
-    }
+            assertLongSelection(narrow, LiveViewCheckpointStateCodec.COVERING_LONG,
+                    CoveringCompressor.LONG_HEADER_SIZE + CHUNK_ROWS * 10 / 8);
 
-    /**
-     * The XOR stream packs a row's control bits and its significant bits at whatever
-     * bit offset the previous row left behind, so a field can start at any of the
-     * eight alignments and span up to nine bytes. A repeated full-width window costs
-     * 66 bits a row, which walks the alignment round and leaves most fields crossing a
-     * byte - and sweeping the row count ends the stream at every byte offset, so the
-     * last field of some arm sits against the end of the stream. The other arm varies
-     * the window width instead, which moves the two 6-bit headers through alignments
-     * a uniform run never reaches.
-     */
-    @Test
-    public void testDoubleXorRoundTripsFieldsAtEveryAlignment() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int n = 2; n <= 40; n++) {
-                final long[] bits = new long[n];
-                for (int i = 0; i < n; i++) {
-                    // Consecutive values XOR to 0x8000000000000001: no leading and no
-                    // trailing zeros, so every window spans the full 64 bits.
-                    bits[i] = (i & 1) == 0 ? 1L : Long.MIN_VALUE;
-                }
-                assertDoubleRoundTrip(bits, LiveViewCheckpointStateCodec.DOUBLE_XOR);
+            // A stream that spans the whole 64-bit range packs no narrower than it
+            // already is, so the FoR header alone makes the block longer than raw.
+            final long[] wide = new long[CHUNK_ROWS];
+            for (int i = 0; i < wide.length; i++) {
+                wide[i] = (i & 1) == 0 ? Long.MIN_VALUE + i : Long.MAX_VALUE - i;
             }
-            for (int n = 2; n <= 40; n++) {
-                final long[] bits = new long[n];
-                long value = 0x3ff0_0000_0000_0000L;
-                for (int i = 0; i < n; i++) {
-                    bits[i] = value;
-                    value ^= 1L << (i % Long.SIZE);
-                }
-                assertDoubleRoundTrip(bits, LiveViewCheckpointStateCodec.DOUBLE_XOR);
-            }
+            assertLongSelection(wide, LiveViewCheckpointStateCodec.RAW_64, CHUNK_ROWS * Long.BYTES);
         });
     }
 
@@ -408,21 +224,38 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
     public void testRandomRoundTripProperty() throws Exception {
         assertMemoryLeak(() -> {
             final Rnd rnd = new Rnd(0x9876_5432L, 0x1020_3040L);
-            for (int iteration = 0; iteration < 200; iteration++) {
-                final int size = rnd.nextInt(LiveViewCheckpointStateCodec.CHUNK_ROWS + 1);
+            for (int iteration = 0; iteration < 100; iteration++) {
+                final int size = rnd.nextInt(CHUNK_ROWS + 1);
                 final long[] timestamps = new long[size];
                 final long[] doubles = new long[size];
+                final long[] longs = new long[size];
                 long timestamp = rnd.nextLong() % 1_000_000_000L;
                 for (int i = 0; i < size; i++) {
                     timestamp += rnd.nextPositiveInt() % 1000;
                     timestamps[i] = timestamp;
                     doubles[i] = rnd.nextLong();
+                    longs[i] = rnd.nextLong() >> (rnd.nextPositiveInt() % 64);
                 }
-                assertTimestampRoundTrip(timestamps, LiveViewCheckpointStateCodec.TIMESTAMP_RAW_64);
-                assertTimestampRoundTrip(timestamps, LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT);
-                assertDoubleRoundTrip(doubles, LiveViewCheckpointStateCodec.DOUBLE_RAW_64);
-                assertDoubleRoundTrip(doubles, LiveViewCheckpointStateCodec.DOUBLE_XOR);
+                assertTimestampRoundTrip(timestamps, -1);
+                assertDoubleRoundTrip(doubles, -1);
+                assertLongRoundTrip(longs, -1);
             }
+        });
+    }
+
+    @Test
+    public void testRawWinsSizeTies() throws Exception {
+        assertMemoryLeak(() -> {
+            // Two values spanning nine bits pack into exactly the 16 raw bytes they
+            // came from: the tie must go to raw, which is what keeps a page from
+            // ever exceeding its decoded payload.
+            final long[] tied = {0, 511};
+            Assert.assertEquals(
+                    CoveringCompressor.LONG_HEADER_SIZE + 3,
+                    tied.length * Long.BYTES
+            );
+            assertLongSelection(tied, LiveViewCheckpointStateCodec.RAW_64, tied.length * Long.BYTES);
+            assertTimestampSelection(tied, LiveViewCheckpointStateCodec.RAW_64, tied.length * Long.BYTES);
         });
     }
 
@@ -434,15 +267,28 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
                     1,
                     MemoryTrackerWorkload.LIVE_VIEW_REFRESH
             );
-            try (LiveViewCheckpointStateCodec.Scratch scratch = new LiveViewCheckpointStateCodec.Scratch(tracker)) {
+            try (LiveViewCheckpointStateCodec.Scratch scratch = new LiveViewCheckpointStateCodec.Scratch(tracker);
+                 MemoryCARW encoded = sink()) {
                 Assert.assertEquals(0, tracker.getUsed());
                 final long timestamps = scratch.timestampsAddress();
-                Assert.assertEquals((long) LiveViewCheckpointStateCodec.CHUNK_ROWS * Long.BYTES, tracker.getUsed());
-                final long doubles = scratch.valuesAddress();
-                Assert.assertEquals(2L * LiveViewCheckpointStateCodec.CHUNK_ROWS * Long.BYTES, tracker.getUsed());
+                Assert.assertEquals((long) CHUNK_ROWS * Long.BYTES, tracker.getUsed());
+                final long values = scratch.valuesAddress();
+                Assert.assertEquals(2L * CHUNK_ROWS * Long.BYTES, tracker.getUsed());
                 Assert.assertEquals(timestamps, scratch.timestampsAddress());
-                Assert.assertEquals(doubles, scratch.valuesAddress());
-                Assert.assertEquals(2L * LiveViewCheckpointStateCodec.CHUNK_ROWS * Long.BYTES, tracker.getUsed());
+                Assert.assertEquals(values, scratch.valuesAddress());
+                Assert.assertEquals(2L * CHUNK_ROWS * Long.BYTES, tracker.getUsed());
+
+                // The encoder region is the largest of them and opens only when a
+                // page is actually encoded, so a restore-only reader never pays for
+                // it. A second page reuses it rather than growing the charge.
+                for (int i = 0; i < CHUNK_ROWS; i++) {
+                    Unsafe.putLong(timestamps + (long) i * Long.BYTES, i * 1_000L);
+                }
+                LiveViewCheckpointStateCodec.encodeTimestamps(encoded, scratch, timestamps, CHUNK_ROWS);
+                final long encodeScratch = tracker.getUsed();
+                Assert.assertTrue(encodeScratch > 2L * CHUNK_ROWS * Long.BYTES);
+                LiveViewCheckpointStateCodec.encodeDoubles(encoded, scratch, values, CHUNK_ROWS);
+                Assert.assertEquals(encodeScratch, tracker.getUsed());
             }
             Assert.assertEquals(0, tracker.getUsed());
             tracker.close();
@@ -450,127 +296,90 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampExtremesAndMaximumDeltaRoundTrip() throws Exception {
+    public void testTimestampSelectionByExactSize() throws Exception {
         assertMemoryLeak(() -> {
-            assertTimestampRoundTrip(
-                    new long[]{Long.MIN_VALUE, -1},
-                    LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT
-            );
-            assertTimestampRoundTrip(
-                    new long[]{Long.MAX_VALUE - 2, Long.MAX_VALUE - 1, Long.MAX_VALUE},
-                    LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT
-            );
-            assertTimestampRoundTrip(
-                    new long[]{Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE + 1, Long.MIN_VALUE + 1},
-                    LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT
-            );
-            assertTimestampRoundTrip(
-                    new long[]{Long.MIN_VALUE, 0, Long.MAX_VALUE},
-                    LiveViewCheckpointStateCodec.TIMESTAMP_RAW_64
-            );
-            // Delta-of-delta 64 zigzags to 128, whose canonical encoding spends a
-            // first byte carrying no payload bits at all. Only the terminator says
-            // whether an encoding is canonical, so this must round-trip rather than
-            // read as the padding the case above rejects.
-            assertTimestampRoundTrip(
-                    new long[]{0, 100, 264, 8_620},
-                    LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT
-            );
+            // A regularly spaced full chunk is exactly what linear prediction is
+            // for: the residuals are all zero, so the block is its header alone.
+            final long[] regular = new long[CHUNK_ROWS];
+            for (int i = 0; i < regular.length; i++) {
+                regular[i] = 1_700_000_000_000_000L + i * 1_000L;
+            }
+            assertTimestampSelection(regular, LiveViewCheckpointStateCodec.COVERING_LONG,
+                    CoveringCompressor.LONG_LINEAR_PRED_HEADER_SIZE);
+
+            // Three rows are too few to pay the 29-byte linear header, so the
+            // 13-byte plain header wins even though the residuals are still zero.
+            assertTimestampSelection(new long[]{100, 200, 300}, LiveViewCheckpointStateCodec.COVERING_LONG,
+                    CoveringCompressor.LONG_HEADER_SIZE + 3);
+
+            // One row cannot pay for any header.
+            assertTimestampSelection(new long[]{100}, LiveViewCheckpointStateCodec.RAW_64, Long.BYTES);
+
+            // A stream spanning the full 64-bit range overflows the linear residual
+            // width, and plain FoR cannot beat raw either.
+            assertTimestampSelection(new long[]{Long.MIN_VALUE, Long.MAX_VALUE},
+                    LiveViewCheckpointStateCodec.RAW_64, 2 * Long.BYTES);
+
+            // Duplicate timestamps are legal in the ring, and a jittered cadence is
+            // the common case: both still round-trip through whichever layout wins.
+            final long[] jittered = new long[CHUNK_ROWS];
+            long timestamp = 1_700_000_000_000_000L;
+            for (int i = 0; i < jittered.length; i++) {
+                timestamp += (i % 7) * 100L;
+                jittered[i] = timestamp;
+            }
+            assertTimestampRoundTrip(jittered, LiveViewCheckpointStateCodec.COVERING_LONG);
         });
     }
 
-    private static void assertDoubleDecodeFails(
-            MemoryCARW encoded,
-            long targetAddress,
-            int codec,
-            int rowCount,
-            CharSequence message
-    ) {
-        try {
-            LiveViewCheckpointStateCodec.decodeDoubles(
-                    encoded.addressOf(0),
-                    (int) encoded.getAppendOffset(),
-                    codec,
-                    rowCount,
-                    targetAddress,
-                    LiveViewCheckpointStateCodec.CHUNK_ROWS
-            );
-            Assert.fail("expected malformed double stream rejection");
-        } catch (CairoException e) {
-            Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());
-            TestUtils.assertContains(e.getFlyweightMessage(), message);
-        }
-    }
+    @Test
+    public void testUnknownCodecTagsAndRawLengthsAreRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            try (LiveViewCheckpointStateCodec.Scratch scratch = new LiveViewCheckpointStateCodec.Scratch(null);
+                 MemoryCARW encoded = sink()) {
+                final long target = scratch.valuesAddress();
+                encoded.putLong(7);
 
-    private static void assertDoubleRoundTrip(long[] values, int codec) {
-        try (LiveViewCheckpointStateCodec.Scratch source = new LiveViewCheckpointStateCodec.Scratch(null);
-             LiveViewCheckpointStateCodec.Scratch target = new LiveViewCheckpointStateCodec.Scratch(null);
-             MemoryCARW encoded = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            final long sourceAddress = source.valuesAddress();
-            final long targetAddress = target.valuesAddress();
-            put(sourceAddress, values);
-            final int written = LiveViewCheckpointStateCodec.encodeDoubles(encoded, sourceAddress, values.length, codec);
-            Assert.assertEquals(encoded.getAppendOffset(), written);
-            Assert.assertEquals(
-                    written,
-                    LiveViewCheckpointStateCodec.decodeDoubles(
-                            encoded.addressOf(0),
-                            written,
-                            codec,
-                            values.length,
-                            targetAddress,
-                            LiveViewCheckpointStateCodec.CHUNK_ROWS
-                    )
-            );
-            assertBitsEqual(values, targetAddress);
-        }
-    }
+                // Only the three format-1 tags exist, and a page kind accepts one
+                // covering family, not both.
+                assertDecodeFails(() -> LiveViewCheckpointStateCodec.decodeLongs(
+                        encoded.addressOf(0), 8, 3, 1, target, CHUNK_ROWS, scratch
+                ), "unknown long codec tag");
+                assertDecodeFails(() -> LiveViewCheckpointStateCodec.decodeLongs(
+                        encoded.addressOf(0), 8, LiveViewCheckpointStateCodec.COVERING_DOUBLE, 1, target, CHUNK_ROWS, scratch
+                ), "unknown long codec tag");
+                assertDecodeFails(() -> LiveViewCheckpointStateCodec.decodeDoubles(
+                        encoded.addressOf(0), 8, LiveViewCheckpointStateCodec.COVERING_LONG, 1, target, CHUNK_ROWS, scratch
+                ), "unknown double codec tag");
 
-    private static void assertTimestampDecodeFails(
-            MemoryCARW encoded,
-            long targetAddress,
-            int codec,
-            int rowCount,
-            CharSequence message
-    ) {
-        try {
-            LiveViewCheckpointStateCodec.decodeTimestamps(
-                    encoded.addressOf(0),
-                    (int) encoded.getAppendOffset(),
-                    codec,
-                    rowCount,
-                    targetAddress,
-                    LiveViewCheckpointStateCodec.CHUNK_ROWS
-            );
-            Assert.fail("expected malformed timestamp stream rejection");
-        } catch (CairoException e) {
-            Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());
-            TestUtils.assertContains(e.getFlyweightMessage(), message);
-        }
-    }
+                // A raw page's stored length is fully determined by its row count.
+                assertDecodeFails(() -> LiveViewCheckpointStateCodec.decodeLongs(
+                        encoded.addressOf(0), 8, LiveViewCheckpointStateCodec.RAW_64, 2, target, CHUNK_ROWS, scratch
+                ), "raw long page length mismatch");
+                assertDecodeFails(() -> LiveViewCheckpointStateCodec.decodeDoubles(
+                        encoded.addressOf(0), 8, LiveViewCheckpointStateCodec.RAW_64, 2, target, CHUNK_ROWS, scratch
+                ), "raw double page length mismatch");
 
-    private static void assertTimestampRoundTrip(long[] values, int codec) {
-        try (LiveViewCheckpointStateCodec.Scratch source = new LiveViewCheckpointStateCodec.Scratch(null);
-             LiveViewCheckpointStateCodec.Scratch target = new LiveViewCheckpointStateCodec.Scratch(null);
-             MemoryCARW encoded = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            final long sourceAddress = source.timestampsAddress();
-            final long targetAddress = target.timestampsAddress();
-            put(sourceAddress, values);
-            final int written = LiveViewCheckpointStateCodec.encodeTimestamps(encoded, sourceAddress, values.length, codec);
-            Assert.assertEquals(encoded.getAppendOffset(), written);
-            Assert.assertEquals(
-                    written,
-                    LiveViewCheckpointStateCodec.decodeTimestamps(
-                            encoded.addressOf(0),
-                            written,
-                            codec,
-                            values.length,
-                            targetAddress,
-                            LiveViewCheckpointStateCodec.CHUNK_ROWS
-                    )
-            );
-            assertBitsEqual(values, targetAddress);
-        }
+                assertDecodeFails(() -> LiveViewCheckpointStateCodec.decodeLongs(
+                        encoded.addressOf(0), 8, LiveViewCheckpointStateCodec.RAW_64, -1, target, CHUNK_ROWS, scratch
+                ), "row count out of bounds");
+                assertDecodeFails(() -> LiveViewCheckpointStateCodec.decodeLongs(
+                        encoded.addressOf(0), 8, LiveViewCheckpointStateCodec.RAW_64, CHUNK_ROWS + 1, target,
+                        CHUNK_ROWS, scratch
+                ), "row count out of bounds");
+                assertDecodeFails(() -> LiveViewCheckpointStateCodec.decodeLongs(
+                        encoded.addressOf(0), 8, LiveViewCheckpointStateCodec.RAW_64, 1, target, 0, scratch
+                ), "decode target capacity too small");
+
+                // The encoder rejects the same bounds before it writes anything.
+                try {
+                    LiveViewCheckpointStateCodec.encodeLongs(encoded, scratch, target, CHUNK_ROWS + 1);
+                    Assert.fail("expected row count rejection");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "row count out of bounds");
+                }
+            }
+        });
     }
 
     private static void assertBitsEqual(long[] expected, long actualAddress) {
@@ -579,21 +388,169 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
         }
     }
 
-    private static int encodeDoubles(
+    private static void assertDecodeFails(Decode decode, CharSequence message) {
+        try {
+            decode.run();
+            Assert.fail("expected malformed page rejection");
+        } catch (CairoException e) {
+            Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());
+            TestUtils.assertContains(e.getFlyweightMessage(), message);
+        }
+    }
+
+    private static void assertDoubleDecodeFails(
             MemoryCARW encoded,
-            LiveViewCheckpointStateCodec.Scratch scratch,
-            long[] values,
-            int codec
+            int storedLength,
+            int codec,
+            int rowCount,
+            CharSequence message
     ) {
-        encoded.truncate();
-        final long sourceAddress = scratch.valuesAddress();
-        put(sourceAddress, values);
-        return LiveViewCheckpointStateCodec.encodeDoubles(encoded, sourceAddress, values.length, codec);
+        try (LiveViewCheckpointStateCodec.Scratch target = new LiveViewCheckpointStateCodec.Scratch(null)) {
+            assertDecodeFails(() -> LiveViewCheckpointStateCodec.decodeDoubles(
+                    encoded.addressOf(0), storedLength, codec, rowCount,
+                    target.valuesAddress(), CHUNK_ROWS, target
+            ), message);
+        }
+    }
+
+    /**
+     * Round-trips a double page through whichever codec the adapter selects,
+     * asserting the exact bits and the format's hard size invariant. Pass
+     * {@code expectedCodec} as -1 when the selection is not the point of the test.
+     */
+    private static void assertDoubleRoundTrip(long[] values, int expectedCodec) {
+        try (LiveViewCheckpointStateCodec.Scratch source = new LiveViewCheckpointStateCodec.Scratch(null);
+             LiveViewCheckpointStateCodec.Scratch target = new LiveViewCheckpointStateCodec.Scratch(null);
+             MemoryCARW encoded = sink()) {
+            final long sourceAddress = source.valuesAddress();
+            put(sourceAddress, values);
+            final int codec = LiveViewCheckpointStateCodec.encodeDoubles(encoded, source, sourceAddress, values.length);
+            final int storedLength = assertStoredLength(encoded, values.length, codec, expectedCodec);
+            Assert.assertEquals(storedLength, LiveViewCheckpointStateCodec.decodeDoubles(
+                    encoded.addressOf(0), storedLength, codec, values.length,
+                    target.valuesAddress(), CHUNK_ROWS, target
+            ));
+            assertBitsEqual(values, target.valuesAddress());
+        }
+    }
+
+    private static void assertDoubleSelection(long[] values, int expectedCodec, int expectedStoredLength) {
+        try (LiveViewCheckpointStateCodec.Scratch scratch = new LiveViewCheckpointStateCodec.Scratch(null);
+             MemoryCARW encoded = sink()) {
+            final long sourceAddress = scratch.valuesAddress();
+            put(sourceAddress, values);
+            Assert.assertEquals(
+                    expectedCodec,
+                    LiveViewCheckpointStateCodec.encodeDoubles(encoded, scratch, sourceAddress, values.length)
+            );
+            Assert.assertEquals(expectedStoredLength, encoded.getAppendOffset());
+        }
+        assertDoubleRoundTrip(values, expectedCodec);
+    }
+
+    private static void assertLongDecodeFails(
+            MemoryCARW encoded,
+            int storedLength,
+            int codec,
+            int rowCount,
+            CharSequence message
+    ) {
+        try (LiveViewCheckpointStateCodec.Scratch target = new LiveViewCheckpointStateCodec.Scratch(null)) {
+            assertDecodeFails(() -> LiveViewCheckpointStateCodec.decodeLongs(
+                    encoded.addressOf(0), storedLength, codec, rowCount,
+                    target.timestampsAddress(), CHUNK_ROWS, target
+            ), message);
+        }
+    }
+
+    private static void assertLongRoundTrip(long[] values, int expectedCodec) {
+        try (LiveViewCheckpointStateCodec.Scratch source = new LiveViewCheckpointStateCodec.Scratch(null);
+             LiveViewCheckpointStateCodec.Scratch target = new LiveViewCheckpointStateCodec.Scratch(null);
+             MemoryCARW encoded = sink()) {
+            final long sourceAddress = source.valuesAddress();
+            put(sourceAddress, values);
+            final int codec = LiveViewCheckpointStateCodec.encodeLongs(encoded, source, sourceAddress, values.length);
+            final int storedLength = assertStoredLength(encoded, values.length, codec, expectedCodec);
+            Assert.assertEquals(storedLength, LiveViewCheckpointStateCodec.decodeLongs(
+                    encoded.addressOf(0), storedLength, codec, values.length,
+                    target.valuesAddress(), CHUNK_ROWS, target
+            ));
+            assertBitsEqual(values, target.valuesAddress());
+        }
+    }
+
+    private static void assertLongSelection(long[] values, int expectedCodec, int expectedStoredLength) {
+        try (LiveViewCheckpointStateCodec.Scratch scratch = new LiveViewCheckpointStateCodec.Scratch(null);
+             MemoryCARW encoded = sink()) {
+            final long sourceAddress = scratch.valuesAddress();
+            put(sourceAddress, values);
+            Assert.assertEquals(
+                    expectedCodec,
+                    LiveViewCheckpointStateCodec.encodeLongs(encoded, scratch, sourceAddress, values.length)
+            );
+            Assert.assertEquals(expectedStoredLength, encoded.getAppendOffset());
+        }
+        assertLongRoundTrip(values, expectedCodec);
+    }
+
+    private static int assertStoredLength(MemoryCARW encoded, int rowCount, int codec, int expectedCodec) {
+        if (expectedCodec >= 0) {
+            Assert.assertEquals(expectedCodec, codec);
+        }
+        final int storedLength = (int) encoded.getAppendOffset();
+        // The invariant the whole selection exists to hold: a page is never larger
+        // than the payload it decodes to.
+        Assert.assertTrue(
+                "storedLength=" + storedLength + ", decodedLength=" + rowCount * Long.BYTES,
+                storedLength <= rowCount * Long.BYTES
+        );
+        return storedLength;
+    }
+
+    private static void assertTimestampRoundTrip(long[] values, int expectedCodec) {
+        try (LiveViewCheckpointStateCodec.Scratch source = new LiveViewCheckpointStateCodec.Scratch(null);
+             LiveViewCheckpointStateCodec.Scratch target = new LiveViewCheckpointStateCodec.Scratch(null);
+             MemoryCARW encoded = sink()) {
+            final long sourceAddress = source.timestampsAddress();
+            put(sourceAddress, values);
+            final int codec = LiveViewCheckpointStateCodec.encodeTimestamps(
+                    encoded, source, sourceAddress, values.length
+            );
+            final int storedLength = assertStoredLength(encoded, values.length, codec, expectedCodec);
+            Assert.assertEquals(storedLength, LiveViewCheckpointStateCodec.decodeLongs(
+                    encoded.addressOf(0), storedLength, codec, values.length,
+                    target.timestampsAddress(), CHUNK_ROWS, target
+            ));
+            assertBitsEqual(values, target.timestampsAddress());
+        }
+    }
+
+    private static void assertTimestampSelection(long[] values, int expectedCodec, int expectedStoredLength) {
+        try (LiveViewCheckpointStateCodec.Scratch scratch = new LiveViewCheckpointStateCodec.Scratch(null);
+             MemoryCARW encoded = sink()) {
+            final long sourceAddress = scratch.timestampsAddress();
+            put(sourceAddress, values);
+            Assert.assertEquals(
+                    expectedCodec,
+                    LiveViewCheckpointStateCodec.encodeTimestamps(encoded, scratch, sourceAddress, values.length)
+            );
+            Assert.assertEquals(expectedStoredLength, encoded.getAppendOffset());
+        }
+        assertTimestampRoundTrip(values, expectedCodec);
     }
 
     private static void put(long address, long... values) {
         for (int i = 0; i < values.length; i++) {
             Unsafe.putLong(address + (long) i * Long.BYTES, values[i]);
         }
+    }
+
+    private static MemoryCARW sink() {
+        return Vm.getCARWInstance(SINK_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+    }
+
+    @FunctionalInterface
+    private interface Decode {
+        void run();
     }
 }

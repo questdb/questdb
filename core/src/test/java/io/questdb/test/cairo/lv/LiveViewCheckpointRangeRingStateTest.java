@@ -278,14 +278,16 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                     builder.freeze(writer, KEY, 0L, 0, 0, 0, payload.length, root);
                     directory.addSegment(7, writer.commit());
                 }
-                // The value pages self-identify as the long page kind, stored raw.
+                // The value pages self-identify as the long page kind. This payload
+                // spans the whole 64-bit range, so FoR cannot narrow it and the
+                // selection falls back to raw.
                 for (int i = 1; i < root.getStatePageCount(); i += 2) {
                     Assert.assertEquals(
                             LiveViewCheckpointRangeRingStateReader.LONG_VALUE_PAGE_KIND,
                             root.getStatePageRef(i).getPageKind()
                     );
                     Assert.assertEquals(
-                            LiveViewCheckpointStateCodec.LONG_RAW_64,
+                            LiveViewCheckpointStateCodec.RAW_64,
                             root.getStatePageRef(i).getCodec()
                     );
                 }
@@ -347,20 +349,22 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 );
                 assertInvalid(entry(valid.getScalarState(), mismatched), directory, false, "row counts differ");
 
-                Assert.assertEquals(LiveViewCheckpointStateCodec.TIMESTAMP_RAW_64, valid.getStatePageRef(0).getCodec());
-                final FilesFacade ff = configuration.getFilesFacade();
-                final long fileLength = directory.reader.getFileLength(30);
-                try (Path path = new Path()) {
-                    final long fd = ff.openRW(dataPath(path, 30).$(), 0);
-                    final long address = ff.mmap(fd, fileLength, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
-                    try {
-                        Unsafe.putLong(address + valid.getStatePageRef(0).getOffset() + Long.BYTES, -1);
-                    } finally {
-                        ff.munmap(address, fileLength, MemoryTag.MMAP_DEFAULT);
-                        ff.close(fd);
-                    }
-                }
-                assertInvalid(valid, directory, true, "rows are not canonical");
+                // A regular three-row cadence fits the plain FoR block, and the
+                // block's own embedded count is the first thing the checked decoder
+                // cross-checks against the page reference.
+                Assert.assertEquals(LiveViewCheckpointStateCodec.COVERING_LONG, valid.getStatePageRef(0).getCodec());
+                corruptDataPage(directory, 30, valid.getStatePageRef(0).getOffset(), 0, -1);
+                assertInvalid(valid, directory, true, "covering long block rejected");
+
+                // A page whose framing stays well formed is caught by the walk
+                // instead: this ring's timestamps are far enough apart that the page
+                // stores raw, so flipping one word makes the sequence decrease
+                // without disturbing anything the decoder validates.
+                final LiveViewCheckpointPartitionMapEntry sparse = new LiveViewCheckpointPartitionMapEntry();
+                writeInitial(sparse, directory, 31, 3, 1L << 40);
+                Assert.assertEquals(LiveViewCheckpointStateCodec.RAW_64, sparse.getStatePageRef(0).getCodec());
+                corruptDataPage(directory, 31, sparse.getStatePageRef(0).getOffset(), Long.BYTES, -1);
+                assertInvalid(sparse, directory, true, "rows are not canonical");
             }
         });
     }
@@ -905,6 +909,32 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
         return path.of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
     }
 
+    /**
+     * Writes {@code value} over one 64-bit word of a published data page, which is
+     * how a test forges the payload corruption a data page carries no checksum to
+     * detect.
+     */
+    private static void corruptDataPage(
+            Catalogue directory,
+            long segmentId,
+            long pageOffset,
+            long byteOffset,
+            long value
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long fileLength = directory.reader.getFileLength(segmentId);
+        try (Path path = new Path()) {
+            final long fd = ff.openRW(dataPath(path, segmentId).$(), 0);
+            final long address = ff.mmap(fd, fileLength, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+            try {
+                Unsafe.putLong(address + pageOffset + byteOffset, value);
+            } finally {
+                ff.munmap(address, fileLength, MemoryTag.MMAP_DEFAULT);
+                ff.close(fd);
+            }
+        }
+    }
+
     private static LiveViewCheckpointStatePageRef copy(LiveViewCheckpointStatePageRef ref) {
         return new LiveViewCheckpointStatePageRef().of(
                 ref.getSegmentId(), ref.getOffset(), ref.getStoredLength(), ref.getDecodedLength(),
@@ -939,13 +969,29 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             long segmentId,
             int rows
     ) {
+        writeInitial(out, directory, segmentId, rows, 1_000L);
+    }
+
+    /**
+     * Writes a fresh double ring of {@code rows} rows spaced {@code step} apart.
+     * The spacing decides which codec the timestamp page lands under, so a test
+     * that corrupts a payload picks the spacing that gives it the layout it means
+     * to corrupt.
+     */
+    private static void writeInitial(
+            LiveViewCheckpointPartitionMapEntry out,
+            Catalogue directory,
+            long segmentId,
+            int rows,
+            long step
+    ) {
         try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
              LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
              Path dir = new Path()) {
             builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
             writer.of(checkpointsDir(dir), segmentId);
             for (int i = 0; i < rows; i++) {
-                builder.append(writer, i * 1_000L, Double.doubleToRawLongBits(i + 0.25));
+                builder.append(writer, i * step, Double.doubleToRawLongBits(i + 0.25));
             }
             builder.freeze(writer, KEY, Double.doubleToRawLongBits(42.5), 0, 0, 0, rows, out);
             directory.addSegment(segmentId, writer.commit());

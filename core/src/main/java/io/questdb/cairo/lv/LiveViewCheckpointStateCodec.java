@@ -25,6 +25,8 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.idx.CoveringCompressor;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
@@ -37,43 +39,76 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 /**
- * Bounded semantic codecs for immutable live-view checkpoint state pages.
- * Codec tags are global within {@link LiveViewCheckpointStatePageRef}; callers
- * additionally validate the function-specific page kind before decoding.
+ * Format-1 adapter between immutable live-view checkpoint state pages and the
+ * covering-index encodings in {@link CoveringCompressor}. The adapter implements
+ * no compression of its own: it trials the covering candidates a page kind
+ * allows, copies the shortest representation - raw storage included - and
+ * dispatches a stored page back through the bounded checked decoders.
  *
- * <p>The timestamp encoding stores the first timestamp raw, the first checked
- * non-negative delta as unsigned LEB128, and later checked delta-of-delta values
- * as ZigZag LEB128. The double encoding is a bit-exact Gorilla-style XOR stream
- * over raw IEEE-754 bits. Both adaptive selectors retain raw 64-bit storage
- * unless encoding saves at least 6.25% and at least 16 bytes.</p>
+ * <p>Codec tags are global within {@link LiveViewCheckpointStatePageRef} and the
+ * page kind supplies the semantic type:</p>
  *
- * <p>What the decoders validate is FRAMING, not content. The varint paths reject
- * non-canonical encodings, overflow and truncation, so they happen to catch many
- * corrupt inputs; the {@code *_RAW_64} paths check the stored length and then
- * {@code memcpy}, so a flipped bit inside a stored accumulator decodes as a
- * perfectly legal value. Neither is an integrity check: like every other data
- * payload in the engine, these pages carry no checksum (the CRC32s live on the
- * metadata pages and superblock slots - see {@link LiveViewCheckpointLayout}).
- * Read a successful decode as "well-formed", never as "uncorrupted".</p>
+ * <table>
+ *     <caption>format-1 codec tags</caption>
+ *     <tr><td>{@link #RAW_64}</td><td>raw 64-bit words</td></tr>
+ *     <tr><td>{@link #COVERING_LONG}</td><td>covering long block, plain FoR or
+ *     linear-prediction FoR, distinguished by the block's own flag byte</td></tr>
+ *     <tr><td>{@link #COVERING_DOUBLE}</td><td>covering ALP/FoR double block with
+ *     exception positions and values</td></tr>
+ * </table>
+ *
+ * <p>A timestamp page and an integer-oriented value page accept raw or covering
+ * long; a double value page accepts raw or covering double. Selection is by exact
+ * stored byte count with raw winning ties, so a page is never larger than the
+ * payload it decodes to.</p>
+ *
+ * <p>What the decoders validate is FRAMING, not content. The checked covering
+ * decoders reject every header field, extent and exception position that could
+ * walk a read past the mapped page or a write past the target, and the raw paths
+ * check the stored length and then {@code memcpy} - so a flipped bit inside a
+ * stored accumulator decodes as a perfectly legal value. Neither is an integrity
+ * check: like every other data payload in the engine, these pages carry no
+ * checksum (the CRC32s live on the metadata pages and superblock slots - see
+ * {@link LiveViewCheckpointLayout}). Read a successful decode as "well-formed",
+ * never as "uncorrupted".</p>
  */
 public final class LiveViewCheckpointStateCodec {
 
     public static final int CHUNK_ROWS = 4096;
-    public static final int DOUBLE_RAW_64 = 2;
-    public static final int DOUBLE_XOR = 3;
-    public static final int LONG_RAW_64 = 4;
-    public static final int MIN_SAVING_BYTES = 16;
-    public static final int TIMESTAMP_DELTA_OF_DELTA_VARINT = 1;
-    public static final int TIMESTAMP_RAW_64 = 0;
-    private static final int BITS_PER_BYTE = 8;
-    private static final int MAX_VARINT_BYTES = 10;
+    public static final int COVERING_DOUBLE = 2;
+    public static final int COVERING_LONG = 1;
+    public static final int RAW_64 = 0;
+    /**
+     * The {@code valueShift} {@link CoveringCompressor#compressDoubles} reads its
+     * source stride by: a checkpoint value word is always a full 64-bit double,
+     * never a promoted FLOAT.
+     */
+    private static final int DOUBLE_VALUE_SHIFT = 3;
+    /**
+     * The double ALP block is the widest thing an encoder may write: its worst
+     * case stores every value as an exception, which costs more than the raw
+     * payload. The region also holds the plain-FoR long candidate, which is
+     * smaller.
+     */
+    private static final int ENCODE_DESTINATION_BYTES =
+            align8(CoveringCompressor.maxCompressedSize(CHUNK_ROWS, ColumnType.DOUBLE));
+    private static final int ENCODE_FLAGS_BYTES = CHUNK_ROWS;
+    private static final int ENCODE_LINEAR_DESTINATION_BYTES =
+            align8(CoveringCompressor.maxCompressedSize(CHUNK_ROWS, ColumnType.TIMESTAMP));
+    private static final int ENCODE_LONG_WORKSPACE_BYTES = CHUNK_ROWS * Long.BYTES;
+    private static final int ENCODE_SCRATCH_WORDS = (ENCODE_DESTINATION_BYTES + ENCODE_FLAGS_BYTES
+            + ENCODE_LINEAR_DESTINATION_BYTES + ENCODE_LONG_WORKSPACE_BYTES) / Long.BYTES;
 
     private LiveViewCheckpointStateCodec() {
     }
 
     /**
-     * Decodes a complete double stream into {@code targetAddress}. The target
-     * capacity and every source read are validated before native memory access.
+     * Decodes a complete double value page into {@code targetAddress}. The page
+     * carries either raw IEEE-754 bits or a covering ALP/FoR block; both paths
+     * validate the stored length, the row count and the target capacity before
+     * any native access, and the covering path additionally runs
+     * {@link CoveringCompressor#decompressDoublesToAddrChecked} so a corrupt
+     * block cannot read past the page or write past the target.
      *
      * @return bytes consumed, always {@code storedLength} on success
      */
@@ -83,87 +118,42 @@ public final class LiveViewCheckpointStateCodec {
             int codec,
             int rowCount,
             long targetAddress,
-            int targetCapacity
+            int targetCapacity,
+            @NotNull Scratch scratch
     ) {
         validateDecodeArguments(sourceAddress, storedLength, rowCount, targetAddress, targetCapacity);
-        if (codec == DOUBLE_RAW_64) {
-            final int rawLength = rawLength(rowCount);
-            if (storedLength != rawLength) {
-                throw invalid("raw double page length mismatch")
-                        .put(" [storedLength=").put(storedLength)
-                        .put(", expected=").put(rawLength).put(']');
-            }
-            if (rawLength > 0) {
-                Vect.memcpy(targetAddress, sourceAddress, rawLength);
-            }
-            return rawLength;
+        if (codec == RAW_64) {
+            return decodeRaw(sourceAddress, storedLength, rowCount, targetAddress, "double");
         }
-        if (codec != DOUBLE_XOR) {
+        if (codec != COVERING_DOUBLE) {
             throw invalid("unknown double codec tag [codec=").put(codec).put(']');
         }
-        if (rowCount == 0) {
-            if (storedLength != 0) {
-                throw invalid("empty double page has trailing bytes [storedLength=").put(storedLength).put(']');
-            }
-            return 0;
+        final int status = CoveringCompressor.decompressDoublesToAddrChecked(
+                sourceAddress,
+                storedLength,
+                rowCount,
+                targetAddress,
+                targetCapacity,
+                scratch.decodeWorkspaceAddress(),
+                CHUNK_ROWS
+        );
+        if (status != CoveringCompressor.DECODE_OK) {
+            throw invalid("covering double block rejected [reason=")
+                    .put(CoveringCompressor.decodeStatusName(status)).put(']');
         }
-        if (storedLength < Long.BYTES) {
-            throw invalid("truncated double XOR first value");
-        }
-
-        long previous = Unsafe.getLong(sourceAddress);
-        Unsafe.putLong(targetAddress, previous);
-        final BitReader bits = new BitReader(sourceAddress + Long.BYTES, storedLength - Long.BYTES);
-        int previousLeading = -1;
-        int previousTrailing = -1;
-        for (int i = 1; i < rowCount; i++) {
-            final long xor;
-            if (bits.readBit() == 0) {
-                xor = 0;
-            } else if (bits.readBit() == 0) {
-                if (previousLeading < 0) {
-                    throw invalid("double XOR stream reuses a missing window");
-                }
-                final int significantBits = Long.SIZE - previousLeading - previousTrailing;
-                final long significant = bits.readBits(significantBits);
-                if (significant == 0) {
-                    throw invalid("double XOR reuse encodes a zero XOR");
-                }
-                xor = significant << previousTrailing;
-            } else {
-                final int leading = (int) bits.readBits(6);
-                final int storedSignificantBits = (int) bits.readBits(6);
-                final int significantBits = storedSignificantBits == 0 ? Long.SIZE : storedSignificantBits;
-                final int trailing = Long.SIZE - leading - significantBits;
-                if (trailing < 0) {
-                    throw invalid("double XOR window out of bounds")
-                            .put(" [leading=").put(leading)
-                            .put(", significantBits=").put(significantBits).put(']');
-                }
-                final long significant = bits.readBits(significantBits);
-                if (significant == 0) {
-                    throw invalid("double XOR window encodes a zero XOR");
-                }
-                xor = significant << trailing;
-                if (Long.numberOfLeadingZeros(xor) != leading || Long.numberOfTrailingZeros(xor) != trailing) {
-                    throw invalid("double XOR window is non-canonical");
-                }
-                previousLeading = leading;
-                previousTrailing = trailing;
-            }
-            previous ^= xor;
-            Unsafe.putLong(targetAddress + (long) i * Long.BYTES, previous);
-        }
-        bits.assertFullyConsumed();
         return storedLength;
     }
 
     /**
-     * Decodes a complete raw 64-bit value stream into {@code targetAddress}. Long,
-     * DATE and TIMESTAMP value rings store their payload verbatim rather than through
-     * the double XOR stream: an arbitrary 64-bit value has no floating-point structure
-     * to exploit, and reinterpreting it as a double could canonicalize a NaN bit
-     * pattern and corrupt the stored value.
+     * Decodes a complete timestamp or integer-oriented value page into
+     * {@code targetAddress}. The page carries either raw 64-bit words or a
+     * covering long block in either layout - plain FoR or linear-prediction FoR -
+     * which the checked decoder tells apart from the block's own flag byte.
+     * <p>
+     * Integer-oriented words never travel through the double codec: an arbitrary
+     * 64-bit value has no floating-point structure for ALP to exploit, and
+     * reinterpreting it as a double could canonicalize a NaN bit pattern and
+     * corrupt the stored value.
      *
      * @return bytes consumed, always {@code storedLength} on success
      */
@@ -173,15 +163,165 @@ public final class LiveViewCheckpointStateCodec {
             int codec,
             int rowCount,
             long targetAddress,
-            int targetCapacity
+            int targetCapacity,
+            @NotNull Scratch scratch
     ) {
         validateDecodeArguments(sourceAddress, storedLength, rowCount, targetAddress, targetCapacity);
-        if (codec != LONG_RAW_64) {
+        if (codec == RAW_64) {
+            return decodeRaw(sourceAddress, storedLength, rowCount, targetAddress, "long");
+        }
+        if (codec != COVERING_LONG) {
             throw invalid("unknown long codec tag [codec=").put(codec).put(']');
         }
+        final int status = CoveringCompressor.decompressLongsToAddrChecked(
+                sourceAddress,
+                storedLength,
+                rowCount,
+                targetAddress,
+                targetCapacity,
+                scratch.decodeWorkspaceAddress(),
+                CHUNK_ROWS
+        );
+        if (status != CoveringCompressor.DECODE_OK) {
+            throw invalid("covering long block rejected [reason=")
+                    .put(CoveringCompressor.decodeStatusName(status)).put(']');
+        }
+        return storedLength;
+    }
+
+    /**
+     * Appends a double value page, choosing the shorter of the covering ALP/FoR
+     * block and the raw payload. Raw wins ties, so the page never exceeds
+     * {@code rowCount * 8} bytes.
+     * <p>
+     * The ALP transform is bit-exact: NaNs, infinities, signed zero and every
+     * value that does not round-trip through the selected decimal transform go
+     * into the block's exception list rather than being approximated.
+     *
+     * @return the format-1 codec tag the caller must record for the page
+     */
+    public static int encodeDoubles(
+            @NotNull MemoryA sink,
+            @NotNull Scratch scratch,
+            long sourceAddress,
+            int rowCount
+    ) {
+        validateEncodeArguments(sourceAddress, rowCount);
+        final int rawLength = rawLength(rowCount);
+        if (rowCount > 0) {
+            final long destination = scratch.encodeDestinationAddress();
+            final int encodedLength = CoveringCompressor.compressDoubles(
+                    sourceAddress,
+                    rowCount,
+                    DOUBLE_VALUE_SHIFT,
+                    destination,
+                    scratch.encodeLongWorkspaceAddress(),
+                    scratch.encodeFlagsAddress()
+            );
+            if (encodedLength < rawLength) {
+                sink.putBlockOfBytes(destination, encodedLength);
+                return COVERING_DOUBLE;
+            }
+        }
+        putRaw(sink, sourceAddress, rawLength);
+        return RAW_64;
+    }
+
+    /**
+     * Appends an integer-oriented value page, choosing the shorter of the
+     * covering plain-FoR long block and the raw payload. Raw wins ties.
+     * <p>
+     * Wide decimals arrive flattened into their 64-bit words, most significant
+     * first, and are trialled as one word stream: repeated or sign-extended high
+     * words compress, arbitrary low words force a 64-bit width and lose to raw.
+     *
+     * @return the format-1 codec tag the caller must record for the page
+     */
+    public static int encodeLongs(
+            @NotNull MemoryA sink,
+            @NotNull Scratch scratch,
+            long sourceAddress,
+            int rowCount
+    ) {
+        validateEncodeArguments(sourceAddress, rowCount);
+        final int rawLength = rawLength(rowCount);
+        if (rowCount > 0) {
+            final long destination = scratch.encodeDestinationAddress();
+            final int encodedLength = CoveringCompressor.compressLongs(sourceAddress, rowCount, destination);
+            if (encodedLength < rawLength) {
+                sink.putBlockOfBytes(destination, encodedLength);
+                return COVERING_LONG;
+            }
+        }
+        putRaw(sink, sourceAddress, rawLength);
+        return RAW_64;
+    }
+
+    /**
+     * Appends a timestamp page, choosing the shortest of the raw payload, the
+     * covering plain-FoR long block and the covering linear-prediction long
+     * block. Raw wins ties.
+     * <p>
+     * Both covering layouts share {@link #COVERING_LONG}: the block's own flag
+     * byte says which one it is, so the page reference does not have to. The
+     * linear candidate is trialled only for a non-descending stream, which is
+     * what its stride is fitted to; a small page can still be shorter under the
+     * 13-byte plain header even when the linear residuals are all zero.
+     *
+     * @return the format-1 codec tag the caller must record for the page
+     */
+    public static int encodeTimestamps(
+            @NotNull MemoryA sink,
+            @NotNull Scratch scratch,
+            long sourceAddress,
+            int rowCount
+    ) {
+        validateEncodeArguments(sourceAddress, rowCount);
+        final int rawLength = rawLength(rowCount);
+        // A zero winner is the raw candidate: the scratch regions are allocated, so
+        // neither covering candidate can sit at address zero.
+        long winnerAddress = 0;
+        int winnerLength = rawLength;
+        if (rowCount > 0) {
+            final long plainDestination = scratch.encodeDestinationAddress();
+            final int plainLength = CoveringCompressor.compressLongs(sourceAddress, rowCount, plainDestination);
+            if (plainLength < winnerLength) {
+                winnerAddress = plainDestination;
+                winnerLength = plainLength;
+            }
+            if (hasNonDescendingBounds(sourceAddress, rowCount)) {
+                final long linearDestination = scratch.encodeLinearDestinationAddress();
+                final int linearLength = CoveringCompressor.compressLongsLinearPred(
+                        sourceAddress, rowCount, linearDestination, scratch.encodeLongWorkspaceAddress()
+                );
+                if (linearLength < winnerLength) {
+                    winnerAddress = linearDestination;
+                    winnerLength = linearLength;
+                }
+            }
+        }
+        if (winnerAddress == 0) {
+            putRaw(sink, sourceAddress, rawLength);
+            return RAW_64;
+        }
+        sink.putBlockOfBytes(winnerAddress, winnerLength);
+        return COVERING_LONG;
+    }
+
+    private static int align8(int bytes) {
+        return (bytes + 7) & ~7;
+    }
+
+    private static int decodeRaw(
+            long sourceAddress,
+            int storedLength,
+            int rowCount,
+            long targetAddress,
+            CharSequence what
+    ) {
         final int rawLength = rawLength(rowCount);
         if (storedLength != rawLength) {
-            throw invalid("raw long page length mismatch")
+            throw invalid("raw ").put(what).put(" page length mismatch")
                     .put(" [storedLength=").put(storedLength)
                     .put(", expected=").put(rawLength).put(']');
         }
@@ -192,363 +332,13 @@ public final class LiveViewCheckpointStateCodec {
     }
 
     /**
-     * Decodes a complete timestamp stream and rejects non-canonical varints,
-     * checked-arithmetic overflow, decreasing output, truncation, and trailing
-     * bytes before returning decoded state.
-     *
-     * @return bytes consumed, always {@code storedLength} on success
+     * @return whether the stream's last word is at or above its first, which is
+     * the precondition {@link CoveringCompressor#compressLongsLinearPred} fits a
+     * stride to. A ring's timestamps are non-decreasing by construction, so a
+     * stream that fails this came from a caller handing the codec something else
      */
-    public static int decodeTimestamps(
-            long sourceAddress,
-            int storedLength,
-            int codec,
-            int rowCount,
-            long targetAddress,
-            int targetCapacity
-    ) {
-        validateDecodeArguments(sourceAddress, storedLength, rowCount, targetAddress, targetCapacity);
-        if (codec == TIMESTAMP_RAW_64) {
-            final int rawLength = rawLength(rowCount);
-            if (storedLength != rawLength) {
-                throw invalid("raw timestamp page length mismatch")
-                        .put(" [storedLength=").put(storedLength)
-                        .put(", expected=").put(rawLength).put(']');
-            }
-            if (rawLength > 0) {
-                Vect.memcpy(targetAddress, sourceAddress, rawLength);
-            }
-            return rawLength;
-        }
-        if (codec != TIMESTAMP_DELTA_OF_DELTA_VARINT) {
-            throw invalid("unknown timestamp codec tag [codec=").put(codec).put(']');
-        }
-        if (rowCount == 0) {
-            if (storedLength != 0) {
-                throw invalid("empty timestamp page has trailing bytes [storedLength=").put(storedLength).put(']');
-            }
-            return 0;
-        }
-        if (storedLength < Long.BYTES) {
-            throw invalid("truncated timestamp first value");
-        }
-
-        int offset = Long.BYTES;
-        long previousTimestamp = Unsafe.getLong(sourceAddress);
-        Unsafe.putLong(targetAddress, previousTimestamp);
-        long previousDelta = 0;
-        for (int i = 1; i < rowCount; i++) {
-            // The varint scan runs inline and hands the value back in a register.
-            // Reading it out of the target buffer instead - which is where the
-            // decoded timestamp lands a few instructions later - costs a native
-            // store and the load that reads it straight back, once per row.
-            long encoded = 0;
-            int shift = 0;
-            int bytes = 0;
-            while (true) {
-                if (offset >= storedLength) {
-                    throw invalid("truncated LEB128 value");
-                }
-                final int b = Unsafe.getByte(sourceAddress + offset) & 0xff;
-                offset++;
-                bytes++;
-                // The last byte a 64-bit value may spend carries bit 63 and nothing
-                // else, so anything above it - a payload bit or another continuation
-                // marker - overflows. Rejecting the continuation here is also what
-                // bounds the loop.
-                if (bytes == MAX_VARINT_BYTES && (b & 0xfe) != 0) {
-                    throw invalid("LEB128 value overflows 64 bits");
-                }
-                encoded |= (long) (b & 0x7f) << shift;
-                if ((b & 0x80) == 0) {
-                    // A canonical encoding spends its last byte on at least one set
-                    // bit, so a zero terminator means the writer padded a shorter
-                    // value out.
-                    if (bytes > 1 && b == 0) {
-                        throw invalid("non-canonical LEB128 value");
-                    }
-                    break;
-                }
-                shift += 7;
-            }
-            final long delta;
-            if (i == 1) {
-                delta = encoded;
-                if (delta < 0) {
-                    throw invalid("timestamp delta exceeds signed range");
-                }
-            } else {
-                try {
-                    delta = Math.addExact(previousDelta, zigZagDecode(encoded));
-                } catch (ArithmeticException e) {
-                    throw invalid("timestamp delta arithmetic overflow");
-                }
-                if (delta < 0) {
-                    throw invalid("decoded timestamp sequence decreases");
-                }
-            }
-            previousTimestamp = checkedTimestampAdd(previousTimestamp, delta);
-            Unsafe.putLong(targetAddress + (long) i * Long.BYTES, previousTimestamp);
-            previousDelta = delta;
-        }
-        if (offset != storedLength) {
-            throw invalid("timestamp stream has trailing bytes")
-                    .put(" [consumed=").put(offset).put(", storedLength=").put(storedLength).put(']');
-        }
-        return offset;
-    }
-
-    /**
-     * Encodes raw or exact-XOR double bits. Passing the adaptive selector's
-     * result ensures the stream never expands for incompressible input.
-     *
-     * @return bytes appended
-     */
-    public static int encodeDoubles(
-            @NotNull MemoryA sink,
-            long sourceAddress,
-            int rowCount,
-            int codec
-    ) {
-        validateEncodeArguments(sourceAddress, rowCount);
-        final long start = sink.getAppendOffset();
-        if (codec == DOUBLE_RAW_64) {
-            final int rawLength = rawLength(rowCount);
-            if (rawLength > 0) {
-                sink.putBlockOfBytes(sourceAddress, rawLength);
-            }
-        } else if (codec == DOUBLE_XOR) {
-            encodeDoubleXor(sink, sourceAddress, rowCount);
-        } else {
-            throw CairoException.critical(0).put("unknown live view checkpoint double codec tag [codec=").put(codec).put(']');
-        }
-        return checkedWrittenLength(sink, start);
-    }
-
-    /**
-     * Encodes a raw 64-bit value stream. Long, DATE and TIMESTAMP value rings store
-     * their payload verbatim; {@link #LONG_RAW_64} is the only codec they use.
-     *
-     * @return bytes appended
-     */
-    public static int encodeLongs(
-            @NotNull MemoryA sink,
-            long sourceAddress,
-            int rowCount,
-            int codec
-    ) {
-        validateEncodeArguments(sourceAddress, rowCount);
-        if (codec != LONG_RAW_64) {
-            throw CairoException.critical(0).put("unknown live view checkpoint long codec tag [codec=").put(codec).put(']');
-        }
-        final long start = sink.getAppendOffset();
-        final int rawLength = rawLength(rowCount);
-        if (rawLength > 0) {
-            sink.putBlockOfBytes(sourceAddress, rawLength);
-        }
-        return checkedWrittenLength(sink, start);
-    }
-
-    /**
-     * Encodes raw or checked delta/delta-of-delta timestamps.
-     *
-     * @return bytes appended
-     */
-    public static int encodeTimestamps(
-            @NotNull MemoryA sink,
-            long sourceAddress,
-            int rowCount,
-            int codec
-    ) {
-        validateEncodeArguments(sourceAddress, rowCount);
-        final long start = sink.getAppendOffset();
-        if (codec == TIMESTAMP_RAW_64) {
-            final int rawLength = rawLength(rowCount);
-            if (rawLength > 0) {
-                sink.putBlockOfBytes(sourceAddress, rawLength);
-            }
-        } else if (codec == TIMESTAMP_DELTA_OF_DELTA_VARINT) {
-            encodeTimestampDeltaOfDelta(sink, sourceAddress, rowCount);
-        } else {
-            throw CairoException.critical(0).put("unknown live view checkpoint timestamp codec tag [codec=").put(codec).put(']');
-        }
-        return checkedWrittenLength(sink, start);
-    }
-
-    /**
-     * Selects exact XOR only when it meets the fixed adaptive-saving rule.
-     */
-    public static int selectDoubleCodec(long sourceAddress, int rowCount) {
-        validateEncodeArguments(sourceAddress, rowCount);
-        final int rawLength = rawLength(rowCount);
-        final int encodedLength = doubleXorLength(sourceAddress, rowCount);
-        return savesEnough(rawLength, encodedLength) ? DOUBLE_XOR : DOUBLE_RAW_64;
-    }
-
-    /**
-     * Selects checked delta-of-delta only when supported and sufficiently smaller.
-     */
-    public static int selectTimestampCodec(long sourceAddress, int rowCount) {
-        validateEncodeArguments(sourceAddress, rowCount);
-        final int rawLength = rawLength(rowCount);
-        final int encodedLength = timestampDeltaOfDeltaLength(sourceAddress, rowCount);
-        return encodedLength >= 0 && savesEnough(rawLength, encodedLength)
-                ? TIMESTAMP_DELTA_OF_DELTA_VARINT
-                : TIMESTAMP_RAW_64;
-    }
-
-    static int doubleXorLength(long sourceAddress, int rowCount) {
-        if (rowCount == 0) {
-            return 0;
-        }
-        long bitCount = 0;
-        long previous = Unsafe.getLong(sourceAddress);
-        int previousLeading = -1;
-        int previousTrailing = -1;
-        for (int i = 1; i < rowCount; i++) {
-            final long value = Unsafe.getLong(sourceAddress + (long) i * Long.BYTES);
-            final long xor = previous ^ value;
-            if (xor == 0) {
-                bitCount++;
-            } else {
-                final int leading = Long.numberOfLeadingZeros(xor);
-                final int trailing = Long.numberOfTrailingZeros(xor);
-                bitCount += 2;
-                if (previousLeading >= 0 && leading >= previousLeading && trailing >= previousTrailing) {
-                    bitCount += Long.SIZE - previousLeading - previousTrailing;
-                } else {
-                    bitCount += 12L + Long.SIZE - leading - trailing;
-                    previousLeading = leading;
-                    previousTrailing = trailing;
-                }
-            }
-            previous = value;
-        }
-        return Long.BYTES + (int) ((bitCount + 7) >>> 3);
-    }
-
-    static int timestampDeltaOfDeltaLength(long sourceAddress, int rowCount) {
-        if (rowCount == 0) {
-            return 0;
-        }
-        int size = Long.BYTES;
-        if (rowCount == 1) {
-            return size;
-        }
-        long previousTimestamp = Unsafe.getLong(sourceAddress);
-        long timestamp = Unsafe.getLong(sourceAddress + Long.BYTES);
-        if (timestamp < previousTimestamp) {
-            return -1;
-        }
-        final long firstDelta;
-        try {
-            firstDelta = Math.subtractExact(timestamp, previousTimestamp);
-        } catch (ArithmeticException e) {
-            return -1;
-        }
-        size += unsignedLeb128Length(firstDelta);
-        long previousDelta = firstDelta;
-        previousTimestamp = timestamp;
-        for (int i = 2; i < rowCount; i++) {
-            timestamp = Unsafe.getLong(sourceAddress + (long) i * Long.BYTES);
-            if (timestamp < previousTimestamp) {
-                return -1;
-            }
-            final long delta;
-            final long deltaOfDelta;
-            try {
-                delta = Math.subtractExact(timestamp, previousTimestamp);
-                deltaOfDelta = Math.subtractExact(delta, previousDelta);
-            } catch (ArithmeticException e) {
-                return -1;
-            }
-            size += unsignedLeb128Length(zigZagEncode(deltaOfDelta));
-            previousTimestamp = timestamp;
-            previousDelta = delta;
-        }
-        return size;
-    }
-
-    private static long checkedTimestampAdd(long timestamp, long delta) {
-        final long next;
-        try {
-            next = Math.addExact(timestamp, delta);
-        } catch (ArithmeticException e) {
-            throw invalid("timestamp arithmetic overflow");
-        }
-        if (next < timestamp) {
-            throw invalid("decoded timestamp sequence decreases");
-        }
-        return next;
-    }
-
-    private static int checkedWrittenLength(MemoryA sink, long start) {
-        final long written = sink.getAppendOffset() - start;
-        if (written < 0 || written > Integer.MAX_VALUE) {
-            throw CairoException.critical(0).put("live view checkpoint encoded page size out of range [bytes=").put(written).put(']');
-        }
-        return (int) written;
-    }
-
-    private static void encodeDoubleXor(MemoryA sink, long sourceAddress, int rowCount) {
-        if (rowCount == 0) {
-            return;
-        }
-        long previous = Unsafe.getLong(sourceAddress);
-        sink.putLong(previous);
-        final BitWriter bits = new BitWriter(sink);
-        int previousLeading = -1;
-        int previousTrailing = -1;
-        for (int i = 1; i < rowCount; i++) {
-            final long value = Unsafe.getLong(sourceAddress + (long) i * Long.BYTES);
-            final long xor = previous ^ value;
-            if (xor == 0) {
-                bits.writeBit(0);
-            } else {
-                bits.writeBit(1);
-                final int leading = Long.numberOfLeadingZeros(xor);
-                final int trailing = Long.numberOfTrailingZeros(xor);
-                if (previousLeading >= 0 && leading >= previousLeading && trailing >= previousTrailing) {
-                    bits.writeBit(0);
-                    bits.writeBits(xor >>> previousTrailing, Long.SIZE - previousLeading - previousTrailing);
-                } else {
-                    bits.writeBit(1);
-                    final int significantBits = Long.SIZE - leading - trailing;
-                    bits.writeBits(leading, 6);
-                    bits.writeBits(significantBits == Long.SIZE ? 0 : significantBits, 6);
-                    bits.writeBits(xor >>> trailing, significantBits);
-                    previousLeading = leading;
-                    previousTrailing = trailing;
-                }
-            }
-            previous = value;
-        }
-        bits.finish();
-    }
-
-    private static void encodeTimestampDeltaOfDelta(MemoryA sink, long sourceAddress, int rowCount) {
-        final int expectedLength = timestampDeltaOfDeltaLength(sourceAddress, rowCount);
-        if (expectedLength < 0) {
-            throw CairoException.critical(0).put("live view checkpoint timestamp stream is decreasing or overflows delta arithmetic");
-        }
-        if (rowCount == 0) {
-            return;
-        }
-        long previousTimestamp = Unsafe.getLong(sourceAddress);
-        sink.putLong(previousTimestamp);
-        if (rowCount == 1) {
-            return;
-        }
-        long timestamp = Unsafe.getLong(sourceAddress + Long.BYTES);
-        long previousDelta = timestamp - previousTimestamp;
-        writeUnsignedLeb128(sink, previousDelta);
-        previousTimestamp = timestamp;
-        for (int i = 2; i < rowCount; i++) {
-            timestamp = Unsafe.getLong(sourceAddress + (long) i * Long.BYTES);
-            final long delta = timestamp - previousTimestamp;
-            writeUnsignedLeb128(sink, zigZagEncode(delta - previousDelta));
-            previousTimestamp = timestamp;
-            previousDelta = delta;
-        }
+    private static boolean hasNonDescendingBounds(long sourceAddress, int rowCount) {
+        return Unsafe.getLong(sourceAddress + (long) (rowCount - 1) * Long.BYTES) >= Unsafe.getLong(sourceAddress);
     }
 
     private static CairoException invalid(CharSequence reason) {
@@ -556,22 +346,14 @@ public final class LiveViewCheckpointStateCodec {
                 .put("live view checkpoint state codec ").put(reason);
     }
 
+    private static void putRaw(MemoryA sink, long sourceAddress, int rawLength) {
+        if (rawLength > 0) {
+            sink.putBlockOfBytes(sourceAddress, rawLength);
+        }
+    }
+
     private static int rawLength(int rowCount) {
         return rowCount * Long.BYTES;
-    }
-
-    private static boolean savesEnough(int rawLength, int encodedLength) {
-        final int minimumSaving = Math.max(MIN_SAVING_BYTES, (rawLength + 15) >>> 4);
-        return rawLength - encodedLength >= minimumSaving;
-    }
-
-    private static int unsignedLeb128Length(long value) {
-        int bytes = 1;
-        while ((value & ~0x7fL) != 0) {
-            value >>>= 7;
-            bytes++;
-        }
-        return bytes;
     }
 
     private static void validateDecodeArguments(
@@ -600,6 +382,8 @@ public final class LiveViewCheckpointStateCodec {
     }
 
     private static void validateEncodeArguments(long sourceAddress, int rowCount) {
+        // The encoder scratch regions are sized for CHUNK_ROWS words, so this is
+        // what bounds every covering encoder's writes into them.
         if (rowCount < 0 || rowCount > CHUNK_ROWS) {
             throw CairoException.critical(0)
                     .put("live view checkpoint codec row count out of bounds [rowCount=")
@@ -610,45 +394,53 @@ public final class LiveViewCheckpointStateCodec {
         }
     }
 
-    private static void writeUnsignedLeb128(MemoryA sink, long value) {
-        while ((value & ~0x7fL) != 0) {
-            sink.putByte((byte) ((value & 0x7f) | 0x80));
-            value >>>= 7;
-        }
-        sink.putByte((byte) value);
-    }
-
-    private static long zigZagDecode(long value) {
-        return (value >>> 1) ^ -(value & 1);
-    }
-
-    private static long zigZagEncode(long value) {
-        return (value << 1) ^ (value >> 63);
-    }
-
     /**
-     * Reusable, lazily allocated native input/output scratch for one logical
-     * chunk. Allocation is fixed at two {@link #CHUNK_ROWS}-long arrays and is
-     * charged to the owning live-view refresh tracker. The scratch must be
-     * closed before its tracker is released.
+     * Reusable, lazily allocated native scratch for one logical chunk, charged to
+     * the owning live-view refresh tracker and closed before that tracker is
+     * released.
+     * <p>
+     * The timestamp and value buffers hold one chunk's decoded words. The decode
+     * workspace holds the residuals or ALP words a checked covering decode needs,
+     * and the encoder region holds the covering candidates a seal trials plus the
+     * workspaces the encoders write them through. Each region is a single
+     * contiguous allocation, because every one of them reaches a covering
+     * encoder or decoder as a bare native address with a declared capacity.
+     * <p>
+     * A restore-only reader never touches the encoder region, which is the
+     * largest of them, so it is opened by the first encode rather than with the
+     * scratch.
      */
     public static final class Scratch implements Closeable {
-        private final DirectLongList timestamps = new DirectLongList(CHUNK_ROWS, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM, true);
-        private final DirectLongList values = new DirectLongList(CHUNK_ROWS, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM, true);
+        private final DirectLongList encodeRegion =
+                new DirectLongList(ENCODE_SCRATCH_WORDS, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM, true);
+        private final DirectLongList timestamps =
+                new DirectLongList(CHUNK_ROWS, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM, true);
+        private final DirectLongList values =
+                new DirectLongList(CHUNK_ROWS, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM, true);
+        private final DirectLongList workspace =
+                new DirectLongList(CHUNK_ROWS, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM, true);
+        private long encodeRegionAddress;
         private long timestampsAddress;
         private long valuesAddress;
+        private long workspaceAddress;
 
         public Scratch(@Nullable MemoryTracker memoryTracker) {
-            values.setMemoryTracker(memoryTracker);
+            encodeRegion.setMemoryTracker(memoryTracker);
             timestamps.setMemoryTracker(memoryTracker);
+            values.setMemoryTracker(memoryTracker);
+            workspace.setMemoryTracker(memoryTracker);
         }
 
         @Override
         public void close() {
-            values.close();
+            encodeRegion.close();
             timestamps.close();
+            values.close();
+            workspace.close();
+            encodeRegionAddress = 0;
             timestampsAddress = 0;
             valuesAddress = 0;
+            workspaceAddress = 0;
         }
 
         /**
@@ -676,95 +468,38 @@ public final class LiveViewCheckpointStateCodec {
             }
             return valuesAddress;
         }
-    }
 
-    private static final class BitReader {
-        private final long address;
-        private final long bitLimit;
-        private final int byteLength;
-        private long bitPosition;
-
-        private BitReader(long address, int byteLength) {
-            this.address = address;
-            this.byteLength = byteLength;
-            this.bitLimit = (long) byteLength * BITS_PER_BYTE;
+        private long decodeWorkspaceAddress() {
+            if (workspaceAddress == 0) {
+                workspace.reopen();
+                workspaceAddress = workspace.getAddress();
+            }
+            return workspaceAddress;
         }
 
-        private void assertFullyConsumed() {
-            final int bytesConsumed = (int) ((bitPosition + 7) >>> 3);
-            if (bytesConsumed != byteLength) {
-                throw invalid("double XOR stream has trailing bytes")
-                        .put(" [consumed=").put(bytesConsumed).put(", stored=").put(byteLength).put(']');
-            }
-            final int usedBitsInLastByte = (int) (bitPosition & 7);
-            if (usedBitsInLastByte != 0) {
-                final int last = Unsafe.getByte(address + byteLength - 1L) & 0xff;
-                final int paddingMask = ~((1 << usedBitsInLastByte) - 1) & 0xff;
-                if ((last & paddingMask) != 0) {
-                    throw invalid("double XOR stream has non-zero padding bits");
-                }
-            }
+        private long encodeDestinationAddress() {
+            return encodeRegionAddress();
         }
 
-        private int readBit() {
-            return (int) readBits(1);
+        private long encodeFlagsAddress() {
+            return encodeRegionAddress()
+                    + ENCODE_DESTINATION_BYTES + ENCODE_LINEAR_DESTINATION_BYTES + ENCODE_LONG_WORKSPACE_BYTES;
         }
 
-        private long readBits(int count) {
-            if (count < 0 || count > Long.SIZE || bitPosition > bitLimit - count) {
-                throw invalid("truncated double XOR bitstream");
+        private long encodeLinearDestinationAddress() {
+            return encodeRegionAddress() + ENCODE_DESTINATION_BYTES;
+        }
+
+        private long encodeLongWorkspaceAddress() {
+            return encodeRegionAddress() + ENCODE_DESTINATION_BYTES + ENCODE_LINEAR_DESTINATION_BYTES;
+        }
+
+        private long encodeRegionAddress() {
+            if (encodeRegionAddress == 0) {
+                encodeRegion.reopen();
+                encodeRegionAddress = encodeRegion.getAddress();
             }
-            long value = 0;
-            int consumed = 0;
-            while (consumed < count) {
-                final int bitInByte = (int) (bitPosition & 7);
-                final int take = Math.min(count - consumed, BITS_PER_BYTE - bitInByte);
-                final int b = Unsafe.getByte(address + (bitPosition >>> 3)) & 0xff;
-                final long mask = (1L << take) - 1;
-                value |= ((b >>> bitInByte) & mask) << consumed;
-                consumed += take;
-                bitPosition += take;
-            }
-            return value;
+            return encodeRegionAddress;
         }
     }
-
-    private static final class BitWriter {
-        private final MemoryA sink;
-        private int bitCount;
-        private int currentByte;
-
-        private BitWriter(MemoryA sink) {
-            this.sink = sink;
-        }
-
-        private void finish() {
-            if (bitCount > 0) {
-                sink.putByte((byte) currentByte);
-                bitCount = 0;
-                currentByte = 0;
-            }
-        }
-
-        private void writeBit(int bit) {
-            writeBits(bit, 1);
-        }
-
-        private void writeBits(long value, int count) {
-            int consumed = 0;
-            while (consumed < count) {
-                final int take = Math.min(count - consumed, BITS_PER_BYTE - bitCount);
-                final long mask = (1L << take) - 1;
-                currentByte |= (int) (((value >>> consumed) & mask) << bitCount);
-                consumed += take;
-                bitCount += take;
-                if (bitCount == BITS_PER_BYTE) {
-                    sink.putByte((byte) currentByte);
-                    bitCount = 0;
-                    currentByte = 0;
-                }
-            }
-        }
-    }
-
 }

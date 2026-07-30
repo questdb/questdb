@@ -49,13 +49,14 @@ import java.util.Arrays;
  * on its own when the ring stores no value.
  * <p>
  * A row's value occupies zero, one, two or four 64-bit words, which the ring's value
- * kind selects. A DOUBLE value page stores exact IEEE-754 bits (raw or XOR-compressed)
+ * kind selects. A DOUBLE value page stores exact IEEE-754 bits (raw or ALP-compressed)
  * in one word; a LONG/DATE/TIMESTAMP page and a narrow DECIMAL page (physical width 8,
- * 16, 32 or 64 bits, all of which a signed 64-bit word holds exactly) store the raw
- * payload in one word, because an arbitrary integer has no floating-point structure to
- * compress and reinterpreting it as a double could canonicalize a NaN bit pattern; a
- * DECIMAL128 page stores two raw words and a DECIMAL256 page four, most significant
- * first. {@link #VALUE_KIND_NONE} stores none: {@code count}'s per-row state is the
+ * 16, 32 or 64 bits, all of which a signed 64-bit word holds exactly) store the payload
+ * in one word, raw or FoR-compressed, never through the double codec, because an
+ * arbitrary integer has no floating-point structure for ALP to exploit and
+ * reinterpreting it as a double could canonicalize a NaN bit pattern; a DECIMAL128 page
+ * stores two such words and a DECIMAL256 page four, most significant first.
+ * {@link #VALUE_KIND_NONE} stores none: {@code count}'s per-row state is the
  * designated timestamp itself, so its chunk is the timestamp page alone and it carries
  * no value page to pay for. The reader delivers every value as raw 64-bit words and
  * leaves the function to interpret them. The partition entry's checksummed scalar
@@ -100,7 +101,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     public static final int DEQUE_DOUBLE_VALUE_PAGE_KIND = 0x24;
     public static final int DEQUE_LONG_VALUE_PAGE_KIND = 0x25;
     public static final int DOUBLE_VALUE_PAGE_KIND = 0x22;
-    public static final int FORMAT_VERSION = 2;
+    public static final int FORMAT_VERSION = 1;
     public static final int LONG_VALUE_PAGE_KIND = 0x23;
     public static final int TIMESTAMP_PAGE_KIND = 0x21;
     public static final int VALUE_KIND_DECIMAL128 = 4;
@@ -587,8 +588,8 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     private static void validateTimestampRef(LiveViewCheckpointStatePageRef ref, int valueKind) {
         LiveViewCheckpointMetadata.validateStateRef(ref, false, "RANGE ring timestamp chunk");
         if (ref.getPageKind() != TIMESTAMP_PAGE_KIND
-                || (ref.getCodec() != LiveViewCheckpointStateCodec.TIMESTAMP_RAW_64
-                && ref.getCodec() != LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT)) {
+                || (ref.getCodec() != LiveViewCheckpointStateCodec.RAW_64
+                && ref.getCodec() != LiveViewCheckpointStateCodec.COVERING_LONG)) {
             throw invalid("RANGE ring timestamp page kind or codec invalid")
                     .put(" [kind=").put(ref.getPageKind()).put(", codec=").put(ref.getCodec()).put(']');
         }
@@ -598,12 +599,11 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     private static void validateValueRef(LiveViewCheckpointStatePageRef ref, int valueKind) {
         LiveViewCheckpointMetadata.validateStateRef(ref, false, "RANGE ring value chunk");
         final int expectedPageKind = valuePageKind(valueKind);
-        final boolean isKindValid = isLongColumn(valueKind)
-                ? ref.getPageKind() == expectedPageKind
-                  && ref.getCodec() == LiveViewCheckpointStateCodec.LONG_RAW_64
-                : ref.getPageKind() == expectedPageKind
-                  && (ref.getCodec() == LiveViewCheckpointStateCodec.DOUBLE_RAW_64
-                      || ref.getCodec() == LiveViewCheckpointStateCodec.DOUBLE_XOR);
+        final boolean isKindValid = ref.getPageKind() == expectedPageKind
+                && (ref.getCodec() == LiveViewCheckpointStateCodec.RAW_64
+                || ref.getCodec() == (isLongColumn(valueKind)
+                ? LiveViewCheckpointStateCodec.COVERING_LONG
+                : LiveViewCheckpointStateCodec.COVERING_DOUBLE));
         if (!isKindValid) {
             throw invalid("RANGE ring value page kind or codec invalid")
                     .put(" [valueKind=").put(valueKind).put(", kind=").put(ref.getPageKind())
@@ -654,9 +654,11 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
 
     private void decodeTimestamps(LiveViewCheckpointStatePageRef ref, long targetAddress) {
         openPage(ref, TIMESTAMP_PAGE_KIND);
-        final int consumed = LiveViewCheckpointStateCodec.decodeTimestamps(
+        // A timestamp page is an integer-oriented word stream like a long value
+        // page: raw, or a covering long block in either of its layouts.
+        final int consumed = LiveViewCheckpointStateCodec.decodeLongs(
                 openReader.getPageAddress(), openReader.getPageStoredLength(), ref.getCodec(), ref.getRowCount(),
-                targetAddress, LiveViewCheckpointStateCodec.CHUNK_ROWS
+                targetAddress, LiveViewCheckpointStateCodec.CHUNK_ROWS, scratch
         );
         openReader.assertFullyConsumed(consumed, ref.getDecodedLength(), ref.getRowCount());
     }
@@ -671,12 +673,12 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         if (isLongColumn(valueKind)) {
             consumed = LiveViewCheckpointStateCodec.decodeLongs(
                     openReader.getPageAddress(), openReader.getPageStoredLength(), ref.getCodec(), words,
-                    targetAddress, LiveViewCheckpointStateCodec.CHUNK_ROWS
+                    targetAddress, LiveViewCheckpointStateCodec.CHUNK_ROWS, scratch
             );
         } else {
             consumed = LiveViewCheckpointStateCodec.decodeDoubles(
                     openReader.getPageAddress(), openReader.getPageStoredLength(), ref.getCodec(), words,
-                    targetAddress, LiveViewCheckpointStateCodec.CHUNK_ROWS
+                    targetAddress, LiveViewCheckpointStateCodec.CHUNK_ROWS, scratch
             );
         }
         openReader.assertFullyConsumed(consumed, ref.getDecodedLength(), ref.getRowCount());

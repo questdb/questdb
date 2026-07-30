@@ -43,10 +43,11 @@ import java.util.Arrays;
  * <p>
  * The value column holds zero, one, two or four 64-bit words per row, which the
  * ring's value kind selects: a DOUBLE ring stores exact IEEE-754 bits (raw or
- * XOR-compressed), a LONG/DATE/TIMESTAMP or narrow DECIMAL ring stores one raw
- * payload word, a DECIMAL128/DECIMAL256 ring stores two or four raw words, most
- * significant first, and a valueless ring stores none - {@code count}'s per-row state
- * is the designated timestamp itself, so its chunk is a timestamp page on its own.
+ * ALP-compressed), a LONG/DATE/TIMESTAMP or narrow DECIMAL ring stores one payload
+ * word (raw or FoR-compressed), a DECIMAL128/DECIMAL256 ring stores two or four such
+ * words, most significant first, and a valueless ring stores none - {@code count}'s
+ * per-row state is the designated timestamp itself, so its chunk is a timestamp page
+ * on its own.
  * {@link #of} configures which kind the seal writes. A {@code max}/{@code min} frame
  * ring uses the same payload as a value ring but tags its value pages with the deque
  * page kinds so a deque-family root stays distinct from a value-ring root.
@@ -424,9 +425,8 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
                     .put("live view checkpoint RANGE ring state page reference count exceeds format limit");
         }
         refs[refCount] = new LiveViewCheckpointStatePageRef();
-        final int timestampCodec = LiveViewCheckpointStateCodec.selectTimestampCodec(scratch.timestampsAddress(), tailCount);
-        LiveViewCheckpointStateCodec.encodeTimestamps(
-                writer.beginPage(), scratch.timestampsAddress(), tailCount, timestampCodec
+        final int timestampCodec = LiveViewCheckpointStateCodec.encodeTimestamps(
+                writer.beginPage(), scratch, scratch.timestampsAddress(), tailCount
         );
         writer.endPage(
                 refs[refCount], tailCount * Long.BYTES,
@@ -444,24 +444,15 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
         // A wide value spends several words per row; the page still counts rows, so
         // its decoded length carries the width the reader validates against.
         final int valueElements = tailCount * valueWords;
-        if (LiveViewCheckpointRangeRingStateReader.isLongColumn(valueKind)) {
-            LiveViewCheckpointStateCodec.encodeLongs(
-                    writer.beginPage(), scratch.valuesAddress(), valueElements, LiveViewCheckpointStateCodec.LONG_RAW_64
-            );
-            writer.endPage(
-                    refs[refCount + 1], valueElements * Long.BYTES,
-                    valuePageKind, LiveViewCheckpointStateCodec.LONG_RAW_64, tailCount, 0
-            );
-        } else {
-            final int doubleCodec = LiveViewCheckpointStateCodec.selectDoubleCodec(scratch.valuesAddress(), valueElements);
-            LiveViewCheckpointStateCodec.encodeDoubles(
-                    writer.beginPage(), scratch.valuesAddress(), valueElements, doubleCodec
-            );
-            writer.endPage(
-                    refs[refCount + 1], valueElements * Long.BYTES,
-                    valuePageKind, doubleCodec, tailCount, 0
-            );
-        }
+        final int valueCodec = LiveViewCheckpointRangeRingStateReader.isLongColumn(valueKind)
+                ? LiveViewCheckpointStateCodec.encodeLongs(
+                writer.beginPage(), scratch, scratch.valuesAddress(), valueElements)
+                : LiveViewCheckpointStateCodec.encodeDoubles(
+                writer.beginPage(), scratch, scratch.valuesAddress(), valueElements);
+        writer.endPage(
+                refs[refCount + 1], valueElements * Long.BYTES,
+                valuePageKind, valueCodec, tailCount, 0
+        );
         refCount += 2;
         tailCount = 0;
     }

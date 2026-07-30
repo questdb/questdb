@@ -698,11 +698,11 @@ public interface WindowFunction extends Function {
     /**
      * The value kind this function's checkpoint ring stores per row, one of the
      * {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader} {@code VALUE_KIND_*}
-     * constants. A DOUBLE ring stores exact IEEE-754 bits (raw or XOR-compressed) in one word;
+     * constants. A DOUBLE ring stores exact IEEE-754 bits (raw or ALP-compressed) in one word;
      * a LONG/DATE/TIMESTAMP ring and a narrow DECIMAL ring (physical width 8, 16, 32 or 64 bits)
-     * store the raw 64-bit payload, which an integer value keeps out of a double so a NaN bit
-     * pattern is never canonicalized; a DECIMAL128 ring stores two raw words per row and a
-     * DECIMAL256 ring four, most significant first. The {@code DEQUE_*} kinds carry the same
+     * store the 64-bit payload raw or FoR-compressed, which an integer value keeps out of a
+     * double so a NaN bit pattern is never canonicalized; a DECIMAL128 ring stores two such
+     * words per row and a DECIMAL256 ring four, most significant first. The {@code DEQUE_*} kinds carry the same
      * payload but tag the value pages as a {@code max}/{@code min} monotonic-deque root's frame
      * ring, keeping it distinct from a value-ring root. {@code VALUE_KIND_NONE} stores no value
      * at all: {@code count}'s per-row state is the designated timestamp itself, so its chunk is
