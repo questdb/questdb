@@ -970,7 +970,7 @@ public class FuzzRunner {
         }
 
         sink.clear();
-        TestUtils.printSql(compiler, sqlExecutionContext, "select distinct \"" + symbolColumnName + "\" a from " + tableName, sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select distinct \"" + symbolColumnName + "\" a from " + tableName + " order by 1", sink);
         int checked = 0;
         for (int lo = sink.indexOf("\n") + 1, hi; lo > 0 && lo < sink.length() && checked < MAX_COVERED_KEYS_CHECKED; lo = hi + 1) {
             hi = sink.indexOf("\n", lo);
@@ -1549,9 +1549,7 @@ public class FuzzRunner {
             applyNonWal(transactions, tableNameNoWal, rnd);
             long endNonWalMicro = System.nanoTime() / 1000;
             long nonWalTotal = endNonWalMicro - startMicro;
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                assertMinMaxTimestamp(sqlExecutionContext, tableNameNoWal);
-            }
+            assertMinMaxTimestamp(sqlExecutionContext, tableNameNoWal);
 
             applyWal(transactions, tableNameWal, 1, rnd);
 

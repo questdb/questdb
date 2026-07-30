@@ -322,9 +322,10 @@ public class CoveringIndexParquetNativeRoundTripTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .withPlanContaining("CoveringIndex on: sym with: price")
                     .returns("sum_price\tc\n2550.0\t50\n");
+
             assertSqlCursors(
-                    "SELECT ts, sym, price, tag FROM t_rt WHERE sym IN ('A0', 'A2') ORDER BY ts",
-                    "SELECT /*+ no_covering */ ts, sym, price, tag FROM t_rt WHERE sym IN ('A0', 'A2') ORDER BY ts"
+                    "SELECT sym, price, tag FROM t_rt WHERE sym IN ('A0', 'A2')",
+                    "SELECT /*+ no_covering */ sym, price, tag FROM t_rt WHERE sym IN ('A0', 'A2')"
             );
         });
     }
