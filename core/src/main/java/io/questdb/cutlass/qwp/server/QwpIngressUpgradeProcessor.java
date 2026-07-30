@@ -1423,6 +1423,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         boolean deferCommit = false;
         boolean closesDeferredGroup = false;
+        boolean deferredFrameFullyCommitted = false;
         try {
             // Add the binary data to the state buffer
             state.addData(payload, payload + length);
@@ -1443,16 +1444,24 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 state.commit();
             }
             if (state.isOk() && deferCommit) {
+                // Capture BEFORE the refresh below, for the same reason the
+                // non-deferred arm captures before commit(): if earlier deferred
+                // frames are still withheld, an ack that finally covers them
+                // must flush eagerly rather than wait for unrelated traffic.
+                closesDeferredGroup = state.hasUncommittedDeferredRows();
                 state.commitIfMaxUncommittedRowsReached();
                 if (state.isOk()) {
-                    // Rows are buffered in WAL writers but NOT committed (the
-                    // force-commit above fires per-table at the
-                    // max-uncommitted-rows cap and gives no full-coverage
-                    // guarantee). Until the group-closing commit or a rollback,
-                    // the cumulative-ack watermark must not move past this
-                    // frame -- an OK ack would let the client trim rows the
-                    // server can still roll back (#7144's replay contract).
-                    state.markUncommittedDeferredRows();
+                    // The force-commit above fires per-table at the
+                    // max-uncommitted-rows cap, so it may have covered
+                    // everything, something, or nothing. Ask what is actually
+                    // uncommitted instead of assuming the worst: while anything
+                    // is still uncommitted the cumulative-ack watermark must not
+                    // move past this frame -- an OK ack would let the client trim
+                    // rows the server can still roll back (#7144's replay
+                    // contract). Once nothing is uncommitted, every row this
+                    // connection has appended is in the WAL, so the frame is as
+                    // durable as a committed one and the ack may cover it.
+                    deferredFrameFullyCommitted = !state.refreshUncommittedDeferredRows();
                 }
             }
             // Read AFTER the commit calls: processMessage's read-only gate AND the
@@ -1519,8 +1528,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         // Send response using cumulative ACK strategy
         if (responseStatus == STATUS_OK) {
-            if (deferCommit) {
-                // Deferred frame: rows appended but uncommitted. NO watermark
+            if (deferCommit && !deferredFrameFullyCommitted) {
+                // Deferred frame with rows still uncommitted. NO watermark
                 // advance and NO ack -- a cumulative OK ack at this sequence
                 // would let the store-and-forward client trim slots whose rows
                 // the server rolls back on any error, demote, or disconnect.
@@ -1532,12 +1541,21 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 LOG.debug().$("WebSocket deferred frame ack withheld until group commit [fd=").$(context.getFd())
                         .$(", seq=").$(seq).I$();
             } else {
-                // Success - update tracking, send ACK if batch size reached.
-                // A group-closing commit flushes eagerly (hasPendingAck) instead
-                // of waiting for the batch threshold: the deferred frames it
-                // covers were never individually acked, and the client's
-                // transaction confirmation should not wait for unrelated
-                // follow-up traffic.
+                // Either a commit frame, or a deferred frame whose rows are all
+                // committed anyway -- the per-table force-commit at the
+                // max-uncommitted-rows cap can cover a whole group mid-flight.
+                // Both leave this connection holding nothing the server could
+                // still roll back, which is exactly what an OK ack promises, so
+                // the watermark advances over the frame. For the deferred case
+                // that is the point of the derivation: a mid-group reconnect
+                // then replays only what is genuinely uncommitted, instead of
+                // re-sending rows that are already durable and duplicating them.
+                //
+                // A frame that closes a run of withheld deferred frames flushes
+                // eagerly (hasPendingAck) instead of waiting for the batch
+                // threshold: those frames were never individually acked, and the
+                // client's transaction confirmation should not wait for
+                // unrelated follow-up traffic.
                 state.setHighestProcessedSequence(seq);
                 if (closesDeferredGroup ? state.hasPendingAck() : state.shouldSendAck(ACK_BATCH_SIZE)) {
                     trySendAck(context, state);

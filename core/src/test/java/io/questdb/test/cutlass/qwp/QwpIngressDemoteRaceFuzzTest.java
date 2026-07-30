@@ -345,10 +345,12 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
         if (state.isOk() && deferCommit) {
             state.commitIfMaxUncommittedRowsReached();
             if (state.isOk()) {
-                // Mirrors the processor's deferred-ack containment: rows are
-                // buffered but uncommitted, so the cumulative-ack watermark
-                // must not advance past this frame until the group commits.
-                state.markUncommittedDeferredRows();
+                // Mirrors the processor's deferred-ack containment: the
+                // cumulative-ack watermark may not advance past this frame
+                // while any of its rows are still uncommitted, and the
+                // processor derives that from the TUD cache rather than
+                // assuming it.
+                state.refreshUncommittedDeferredRows();
             }
         }
         // Read AFTER the commit calls — the ordering the containment fix

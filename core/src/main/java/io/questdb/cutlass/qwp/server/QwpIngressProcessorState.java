@@ -237,17 +237,19 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private long firstUnresolvedSequence = -1;
     private SecurityContext securityContext;
     // True while WAL rows appended by FLAG_DEFER_COMMIT frames remain
-    // uncommitted. Set when a deferred frame's rows are buffered, cleared when
-    // commitAll() succeeds (the group-closing commit frame) or when clear()
-    // rolls the rows back. While true, the cumulative-ack watermark must not
-    // advance: a cumulative OK ack confirms every sequence up to and including
-    // its value, so covering an uncommitted deferred frame would let a
+    // uncommitted. Recomputed from the TUD cache after every deferred frame
+    // (refreshUncommittedDeferredRows), cleared when commitAll() succeeds (the
+    // group-closing commit frame) or when clear() rolls the rows back, and set
+    // outright by markUncommittedDeferredRows where the fact is known without a
+    // cache to ask. While true, the cumulative-ack watermark must not advance:
+    // a cumulative OK ack confirms every sequence up to and including its
+    // value, so covering an uncommitted deferred frame would let a
     // store-and-forward client trim slots whose rows the server can still roll
     // back -- silent data loss. This is the contract stated (but previously not
     // enforced) by the deferred-commit feature (#7144): "the client's
     // store-and-forward replays all unacknowledged messages on reconnect" --
-    // deferred frames must therefore stay unacknowledged until their group
-    // commits. Enforced in setHighestProcessedSequence as a last resort; the
+    // deferred frames must therefore stay unacknowledged until their rows are
+    // committed. Enforced in setHighestProcessedSequence as a last resort; the
     // upgrade processor's ack path must not attempt the advance to begin with.
     private boolean uncommittedDeferredRows;
     private int sendState = SEND_STATE_READY;
@@ -549,6 +551,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * True while WAL rows appended by FLAG_DEFER_COMMIT frames remain
      * uncommitted. While true, no cumulative OK ack may cover the deferred
      * frames' sequences -- see {@link #setHighestProcessedSequence}.
+     * <p>
+     * {@code QwpIngressUpgradeProcessor.handleBinaryMessage} also reads it to
+     * decide whether an outgoing ack closes a run of withheld deferred frames
+     * and so must flush eagerly rather than wait for the batch threshold.
      */
     public boolean hasUncommittedDeferredRows() {
         return uncommittedDeferredRows;
@@ -763,15 +769,39 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
-     * Records that a FLAG_DEFER_COMMIT frame buffered rows into WAL writers
-     * without a covering commit. Cleared by {@link #commit()} (successful
-     * commitAll) or {@link #clear()} (rollback). The per-table force-commit
-     * at the max-uncommitted-rows cap does NOT clear this: it commits single
-     * tables and gives no full-coverage guarantee, so the watermark stays put
-     * and those rows are simply replayed (at-least-once) after a reconnect.
+     * Records that WAL rows are buffered without a covering commit, where that
+     * is known outright rather than by asking the TUD cache. Cleared by
+     * {@link #commit()} (successful commitAll) or {@link #clear()} (rollback).
+     * The deferred-frame path uses {@link #refreshUncommittedDeferredRows()}
+     * instead.
      */
     public void markUncommittedDeferredRows() {
         uncommittedDeferredRows = true;
+    }
+
+    /**
+     * Recomputes the deferred-rows clamp from what this connection actually
+     * holds uncommitted, and returns the result.
+     * <p>
+     * The per-table force-commit at the max-uncommitted-rows cap fires for
+     * whichever tables crossed the cap, so after a deferred frame the
+     * connection may hold everything, something, or nothing uncommitted. The
+     * clamp exists to keep the cumulative-ack watermark off sequences whose
+     * rows the server can still roll back (#7144); once a force-commit has left
+     * nothing uncommitted, the deferred frames are as durable as a committed
+     * one and the watermark may cover them. Acking there is what keeps a
+     * mid-group reconnect from replaying -- and so duplicating -- rows the
+     * server has already written.
+     * <p>
+     * The clamp releases only when NO live table holds uncommitted rows; any
+     * table still holding rows keeps it set, so the "ack implies committed"
+     * guarantee is unchanged.
+     *
+     * @return {@code true} if rows remain uncommitted (the watermark stays clamped)
+     */
+    public boolean refreshUncommittedDeferredRows() {
+        uncommittedDeferredRows = tudCache.hasUncommittedRows();
+        return uncommittedDeferredRows;
     }
 
     public long nextMessageSequence() {
@@ -1312,9 +1342,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         // LAST-RESORT CONTAINMENT for the deferred-commit ack hole (#7144): while
         // FLAG_DEFER_COMMIT rows sit uncommitted in WAL writers, a cumulative OK
         // ack covering their frames would let the client trim slots the server
-        // can still roll back. The upgrade processor's ack path skips the
-        // advance for deferred frames entirely; if the watermark still tries to
-        // move while deferred rows are uncommitted, that path has regressed.
+        // can still roll back. The upgrade processor's ack path advances over a
+        // deferred frame only once refreshUncommittedDeferredRows reports that
+        // nothing is uncommitted; if the watermark still tries to move while
+        // deferred rows ARE uncommitted, that path has regressed.
         // Clamp and scream: the client stalls on acks and replays after the
         // close -- an availability hit, never data loss.
         if (uncommittedDeferredRows && highestProcessedSequence > this.highestProcessedSequence) {

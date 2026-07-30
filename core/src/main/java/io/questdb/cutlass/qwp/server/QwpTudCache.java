@@ -272,6 +272,26 @@ public class QwpTudCache implements QuietCloseable {
         }
     }
 
+    /**
+     * Whether ANY live table in this cache still holds rows appended but not committed.
+     * <p>
+     * This is the fact behind {@code QwpIngressProcessorState.uncommittedDeferredRows}: the per-table
+     * force-commit at the max-uncommitted-rows cap covers whichever tables crossed the cap and no others,
+     * so "did a deferred frame run" is not the same question as "is anything still uncommitted". A dropped
+     * table is skipped -- its buffered rows are discarded on eviction, and the commit loops raise on that
+     * separately so the clamp cannot release over discarded rows.
+     */
+    public boolean hasUncommittedRows() {
+        final ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            WalTableUpdateDetails tud = tableUpdateDetails.valueQuick(i);
+            if (!tud.isDropped() && !tud.isFirstRow()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         Utf8Sequence discardedTableName = null;

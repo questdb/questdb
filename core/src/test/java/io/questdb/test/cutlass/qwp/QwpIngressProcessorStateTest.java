@@ -365,6 +365,119 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A deferred frame whose rows the max-uncommitted-rows force-commit has already
+     * written is ack-covered; one that still holds rows is not.
+     * <p>
+     * Both arms run the real decoder, WAL appender and TUD cache, driven in the call
+     * order {@code QwpIngressUpgradeProcessor.handleBinaryMessage} uses for a
+     * FLAG_DEFER_COMMIT frame. They differ only in the connection's
+     * max-uncommitted-rows cap, so the force-commit fires in one and not the other --
+     * which is the whole input to the derivation.
+     */
+    @Test
+    public void testDeferredFrameIsAckableOnlyOnceItsRowsAreCommitted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE defer_capped (val INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) " +
+                    "PARTITION BY DAY WAL");
+            execute("CREATE TABLE defer_buffered (val INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) " +
+                    "PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+
+            // Cap 1: the appender force-commits the row it just wrote, so the
+            // deferred frame leaves nothing uncommitted. The clamp releases and the
+            // watermark may cover the frame -- without that, a mid-group reconnect
+            // replays rows that are already durable and duplicates them.
+            QwpIngressProcessorState capped = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                capped.of(1, AllowAllSecurityContext.INSTANCE);
+                installTudCacheWithCap(capped, engine, lineConfig, 1);
+                capped.setHighestProcessedSequence(2);
+
+                Assert.assertFalse("a fired force-commit must leave nothing uncommitted",
+                        driveDeferredFrame(capped, "defer_capped", 1));
+                capped.setHighestProcessedSequence(5);
+                Assert.assertEquals("a fully committed deferred frame is ack-covered",
+                        5, capped.getHighestProcessedSequence());
+            } finally {
+                capped.onDisconnected();
+                capped.close();
+            }
+
+            // Cap Long.MAX_VALUE: nothing force-commits, the rows stay buffered, and
+            // the watermark must refuse to move -- #7144's "ack implies committed".
+            QwpIngressProcessorState buffered = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                buffered.of(2, AllowAllSecurityContext.INSTANCE);
+                installTudCacheWithCap(buffered, engine, lineConfig, Long.MAX_VALUE);
+                buffered.setHighestProcessedSequence(2);
+
+                Assert.assertTrue("buffered rows must hold the clamp",
+                        driveDeferredFrame(buffered, "defer_buffered", 2));
+                buffered.setHighestProcessedSequence(9);
+                Assert.assertEquals("clamped while rows are uncommitted",
+                        2, buffered.getHighestProcessedSequence());
+
+                // The group-closing commit covers the buffered frame after all.
+                buffered.commit();
+                Assert.assertTrue(buffered.isOk());
+                Assert.assertFalse(buffered.hasUncommittedDeferredRows());
+                buffered.setHighestProcessedSequence(9);
+                Assert.assertEquals(9, buffered.getHighestProcessedSequence());
+            } finally {
+                buffered.onDisconnected();
+                buffered.close();
+            }
+        });
+    }
+
+    /**
+     * {@code hasUncommittedRows} is the fact the clamp is derived from, so both
+     * directions matter: a single dirty table must hold it, and only genuinely
+     * full coverage may release it. A stub returning {@code false} is the
+     * data-loss direction and must fail here.
+     */
+    @Test
+    public void testHasUncommittedRowsTracksEveryLiveTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE unc_a (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE unc_b (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tudA = tudOf(cache, "unc_a");
+                WalTableUpdateDetails tudB = tudOf(cache, "unc_b");
+                Assert.assertFalse("two clean tables hold nothing", cache.hasUncommittedRows());
+
+                tudA.getWriter().newRow(1_000_000L).append();
+                Assert.assertTrue("one dirty table is enough", cache.hasUncommittedRows());
+
+                // B alone committing is NOT full coverage -- the exact case the
+                // per-table force-commit produces on a multi-table connection.
+                tudB.commit(false);
+                Assert.assertTrue("a partial commit must not release the clamp", cache.hasUncommittedRows());
+
+                commitAll(cache);
+                Assert.assertFalse("full coverage releases the clamp", cache.hasUncommittedRows());
+
+                // A dropped table's buffered rows are discarded on eviction, so
+                // they are not "uncommitted rows" this connection can still
+                // commit; the commit loops raise on the discard separately.
+                tudB.getWriter().newRow(2_000_000L).append();
+                Assert.assertTrue(cache.hasUncommittedRows());
+                tudB.setIsDropped();
+                Assert.assertFalse("a dropped table must not hold the clamp", cache.hasUncommittedRows());
+                Assert.assertNotNull(tudA);
+            }
+        });
+    }
+
     @Test
     public void testCollectDurableProgressMultiTable() throws Exception {
         assertMemoryLeak(() -> {
@@ -1295,7 +1408,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertTrue(state.isOk());
                 state.commitIfMaxUncommittedRowsReached();
                 Assert.assertTrue(state.isOk());
-                state.markUncommittedDeferredRows();
+                Assert.assertTrue("T's rows are uncommitted, so the clamp must hold",
+                        state.refreshUncommittedDeferredRows());
                 state.clearMessageState();
 
                 addEncodedRow(state, "protocol_t", 2, QwpConstants.FLAG_DEFER_COMMIT);
@@ -1304,7 +1418,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertTrue(state.isOk());
                 state.commitIfMaxUncommittedRowsReached();
                 Assert.assertTrue(state.isOk());
-                state.markUncommittedDeferredRows();
+                Assert.assertTrue("T's rows are uncommitted, so the clamp must hold",
+                        state.refreshUncommittedDeferredRows());
                 state.clearMessageState();
 
                 execute("DROP TABLE protocol_t");
@@ -5504,6 +5619,64 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         FakeConsumerTudCache fake = new FakeConsumerTudCache(engine, lineConfig);
         f.set(state, fake);
         return fake;
+    }
+
+    /**
+     * Swaps in a real TUD cache with an explicit max-uncommitted-rows cap. The
+     * QWP WAL path takes the cap from the connection, not the table metadata
+     * ({@code TableUpdateDetails.getMetaMaxUncommittedRows} falls through to the
+     * connection default for a multi-writer WAL table), so this is what decides
+     * whether the appender's force-commit fires.
+     */
+    private static void installTudCacheWithCap(
+            QwpIngressProcessorState state,
+            io.questdb.cairo.CairoEngine engine,
+            LineHttpProcessorConfiguration lineConfig,
+            long maxUncommittedRows
+    ) throws Exception {
+        Field f = QwpIngressProcessorState.class.getDeclaredField("tudCache");
+        f.setAccessible(true);
+        Misc.free((QwpTudCache) f.get(state));
+        f.set(state, new QwpTudCache(
+                engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY, -1, maxUncommittedRows
+        ));
+    }
+
+    /**
+     * Drives one FLAG_DEFER_COMMIT frame through the state in the call order
+     * {@code QwpIngressUpgradeProcessor.handleBinaryMessage} uses for the
+     * deferred arm, and leaves the state ready for the next frame.
+     *
+     * @return the derived clamp: true while rows remain uncommitted
+     */
+    private static boolean driveDeferredFrame(QwpIngressProcessorState state, String tableName, int value) {
+        addEncodedRow(state, tableName, value, QwpConstants.FLAG_DEFER_COMMIT);
+        Assert.assertTrue(state.isDeferCommit());
+        state.processMessage();
+        Assert.assertTrue(state.getErrorText(), state.isOk());
+        state.commitIfMaxUncommittedRowsReached();
+        Assert.assertTrue(state.getErrorText(), state.isOk());
+        boolean clamped = state.refreshUncommittedDeferredRows();
+        state.clearMessageState();
+        return clamped;
+    }
+
+    private static WalTableUpdateDetails tudOf(QwpTudCache cache, String tableName) {
+        WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                AllowAllSecurityContext.INSTANCE, new Utf8String(tableName), null, null, 2
+        );
+        Assert.assertNotNull(tud);
+        return tud;
+    }
+
+    private static void commitAll(QwpTudCache cache) throws Exception {
+        try {
+            cache.commitAll();
+        } catch (Exception e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new AssertionError("unexpected throwable", t);
+        }
     }
 
     private static void addEncodedRow(QwpIngressProcessorState state, String tableName, int value, byte flags) {
