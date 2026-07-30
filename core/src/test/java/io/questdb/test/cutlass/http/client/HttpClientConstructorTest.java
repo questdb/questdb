@@ -48,6 +48,28 @@ import org.junit.Test;
 public class HttpClientConstructorTest extends AbstractOomSweepTest {
 
     @Test
+    public void testCloseFreesNativeAllocationsWhenSocketCloseThrows() throws Exception {
+        // close() is the only thing that ever frees the request buffer, the response-parser buffer and
+        // the parser itself, and no caller calls it twice. It disconnects first, so a socket whose
+        // close() threw used to strand all three - and the platform poller with them, since the
+        // subclass override frees that after super.close() returns. An extension socket, TLS or an
+        // enterprise transport, runs arbitrary code, which is what the failure below stands in for.
+        // assertMemoryLeak is the oracle for the frees; the assertion is the oracle for the socket
+        // failure still reaching the caller.
+        assertMemoryLeak(() -> {
+            final ThrowingSocketFactory socketFactory = new ThrowingSocketFactory();
+            final HttpClient client = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration(), socketFactory);
+            try {
+                client.close();
+                Assert.fail("expected InjectedSocketFailure");
+            } catch (InjectedSocketFailure ignore) {
+                // the socket close threw, and close() propagated it after freeing
+            }
+            Assert.assertEquals("close() must have closed the socket", 1, socketFactory.closeCount);
+        });
+    }
+
+    @Test
     public void testConstructorFailureAtCookieHandlerFactoryClosesSocket() throws Exception {
         // The cookie-handler factory is the first extension point the constructor reaches after it
         // takes the socket - only getTimeout() precedes it - and it still runs before the first
@@ -165,6 +187,27 @@ public class HttpClientConstructorTest extends AbstractOomSweepTest {
             }
             Assert.assertEquals("the constructor must close the socket it took", 1, socketFactory.closeCount);
         });
+
+        // Same rollback, but with the socket close itself failing. The rollback disconnects before it
+        // frees, so a throwing socket used to end the rollback there: the two client buffers and the
+        // response parser stayed allocated, and the socket's exception replaced the constructor
+        // failure the caller has to see. assertMemoryLeak covers the frees, the assertions cover both
+        // exceptions.
+        assertMemoryLeak(() -> {
+            final ThrowingSocketFactory socketFactory = new ThrowingSocketFactory();
+            try {
+                clientFactory.newInstance(configuration, socketFactory).close();
+                Assert.fail("expected InjectedFailure");
+            } catch (InjectedFailure e) {
+                final Throwable[] suppressed = e.getSuppressed();
+                Assert.assertEquals("the socket failure must not be dropped", 1, suppressed.length);
+                Assert.assertTrue(
+                        "expected the socket failure as suppressed, got " + suppressed[0],
+                        suppressed[0] instanceof InjectedSocketFailure
+                );
+            }
+            Assert.assertEquals("the constructor must close the socket it took", 1, socketFactory.closeCount);
+        });
     }
 
     @FunctionalInterface
@@ -189,7 +232,34 @@ public class HttpClientConstructorTest extends AbstractOomSweepTest {
 
     private static class InjectedFailure extends RuntimeException {
         InjectedFailure() {
-            super("injected configuration failure", null, false, false);
+            // Suppression stays enabled - the rollback attaches a failing socket close to this
+            // exception, and testLinux/Osx/WindowsConstructorFailureClosesBaseClient reads it back.
+            // The stack trace does not, since no assertion looks at it.
+            super("injected configuration failure", null, true, false);
+        }
+    }
+
+    private static class InjectedSocketFailure extends RuntimeException {
+        InjectedSocketFailure() {
+            super("injected socket close failure", null, false, false);
+        }
+    }
+
+    private static class ThrowingSocketFactory implements SocketFactory {
+        int closeCount;
+
+        @Override
+        public Socket newInstance(NetworkFacade nf, Log log) {
+            return new PlainSocket(nf, log) {
+                @Override
+                public void close() {
+                    closeCount++;
+                    // Release the real socket before throwing, so the double leaks nothing of its own
+                    // and the leak check stays an oracle for the client's own buffers.
+                    super.close();
+                    throw new InjectedSocketFailure();
+                }
+            };
         }
     }
 }

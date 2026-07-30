@@ -1042,18 +1042,24 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
     public static class BoundaryAugmenter implements Reopenable, QuietCloseable {
         private static final Utf8String BOUNDARY_PREFIX = new Utf8String("\r\n--");
-        // Must stay >= BOUNDARY_PREFIX.size(): the constructor and reopen() both write the prefix
-        // into a block of exactly this size before anything else can grow it.
+        // Must stay >= BOUNDARY_PREFIX.size(): the constructor writes the prefix into a block of
+        // exactly this size before anything else can grow it.
         private static final int INITIAL_CAPACITY = 64;
         private final DirectUtf8String export = new DirectUtf8String();
         private long _wptr;
         private long lim;
         private long lo;
+        // The size reopen() comes back at. lim tracks the live block and close() has to zero it, so
+        // the capacity the augmenter grew to is remembered here instead: a boundary longer than 60
+        // bytes repeats on every request of a connection, and reopening at INITIAL_CAPACITY made the
+        // first of() after each pooled reuse realloc straight back up. Never zeroed, so it holds the
+        // high-water capacity across any number of close/reopen rounds.
+        private long reopenCapacity;
 
         public BoundaryAugmenter() {
             final long newLo = Unsafe.malloc(INITIAL_CAPACITY, MemoryTag.NATIVE_HTTP_CONN);
             this.lo = this._wptr = newLo;
-            this.lim = INITIAL_CAPACITY;
+            this.lim = this.reopenCapacity = INITIAL_CAPACITY;
             of0(BOUNDARY_PREFIX);
         }
 
@@ -1087,12 +1093,12 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         @Override
         public void reopen() {
             if (lo == 0) {
-                // close() zeroed lim along with the block, so restore it - but only after the
-                // malloc, per resize(). Committing lim first breaks the lim == 0 <=> lo == 0
-                // invariant that close() and of() both rely on.
-                final long newLo = Unsafe.malloc(INITIAL_CAPACITY, MemoryTag.NATIVE_HTTP_CONN);
+                // close() zeroed lim along with the block, so restore it from the remembered
+                // capacity - but only after the malloc, per resize(). Committing lim first breaks the
+                // lim == 0 <=> lo == 0 invariant that close() and of() both rely on.
+                final long newLo = Unsafe.malloc(reopenCapacity, MemoryTag.NATIVE_HTTP_CONN);
                 this.lo = this._wptr = newLo;
-                this.lim = INITIAL_CAPACITY;
+                this.lim = reopenCapacity;
                 of0(BOUNDARY_PREFIX);
             }
         }
@@ -1113,7 +1119,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             // value fit the claimed size skipped the resize and wrote past the real block.
             final long newLo = Unsafe.realloc(this.lo, prevLim, newLim, MemoryTag.NATIVE_HTTP_CONN);
             this.lo = this._wptr = newLo;
-            this.lim = newLim;
+            this.lim = this.reopenCapacity = newLim;
             of0(BOUNDARY_PREFIX);
         }
     }

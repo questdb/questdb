@@ -129,15 +129,7 @@ public abstract class HttpClient implements QuietCloseable {
 
     @Override
     public void close() {
-        disconnect();
-        if (bufLo != 0) {
-            Unsafe.free(bufLo, bufferSize, MemoryTag.NATIVE_DEFAULT);
-            bufLo = 0;
-            assert responseParserBufLo != 0;
-            Unsafe.free(responseParserBufLo, responseParserBufSize, MemoryTag.NATIVE_DEFAULT);
-            responseParserBufLo = 0;
-        }
-        responseHeaders.free();
+        closeBase();
     }
 
     public void disconnect() {
@@ -168,6 +160,25 @@ public abstract class HttpClient implements QuietCloseable {
         final long requiredSize = usedBytes + capacity;
         if (requiredSize > bufferSize) {
             growBuffer(requiredSize);
+        }
+    }
+
+    private void closeBase() {
+        // Free the native blocks in a finally: disconnect() runs an extension socket's close(), and a
+        // socket that throws there used to strand both buffers and the parser for good - close() is
+        // the only thing that ever frees them and no caller calls it twice. The socket failure still
+        // propagates, so the caller keeps seeing it.
+        try {
+            disconnect();
+        } finally {
+            if (bufLo != 0) {
+                Unsafe.free(bufLo, bufferSize, MemoryTag.NATIVE_DEFAULT);
+                bufLo = 0;
+                assert responseParserBufLo != 0;
+                Unsafe.free(responseParserBufLo, responseParserBufSize, MemoryTag.NATIVE_DEFAULT);
+                responseParserBufLo = 0;
+            }
+            responseHeaders.free();
         }
     }
 
@@ -243,6 +254,26 @@ public abstract class HttpClient implements QuietCloseable {
             dieIfNegative(socket.tlsIO(Socket.WRITE_FLAG));
         }
         return n;
+    }
+
+    /**
+     * Rolls the base class back from a platform subclass's failing constructor. The subclass catch
+     * cannot let this cleanup throw on top of the failure it is handling: the extension socket that
+     * {@link #disconnect()} closes can raise a runtime exception, which would replace the constructor
+     * failure the caller has to see and skip the poller the subclass releases next. Keep
+     * {@code primary} as the failure and carry the cleanup one as suppressed.
+     * <p>
+     * Releases the base class directly rather than through {@link #close()}, which dispatches into a
+     * subclass override running against fields its own constructor has not reached yet.
+     */
+    protected final void closeBaseQuietly(@NotNull Throwable primary) {
+        try {
+            closeBase();
+        } catch (Throwable th) {
+            if (th != primary) {
+                primary.addSuppressed(th);
+            }
+        }
     }
 
     protected void dieWaiting(int n) {

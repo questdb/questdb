@@ -1346,6 +1346,67 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHeapSizeBetweenStructuralMinimumAndEntrySize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // 24 bytes against a 16-byte entry: one entry fits and every later one grows the heap, so a
+            // map configured this small runs its queries rather than failing them. That is what ties
+            // MIN_MAP_PAGE_SIZE to the map's own structural bound - it asserts heapSize > 3 - instead of
+            // to an entry size: a floor picked above the bound rejects working page sizes like this one
+            // at startup, and the per-query check below already covers the rest.
+            try (
+                    OrderedMap map = new OrderedMap(
+                            24,
+                            new SingleColumnType(ColumnType.LONG),
+                            new SingleColumnType(ColumnType.LONG),
+                            16,
+                            0.5,
+                            Integer.MAX_VALUE
+                    )
+            ) {
+                final int N = 100;
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putLong(i);
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putLong(0, i * 3L);
+                }
+
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putLong(i);
+                    MapValue value = key.findValue();
+                    Assert.assertNotNull(value);
+                    Assert.assertEquals(i * 3L, value.getLong(0));
+                }
+                Assert.assertEquals(N, map.size());
+            }
+
+            // The entry size is the boundary the map itself enforces, and it names the property while
+            // doing so, so the query-dependent half of the minimum needs no startup floor. A page equal
+            // to the entry size is rejected: the check is `>=`, since the heap has to hold the entry
+            // and still have somewhere to append the next one from.
+            try {
+                new OrderedMap(
+                        16,
+                        new SingleColumnType(ColumnType.LONG),
+                        new SingleColumnType(ColumnType.LONG),
+                        16,
+                        0.5,
+                        Integer.MAX_VALUE
+                ).close();
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "page size is too small to fit a single key, consider increasing "
+                                + "`cairo.sql.small.map.page.size` [expected=16, actual=16]"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testKeyCopyFromFixedSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();

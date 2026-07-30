@@ -106,9 +106,9 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         // Compiling a real join at exactly that floor is what keeps the floor and the schema from
         // drifting apart: the number lives in PropServerConfiguration and the map it protects lives
         // here, and nothing else ties the two together.
-        node1.setProperty(PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, 32);
+        node1.setProperty(PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, 4);
         assertMemoryLeak(() -> {
-            Assert.assertEquals(32, configuration.getSqlJoinMetadataPageSize());
+            Assert.assertEquals(4, configuration.getSqlJoinMetadataPageSize());
             execute("CREATE TABLE bids (bid INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY NONE");
             execute("CREATE TABLE asks (ask INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY NONE");
             execute("""
@@ -120,7 +120,7 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
                       (101, '2024-01-01T00:00:01.000000Z'),
                       (103, '2024-01-01T00:00:03.000000Z')""");
 
-            // A three-column join metadata, so the map has to grow past the 32-byte page it starts on
+            // A three-column join metadata, so the map has to grow past the 4-byte page it starts on
             // rather than merely be constructed with it.
             assertQuery("SELECT b.bid, b.ts, a.ask FROM bids b JOIN asks a ON b.bid = a.ask")
                     .timestamp("ts")

@@ -48,17 +48,20 @@ public class HttpClientWindows extends HttpClient {
         } catch (Throwable th) {
             // super() has already taken the socket, both buffers and the response parser. A throw
             // here leaves a half-built client the caller never receives, so nothing would close it.
-            // super.close() rather than close(): fdSet is still null and only the base class holds
-            // anything to release.
-            super.close();
+            closeBaseQuietly(th);
             throw th;
         }
     }
 
     @Override
     public void close() {
-        super.close();
-        this.fdSet = Misc.free(fdSet);
+        // Free the FD set in a finally: super.close() disconnects first, and an extension socket that
+        // throws there used to leak it for good, since close() is the only thing that frees it.
+        try {
+            super.close();
+        } finally {
+            this.fdSet = Misc.free(fdSet);
+        }
     }
 
     @Override

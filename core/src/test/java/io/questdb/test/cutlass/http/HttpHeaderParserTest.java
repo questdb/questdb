@@ -94,17 +94,20 @@ public class HttpHeaderParserTest {
 
     @Test
     public void testBoundaryAugmenterReopenAfterCloseRestoresLimit() throws Exception {
-        // close() zeroes lim, so reopen() has to commit INITIAL_CAPACITY back alongside the block
-        // it allocates. The two assertions below split that in half. The first covers the malloc:
-        // reopen() sizes it from the constant rather than from lim, so a grown-then-closed augmenter
-        // comes back at 64 bytes instead of retaining the grown capacity across the connection reuse
-        // that HttpHeaderParser.reopen() drives. Growing past 64 first is what makes this assertion
-        // load-bearing - a boundary that always fitted the initial block leaves lim at 64 either
-        // way, so malloc(lim) and malloc(INITIAL_CAPACITY) ask for the same size and the two
-        // implementations are indistinguishable. The second assertion covers the commit itself,
-        // which the first cannot see - drop `lim = INITIAL_CAPACITY` and the malloc still runs, but
-        // lim stays 0 while lo holds a 64-byte block, so the of() below takes the resize path it
-        // should have skipped and reallocs against an oldSize of 0.
+        // close() zeroes lim, so reopen() has to commit a capacity back alongside the block it
+        // allocates, and that capacity is the one the augmenter grew to rather than INITIAL_CAPACITY.
+        // A multipart boundary is a property of the client, so it repeats on every request of a
+        // connection: sizing reopen() from the constant made the first of() after each pooled reuse
+        // realloc straight back up to the same size, a malloc plus a realloc per reuse for any
+        // boundary longer than 60 bytes. Growing past 64 first is what makes the assertion
+        // load-bearing - a boundary that always fitted the initial block leaves the remembered
+        // capacity at 64 either way, so both implementations ask for the same size.
+        //
+        // The second assertion covers the commit, which the first cannot see: drop `lim =
+        // reopenCapacity` and the malloc still runs, but lim stays 0 while lo holds a real block, so
+        // the of() below takes the resize path it should have skipped and reallocs against an oldSize
+        // of 0. The third covers close() leaving the remembered capacity alone, so a connection reused
+        // more than once does not fall back to 64 on the second round.
         TestUtils.assertMemoryLeak(() -> {
             // 200 chars + the 4-byte prefix rounds up to a 256-byte block, so lim ends up four
             // times the initial capacity.
@@ -120,17 +123,25 @@ public class HttpHeaderParserTest {
                 final long usedAfterClose = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN);
                 augmenter.reopen();
                 Assert.assertEquals(
-                        "reopen() must restore the initial capacity, not the grown one",
-                        usedAfterClose + 64,
+                        "reopen() must restore the capacity the augmenter grew to",
+                        usedAfterClose + 256,
                         Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN)
                 );
 
-                // 10 bytes against a restored 64-byte limit: of() must find room and leave the
-                // block alone. A lim left at 0 makes the same call resize.
-                TestUtils.assertEquals("\r\n--second", augmenter.of(new Utf8String("second")));
+                // The same boundary again, against a restored 256-byte limit: of() must find room and
+                // leave the block alone. A lim left at 0 makes the same call resize.
+                TestUtils.assertEquals("\r\n--" + grown, augmenter.of(new Utf8String(grown)));
                 Assert.assertEquals(
-                        "a boundary inside the initial capacity must not reallocate",
-                        usedAfterClose + 64,
+                        "a boundary inside the restored capacity must not reallocate",
+                        usedAfterClose + 256,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN)
+                );
+
+                augmenter.close();
+                augmenter.reopen();
+                Assert.assertEquals(
+                        "the remembered capacity must survive every close/reopen round",
+                        usedAfterClose + 256,
                         Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN)
                 );
             }

@@ -156,11 +156,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     // (CHAIN_VALUE_SIZE 12); window.store sizes buffers via store/RECORD_SIZE (widest 40) and the
     // RecordArray index page (store >> 4), so it needs >= 64.
     // small.map and join.metadata size OrderedMap heaps, whose constructor rejects any page that
-    // cannot fit one key plus its values. That true minimum is query-dependent, so the per-query
-    // check stays; this floor only rules out values no query could use. 32 admits the commonest
-    // minimal entry (one LONG key plus one LONG value, 16 bytes) with the strict margin the check
-    // requires, and both properties take it so the shared invariant has one number.
-    private static final int MIN_MAP_PAGE_SIZE = 32;
+    // cannot fit one key plus its values, naming the property as it does so. That minimum is
+    // query-dependent, and a page above it but below a query's entry still works - the map grows on
+    // demand - so this floor stays at the map's own structural bound (it asserts heapSize > 3) and
+    // leaves the query-dependent part to the per-query check. A wider floor would reject page sizes
+    // that run every query they are configured for. Both properties take the one number, since it
+    // comes from the one structure.
+    private static final int MIN_MAP_PAGE_SIZE = 4;
     private static final int MIN_SORT_KEY_PAGE_SIZE = 64;
     private static final int MIN_VALUE_HEAP_PAGE_SIZE = 12;
     private static final int MIN_WINDOW_STORE_PAGE_SIZE = 64;

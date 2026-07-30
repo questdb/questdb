@@ -49,32 +49,6 @@ import org.junit.Test;
 public class HttpConnectionContextTest extends AbstractOomSweepTest {
 
     @Test
-    public void testConstructorFailureFreesNativeAllocations() throws Exception {
-        // The constructor takes both header parsers, the response sink and - when the server
-        // pre-allocates - the receive buffer, in that order. A ceiling tripped at any of those
-        // points used to strand everything acquired before it: the half-built context never
-        // reaches the connection pool, so nothing ever calls close() on it.
-        //
-        // Sweeping the ceiling covers every allocation point rather than one hand-picked value,
-        // and assertOomSweep's own brackets fail loudly if the range stops short of the
-        // failing-to-succeeding transition. assertMemoryLeak is the assertion that matters: each
-        // point either builds a context and closes it, or throws and must leave nothing behind.
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            // The default context allocates roughly 4.8 KiB here - a 4096-byte request header
-            // buffer and a 512-byte multipart one, each with its own 64-byte boundary augmenter
-            // and 32-byte sink - so the step has to be finer than the smallest of those to land
-            // between allocation points rather than skipping the whole span in one stride.
-            assertOomSweep(16 * 1024, 64, null, () -> {
-                //noinspection EmptyTryBlock
-                try (HttpConnectionContext ignore = new HttpConnectionContext(httpConfig, PlainSocketFactory.INSTANCE)) {
-                    // built without tripping the ceiling; close() releases it
-                }
-            });
-        });
-    }
-
-    @Test
     public void testClearDisarmsBreakerOnPoolReturnWhileProtocolSwitched() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
@@ -104,9 +78,10 @@ public class HttpConnectionContextTest extends AbstractOomSweepTest {
     public void testConstructorFailureAtAuthenticatorFactoryFreesPreallocatedBuffers() throws Exception {
         // The authenticator factory is the first fallible step after the pre-allocated receive
         // buffer and the response sink's send buffer, so this is the point where those two are
-        // live and only the constructor's own catch can hand them back. Nothing has taken the
-        // authenticator yet, so the rollback must not touch it either.
-        final CountingAuthenticator authenticator = new CountingAuthenticator();
+        // live and only the constructor's own catch can hand them back. The factory throws instead
+        // of returning, so no authenticator exists to assert about here - the constructor closing
+        // the one it did take is what testConstructorFailureAtRejectFactoryClosesSocketAndAuthenticator
+        // covers.
         final HttpFullFatServerConfiguration httpConfig = preallocatingConfiguration(
                 () -> {
                     throw new InjectedFailure();
@@ -116,11 +91,7 @@ public class HttpConnectionContextTest extends AbstractOomSweepTest {
                 }
         );
 
-        assertMemoryLeak(() -> {
-            final CountingSocketFactory socketFactory = new CountingSocketFactory();
-            assertConstructorRollback(httpConfig, socketFactory);
-            Assert.assertEquals("nothing acquired the authenticator, so nothing must close it", 0, authenticator.closeCount);
-        });
+        assertMemoryLeak(() -> assertConstructorRollback(httpConfig, new CountingSocketFactory()));
     }
 
     @Test
@@ -168,6 +139,32 @@ public class HttpConnectionContextTest extends AbstractOomSweepTest {
             // hiding behind the socket assertion, which the sibling test above pins on its own.
             Assert.assertEquals("the constructor must close the authenticator it took", 1, authenticator.closeCount);
             Assert.assertEquals("the constructor must close the socket it took", 1, socketFactory.closeCount);
+        });
+    }
+
+    @Test
+    public void testConstructorFailureFreesNativeAllocations() throws Exception {
+        // The constructor takes both header parsers, the response sink and - when the server
+        // pre-allocates - the receive buffer, in that order. A ceiling tripped at any of those
+        // points used to strand everything acquired before it: the half-built context never
+        // reaches the connection pool, so nothing ever calls close() on it.
+        //
+        // Sweeping the ceiling covers every allocation point rather than one hand-picked value,
+        // and assertOomSweep's own brackets fail loudly if the range stops short of the
+        // failing-to-succeeding transition. assertMemoryLeak is the assertion that matters: each
+        // point either builds a context and closes it, or throws and must leave nothing behind.
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            // The default context allocates roughly 4.8 KiB here - a 4096-byte request header
+            // buffer and a 512-byte multipart one, each with its own 64-byte boundary augmenter
+            // and 32-byte sink - so the step has to be finer than the smallest of those to land
+            // between allocation points rather than skipping the whole span in one stride.
+            assertOomSweep(16 * 1024, 64, null, () -> {
+                //noinspection EmptyTryBlock
+                try (HttpConnectionContext ignore = new HttpConnectionContext(httpConfig, PlainSocketFactory.INSTANCE)) {
+                    // built without tripping the ceiling; close() releases it
+                }
+            });
         });
     }
 
