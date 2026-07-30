@@ -520,7 +520,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
         }
 
         private void publish(LiveViewCheckpointMetaStore store, long generation, long metadataSegmentId) {
-            writer.publish(metadataSegmentId, root);
+            writer.publish(metadataSegmentId, generation, root);
             final LiveViewCheckpointSuperblock superblock = store.getSuperblock();
             superblock.generation = generation;
             superblock.timelineRootRef.clear();

@@ -100,8 +100,11 @@ import io.questdb.std.ObjList;
  *     {@code checkpoint_gc_lag_generations}. The first two come from the ordered
  *     catalogue walk the purge sweep makes, which runs at startup and at a
  *     retrying publication rather than per seal, so they carry the last sweep's
- *     verdict. The last two are per-publication: the A/B pair retains the
- *     previous generation as its recovery fallback, so a healthy lag is 1.</li>
+ *     verdict. The count is data segments alone; the obsolete bytes span the
+ *     metadata segments the copy-on-write trees retire as well, because both
+ *     kinds wait on the same fallback slot and reader pins before their files can
+ *     go. The last two are per-publication: the A/B pair retains the previous
+ *     generation as its recovery fallback, so a healthy lag is 1.</li>
  *     <li>Cost - {@code checkpoint_last_write_micros},
  *     {@code checkpoint_last_restore_micros},
  *     {@code checkpoint_last_write_new_bytes} and

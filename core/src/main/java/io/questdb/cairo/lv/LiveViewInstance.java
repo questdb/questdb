@@ -214,11 +214,11 @@ public class LiveViewInstance implements QuietCloseable {
     // timeline generation currently requires WAL.
     private volatile long checkpointTimelineWalPurgeFloor = Numbers.LONG_NULL;
     // Live data segments the last lifecycle reconciliation's purge sweep counted,
-    // and the bytes of retired segments that sweep could not yet unlink. Both
-    // come from the ordered catalogue walk purge already makes, which runs at
-    // startup and at a retrying publication rather than per seal, so they carry
-    // the last sweep's verdict rather than a live figure. Surfaced via
-    // live_views().checkpoint_data_segment_count /
+    // and the bytes of retired segments - data and metadata alike - that sweep
+    // could not yet unlink. Both come from the ordered catalogue walk purge
+    // already makes, which runs at startup and at a retrying publication rather
+    // than per seal, so they carry the last sweep's verdict rather than a live
+    // figure. Surfaced via live_views().checkpoint_data_segment_count /
     // checkpoint_obsolete_segment_bytes. LONG_NULL until a sweep has run: a view
     // whose timeline holds no valid generation has no catalogue to report on,
     // which zeroes would misreport as "swept, found nothing".

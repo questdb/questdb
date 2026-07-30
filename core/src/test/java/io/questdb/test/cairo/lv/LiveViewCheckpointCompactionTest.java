@@ -465,7 +465,9 @@ public class LiveViewCheckpointCompactionTest extends AbstractLiveViewTest {
             ) {
                 segments.of(dir, pin.getSegmentDirectoryRootRef());
                 segments.iterateAll(entry -> {
-                    if (entry.referenceCount > 0 && !dataSegmentFileExists(instance, entry.segmentId)) {
+                    if (!entry.isMetadata()
+                            && entry.referenceCount > 0
+                            && !dataSegmentFileExists(instance, entry.segmentId)) {
                         missing.add(entry.segmentId);
                     }
                 });

@@ -25,8 +25,8 @@
 package io.questdb.cairo.lv;
 
 /**
- * Node framing for the persistent copy-on-write B+ tree that catalogues data
- * segments and their generation-transactional reference counts.
+ * Node framing for the persistent copy-on-write B+ tree that catalogues data and
+ * metadata segments and their generation-transactional reference counts.
  * <p>
  * The directory is ordered by {@code segmentId} and stored as immutable,
  * individually-checksummed metadata pages (kind {@link #PAGE_KIND_LEAF} or
@@ -43,15 +43,30 @@ package io.questdb.cairo.lv;
  *     fileLength          LONG   (+8)
  *     referenceCount      LONG   (+16)
  *     retireGeneration    LONG   (+24)
+ *     kind                LONG   (+32)
  * </pre>
- * Entry stride is {@link #LEAF_ENTRY_STRIDE} (32 bytes). Entries are sorted
+ * Entry stride is {@link #LEAF_ENTRY_STRIDE} (40 bytes). Entries are sorted
  * ascending by {@code segmentId}, which is unique because segment ids are
- * monotonic within a history epoch and never reused.
+ * monotonic within a history epoch and never reused - and unique across both
+ * kinds, because one id names at most one file in exactly one of {@code data/}
+ * and {@code meta/}.
  * <p>
- * Reference counts are per logical root, not per page: a root that names one
- * segment from several of its pages counts once. A zero count carries the
- * generation at which the segment became obsolete, so a later purge can prove no
- * reader can still reach it.
+ * {@code kind} is strictly redundant with that shared id namespace: a probe of
+ * both paths would answer it. The directory stores it anyway, so a caller that
+ * iterates the catalogue - a compaction pass looking for sparse data segments, a
+ * purge sweep building the path to unlink - reads the kind rather than inferring
+ * it, and a segment whose file is missing stays distinguishable from one of the
+ * other kind.
+ * <p>
+ * What a {@code referenceCount} counts depends on the kind. A
+ * {@link #SEGMENT_KIND_DATA} segment counts logical roots, not pages: a root that
+ * names one segment from several of its pages counts once. A
+ * {@link #SEGMENT_KIND_META} segment counts pages instead - the pages of the
+ * three superblock-rooted trees that reside in it and are still reachable from
+ * the current generation's roots. Both reach zero exactly when the current
+ * generation stops naming the file, which is all the purge rule needs. A zero
+ * count carries the generation at which the segment became obsolete, so a later
+ * purge can prove no reader can still reach it.
  *
  * <h2>Internal page payload</h2>
  * <pre>
@@ -71,6 +86,10 @@ public final class LiveViewCheckpointSegmentDirectory {
      * Byte offset of {@code fileLength} within a leaf entry.
      */
     public static final int ENTRY_FILE_LENGTH_OFFSET = 8;
+    /**
+     * Byte offset of {@code kind} within a leaf entry.
+     */
+    public static final int ENTRY_KIND_OFFSET = 32;
     /**
      * Byte offset of {@code referenceCount} within a leaf entry.
      */
@@ -98,9 +117,9 @@ public final class LiveViewCheckpointSegmentDirectory {
      */
     public static final int INTERNAL_CHILD_STRIDE = INTERNAL_CHILD_REF_OFFSET + LiveViewCheckpointPageRef.BYTES; // 28
     /**
-     * On-page size of one leaf entry: four LONGs.
+     * On-page size of one leaf entry: five LONGs.
      */
-    public static final int LEAF_ENTRY_STRIDE = ENTRY_RETIRE_GENERATION_OFFSET + Long.BYTES; // 32
+    public static final int LEAF_ENTRY_STRIDE = ENTRY_KIND_OFFSET + Long.BYTES; // 40
     /**
      * Byte offset of a node's {@code count} field at the start of its payload
      * (a leaf's entry count or an internal node's child count).
@@ -123,6 +142,18 @@ public final class LiveViewCheckpointSegmentDirectory {
      * references.
      */
     public static final long RETIRE_GENERATION_NONE = -1;
+    /**
+     * A {@code data/d.<segmentId>} file holding encoded state pages. Its
+     * {@code referenceCount} is the number of current logical roots that name it.
+     */
+    public static final long SEGMENT_KIND_DATA = 0;
+    /**
+     * A {@code meta/m.<segmentId>} file holding B+ tree pages. Its
+     * {@code referenceCount} is the number of its pages the current generation's
+     * superblock-rooted trees still reach - see
+     * {@link LiveViewCheckpointSegmentDirectoryWriter#releaseMetadataPages}.
+     */
+    public static final long SEGMENT_KIND_META = 1;
 
     private LiveViewCheckpointSegmentDirectory() {
     }

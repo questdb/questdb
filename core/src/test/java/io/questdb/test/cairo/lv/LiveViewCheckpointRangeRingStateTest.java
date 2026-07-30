@@ -1342,7 +1342,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 writer.of(checkpointsDir(dir));
                 writer.begin(root);
                 writer.addSegment(segmentId, fileLength, 1);
-                writer.publish(nextMetaSegmentId++, root);
+                writer.publish(nextMetaSegmentId++, 1, root);
                 reader.of(checkpointsDir(dir), root);
             }
         }

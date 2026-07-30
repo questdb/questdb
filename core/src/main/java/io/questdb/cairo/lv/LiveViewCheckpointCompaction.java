@@ -157,7 +157,11 @@ public final class LiveViewCheckpointCompaction {
                 // Select the sparsest referenced segments in catalogue order (oldest
                 // first, most likely superseded), capped so one pass stays bounded.
                 segmentDirectory.iterateAll(entry -> {
-                    if (selectedSegments.size() >= maxSourceSegments || entry.referenceCount <= 0) {
+                    // Compaction repacks state pages, so it only ever drains data
+                    // segments; the catalogue's metadata entries are not candidates.
+                    if (selectedSegments.size() >= maxSourceSegments
+                            || entry.isMetadata()
+                            || entry.referenceCount <= 0) {
                         return;
                     }
                     final long[] liveBytes = liveBytesBySegment.get(entry.segmentId);

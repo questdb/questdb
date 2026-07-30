@@ -515,7 +515,8 @@ public class LiveViewCheckpointDataStore implements Closeable {
         /**
          * @return bytes held by retired segments this sweep could not unlink -
          * still protected by the fallback slot or a reader pin, or failed to
-         * remove. The collection lag in bytes
+         * remove. The collection lag in bytes, over data and metadata segments
+         * alike, since both retire under the same rule
          */
         public long getObsoleteBytes() {
             return obsoleteBytes;
@@ -575,11 +576,16 @@ public class LiveViewCheckpointDataStore implements Closeable {
     }
 
     /**
-     * Reusable ordered sweep over the pinned generation's catalogue. A segment is
-     * unlinked only when it is unreferenced, unowned by a compaction candidate,
-     * unreachable from both valid superblock slots, and older than every live
-     * reader pin. A failed unlink stays catalogued and is retried on the next
-     * call.
+     * Reusable ordered sweep over the pinned generation's catalogue. A segment -
+     * data or metadata - is unlinked only when it is unreferenced, unowned by a
+     * compaction candidate, unreachable from both valid superblock slots, and
+     * older than every live reader pin. A failed unlink stays catalogued and is
+     * retried on the next call.
+     * <p>
+     * The two kinds reach zero for different reasons - a data segment when the
+     * last root naming it goes, a metadata segment when the last of its pages is
+     * path-copied away - but the rule that decides when zero is safe to act on is
+     * the same, so the sweep needs only the path to differ.
      */
     private final class PurgeSweep implements LiveViewCheckpointSegmentDirectoryReader.Visitor {
 
@@ -594,7 +600,10 @@ public class LiveViewCheckpointDataStore implements Closeable {
         @Override
         public void onEntry(LiveViewCheckpointSegmentDirectoryEntry entry) {
             final long segmentId = entry.segmentId;
-            if (entry.referenceCount != 0) {
+            // Data segments only: the count is what live_views() publishes as
+            // checkpoint_data_segment_count, and cataloguing metadata segments
+            // beside them must not silently redefine it.
+            if (entry.referenceCount != 0 && !entry.isMetadata()) {
                 liveSegments++;
             }
             if (entry.referenceCount != 0 || isCandidateOwned(segmentId)) {
@@ -607,7 +616,13 @@ public class LiveViewCheckpointDataStore implements Closeable {
                 return;
             }
             try (Path path = new Path()) {
-                LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, segmentId);
+                // The catalogue's kind decides the directory: the id namespace is
+                // shared, so one id names a file in exactly one of the two.
+                if (entry.isMetadata()) {
+                    LiveViewCheckpointLayout.metaSegmentPath(path, checkpointsDir, segmentId);
+                } else {
+                    LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, segmentId);
+                }
                 if (!ff.exists(path.$())) {
                     return;
                 }
@@ -618,7 +633,7 @@ public class LiveViewCheckpointDataStore implements Closeable {
                     failedSegments++;
                     obsoleteBytes = checkedAdd(obsoleteBytes, entry.fileLength);
                     LOG.error()
-                            .$("could not purge live view checkpoint data segment [path=")
+                            .$("could not purge live view checkpoint segment [path=")
                             .$(path)
                             .$(',').$(" errno=").$(ff.errno()).I$();
                 }

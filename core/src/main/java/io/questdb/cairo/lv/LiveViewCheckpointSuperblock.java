@@ -79,7 +79,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * Byte offset of the trailing CRC32 within a slot. The checksum covers
      * {@link #SLOT_CRC_COVERAGE} bytes from the slot base.
      */
-    public static final int SLOT_CRC_OFFSET = 172;
+    public static final int SLOT_CRC_OFFSET = 196;
     /**
      * Bytes of a slot the CRC32 covers: everything from the magic through the
      * last accounting total, excluding the CRC field itself.
@@ -87,7 +87,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public static final int SLOT_CRC_COVERAGE = SLOT_CRC_OFFSET;
     public static final int SLOT_DATA_BYTES_OFFSET = 80;
     public static final int SLOT_DEFINITION_TXN_OFFSET = 24;
-    public static final int SLOT_FORMAT_VERSION = 2;
+    public static final int SLOT_FORMAT_VERSION = 3;
     public static final int SLOT_FORMAT_VERSION_OFFSET = 8;
     public static final int SLOT_GENERATION_OFFSET = 16;
     public static final int SLOT_HISTORY_EPOCH_OFFSET = 32;
@@ -97,7 +97,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * version nibble. A distinctive 8-byte value so a foreign or zeroed slot is
      * rejected before the checksum runs.
      */
-    public static final long SLOT_MAGIC = 0x4C56_544D_4C4E_0002L;
+    public static final long SLOT_MAGIC = 0x4C56_544D_4C4E_0003L;
     /**
      * The magic without its version nibble. A slot matching this under
      * {@link #SLOT_MAGIC_FAMILY_MASK} was written as a timeline superblock by
@@ -111,6 +111,23 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public static final int SLOT_NEXT_CHECKPOINT_ID_OFFSET = 56;
     public static final int SLOT_NEXT_SEGMENT_ID_OFFSET = 64;
     public static final int SLOT_NORMALIZED_BASE_SEQTXN_OFFSET = 40;
+    /**
+     * Byte offset of the published byte length of the segment named by
+     * {@link #SLOT_PENDING_DIRECTORY_SEGMENT_ID_OFFSET}.
+     */
+    public static final int SLOT_PENDING_DIRECTORY_SEGMENT_BYTES_OFFSET = 180;
+    /**
+     * Byte offset of the metadata segment this generation's segment directory
+     * root lives in and which its own catalogue therefore does not yet list, or
+     * {@link Numbers#LONG_NULL} when the generation reused the previous root and
+     * wrote no directory segment. See {@link #pendingDirectorySegmentId}.
+     */
+    public static final int SLOT_PENDING_DIRECTORY_SEGMENT_ID_OFFSET = 172;
+    /**
+     * Byte offset of the reachable page count of the segment named by
+     * {@link #SLOT_PENDING_DIRECTORY_SEGMENT_ID_OFFSET}.
+     */
+    public static final int SLOT_PENDING_DIRECTORY_SEGMENT_PAGES_OFFSET = 188;
     public static final int SLOT_ROW_POSITION_DELTA_BYTES_OFFSET = 164;
     public static final int SLOT_ROW_POSITION_DELTA_ROOT_REF_OFFSET = 108;
     /**
@@ -124,7 +141,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     /**
      * Fixed size of one slot. The file is exactly {@link #FILE_SIZE} = two slots.
      */
-    public static final int SLOT_SIZE = 176;
+    public static final int SLOT_SIZE = 200;
     public static final int SLOT_TIMELINE_ROOT_REF_OFFSET = 88;
     /**
      * Total size of the {@code _timeline} file: two slots back to back.
@@ -150,6 +167,29 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public long nextCheckpointId;
     public long nextSegmentId;
     public long normalizedBaseSeqTxn;
+    /**
+     * Published byte length of {@link #pendingDirectorySegmentId}, or zero when
+     * there is none.
+     */
+    public long pendingDirectorySegmentBytes;
+    /**
+     * The metadata segment holding this generation's segment directory pages,
+     * which its own catalogue cannot list: a directory tree cannot record the
+     * final length of the file it is being written into. The next publication
+     * registers it before staging anything else, at which point the length and
+     * the page count are known and the segment is no longer the selected root's
+     * home free of charge.
+     * <p>
+     * {@link Numbers#LONG_NULL} when the generation staged no catalogue mutation
+     * and reused the previous directory root, so no segment was written.
+     */
+    public long pendingDirectorySegmentId = Numbers.LONG_NULL;
+    /**
+     * Reachable page count of {@link #pendingDirectorySegmentId} - the pages the
+     * publication wrote, each of which its parent or the root reference names
+     * exactly once - or zero when there is none.
+     */
+    public long pendingDirectorySegmentPages;
     /**
      * The share of {@link #metadataBytes} the persistent row-position difference
      * index wrote. Only a repair with a non-zero suffix delta adds to it, so it
@@ -393,6 +433,15 @@ public class LiveViewCheckpointSuperblock implements Closeable {
                     .put("live view checkpoint seed cursor offset must be non-negative, was ")
                     .put(seedCursorOffset);
         }
+        if (pendingDirectorySegmentId == Numbers.LONG_NULL
+                ? (pendingDirectorySegmentBytes != 0 || pendingDirectorySegmentPages != 0)
+                : (pendingDirectorySegmentId < 0 || pendingDirectorySegmentBytes <= 0 || pendingDirectorySegmentPages <= 0)) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint pending directory segment registration invalid")
+                    .put(" [segmentId=").put(pendingDirectorySegmentId)
+                    .put(", bytes=").put(pendingDirectorySegmentBytes)
+                    .put(", pages=").put(pendingDirectorySegmentPages).put(']');
+        }
 
         storeSlot((long) target * SLOT_SIZE);
         if (commitMode != CommitMode.NOSYNC) {
@@ -475,6 +524,21 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         if (seedCursorOffset < 0 && seedCursorOffset != Numbers.LONG_NULL) {
             return false;
         }
+        // The deferred directory registration is either absent outright or fully
+        // described. A half-set triple would make the next publication catalogue a
+        // segment with a length or page count that names nothing.
+        final long pendingDirectorySegmentId = mem.getLong(base + SLOT_PENDING_DIRECTORY_SEGMENT_ID_OFFSET);
+        final long pendingDirectorySegmentBytes = mem.getLong(base + SLOT_PENDING_DIRECTORY_SEGMENT_BYTES_OFFSET);
+        final long pendingDirectorySegmentPages = mem.getLong(base + SLOT_PENDING_DIRECTORY_SEGMENT_PAGES_OFFSET);
+        if (pendingDirectorySegmentId == Numbers.LONG_NULL) {
+            if (pendingDirectorySegmentBytes != 0 || pendingDirectorySegmentPages != 0) {
+                return false;
+            }
+        } else if (pendingDirectorySegmentId < 0
+                || pendingDirectorySegmentBytes <= 0
+                || pendingDirectorySegmentPages <= 0) {
+            return false;
+        }
         // These are authoritative publication coordinates. Reject impossible
         // values during bounded slot validation rather than allowing a
         // valid-CRC corrupt slot to release WAL by looking like "no floor".
@@ -496,6 +560,9 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         logicalStateBytes = mem.getLong(base + SLOT_LOGICAL_STATE_BYTES_OFFSET);
         rowPositionDeltaBytes = mem.getLong(base + SLOT_ROW_POSITION_DELTA_BYTES_OFFSET);
         seedCursorOffset = mem.getLong(base + SLOT_SEED_CURSOR_OFFSET_OFFSET);
+        pendingDirectorySegmentId = mem.getLong(base + SLOT_PENDING_DIRECTORY_SEGMENT_ID_OFFSET);
+        pendingDirectorySegmentBytes = mem.getLong(base + SLOT_PENDING_DIRECTORY_SEGMENT_BYTES_OFFSET);
+        pendingDirectorySegmentPages = mem.getLong(base + SLOT_PENDING_DIRECTORY_SEGMENT_PAGES_OFFSET);
         timelineRootRef.readFrom(mem, base + SLOT_TIMELINE_ROOT_REF_OFFSET);
         rowPositionDeltaRootRef.readFrom(mem, base + SLOT_ROW_POSITION_DELTA_ROOT_REF_OFFSET);
         segmentDirectoryRootRef.readFrom(mem, base + SLOT_SEGMENT_DIRECTORY_ROOT_REF_OFFSET);
@@ -514,6 +581,9 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         logicalStateBytes = 0;
         rowPositionDeltaBytes = 0;
         seedCursorOffset = Numbers.LONG_NULL;
+        pendingDirectorySegmentId = Numbers.LONG_NULL;
+        pendingDirectorySegmentBytes = 0;
+        pendingDirectorySegmentPages = 0;
         timelineRootRef.clear();
         rowPositionDeltaRootRef.clear();
         segmentDirectoryRootRef.clear();
@@ -566,6 +636,9 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         mem.putLong(base + SLOT_LOGICAL_STATE_BYTES_OFFSET, logicalStateBytes);
         mem.putLong(base + SLOT_ROW_POSITION_DELTA_BYTES_OFFSET, rowPositionDeltaBytes);
         mem.putLong(base + SLOT_SEED_CURSOR_OFFSET_OFFSET, seedCursorOffset);
+        mem.putLong(base + SLOT_PENDING_DIRECTORY_SEGMENT_ID_OFFSET, pendingDirectorySegmentId);
+        mem.putLong(base + SLOT_PENDING_DIRECTORY_SEGMENT_BYTES_OFFSET, pendingDirectorySegmentBytes);
+        mem.putLong(base + SLOT_PENDING_DIRECTORY_SEGMENT_PAGES_OFFSET, pendingDirectorySegmentPages);
         timelineRootRef.writeTo(mem, base + SLOT_TIMELINE_ROOT_REF_OFFSET);
         rowPositionDeltaRootRef.writeTo(mem, base + SLOT_ROW_POSITION_DELTA_ROOT_REF_OFFSET);
         segmentDirectoryRootRef.writeTo(mem, base + SLOT_SEGMENT_DIRECTORY_ROOT_REF_OFFSET);

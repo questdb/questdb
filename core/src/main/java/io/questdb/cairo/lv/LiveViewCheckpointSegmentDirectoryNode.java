@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.ENTRY_FILE_LENGTH_OFFSET;
+import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.ENTRY_KIND_OFFSET;
 import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.ENTRY_REFERENCE_COUNT_OFFSET;
 import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.ENTRY_RETIRE_GENERATION_OFFSET;
 import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.ENTRY_SEGMENT_ID_OFFSET;
@@ -41,6 +42,8 @@ import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.NODE_HEADER
 import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.PAGE_KIND_INTERNAL;
 import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.PAGE_KIND_LEAF;
 import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.RETIRE_GENERATION_NONE;
+import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_DATA;
+import static io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META;
 
 /**
  * A reusable in-heap image of one segment directory B+ tree node (leaf or
@@ -62,6 +65,7 @@ final class LiveViewCheckpointSegmentDirectoryNode {
     long[] childOffset = new long[0];
     long[] childSegmentId = new long[0];
     long[] entryFileLength = new long[0];
+    long[] entryKind = new long[0];
     long[] entryReferenceCount = new long[0];
     long[] entryRetireGeneration = new long[0];
     // Leaf entry columns (valid when leaf == true).
@@ -107,7 +111,7 @@ final class LiveViewCheckpointSegmentDirectoryNode {
 
     void copyEntryTo(int i, @NotNull LiveViewCheckpointSegmentDirectoryEntry out) {
         assert leaf;
-        out.of(entrySegmentId[i], entryFileLength[i], entryReferenceCount[i], entryRetireGeneration[i]);
+        out.of(entrySegmentId[i], entryFileLength[i], entryReferenceCount[i], entryRetireGeneration[i], entryKind[i]);
     }
 
     /**
@@ -126,6 +130,7 @@ final class LiveViewCheckpointSegmentDirectoryNode {
                 dst.entryFileLength[i] = entryFileLength[src];
                 dst.entryReferenceCount[i] = entryReferenceCount[src];
                 dst.entryRetireGeneration[i] = entryRetireGeneration[src];
+                dst.entryKind[i] = entryKind[src];
             }
         } else {
             dst.resetInternal();
@@ -194,7 +199,7 @@ final class LiveViewCheckpointSegmentDirectoryNode {
     /**
      * Inserts an entry at leaf position {@code pos}, shifting later entries up.
      */
-    void insertEntryAt(int pos, long segmentId, long fileLength, long referenceCount, long retireGeneration) {
+    void insertEntryAt(int pos, long segmentId, long fileLength, long referenceCount, long retireGeneration, long kind) {
         assert leaf;
         ensureLeafCapacity(count + 1);
         for (int i = count; i > pos; i--) {
@@ -202,11 +207,13 @@ final class LiveViewCheckpointSegmentDirectoryNode {
             entryFileLength[i] = entryFileLength[i - 1];
             entryReferenceCount[i] = entryReferenceCount[i - 1];
             entryRetireGeneration[i] = entryRetireGeneration[i - 1];
+            entryKind[i] = entryKind[i - 1];
         }
         entrySegmentId[pos] = segmentId;
         entryFileLength[pos] = fileLength;
         entryReferenceCount[pos] = referenceCount;
         entryRetireGeneration[pos] = retireGeneration;
+        entryKind[pos] = kind;
         count++;
     }
 
@@ -243,8 +250,8 @@ final class LiveViewCheckpointSegmentDirectoryNode {
     }
 
     /**
-     * Replaces the mutable values of the entry at {@code pos}. The key is
-     * preserved: a publication re-versions counts, never identities.
+     * Replaces the mutable values of the entry at {@code pos}. The key and the
+     * kind are preserved: a publication re-versions counts, never identities.
      */
     void replaceEntryPayloadAt(int pos, long fileLength, long referenceCount, long retireGeneration) {
         assert leaf;
@@ -276,6 +283,7 @@ final class LiveViewCheckpointSegmentDirectoryNode {
                 payload.putLong(entryFileLength[i]);
                 payload.putLong(entryReferenceCount[i]);
                 payload.putLong(entryRetireGeneration[i]);
+                payload.putLong(entryKind[i]);
             }
         } else {
             for (int i = 0; i < count; i++) {
@@ -346,6 +354,7 @@ final class LiveViewCheckpointSegmentDirectoryNode {
             final long fileLength = reader.getLong(base + ENTRY_FILE_LENGTH_OFFSET);
             final long referenceCount = reader.getLong(base + ENTRY_REFERENCE_COUNT_OFFSET);
             final long retireGeneration = reader.getLong(base + ENTRY_RETIRE_GENERATION_OFFSET);
+            final long kind = reader.getLong(base + ENTRY_KIND_OFFSET);
             if (segmentId < 0 || segmentId <= previousSegmentId) {
                 throw invalid("segment directory ids not strictly increasing")
                         .put(" [previous=").put(previousSegmentId)
@@ -367,10 +376,17 @@ final class LiveViewCheckpointSegmentDirectoryNode {
                         .put(", retireGeneration=").put(retireGeneration)
                         .put(']');
             }
+            if (kind != SEGMENT_KIND_DATA && kind != SEGMENT_KIND_META) {
+                throw invalid("segment directory entry kind unknown")
+                        .put(" [segmentId=").put(segmentId)
+                        .put(", kind=").put(kind)
+                        .put(']');
+            }
             entrySegmentId[i] = segmentId;
             entryFileLength[i] = fileLength;
             entryReferenceCount[i] = referenceCount;
             entryRetireGeneration[i] = retireGeneration;
+            entryKind[i] = kind;
             previousSegmentId = segmentId;
         }
     }
@@ -395,5 +411,6 @@ final class LiveViewCheckpointSegmentDirectoryNode {
         entryFileLength = grow(entryFileLength, cap);
         entryReferenceCount = grow(entryReferenceCount, cap);
         entryRetireGeneration = grow(entryRetireGeneration, cap);
+        entryKind = grow(entryKind, cap);
     }
 }

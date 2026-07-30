@@ -75,6 +75,7 @@ public class LiveViewCheckpointSegmentDirectoryReader implements Closeable {
     private final Path checkpointsDir = new Path();
     private final CairoConfiguration configuration;
     private final long[] entryFileLength = new long[ENTRY_CACHE_SIZE];
+    private final long[] entryKind = new long[ENTRY_CACHE_SIZE];
     private final long[] entryReferenceCount = new long[ENTRY_CACHE_SIZE];
     private final long[] entryRetireGeneration = new long[ENTRY_CACHE_SIZE];
     private final long[] entrySegmentId = new long[ENTRY_CACHE_SIZE];
@@ -146,7 +147,7 @@ public class LiveViewCheckpointSegmentDirectoryReader implements Closeable {
         // negative id asks the tree rather than reading an empty slot as a hit.
         final int slot = (int) (segmentId & (ENTRY_CACHE_SIZE - 1));
         if (segmentId >= 0 && entrySegmentId[slot] == segmentId) {
-            out.of(segmentId, entryFileLength[slot], entryReferenceCount[slot], entryRetireGeneration[slot]);
+            out.of(segmentId, entryFileLength[slot], entryReferenceCount[slot], entryRetireGeneration[slot], entryKind[slot]);
             return true;
         }
         long seg = rootRef.getSegmentId();
@@ -161,6 +162,7 @@ public class LiveViewCheckpointSegmentDirectoryReader implements Closeable {
                 }
                 navNode.copyEntryTo(index, out);
                 entryFileLength[slot] = out.fileLength;
+                entryKind[slot] = out.kind;
                 entryReferenceCount[slot] = out.referenceCount;
                 entryRetireGeneration[slot] = out.retireGeneration;
                 entrySegmentId[slot] = segmentId;
@@ -372,7 +374,7 @@ public class LiveViewCheckpointSegmentDirectoryReader implements Closeable {
     private LiveViewCheckpointSegmentDirectoryEntry required(long segmentId) {
         if (!find(segmentId, lookupEntry)) {
             throw CairoException.critical(0)
-                    .put("unknown live view checkpoint data segment, segmentId=")
+                    .put("unknown live view checkpoint segment, segmentId=")
                     .put(segmentId);
         }
         return lookupEntry;

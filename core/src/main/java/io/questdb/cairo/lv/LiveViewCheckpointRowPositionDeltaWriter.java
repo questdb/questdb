@@ -26,6 +26,7 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
@@ -63,6 +64,7 @@ public class LiveViewCheckpointRowPositionDeltaWriter implements Closeable {
     private int lastSegmentPageCount;
     private LiveViewCheckpointRowPositionDeltaNode[] leftPool = new LiveViewCheckpointRowPositionDeltaNode[0];
     private final LiveViewCheckpointRowPositionDeltaNode newRootBuilder = new LiveViewCheckpointRowPositionDeltaNode();
+    private final LongList releasedSegmentIds = new LongList();
     private AddResult[] resultPool = new AddResult[0];
     private LiveViewCheckpointRowPositionDeltaNode[] rightPool = new LiveViewCheckpointRowPositionDeltaNode[0];
 
@@ -87,6 +89,15 @@ public class LiveViewCheckpointRowPositionDeltaWriter implements Closeable {
         Misc.free(reader);
         Misc.free(segmentWriter);
         Misc.free(checkpointsDir);
+    }
+
+    /**
+     * @return the metadata segment of every page the last mutation superseded,
+     * one element per page, for the caller to release against the segment
+     * catalogue
+     */
+    public LongList getLastReleasedSegmentIds() {
+        return releasedSegmentIds;
     }
 
     /**
@@ -152,6 +163,9 @@ public class LiveViewCheckpointRowPositionDeltaWriter implements Closeable {
     private void addRec(long seg, long off, long len, long ts, long id, long delta, int depth) {
         final LiveViewCheckpointRowPositionDeltaNode node = leftAt(depth);
         reader.openAndDecode(seg, off, len, node);
+        // A descended node is always written back, so decoding one is exactly what
+        // supersedes the page holding it.
+        releasedSegmentIds.add(seg);
         final AddResult res = resultAt(depth);
         if (node.isLeaf()) {
             final int pos = node.findEntry(ts, id);
@@ -176,6 +190,7 @@ public class LiveViewCheckpointRowPositionDeltaWriter implements Closeable {
     private void beginSegment(long segmentId) {
         segmentWriter.of(checkpointsDir, segmentId);
         lastSegmentPageCount = 0;
+        releasedSegmentIds.clear();
     }
 
     private void commitSegment() {

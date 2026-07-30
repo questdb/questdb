@@ -26,6 +26,7 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
@@ -70,8 +71,10 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
     private long lastSegmentBytes;
     private int lastSegmentPageCount;
+    private LiveViewCheckpointTimelineNode[] dropPool = new LiveViewCheckpointTimelineNode[0];
     private LiveViewCheckpointTimelineNode[] leftPool = new LiveViewCheckpointTimelineNode[0];
     private final LiveViewCheckpointTimelineNode newRootBuilder = new LiveViewCheckpointTimelineNode();
+    private final LongList releasedSegmentIds = new LongList();
     private InsertResult[] resultPool = new InsertResult[0];
     private LiveViewCheckpointTimelineNode[] rightPool = new LiveViewCheckpointTimelineNode[0];
     private LiveViewCheckpointPageRef[] spliceRefPool = new LiveViewCheckpointPageRef[0];
@@ -134,6 +137,16 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     }
 
     /**
+     * @return the metadata segment of every page the last mutation superseded -
+     * the path copy's own old pages plus every page of a subtree a truncate
+     * dropped - one element per page, for the caller to release against the
+     * segment catalogue
+     */
+    public LongList getLastReleasedSegmentIds() {
+        return releasedSegmentIds;
+    }
+
+    /**
      * @return byte size of the metadata segment written by the last mutation
      */
     public long getLastSegmentBytes() {
@@ -174,6 +187,9 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     ) {
         if (entryCount == 0) {
             newRootOut.of(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength());
+            lastSegmentBytes = 0;
+            lastSegmentPageCount = 0;
+            releasedSegmentIds.clear();
             return;
         }
         if (oldRoot.isNull()) {
@@ -208,6 +224,7 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
             long newSegmentId,
             @NotNull LiveViewCheckpointPageRef newRootOut
     ) {
+        releasedSegmentIds.clear();
         if (oldRoot.isNull()) {
             return false;
         }
@@ -237,10 +254,23 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     private void beginSegment(long segmentId) {
         segmentWriter.of(checkpointsDir, segmentId);
         lastSegmentPageCount = 0;
+        releasedSegmentIds.clear();
     }
 
     private void commitSegment() {
         lastSegmentBytes = segmentWriter.commit();
+    }
+
+    private LiveViewCheckpointTimelineNode dropAt(int depth) {
+        if (depth >= dropPool.length) {
+            dropPool = growNodes(dropPool, depth + 1);
+        }
+        LiveViewCheckpointTimelineNode node = dropPool[depth];
+        if (node == null) {
+            node = new LiveViewCheckpointTimelineNode();
+            dropPool[depth] = node;
+        }
+        return node;
     }
 
     private void finishNode(LiveViewCheckpointTimelineNode node, InsertResult res, int depth, boolean leaf) {
@@ -268,6 +298,9 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     private void insertRec(long seg, long off, long len, LiveViewCheckpointTimelineEntry entry, int depth) {
         final LiveViewCheckpointTimelineNode node = leftAt(depth);
         reader.openAndDecode(seg, off, len, node);
+        // A descended node is always written back, so decoding one is exactly what
+        // supersedes the page holding it.
+        releasedSegmentIds.add(seg);
         final InsertResult res = resultAt(depth);
         if (node.isLeaf()) {
             final int pos = node.leafInsertPosition(entry.maxTimestamp, entry.checkpointId);
@@ -298,6 +331,29 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
             leftPool[depth] = node;
         }
         return node;
+    }
+
+    /**
+     * Releases every page of the subtree at {@code (seg, off, len)}, which a
+     * truncate is discarding whole. The walk uses its own node pool, so it can run
+     * beside a {@link #truncateRec} descent at the same depth.
+     */
+    private void releaseSubtreeRec(long seg, long off, long len, int depth) {
+        final LiveViewCheckpointTimelineNode node = dropAt(depth);
+        reader.openAndDecode(seg, off, len, node);
+        releasedSegmentIds.add(seg);
+        if (node.isLeaf()) {
+            return;
+        }
+        for (int i = 0, n = node.count(); i < n; i++) {
+            releaseSubtreeRec(node.childSegmentId[i], node.childOffset[i], node.childLength[i], depth + 1);
+        }
+    }
+
+    private void releaseSubtrees(LiveViewCheckpointTimelineNode node, int from, int to, int depth) {
+        for (int i = from; i < to; i++) {
+            releaseSubtreeRec(node.childSegmentId[i], node.childOffset[i], node.childLength[i], depth);
+        }
     }
 
     private InsertResult resultAt(int depth) {
@@ -343,6 +399,7 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     private void spliceRec(long seg, long off, long len, LiveViewCheckpointTimelineEntry[] entries, int lo, int hi, int depth) {
         final LiveViewCheckpointTimelineNode node = leftAt(depth);
         reader.openAndDecode(seg, off, len, node);
+        releasedSegmentIds.add(seg);
         if (node.isLeaf()) {
             for (int r = lo; r < hi; r++) {
                 final LiveViewCheckpointTimelineEntry e = entries[r];
@@ -405,6 +462,7 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     private boolean truncateRec(long seg, long off, long len, long floor, int depth) {
         final LiveViewCheckpointTimelineNode node = leftAt(depth);
         reader.openAndDecode(seg, off, len, node);
+        releasedSegmentIds.add(seg);
         if (node.isLeaf()) {
             final int kept = node.leafLowerBoundByTimestamp(floor);
             if (kept == 0) {
@@ -418,7 +476,11 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
         // kept by reference; the straddling child is the last one whose subtree
         // minimum is below the floor; every later child holds only keys at or
         // above it and is dropped.
+        final int count = node.count();
         final int straddle = node.internalLowerBoundByTimestamp(floor) - 1;
+        // A dropped subtree is never descended into, so its pages have to be
+        // walked to be released. The walk costs what the truncate discards.
+        releaseSubtrees(node, straddle + 1, count, depth + 1);
         if (straddle < 0) {
             return false;
         }

@@ -25,8 +25,8 @@
 package io.questdb.cairo.lv;
 
 /**
- * A mutable value holder for one segment directory entry: a data segment's
- * identity, published byte length, per-generation reference count and, once the
+ * A mutable value holder for one segment directory entry: a segment's identity
+ * and kind, published byte length, per-generation reference count and, once the
  * count reaches zero, the generation at which it retired.
  * <p>
  * The type is a reusable flyweight, like {@link LiveViewCheckpointTimelineEntry}:
@@ -36,13 +36,22 @@ package io.questdb.cairo.lv;
 public final class LiveViewCheckpointSegmentDirectoryEntry {
 
     /**
-     * Byte length of the published {@code d.<segmentId>} file. Every bounded
-     * page read validates its offset and length against this.
+     * Byte length of the published {@code d.<segmentId>} or {@code m.<segmentId>}
+     * file. Every bounded page read validates its offset and length against this.
      */
     public long fileLength;
     /**
-     * Number of current logical roots that name this segment. Repeated
-     * references from one root count once.
+     * {@link LiveViewCheckpointSegmentDirectory#SEGMENT_KIND_DATA} or
+     * {@link LiveViewCheckpointSegmentDirectory#SEGMENT_KIND_META}, which decides
+     * both the directory the file lives in and what
+     * {@link #referenceCount} counts.
+     */
+    public long kind;
+    /**
+     * For a data segment, the number of current logical roots that name it -
+     * repeated references from one root count once. For a metadata segment, the
+     * number of its pages the current generation's superblock-rooted trees still
+     * reach.
      */
     public long referenceCount;
     /**
@@ -52,7 +61,7 @@ public final class LiveViewCheckpointSegmentDirectoryEntry {
      */
     public long retireGeneration;
     /**
-     * Monotonic data segment id. The tree key.
+     * Monotonic segment id, unique across both kinds. The tree key.
      */
     public long segmentId;
 
@@ -61,19 +70,26 @@ public final class LiveViewCheckpointSegmentDirectoryEntry {
         fileLength = 0;
         referenceCount = 0;
         retireGeneration = LiveViewCheckpointSegmentDirectory.RETIRE_GENERATION_NONE;
+        kind = LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_DATA;
         return this;
+    }
+
+    public boolean isMetadata() {
+        return kind == LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META;
     }
 
     public LiveViewCheckpointSegmentDirectoryEntry of(
             long segmentId,
             long fileLength,
             long referenceCount,
-            long retireGeneration
+            long retireGeneration,
+            long kind
     ) {
         this.segmentId = segmentId;
         this.fileLength = fileLength;
         this.referenceCount = referenceCount;
         this.retireGeneration = retireGeneration;
+        this.kind = kind;
         return this;
     }
 }

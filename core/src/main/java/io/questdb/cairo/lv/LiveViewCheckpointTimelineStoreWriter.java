@@ -332,6 +332,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LiveViewCheckpointPageRef oldTimelineRoot = copy(superblock.timelineRootRef);
             final LiveViewCheckpointPageRef oldDirectoryRoot = copy(superblock.segmentDirectoryRootRef);
             directoryWriter.begin(oldDirectoryRoot);
+            registerPendingDirectorySegment(directoryWriter, superblock);
 
             final long targetSegmentId = plan.getTargetSegmentId();
             long nextSegmentId = Math.max(superblock.nextSegmentId, targetSegmentId + 1);
@@ -388,13 +389,22 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 spliced[i] = changedEntries.getQuick(i);
             }
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            final long timelineSegmentId = nextSegmentId++;
             final LiveViewCheckpointPageRef newTimelineRoot = new LiveViewCheckpointPageRef();
-            timelineWriter.splice(oldTimelineRoot, spliced, spliced.length, nextSegmentId++, newTimelineRoot);
+            timelineWriter.splice(oldTimelineRoot, spliced, spliced.length, timelineSegmentId, newTimelineRoot);
             metadataBytesAdded = checkedAdd(metadataBytesAdded, timelineWriter.getLastSegmentBytes());
+            registerMetadataSegment(
+                    directoryWriter,
+                    timelineSegmentId,
+                    timelineWriter.getLastSegmentBytes(),
+                    timelineWriter.getLastSegmentPageCount()
+            );
+            directoryWriter.releaseMetadataPages(timelineWriter.getLastReleasedSegmentIds(), generation);
 
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            final long directorySegmentId = nextSegmentId++;
             final LiveViewCheckpointPageRef newDirectoryRoot = new LiveViewCheckpointPageRef();
-            directoryWriter.publish(nextSegmentId++, newDirectoryRoot);
+            directoryWriter.publish(directorySegmentId, generation, newDirectoryRoot);
             metadataBytesAdded = checkedAdd(metadataBytesAdded, directoryWriter.getLastSegmentBytes());
             if (testFailureStage == TEST_FAIL_AFTER_METADATA_PUBLISH) {
                 throw CairoException.critical(0).put("test failure after live view checkpoint metadata publication");
@@ -402,6 +412,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
             superblock.generation = generation;
             superblock.nextSegmentId = nextSegmentId;
+            carryPendingDirectorySegment(directoryWriter, superblock, directorySegmentId);
             superblock.metadataBytes = checkedAdd(superblock.metadataBytes, metadataBytesAdded);
             superblock.dataBytes = checkedAdd(superblock.dataBytes, plan.getTargetSegmentBytes());
             // Compaction relocates bytes without changing any logical coordinate, so
@@ -526,6 +537,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LiveViewCheckpointPageRef oldDeltaRoot = copy(superblock.rowPositionDeltaRootRef);
             final LiveViewCheckpointPageRef oldDirectoryRoot = copy(superblock.segmentDirectoryRootRef);
             directoryWriter.begin(oldDirectoryRoot);
+            registerPendingDirectorySegment(directoryWriter, superblock);
 
             // The data segment reaches its final name before any metadata can
             // reference it, exactly as the cadence seal orders it. An empty
@@ -623,8 +635,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LiveViewCheckpointPageRef newTimelineRoot = new LiveViewCheckpointPageRef();
             if (boundaryCount > 0) {
                 nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
-                timelineWriter.splice(oldTimelineRoot, newEntries, boundaryCount, nextSegmentId++, newTimelineRoot);
+                final long timelineSegmentId = nextSegmentId++;
+                timelineWriter.splice(oldTimelineRoot, newEntries, boundaryCount, timelineSegmentId, newTimelineRoot);
                 metadataBytesAdded = checkedAdd(metadataBytesAdded, timelineWriter.getLastSegmentBytes());
+                registerMetadataSegment(
+                        directoryWriter,
+                        timelineSegmentId,
+                        timelineWriter.getLastSegmentBytes(),
+                        timelineWriter.getLastSegmentPageCount()
+                );
+                directoryWriter.releaseMetadataPages(timelineWriter.getLastReleasedSegmentIds(), generation);
             } else {
                 copy(oldTimelineRoot, newTimelineRoot);
             }
@@ -649,23 +669,32 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 final LiveViewCheckpointTimelineEntry suffixEntry = new LiveViewCheckpointTimelineEntry();
                 if (timelineReader.successor(oldTimelineRoot, highTsExclusive, suffixEntry)) {
                     nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+                    final long deltaSegmentId = nextSegmentId++;
                     deltaWriter.suffixAdd(
                             oldDeltaRoot,
                             suffixEntry.maxTimestamp,
                             suffixEntry.checkpointId,
                             suffixRowDelta,
-                            nextSegmentId++,
+                            deltaSegmentId,
                             newDeltaRoot
                     );
                     rowPositionDeltaBytesAdded = deltaWriter.getLastSegmentBytes();
                     metadataBytesAdded = checkedAdd(metadataBytesAdded, rowPositionDeltaBytesAdded);
                     suffixBreakpointTimestamp = suffixEntry.maxTimestamp;
+                    registerMetadataSegment(
+                            directoryWriter,
+                            deltaSegmentId,
+                            deltaWriter.getLastSegmentBytes(),
+                            deltaWriter.getLastSegmentPageCount()
+                    );
+                    directoryWriter.releaseMetadataPages(deltaWriter.getLastReleasedSegmentIds(), generation);
                 }
             }
 
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            final long directorySegmentId = nextSegmentId++;
             final LiveViewCheckpointPageRef newDirectoryRoot = new LiveViewCheckpointPageRef();
-            directoryWriter.publish(nextSegmentId++, newDirectoryRoot);
+            directoryWriter.publish(directorySegmentId, generation, newDirectoryRoot);
             metadataBytesAdded = checkedAdd(metadataBytesAdded, directoryWriter.getLastSegmentBytes());
             if (testFailureStage == TEST_FAIL_AFTER_METADATA_PUBLISH) {
                 throw CairoException.critical(0).put("test failure after live view checkpoint metadata publication");
@@ -684,6 +713,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // explicitly rather than letting the selected slot's value ride
             // along.
             superblock.seedCursorOffset = Numbers.LONG_NULL;
+            carryPendingDirectorySegment(directoryWriter, superblock, directorySegmentId);
             copy(newTimelineRoot, superblock.timelineRootRef);
             copy(newDeltaRoot, superblock.rowPositionDeltaRootRef);
             copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
@@ -771,6 +801,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
             final long generation = checkedIncrement(superblock.generation, "generation");
             directoryWriter.begin(oldDirectoryRoot);
+            registerPendingDirectorySegment(directoryWriter, superblock);
 
             // Release every root at or above the floor: each drops the data
             // segments it referenced, so a segment no surviving root names retires
@@ -797,15 +828,24 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             });
 
             long nextSegmentId = skipPublishedSegmentIds(checkpointsDir, superblock.nextSegmentId);
+            final long timelineSegmentId = nextSegmentId++;
             final LiveViewCheckpointPageRef newTimelineRoot = new LiveViewCheckpointPageRef();
-            final boolean survived = timelineWriter.truncateAbove(oldTimelineRoot, floorTimestamp, nextSegmentId++, newTimelineRoot);
+            final boolean survived = timelineWriter.truncateAbove(oldTimelineRoot, floorTimestamp, timelineSegmentId, newTimelineRoot);
             // The predecessor probe above proved a prefix key exists below the floor.
             assert survived;
             long metadataBytesAdded = timelineWriter.getLastSegmentBytes();
+            registerMetadataSegment(
+                    directoryWriter,
+                    timelineSegmentId,
+                    timelineWriter.getLastSegmentBytes(),
+                    timelineWriter.getLastSegmentPageCount()
+            );
+            directoryWriter.releaseMetadataPages(timelineWriter.getLastReleasedSegmentIds(), generation);
 
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            final long directorySegmentId = nextSegmentId++;
             final LiveViewCheckpointPageRef newDirectoryRoot = new LiveViewCheckpointPageRef();
-            directoryWriter.publish(nextSegmentId++, newDirectoryRoot);
+            directoryWriter.publish(directorySegmentId, generation, newDirectoryRoot);
             metadataBytesAdded = checkedAdd(metadataBytesAdded, directoryWriter.getLastSegmentBytes());
             if (testFailureStage == TEST_FAIL_AFTER_METADATA_PUBLISH) {
                 throw CairoException.critical(0).put("test failure after live view checkpoint metadata publication");
@@ -822,6 +862,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             superblock.logicalStateBytes = checkedAdd(superblock.logicalStateBytes, -droppedAccumulators[0]);
             // A truncate leaves no mid-sweep resume point behind.
             superblock.seedCursorOffset = Numbers.LONG_NULL;
+            carryPendingDirectorySegment(directoryWriter, superblock, directorySegmentId);
             copy(newTimelineRoot, superblock.timelineRootRef);
             // The row-position delta root carries forward unchanged: dropping the
             // suffix moves no surviving prefix key's cumulative recovery position.
@@ -941,6 +982,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 oldFunctionDirectory.of(checkpointsDir, oldFunctionDirectoryRef);
             }
             directoryWriter.begin(oldDirectoryRoot);
+            registerPendingDirectorySegment(directoryWriter, superblock);
 
             long nextSegmentId = metaStore.isValid() ? superblock.nextSegmentId : 0;
             nextSegmentId = Math.max(nextSegmentId, orphanUpperBound);
@@ -1009,9 +1051,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     checkpointRootRef.getLength()
             );
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            final long timelineSegmentId = nextSegmentId++;
             final LiveViewCheckpointPageRef newTimelineRoot = new LiveViewCheckpointPageRef();
-            timelineWriter.append(oldTimelineRoot, entry, nextSegmentId++, newTimelineRoot);
+            timelineWriter.append(oldTimelineRoot, entry, timelineSegmentId, newTimelineRoot);
             metadataBytesAdded = checkedAdd(metadataBytesAdded, timelineWriter.getLastSegmentBytes());
+            registerMetadataSegment(
+                    directoryWriter,
+                    timelineSegmentId,
+                    timelineWriter.getLastSegmentBytes(),
+                    timelineWriter.getLastSegmentPageCount()
+            );
+            directoryWriter.releaseMetadataPages(timelineWriter.getLastReleasedSegmentIds(), generation);
 
             if (hasData) {
                 directoryWriter.addSegment(dataSegmentId, dataSegmentBytes, 1);
@@ -1021,8 +1071,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 directoryWriter.applyRootReferenceChanges(emptySegmentIds, reusedSegmentIds, generation);
             }
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            final long directorySegmentId = nextSegmentId++;
             final LiveViewCheckpointPageRef newDirectoryRoot = new LiveViewCheckpointPageRef();
-            directoryWriter.publish(nextSegmentId++, newDirectoryRoot);
+            directoryWriter.publish(directorySegmentId, generation, newDirectoryRoot);
             metadataBytesAdded = checkedAdd(metadataBytesAdded, directoryWriter.getLastSegmentBytes());
             if (testFailureStage == TEST_FAIL_AFTER_METADATA_PUBLISH) {
                 throw CairoException.critical(0).put("test failure after live view checkpoint metadata publication");
@@ -1045,6 +1096,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // row-position delta node and the running total carries forward.
             superblock.rowPositionDeltaBytes = metaStore.isValid() ? superblock.rowPositionDeltaBytes : 0;
             superblock.seedCursorOffset = seedCursorOffset;
+            carryPendingDirectorySegment(directoryWriter, superblock, directorySegmentId);
             copy(newTimelineRoot, superblock.timelineRootRef);
             copy(oldDeltaRoot, superblock.rowPositionDeltaRootRef);
             copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
@@ -1070,6 +1122,24 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     obsoleteSegmentBytes
             );
         }
+    }
+
+    /**
+     * Records the metadata segment the publication's segment directory landed in,
+     * which its own catalogue could not list, so the next publication registers
+     * it. A publication that staged no catalogue mutation reused the previous
+     * root and wrote no segment, and leaves nothing pending.
+     */
+    private static void carryPendingDirectorySegment(
+            LiveViewCheckpointSegmentDirectoryWriter directoryWriter,
+            LiveViewCheckpointSuperblock superblock,
+            long directorySegmentId
+    ) {
+        final long segmentBytes = directoryWriter.getLastSegmentBytes();
+        final boolean hasSegment = segmentBytes > 0;
+        superblock.pendingDirectorySegmentId = hasSegment ? directorySegmentId : Numbers.LONG_NULL;
+        superblock.pendingDirectorySegmentBytes = hasSegment ? segmentBytes : 0;
+        superblock.pendingDirectorySegmentPages = hasSegment ? directoryWriter.getLastSegmentPageCount() : 0;
     }
 
     private static long checkedAdd(long a, long b) {
@@ -1148,6 +1218,51 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return null;
         }
         return ref;
+    }
+
+    /**
+     * Catalogues the metadata segment a tree writer just published. Its reference
+     * count is the number of pages the writer wrote, because a B+ tree page is
+     * named exactly once - by its parent, or by the root reference the superblock
+     * carries. A writer that reused its previous root wrote no segment and is
+     * skipped.
+     */
+    private static void registerMetadataSegment(
+            LiveViewCheckpointSegmentDirectoryWriter directoryWriter,
+            long segmentId,
+            long segmentBytes,
+            int pageCount
+    ) {
+        if (segmentBytes > 0) {
+            directoryWriter.addSegment(
+                    segmentId,
+                    segmentBytes,
+                    pageCount,
+                    LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META
+            );
+        }
+    }
+
+    /**
+     * Registers the segment directory segment the previous publication left
+     * unregistered. Every publication owes this to the one before it: without the
+     * entry, the pages this publication path-copies out of that segment have
+     * nothing to be released against and the file is never reclaimed. Called
+     * first because that is where it reads clearly, not because the staging order
+     * matters - the releases run at {@code publish} time.
+     */
+    private static void registerPendingDirectorySegment(
+            LiveViewCheckpointSegmentDirectoryWriter directoryWriter,
+            LiveViewCheckpointSuperblock superblock
+    ) {
+        if (superblock.pendingDirectorySegmentId != Numbers.LONG_NULL) {
+            directoryWriter.addSegment(
+                    superblock.pendingDirectorySegmentId,
+                    superblock.pendingDirectorySegmentBytes,
+                    superblock.pendingDirectorySegmentPages,
+                    LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META
+            );
+        }
     }
 
     private static void removeMissingPartitions(

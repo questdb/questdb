@@ -37,6 +37,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
@@ -248,11 +249,11 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                         try (Path checkpointsDir = checkpointsDir(instance)) {
                             directory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
                         }
-                        Assert.assertEquals(1, directory.size());
+                        Assert.assertEquals(1, countDataSegments(directory));
                         Assert.assertEquals(
                                 "the retry must not reuse the final-name orphan's segment id",
                                 expectedRetryDataSegmentId,
-                                directory.lastSegmentId()
+                                lastDataSegmentId(directory)
                         );
                         Assert.assertEquals(1, directory.getReferenceCount(expectedRetryDataSegmentId));
                     }
@@ -353,8 +354,13 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                     try (LiveViewCheckpointSegmentDirectoryReader directory =
                                  new LiveViewCheckpointSegmentDirectoryReader(configuration)) {
                         directory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
-                        Assert.assertEquals(3, directory.size());
-                        directory.iterateAll(entry -> Assert.assertEquals(1, entry.referenceCount));
+                        // One data segment per seal, each named by exactly one root.
+                        Assert.assertEquals(3, countDataSegments(directory));
+                        directory.iterateAll(entry -> {
+                            if (!entry.isMetadata()) {
+                                Assert.assertEquals(1, entry.referenceCount);
+                            }
+                        });
                         // The anchor reaches no data segment, so the newest root's
                         // only one is the function state the same seal wrote.
                         Assert.assertEquals(1, root.getSegmentIdCount());
@@ -829,6 +835,26 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         drainWalQueue();
         drainJob(job);
         drainWalQueue();
+    }
+
+    private static int countDataSegments(LiveViewCheckpointSegmentDirectoryReader directory) {
+        final int[] count = {0};
+        directory.iterateAll(entry -> {
+            if (!entry.isMetadata()) {
+                count[0]++;
+            }
+        });
+        return count[0];
+    }
+
+    private static long lastDataSegmentId(LiveViewCheckpointSegmentDirectoryReader directory) {
+        final long[] last = {-1};
+        directory.iterateAll(entry -> {
+            if (!entry.isMetadata()) {
+                last[0] = Math.max(last[0], entry.segmentId);
+            }
+        });
+        return last[0];
     }
 
     private static Path checkpointsDir(LiveViewInstance instance) {

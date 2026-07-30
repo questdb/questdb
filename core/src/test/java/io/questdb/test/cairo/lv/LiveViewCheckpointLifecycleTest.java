@@ -320,6 +320,30 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSupersededTimelineVersionResetsCheckpointDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+            touchFinal(false, 4);
+
+            // The migration direction, which is the one a released build would
+            // actually meet: a slot an EARLIER layout wrote. Both fields an older
+            // build stamps sit at offsets that do not move across versions, so this
+            // is what its file looks like to this one. The timeline is derived
+            // state, so discarding it costs a fast restart, not correctness.
+            supersedeTimelineFormatVersion(0);
+
+            final LiveViewCheckpointLifecycle.ReconcileResult result;
+            try (Path dir = checkpointsDir()) {
+                result = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+            }
+            Assert.assertTrue(result.isFormatReset());
+            Assert.assertFalse(result.isEpochReplaced());
+            Assert.assertFalse("the whole derived directory goes, not just _timeline", checkpointsDirExists());
+        });
+    }
+
+    @Test
     public void testTemporaryOrphanUnlinkRetriesOnNextReconcile() throws Exception {
         final boolean[] failFirstRemove = {true};
         final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
@@ -490,6 +514,29 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
             LiveViewCheckpointLayout.repairDescriptorPath(path, dir, repairId);
             return configuration.getFilesFacade().exists(path.$());
         }
+    }
+
+    /**
+     * Stamps the magic and layout version an earlier build wrote into {@code slot}.
+     * The magic's trailing nibble tracks the version, so a build one version back
+     * carries both one lower.
+     */
+    private void supersedeTimelineFormatVersion(int slot) {
+        withTimelineMemory(mem -> {
+            final long base = (long) slot * LiveViewCheckpointSuperblock.SLOT_SIZE;
+            mem.putLong(
+                    base + LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET,
+                    LiveViewCheckpointSuperblock.SLOT_MAGIC - 1
+            );
+            mem.putInt(
+                    base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET,
+                    LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION - 1
+            );
+            mem.putInt(
+                    base + LiveViewCheckpointSuperblock.SLOT_CRC_OFFSET,
+                    Zip.crc32(0, mem.addressOf(base), LiveViewCheckpointSuperblock.SLOT_CRC_COVERAGE)
+            );
+        });
     }
 
     private boolean segmentExists(boolean metadata, long segmentId, boolean temporary) {

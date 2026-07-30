@@ -20407,15 +20407,21 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 engine.getLiveViewRegistry().clear();
                 engine.buildViewGraphs();
 
+                // The obsolete bytes are the collection lag the fallback slot
+                // holds: the first generation's timeline and catalogue pages were
+                // path-copied away by the second, so they retired at generation 2
+                // and the sweep may not unlink them while generation 1 is still
+                // the other slot.
                 assertQuery("SELECT checkpoint_timeline_generation, checkpoint_timeline_entries, " +
                         "checkpoint_timeline_physical_bytes > 0 AS has_physical_bytes, " +
                         "checkpoint_data_segment_count > 0 AS has_live_segments, " +
-                        "checkpoint_obsolete_segment_bytes, checkpoint_last_write_new_bytes FROM live_views()")
+                        "checkpoint_obsolete_segment_bytes > 0 AS has_obsolete_bytes, " +
+                        "checkpoint_last_write_new_bytes FROM live_views()")
                         .noLeakCheck().noRandomAccess()
                         .returns("checkpoint_timeline_generation\tcheckpoint_timeline_entries\t" +
                                 "has_physical_bytes\thas_live_segments\t" +
-                                "checkpoint_obsolete_segment_bytes\tcheckpoint_last_write_new_bytes\n" +
-                                "2\t2\ttrue\ttrue\t0\t0\n");
+                                "has_obsolete_bytes\tcheckpoint_last_write_new_bytes\n" +
+                                "2\t2\ttrue\ttrue\ttrue\t0\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }

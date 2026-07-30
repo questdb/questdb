@@ -89,7 +89,7 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
                 try (LiveViewCheckpointSegmentDirectoryWriter writer = openWriter(2, 2)) {
                     writer.begin(root);
                     writer.addSegment(1_000 + i, 4_096 + i, 1);
-                    writer.publish(i + 1, root);
+                    writer.publish(i + 1, i + 1, root);
                 }
             }
 
@@ -168,8 +168,8 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
             // cost what it changed, not what the catalogue holds. Both catalogues
             // below take one new segment; the small one and the one a hundred times
             // larger must pay the same handful of pages for it.
-            final long smallPages = appendCost(100, 1_000);
-            final long largePages = appendCost(10_000, 2_000);
+            final long smallPages = appendCost(100, 1_000_000);
+            final long largePages = appendCost(10_000, 2_000_000);
             Assert.assertTrue(
                     "one append wrote " + smallPages + " pages over 100 segments and "
                             + largePages + " over 10000",
@@ -189,12 +189,12 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
             ) {
                 writer.begin(generation1Root);
                 writer.addSegment(100, 4096, 1); // data file deliberately absent
-                writer.publish(1, generation1Root);
+                writer.publish(1, 1, generation1Root);
                 publish(store, 1, generation1Root);
 
                 writer.begin(generation1Root);
                 writer.addSegment(101, 8192, 1);
-                writer.publish(2, generation2Root);
+                writer.publish(2, 2, generation2Root);
                 publish(store, 2, generation2Root);
             }
             corruptPageKind(generation2Root, 0x7fff_ffff);
@@ -266,7 +266,7 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
                         writer.getRetireGeneration(2)
                 );
                 Assert.assertEquals(1, writer.getReferenceCount(3));
-                writer.publish(4, root);
+                writer.publish(4, 1, root);
             }
 
             try (LiveViewCheckpointSegmentDirectoryReader restored = openReader(root)) {
@@ -295,7 +295,10 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
             final LongList added = new LongList();
             final boolean[] touched = new boolean[segmentCount];
             final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
-            long metadataSegmentId = 0;
+            // Above every catalogued data id: one id names at most one file, in
+            // exactly one of data/ and meta/.
+            long metadataSegmentId = 1_000_000;
+            long publishGeneration = 1;
 
             try (LiveViewCheckpointSegmentDirectoryWriter writer = openWriter(4, 4)) {
                 writer.begin(root);
@@ -304,7 +307,7 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
                     retireGenerations[i] = LiveViewCheckpointSegmentDirectory.RETIRE_GENERATION_NONE;
                     writer.addSegment(i, 100 + i, counts[i]);
                 }
-                writer.publish(metadataSegmentId++, root);
+                writer.publish(metadataSegmentId++, publishGeneration++, root);
 
                 for (int generation = 1; generation <= 200; generation++) {
                     removed.clear();
@@ -351,7 +354,7 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
                         Assert.assertEquals(counts[i], writer.getReferenceCount(i));
                         Assert.assertEquals(retireGenerations[i], writer.getRetireGeneration(i));
                     }
-                    writer.publish(metadataSegmentId++, root);
+                    writer.publish(metadataSegmentId++, publishGeneration++, root);
 
                     // Every generation is read back through its own published root,
                     // so a splice that corrupted a reused subtree cannot survive to
@@ -377,7 +380,8 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
             final LongList removed = new LongList();
             final LongList added = new LongList();
             final TreeSet<Long> touched = new TreeSet<>();
-            long metadataSegmentId = 0;
+            long metadataSegmentId = 1_000_000;
+            long publishGeneration = 1;
             long nextSegmentId = 0;
 
             try (LiveViewCheckpointSegmentDirectoryWriter writer = openWriter(3, 3)) {
@@ -409,7 +413,7 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
                     if (added.size() > 0) {
                         writer.applyRootReferenceChanges(removed, added, generation);
                     }
-                    writer.publish(metadataSegmentId++, root);
+                    writer.publish(metadataSegmentId++, publishGeneration++, root);
 
                     try (LiveViewCheckpointSegmentDirectoryReader reader = openReader(root)) {
                         final LongList seen = new LongList();
@@ -448,7 +452,7 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
                 writer.begin(root);
                 writer.addSegment(5, 50, 1);
                 writer.addSegment(5 + collidingStride, 70, 1);
-                writer.publish(1, root);
+                writer.publish(1, 1, root);
             }
 
             final LiveViewCheckpointPageRef nextRoot = new LiveViewCheckpointPageRef();
@@ -458,7 +462,7 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
                 final LongList added = new LongList();
                 added.add(5);
                 writer.applyRootReferenceChanges(removed, added, 9);
-                writer.publish(2, nextRoot);
+                writer.publish(2, 2, nextRoot);
             }
 
             final LiveViewCheckpointSegmentDirectoryEntry entry = new LiveViewCheckpointSegmentDirectoryEntry();
@@ -512,7 +516,11 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
                 mem.putInt(1);
                 putEntry(mem, 5, 0, 1, -1);
             }, "entry value invalid");
-            assertRawDirectoryRejected(27, LiveViewCheckpointSegmentDirectory.PAGE_KIND_INTERNAL, mem -> {
+            assertRawDirectoryRejected(27, LiveViewCheckpointSegmentDirectory.PAGE_KIND_LEAF, mem -> {
+                mem.putInt(1);
+                putEntry(mem, 5, 10, 1, -1, 7);
+            }, "entry kind unknown");
+            assertRawDirectoryRejected(28, LiveViewCheckpointSegmentDirectory.PAGE_KIND_INTERNAL, mem -> {
                 mem.putInt(2);
                 putChild(mem, 9, 1, 0, 24);
                 putChild(mem, 9, 1, 24, 24);
@@ -558,10 +566,22 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
     }
 
     private static void putEntry(MemoryA mem, long segmentId, long fileLength, long count, long retireGeneration) {
+        putEntry(mem, segmentId, fileLength, count, retireGeneration, LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_DATA);
+    }
+
+    private static void putEntry(
+            MemoryA mem,
+            long segmentId,
+            long fileLength,
+            long count,
+            long retireGeneration,
+            long kind
+    ) {
         mem.putLong(segmentId);
         mem.putLong(fileLength);
         mem.putLong(count);
         mem.putLong(retireGeneration);
+        mem.putLong(kind);
     }
 
     /**
@@ -576,11 +596,11 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
             for (int i = 0; i < segmentCount; i++) {
                 writer.addSegment(i, 100 + i, 1);
             }
-            writer.publish(metadataSegmentId, root);
+            writer.publish(metadataSegmentId, 1, root);
 
             writer.begin(root);
             writer.addSegment(segmentCount, 4096, 1);
-            writer.publish(metadataSegmentId + 1, root);
+            writer.publish(metadataSegmentId + 1, 2, root);
             final int pages = writer.getLastSegmentPageCount();
             try (LiveViewCheckpointSegmentDirectoryReader reader = openReader(root)) {
                 Assert.assertEquals(segmentCount + 1L, reader.size());
