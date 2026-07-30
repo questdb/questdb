@@ -988,14 +988,17 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             if (state.isOk() && deferCommit) {
                 state.commitIfMaxUncommittedRowsReached();
                 if (state.isOk()) {
-                    // Rows are buffered in WAL writers but NOT committed (the
-                    // force-commit above fires per-table at the
-                    // max-uncommitted-rows cap and gives no full-coverage
-                    // guarantee). Until the group-closing commit or a rollback,
-                    // the cumulative-ack watermark must not move past this
-                    // frame -- an OK ack would let the client trim rows the
-                    // server can still roll back (#7144's replay contract).
-                    state.markUncommittedDeferredRows();
+                    // The force-commit above fires per-table at the
+                    // max-uncommitted-rows cap, so it may have covered
+                    // everything, something, or nothing. ASK rather than
+                    // assume: while anything is still uncommitted the
+                    // cumulative-ack watermark must not move past this frame --
+                    // an OK ack would let the client trim rows the server can
+                    // still roll back (#7144's replay contract). Once nothing
+                    // is uncommitted, this frame's rows are durable and the ack
+                    // may cover it, which is what stops a mid-group reconnect
+                    // replaying (and so duplicating) rows already committed.
+                    state.refreshUncommittedDeferredRows();
                 }
             }
             // Read AFTER the commit calls: processMessage's read-only gate AND the
