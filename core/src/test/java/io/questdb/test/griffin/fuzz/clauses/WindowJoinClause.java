@@ -43,14 +43,19 @@ import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
  * <p>
  * Shape:
  * <pre>
- * SELECT masterExpr AS e0 [, masterExpr AS e1 ...], agg(p.col) AS a0 [, agg(...) AS a1 ...]
+ * SELECT masterExpr AS e0 [, masterExpr AS e1 ...][, t.ts AS e&lt;n&gt;]
+ *        , agg(p.col) AS a0 [, agg(...) AS a1 ...], count(p.ts) AS a&lt;n&gt;
  * FROM master t
  * WINDOW JOIN slave p [ON (t.sym = p.sym)]
  * RANGE BETWEEN &lt;lo&gt; AND &lt;hi&gt; [INCLUDE PREVAILING | EXCLUDE PREVAILING]
  * [WHERE master-only-predicate]
  * [ORDER BY ...]
- * [LIMIT N]
+ * [ORDER BY t.ts alias LIMIT N]
  * </pre>
+ * The trailing {@code count(p.ts)} is always projected - see
+ * {@link JoinClauseSupport#appendRowSetGuard} - and an ordered {@code LIMIT} brings the master
+ * timestamp into the projection so the limited row set is fully determined. One limited query in
+ * four stays unordered, and only those are tagged non-deterministic.
  * Bounds use static forms only - {@code UNBOUNDED PRECEDING}, {@code
  * CURRENT ROW}, and {@code N <unit> PRECEDING/FOLLOWING} - with units
  * biased to minutes/hours so a frame actually spans several 30-minute-spaced
@@ -77,6 +82,12 @@ public final class WindowJoinClause {
     public static GeneratedQuery generate(Rnd rnd, FuzzTable master, FuzzTable slave, BindContext ctx, boolean injectFaultFn) {
         ExpressionGenerator masterGen = new ExpressionGenerator(rnd, master.getColumns(), MASTER_ALIAS, 2);
         boolean keyed = rnd.nextInt(3) != 0;
+        // Decided up front because an ordered limited query projects the master timestamp; see the
+        // ORDER BY below. One limited query in four stays UNORDERED and is tagged non-deterministic:
+        // a bare LIMIT is what exercises the parallel path's early cancellation, and ordering every
+        // limited query would take that shape out of the generator entirely.
+        boolean hasLimit = rnd.nextBoolean();
+        boolean isLimitOrdered = hasLimit && rnd.nextInt(4) != 0;
 
         StringSink sql = new StringSink();
         sql.put("SELECT ");
@@ -89,12 +100,22 @@ public final class WindowJoinClause {
             e.appendSql(sql, ctx);
             sql.put(" AS e").put(i);
         }
+        // The ordering key a LIMIT needs - see the ORDER BY below. Projected, not just ordered on,
+        // because ORDER BY resolves against the projection here.
+        if (isLimitOrdered) {
+            sql.put(", ").put(MASTER_ALIAS).put(".ts AS e").put(masterSlots);
+            masterSlots++;
+        }
         int aggCount = 1 + rnd.nextInt(3); // 1..3 slave aggregates
         for (int i = 0; i < aggCount; i++) {
             sql.put(", ");
             JoinClauseSupport.appendAggregate(sql, rnd, slave, SLAVE_ALIAS);
             sql.put(" AS a").put(i);
         }
+        // Pins how many slave rows the join matched, so a dropped or duplicated one cannot hide
+        // inside the FLOAT tolerance of a sum sitting next to it.
+        JoinClauseSupport.appendRowSetGuard(sql, SLAVE_ALIAS, aggCount);
+        aggCount++;
 
         sql.put(" FROM ").put(master.getName()).put(' ').put(MASTER_ALIAS);
         sql.put(" WINDOW JOIN ").put(slave.getName()).put(' ').put(SLAVE_ALIAS);
@@ -106,18 +127,26 @@ public final class WindowJoinClause {
         // WHERE may reference master columns only.
         PredicateGenerator.appendWhere(sql, rnd, master.getColumns(), MASTER_ALIAS, 1, ctx, injectFaultFn);
 
-        if (rnd.nextBoolean()) {
+        // A LIMIT needs an ordering that fully determines WHICH rows survive, or the two sides of a
+        // differential can each return a different valid subset and only their row counts can be
+        // compared. A WINDOW JOIN emits exactly one row per master row, and the fuzz tables step ts
+        // by a fixed interval from a fixed start, so the master timestamp is unique per output row:
+        // ordering by it alone is a total order, the LIMIT window is determined, and the runner can
+        // compare cells. Roughly half the generated queries carry a LIMIT, so this is a large part
+        // of the shape's coverage.
+        //
+        // Ordering by an aggregate alias would NOT do: a FLOAT sum drifts with reduction order, so
+        // two rows close in that column can swap between the two sides, and the row-by-row compare
+        // would then read a real divergence off a legitimate tie.
+        if (isLimitOrdered) {
+            sql.put(" ORDER BY e").put(masterSlots - 1);
+        } else if (!hasLimit && rnd.nextBoolean()) {
             JoinClauseSupport.appendOrderBy(sql, rnd, masterSlots, aggCount);
         }
-
-        // LIMIT over a parallel WINDOW JOIN can pick a different valid subset
-        // when ORDER BY does not fully disambiguate; tag the query so the
-        // runner compares row counts rather than content.
-        boolean hasLimit = rnd.nextBoolean();
         if (hasLimit) {
             sql.put(" LIMIT ").put(1 + rnd.nextInt(50));
         }
-        return new GeneratedQuery(sql.toString(), !hasLimit);
+        return new GeneratedQuery(sql.toString(), isLimitOrdered || !hasLimit);
     }
 
     /**

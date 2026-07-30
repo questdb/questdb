@@ -5100,21 +5100,133 @@ public class WindowJoinTest extends AbstractCairoTest {
                 }
             }
 
-            // INCLUDE PREVAILING has no simple plain-SQL oracle; cross-check the single-threaded
-            // and parallel keyed paths against each other, for native and parquet slaves.
+            // INCLUDE PREVAILING has no simple plain-SQL oracle here; cross-check the
+            // single-threaded and parallel keyed paths against each other, for native and parquet
+            // slaves. Parity alone is not an oracle - two implementations agreeing on an empty or
+            // all-null result agree trivially - so the serial side goes through the same
+            // non-vacuity guard as the EXCLUDE oracle above, and each side asserts the route it
+            // actually took. testWindowJoinKeyedIncludePrevailingAbsoluteOracle pins the values.
             for (String slave : new String[]{"prices", "prices_pq"}) {
                 final String incl = "SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
                         "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym) " +
                         "RANGE BETWEEN 4 HOURS PRECEDING AND 2 HOURS PRECEDING INCLUDE PREVAILING " +
                         "ORDER BY t.sym, t.ts";
                 sqlExecutionContext.setParallelWindowJoinEnabled(false);
+                assertWindowJoinParallelism(incl, false);
                 sink.clear();
                 printSql(incl, sink);
                 final String single = sink.toString();
+                assertNonVacuousOracle("include prevailing slave=" + slave, single);
                 sqlExecutionContext.setParallelWindowJoinEnabled(true);
+                assertWindowJoinParallelism(incl, true);
                 sink.clear();
                 printSql(incl, sink);
                 TestUtils.assertEquals("include prevailing slave=" + slave, single, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testWindowJoinKeyedIncludePrevailingAbsoluteOracle() throws Exception {
+        // The serial-vs-parallel INCLUDE PREVAILING differentials elsewhere in this class cannot say
+        // WHAT the right answer is, only that two routes agree on it. This pins the answer.
+        //
+        // A prevailing row is folded in when the window holds no slave row, or when its first slave
+        // row sits strictly after the window's lower bound; the row folded in is the last one before
+        // that bound, and there is at most one of them. The fixture is small enough to work out by
+        // hand, and the slave values are powers of two so every subset has a distinct sum - no
+        // expected total can be reached by the wrong set of rows.
+        //
+        // One master row at 06:00 and slave rows at 00:00 (1), 01:00 (2), 04:00 (4) and 05:30 (8):
+        //   [02:00, 04:00]  holds 04:00 only, which is after the bound -> folds in 01:00
+        //   [02:00, 03:00]  holds nothing                              -> folds in 01:00
+        //   [01:00, 04:00]  holds 01:00 exactly ON the bound           -> folds in nothing
+        //   [22:00, 23:00] of the previous day: nothing in it and nothing before it -> nothing
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices_pq (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Two symbols, and every gap in a's timeline holds a b row, so a prevailing lookup that
+            // ignored the join key would fold one of b's rows in and miss every expectation below.
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('a', '2024-01-01T06:00:00.000000Z'),
+                        ('b', '2024-01-01T06:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO prices VALUES
+                        ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                        ('a', 2, '2024-01-01T01:00:00.000000Z'),
+                        ('a', 4, '2024-01-01T04:00:00.000000Z'),
+                        ('a', 8, '2024-01-01T05:30:00.000000Z'),
+                        ('b', 64, '2024-01-01T00:30:00.000000Z'),
+                        ('b', 16, '2024-01-01T02:30:00.000000Z'),
+                        ('b', 32, '2024-01-01T03:15:00.000000Z')
+                    """);
+            execute("INSERT INTO prices_pq SELECT * FROM prices");
+            execute("ALTER TABLE prices_pq CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // {window, EXCLUDE PREVAILING rows, INCLUDE PREVAILING rows}. Derived by hand: a's rows
+            // are 1@00:00 2@01:00 4@04:00 8@05:30, b's are 64@00:30 16@02:30 32@03:15, both master
+            // rows sit at 06:00. b has a row before every window, so its prevailing fold fires where
+            // a's does not, and its values are the higher powers of two so no total is ambiguous.
+            final String[][] cases = {
+                    {
+                            // [02:00, 04:00]. a: 4 in window, first row after the bound -> folds 2.
+                            //                 b: 16 and 32 in window, first after the bound -> folds 64.
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND 2 HOURS PRECEDING",
+                            "a\t2024-01-01T06:00:00.000000Z\t4\t1\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\t48\t2\n",
+                            "a\t2024-01-01T06:00:00.000000Z\t6\t2\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\t112\t3\n"
+                    },
+                    {
+                            // [02:00, 03:00]. a: empty -> folds 2. b: 16 in window -> folds 64.
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND 3 HOURS PRECEDING",
+                            "a\t2024-01-01T06:00:00.000000Z\tnull\t0\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\t16\t1\n",
+                            "a\t2024-01-01T06:00:00.000000Z\t2\t1\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\t80\t2\n"
+                    },
+                    {
+                            // [01:00, 04:00]. a's first row sits exactly ON the bound, so a folds
+                            // nothing and INCLUDE equals EXCLUDE; b's first row is after it, so b
+                            // still folds 64. One window, both branches.
+                            "RANGE BETWEEN 5 HOURS PRECEDING AND 2 HOURS PRECEDING",
+                            "a\t2024-01-01T06:00:00.000000Z\t6\t2\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\t48\t2\n",
+                            "a\t2024-01-01T06:00:00.000000Z\t6\t2\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\t112\t3\n"
+                    },
+                    {
+                            // [22:00, 23:00] of the previous day: nothing in it and nothing before it,
+                            // for either symbol.
+                            "RANGE BETWEEN 8 HOURS PRECEDING AND 7 HOURS PRECEDING",
+                            "a\t2024-01-01T06:00:00.000000Z\tnull\t0\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\tnull\t0\n",
+                            "a\t2024-01-01T06:00:00.000000Z\tnull\t0\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\tnull\t0\n"
+                    },
+            };
+            final String header = "sym\tts\ta0\ta1\n";
+            for (String[] c : cases) {
+                for (String prevailing : new String[]{"EXCLUDE PREVAILING", "INCLUDE PREVAILING"}) {
+                    final String expected = header + ("EXCLUDE PREVAILING".equals(prevailing) ? c[1] : c[2]);
+                    for (String slave : new String[]{"prices", "prices_pq"}) {
+                        for (boolean parallel : new boolean[]{false, true}) {
+                            sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+                            final String q = "SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
+                                    "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym) " +
+                                    c[0] + " " + prevailing + " ORDER BY t.sym, t.ts";
+                            assertWindowJoinParallelism(q, parallel);
+                            // sizeMayVary: the serial keyed route reports a concrete size while the
+                            // parallel one reports -1, and this loop asserts both.
+                            assertQuery(q).noLeakCheck().sizeMayVary().returns(expected);
+                        }
+                    }
+                }
             }
         });
     }
@@ -5489,15 +5601,20 @@ public class WindowJoinTest extends AbstractCairoTest {
                         // INCLUDE PREVAILING has no simple plain-SQL oracle; cross-check the
                         // single-threaded and parallel keyed paths against each other. Only the
                         // former rebuilds the index per master row, so they diverge if the index is
-                        // marked complete too early.
+                        // marked complete too early. Parity alone is not an oracle, so the serial
+                        // side also goes through the non-vacuity guard and each side asserts its
+                        // route; testWindowJoinKeyedIncludePrevailingAbsoluteOracle pins the values.
                         final String incl = "SELECT t.sym, t.ts, " + shape[0] + " AS a0 " +
                                 "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym)" + shape[1] + " " +
                                 window[0] + " INCLUDE PREVAILING ORDER BY t.sym, t.ts";
                         sqlExecutionContext.setParallelWindowJoinEnabled(false);
+                        assertWindowJoinParallelism(incl, false);
                         sink.clear();
                         printSql(incl, sink);
                         final String single = sink.toString();
+                        assertNonVacuousOracle(prefix + " include prevailing slave=" + slave, single);
                         sqlExecutionContext.setParallelWindowJoinEnabled(true);
+                        assertWindowJoinParallelism(incl, true);
                         sink.clear();
                         printSql(incl, sink);
                         TestUtils.assertEquals(prefix + " include prevailing slave=" + slave, single, sink);

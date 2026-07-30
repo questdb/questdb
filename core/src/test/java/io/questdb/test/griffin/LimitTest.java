@@ -277,6 +277,64 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidLoTypeFreesParsedFunction() throws Exception {
+        // toLimitFunction() parses the LIMIT expression before validating it, so a rejected
+        // expression that owns native memory leaked it: an ARRAY constant holds a DirectArray, and
+        // neither the type coercion nor the explicit type check freed the parsed function. The
+        // callers cannot free it either - they never receive it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // DOUBLE[] is not convertible to LONG, so the coercion rejects it.
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM y LIMIT ARRAY[1.0, 2.0]",
+                    27,
+                    "LIMIT expressions must be convertible to INT"
+            );
+            // Same for the LIMIT hi position, which parses through the same helper.
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM y LIMIT 1, ARRAY[1.0, 2.0]",
+                    30,
+                    "LIMIT expressions must be convertible to INT"
+            );
+            // The two-argument CALLERS have the same hole one level up: they parse the lo, then the
+            // hi, and a rejected hi used to drop a lo that had already materialised. A lo of
+            // ARRAY[...][$1]::long is a runtime constant that passes validation with the DirectArray
+            // of its ARRAY argument still attached, so it is what the caller leaks.
+            bindVariableService.setLong(0, 1L);
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM y LIMIT ARRAY[1.0, 2.0][$1]::long, ARRAY[1.0, 2.0]",
+                    54,
+                    "LIMIT expressions must be convertible to INT"
+            );
+            // And through the DISTINCT caller, which assembles both before its own factory.
+            assertExceptionNoLeakCheck(
+                    "SELECT DISTINCT i FROM y LIMIT ARRAY[1.0, 2.0][$1]::long, ARRAY[1.0, 2.0]",
+                    63,
+                    "LIMIT expressions must be convertible to INT"
+            );
+            // A two-dimensional array takes the same path, and its DirectArray is larger.
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM y LIMIT ARRAY[[1.0, 2.0], [3.0, 4.0]]",
+                    27,
+                    "LIMIT expressions must be convertible to INT"
+            );
+            // The explicit type check is the second rejection in the same helper, now under the
+            // same cleanup.
+            assertExceptionNoLeakCheck("SELECT * FROM y LIMIT 5 + 0.3", 24, "invalid type: DOUBLE");
+            // And it leaks the same way: indexing a folded ARRAY constant with a bind variable is
+            // a runtime constant, so the parser hands it over whole rather than folding it, and its
+            // DOUBLE type passes the coercion only to be rejected here - with the DirectArray of
+            // the ARRAY argument still attached.
+            bindVariableService.setLong(0, 1L);
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM y LIMIT ARRAY[1.0, 2.0][$1]",
+                    37,
+                    "invalid type: DOUBLE"
+            );
+        });
+    }
+
+    @Test
     public void testInvalidNegativeLimitJitDisabled() throws Exception {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
         try {

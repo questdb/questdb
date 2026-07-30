@@ -407,7 +407,26 @@ public class ExpressionNode implements Mutable, Sinkable {
             for (int i = 0; i < paramCount; i++) {
                 // Every args child is guaranteed non-null by the expression parser (ExpressionParser.onNode)
                 // and no later transformation violates this invariant.
-                args.getQuick(i).reassociateConstants(cairoSqlLegacyOperatorPrecedence);
+                final ExpressionNode arg = args.getQuick(i);
+                if (arg.type == CONSTANT) {
+                    // A CONSTANT argument of an n-ary node needs the constancy mark but not the fold
+                    // cache. isReassociationSafe is the only reader of that cache, and it only ever
+                    // receives a node reachable as lhs / rhs (or a grandchild of one) of a node this
+                    // pass has recursed into as a BINARY pair - which always re-caches through the
+                    // CONSTANT arm above. An args slot is never on that route. IN (1, ..., 10_000)
+                    // therefore parsed ten thousand tokens for a fold nothing reads, and a LONG-range
+                    // element paid a guaranteed-failing parseInt first: NumericException.instance()
+                    // allocates and fills a stack trace under -ea, which is how QuestDB runs its
+                    // tests.
+                    arg.isConstantExpression = true;
+                    // Fail closed rather than merely unread. The cleared defaults spell "no widening,
+                    // no valid long fold", which isReassociationSafe answers "safe to regroup" for -
+                    // the opposite of what a real integer or quoted leaf gets. Marking it widening
+                    // keeps the guard shut if a future caller ever does read it.
+                    arg.isConstFoldWidening = true;
+                } else {
+                    arg.reassociateConstants(cairoSqlLegacyOperatorPrecedence);
+                }
             }
             return false;
         }

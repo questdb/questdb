@@ -327,6 +327,24 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReassociationMultiParamsMixedLiteralKinds() throws Exception {
+        // An n-ary argument list is never reassociated, whatever its arguments are made of, so every
+        // literal kind has to come back verbatim: INT, out-of-INT-range LONG, float, DECIMAL with its
+        // 'm' suffix, LONG256 hex, a quoted numeric and a keyword. reassociateConstants marks such an
+        // argument constant without parsing it - the fold cache it would build is read only for the
+        // two operands of a binary pair - so this pins that skipping the parse changes nothing.
+        assertReassociationNoOp("l in (1, 5_000_000_000, 0.5, 1.5m, 0x1f, '02', null)");
+        assertReassociationNoOp("coalesce(l, 1, 5_000_000_000, 0.5, 1.5m, 0x1f, '02')");
+        // A subtree nested inside such a list still reassociates by its own rules: the concatenation
+        // regroups its constant pair around the column, the integer arithmetic does not.
+        assertReassociation(
+                "coalesce(s, s || 'b' || 'c', 'x')",
+                "coalesce(s, s || ('b' || 'c'), 'x')"
+        );
+        assertReassociationNoOp("coalesce(l, l + 2 + 3, 4)");
+    }
+
+    @Test
     public void testReassociationOfModeledArithmeticOperators() throws Exception {
         assertReassociationNoOp("d + 1 + 4");
         assertReassociationNoOp("d * 2 * 3");

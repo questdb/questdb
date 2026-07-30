@@ -2508,7 +2508,14 @@ impl ParquetDecoder {
             let column_metadata = &columns_meta[column_idx];
             let column_chunk_meta = column_metadata.column_chunk().meta_data.as_ref();
             let statistics = column_chunk_meta.and_then(|m| m.statistics.as_ref());
-            let null_count = statistics.and_then(|s| s.null_count);
+            // Parquet stores the null count signed, and nothing validates the footer a third-party
+            // writer produced. A negative count is not "no nulls" - it is no information at all, so
+            // read it as absent: every consumer below already treats an absent count
+            // conservatively, while a negative one made has_nulls false and let a NULL-sentinel
+            // filter prune a row group that does hold nulls. The `_pm` path applies the same rule
+            // to its unsigned encoding at both ends - see parquet_metadata::skip for the read and
+            // qdb_parquet_meta::convert::apply_thrift_stats for the write.
+            let null_count = statistics.and_then(|s| s.null_count).filter(|&c| c >= 0);
             let num_values = column_chunk_meta.map(|m| m.num_values);
 
             let qdb_column_type = packed_filter.qdb_column_type();
@@ -2727,6 +2734,16 @@ impl ParquetDecoder {
     ) -> ParquetResult<bool> {
         let count = filter_desc.count as usize;
         if count == 0 {
+            return Ok(false);
+        }
+        // `parquet2::bloom_filter::is_in_set` indexes a whole 32-byte block without bounds
+        // checks, so a bitset that is not a whole number of blocks panics - and a panic here
+        // aborts the JVM through JNI rather than surfacing as an exception. Answer "cannot
+        // prune" instead. Every caller is expected to have rejected such a bitset already
+        // (`read_from_slice_at_offset` on the parquet-file path, the length check in
+        // `parquet_metadata::skip` on the `_pm` path); this is the last line of defence at the
+        // only place that does the indexing.
+        if bitset.len() < 32 || !bitset.len().is_multiple_of(32) {
             return Ok(false);
         }
 

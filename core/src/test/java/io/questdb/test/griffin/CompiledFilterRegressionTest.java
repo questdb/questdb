@@ -850,6 +850,83 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFoldNullSentinelUnderNonArithmeticRoot() throws Exception {
+        // Only + - * / may become a constant fold root, but both integer folds propagated the
+        // NULL sentinel BEFORE looking at the node's own operator, so a COMPARISON whose two
+        // children are constant arithmetic subtrees was mistaken for a fold root and replaced
+        // with a single IMM:
+        //   2_097_152 * 2_097_152 * 2_097_152 is exactly 2^63 at long width, i.e. LONG_NULL,
+        //   and 65_536 * 32_768 is exactly 2^31 at int width, i.e. INT_NULL,
+        // so the long fold answered LONG_NULL and the int fold answered INT_NULL for the '='
+        // node itself. INT_NULL is non-zero, which the IR reads as TRUE, so the JIT kept rows
+        // the Java filter dropped - the comparison is really 0 = NULL, which is false.
+        // The floating-point folder always rejected a non-arithmetic token before recursing;
+        // both integer folders now do the same.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE nasr AS (
+                        SELECT timestamp_sequence(0, 1_000_000) k,
+                            CASE WHEN x = 1 THEN cast(NULL AS LONG) ELSE x - 2 END i64,
+                            CASE WHEN x = 1 THEN cast(NULL AS INT) ELSE cast(x - 2 AS INT) END i32
+                        FROM long_sequence(4)
+                    ) TIMESTAMP(k)
+                    """);
+            final String allPositiveRows = "k\ti64\ti32\n" +
+                    "1970-01-01T00:00:02.000000Z\t1\t1\n" +
+                    "1970-01-01T00:00:03.000000Z\t2\t2\n";
+            // NOT arm: the constant comparison is false, so NOT makes the filter i64 > 0. The
+            // pre-fix JIT negated the truthy IMM instead and returned nothing.
+            assertJitScalarAndVectorMatchJava(
+                    "nasr where i64 > 0 and not ((2_097_152 * 2_097_152 * 2_097_152) = (65_536 * 32_768))",
+                    allPositiveRows
+            );
+            // Boolean equality of two comparisons is one predicate context, so the folded IMM
+            // landed where the second comparison belonged: pre-fix the JIT compared the boolean
+            // i32 > 0 against INT_NULL and matched nothing, where 0 > NULL is simply false.
+            assertJitScalarAndVectorMatchJava(
+                    "nasr where (i32 > 0) = ((2_097_152 * 2_097_152 * 2_097_152) > (65_536 * 32_768))",
+                    "k\ti64\ti32\n" +
+                            "1970-01-01T00:00:00.000000Z\tnull\tnull\n" +
+                            "1970-01-01T00:00:01.000000Z\t0\t0\n"
+            );
+            // The remaining arms diverged the other way: the malformed IR failed to compile
+            // ("invalid opcode") and dropped the whole filter back to the Java engine, so these
+            // assert JIT is used as well as what it returns. A false constant under AND is not
+            // among them - the optimizer answers that one with an empty factory and never reaches
+            // the JIT - so the roots below are the ones a JIT-compiled filter really meets.
+            assertJitScalarAndVectorMatchJava(
+                    "nasr where i64 > 0 or (2_097_152 * 2_097_152 * 2_097_152) = (65_536 * 32_768)",
+                    allPositiveRows
+            );
+            // Inequality root: 0 <> NULL is true, so AND keeps exactly i64 > 0, where an ordering
+            // root against the sentinel (below) is false and leaves the OR arm alone. The two
+            // together pin both truth values, so neither direction can be vacuous.
+            assertJitScalarAndVectorMatchJava(
+                    "nasr where i64 > 0 and (2_097_152 * 2_097_152 * 2_097_152) <> (65_536 * 32_768)",
+                    allPositiveRows
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "nasr where i32 > 0 or (2_097_152 * 2_097_152 * 2_097_152) >= (65_536 * 32_768)",
+                    allPositiveRows
+            );
+            // The opposite ordering operator, so the backend's handling of the sentinel immediate
+            // is pinned in both directions.
+            assertJitScalarAndVectorMatchJava(
+                    "nasr where i32 > 0 or (2_097_152 * 2_097_152 * 2_097_152) < (65_536 * 32_768)",
+                    allPositiveRows
+            );
+            // Control: with both sentinels under ONE arithmetic root the node IS a fold root and
+            // must keep folding to the INT sentinel - the guard only rejects a non-arithmetic
+            // root. INT arithmetic reads as NULL at every width, so this matches the NULL row.
+            assertJitScalarAndVectorMatchJava(
+                    "nasr where i32 = (2_097_152 * 2_097_152 * 2_097_152) + 65_536 * 32_768",
+                    "k\ti64\ti32\n" +
+                            "1970-01-01T00:00:00.000000Z\tnull\tnull\n"
+            );
+        });
+    }
+
+    @Test
     public void testConstantFoldRootUnderLongWithFloat() throws Exception {
         // An overflowing constant product (258_558 * -259_815) nested under a LONG
         // add (c0 + ...) is read at long width by AddLong#getLong, so the Java

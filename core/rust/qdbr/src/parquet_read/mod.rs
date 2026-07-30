@@ -224,6 +224,7 @@ mod tests {
     use parquet::file::writer::SerializedFileWriter;
     use parquet::format::KeyValue;
     use parquet::schema::types::Type;
+    use parquet2::metadata::{ColumnChunkMetaData, RowGroupMetaData};
     use qdb_core::col_type::ColumnTypeTag;
     use std::io::Cursor;
     use std::sync::Arc;
@@ -1742,6 +1743,122 @@ mod tests {
             err_msg.contains("exceeds"),
             "error should mention 'exceeds': {err_msg}"
         );
+    }
+
+    /// Rewrite the `null_count` statistic of row group 0, column 0. Parquet stores the count
+    /// signed and QuestDB reads files other tools wrote, so a negative count is something the
+    /// decoder has to survive; nothing in the writer can produce one.
+    fn override_null_count(decoder: &mut ParquetDecoder, null_count: Option<i64>) {
+        let row_group = &mut decoder.metadata.row_groups[0];
+        let num_rows = row_group.num_rows();
+        let total_byte_size = row_group.total_byte_size();
+        let mut columns = row_group.take_columns();
+        let column = columns.remove(0);
+        let descriptor = column.descriptor().clone();
+        let mut column_chunk = column.into_thrift();
+        let statistics = column_chunk
+            .meta_data
+            .as_mut()
+            .expect("column chunk has metadata")
+            .statistics
+            .as_mut()
+            .expect("column chunk has statistics");
+        statistics.null_count = null_count;
+        columns.insert(0, ColumnChunkMetaData::new(column_chunk, descriptor));
+        *row_group = RowGroupMetaData::_new(columns, num_rows, total_byte_size);
+    }
+
+    #[test]
+    fn no_skip_eq_null_when_parquet_null_count_is_negative() -> ParquetResult<()> {
+        // Ten values, every other one null, so the row group genuinely holds nulls.
+        let values: Vec<i64> = (100..110).collect();
+        let def_levels: Vec<i16> = (0..10).map(|i| i % 2).collect();
+        let buf = gen_nullable_i64_parquet(&values, &def_levels)?;
+
+        let sentinel: Vec<i64> = vec![i64::MIN]; // the LONG null sentinel
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            sentinel.as_ptr() as u64,
+            FILTER_OP_EQ,
+            ColumnTypeTag::Long as i32,
+        )];
+
+        // A negative count carries no information, but reading it as "no nulls" let the sentinel
+        // be pruned against min/max - the sentinel is below every real value, so the row group
+        // and its null rows disappeared.
+        for null_count in [Some(-1i64), Some(-5), Some(i64::MIN)] {
+            let mut decoder = read_decoder(&buf)?;
+            override_null_count(&mut decoder, null_count);
+            assert!(
+                !decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+                "a negative null count must not read as null-free [null_count={null_count:?}]"
+            );
+        }
+
+        // An absent count was already conservative; keep it that way.
+        let mut decoder = read_decoder(&buf)?;
+        override_null_count(&mut decoder, None);
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // The writer's own count says nulls are present, so this cannot prune either.
+        let decoder = read_decoder(&buf)?;
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // Control: an honest zero count really is null-free, so the sentinel still prunes. Without
+        // this the assertions above would pass on a decoder that never prunes anything.
+        let mut decoder = read_decoder(&buf)?;
+        override_null_count(&mut decoder, Some(0));
+        assert!(
+            decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+            "a zero null count must keep pruning the NULL sentinel"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bloom_probe_declines_structurally_invalid_bitset() -> ParquetResult<()> {
+        use crate::parquet_read::ColumnFilterValues;
+        use parquet2::schema::types::PhysicalType;
+
+        // `is_in_set` indexes a whole 32-byte block without bounds checks, so anything that is
+        // not a whole number of blocks either panics - aborting the JVM through JNI - or probes a
+        // set the writer never filled that way. Both callers are supposed to have rejected such a
+        // bitset before this point; the probe declines it as well rather than trust them.
+        let value: i64 = 42;
+        let filter_desc = ColumnFilterValues {
+            count: 1,
+            ptr: &value as *const i64 as u64,
+            buf_end: unsafe { (&value as *const i64).add(1) } as u64,
+        };
+        for len in [0usize, 1, 31, 33, 63] {
+            let bitset = vec![0u8; len];
+            assert!(
+                !ParquetDecoder::all_values_absent_from_bloom(
+                    &bitset,
+                    &PhysicalType::Int64,
+                    &filter_desc,
+                    false,
+                    false,
+                    false,
+                    ColumnTypeTag::Long as i32,
+                )?,
+                "a bitset of {len} bytes must not answer 'absent'"
+            );
+        }
+        // Control: an all-zero WHOLE block really does answer "absent", so the guard above is
+        // rejecting the invalid lengths rather than the probe having no teeth.
+        let bitset = vec![0u8; 32];
+        assert!(ParquetDecoder::all_values_absent_from_bloom(
+            &bitset,
+            &PhysicalType::Int64,
+            &filter_desc,
+            false,
+            false,
+            false,
+            ColumnTypeTag::Long as i32,
+        )?);
+        Ok(())
     }
 
     #[test]

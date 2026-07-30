@@ -26,10 +26,13 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -5225,6 +5228,81 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeclinedPushdownConditionIsRederivedForBindVariables() throws Exception {
+        // A bound the value arms cannot materialise declines the whole condition, and
+        // prepareFilterList runs once per parquet partition, so the same answer was re-derived - and
+        // for the routine cause, an ImplicitCastException re-thrown - for every one of them. The
+        // decline is now recorded on the condition, but ONLY when every value is a compile-time
+        // constant: a bind variable is a runtime constant and the next execution may bind a value
+        // that does serialize. Both halves are pinned here, the second by reusing ONE compiled
+        // factory across two bindings - a cached decline would silently cost the second execution
+        // its pruning while leaving its rows correct, which no result assertion can see.
+        assertMemoryLeak(() -> {
+            // A LONG column with a DOUBLE bound: the two sides compare at different widths, so the
+            // pushdown declines a bound above 2^53 (see tryPutLongFromDouble) and accepts one below
+            // it. That gives one decline and one prune from the same condition shape.
+            createBoundarySaturatedPartialParquetTyped("LONG", "1", "2");
+
+            // Constant, permanently declined: every row must survive, on both partitions, i.e. across
+            // two calls with the flag set by the first.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT c6 FROM tp WHERE c6 < 1e300 ORDER BY ts").noLeakCheck().returns("c6\n1\n2\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // Same shape through a bind variable, on ONE compiled factory. The first binding declines
+            // exactly as the constant did; the second is pushable and prunes the parquet group, which
+            // can only happen if the decline was not cached.
+            bindVariableService.clear();
+            bindVariableService.setDouble("b", 1e300);
+            try (RecordCursorFactory factory = select("SELECT c6 FROM tp WHERE c6 < :b ORDER BY ts")) {
+                final StringSink sink = new StringSink();
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                }
+                TestUtils.assertEquals("c6\n1\n2\n", sink);
+                Assert.assertEquals("an unpushable bind value must not prune", 0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+                bindVariableService.setDouble("b", -5.0);
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                sink.clear();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                }
+                TestUtils.assertEquals("c6\n", sink);
+                Assert.assertTrue(
+                        "a pushable bind value must still prune after an unpushable one",
+                        ParquetRowGroupFilter.getRowGroupsSkipped() > 0
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDoubleColumnNearToleranceMagnitudeKeepsJitModeForLaterTests() throws Exception {
+        // The tolerance test needs JIT off for its own queries and must hand the mode back
+        // afterwards. A setProperty() override is what leaks across methods - it writes the
+        // class-wide staticOverrides, which only @AfterClass resets, and every later setUp() then
+        // re-primes the execution context from it - so a leaked "off" costs JIT coverage for the
+        // other ~160 tests in this class, including the ones this PR added, and shows up as nothing
+        // at all. Assert the INVARIANT (the callee restores what it found) rather than a literal
+        // mode, so the pin survives a change of the test-configuration default.
+        final int configJitMode = configuration.getSqlJitMode();
+        final int contextJitMode = sqlExecutionContext.getJitMode();
+        testDoubleColumnNearToleranceMagnitudePushdownNotFalsePruned();
+        Assert.assertEquals(
+                "the tolerance test must not change the configured JIT mode",
+                configJitMode,
+                configuration.getSqlJitMode()
+        );
+        Assert.assertEquals(
+                "the tolerance test must restore the JIT mode on the execution context",
+                contextJitMode,
+                sqlExecutionContext.getJitMode()
+        );
+    }
+
+    @Test
     public void testDoubleColumnNearToleranceMagnitudePushdownNotFalsePruned() throws Exception {
         // Near |bound| == DOUBLE_TOLERANCE the tolerance widening cancels: "1e-10 - DOUBLE_TOLERANCE"
         // is exactly 0.0 and nextDown(0.0) is a single subnormal ulp, nowhere near the tolerance edge.
@@ -5240,45 +5318,21 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // Numbers.equals keeps them), so the assertQuery(...).returns(...) battery -- which runs a
         // JIT/strict-filter pass that drops boundary rows -- is not a stable oracle here. Disable JIT
         // and drive the query through printSql so the inclusive Java filter is the one that runs.
-        setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_DISABLED));
-        assertMemoryLeak(() -> {
-            final StringSink sink = new StringSink();
-
-            // GE: pre-fix pushes nextDown(0.0) and prunes the -1e-30 group; the fix declines the pushdown.
-            createBoundarySaturatedPartialParquetTyped("DOUBLE", "-1e-30", "5.0");
-            ParquetRowGroupFilter.resetRowGroupsSkipped();
-            printSql("SELECT c6 FROM tp WHERE c6 >= 1e-10 ORDER BY ts", sink);
-            TestUtils.assertEquals("c6\n-1.0E-30\n5.0\n", sink);
-            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
-
-            // EQ collapses the same way: the BETWEEN lo = nextDown(1e-10 - DOUBLE_TOLERANCE) = nextDown(0.0).
-            ParquetRowGroupFilter.resetRowGroupsSkipped();
-            sink.clear();
-            printSql("SELECT c6 FROM tp WHERE c6 = 1e-10 ORDER BY ts", sink);
-            TestUtils.assertEquals("c6\n-1.0E-30\n", sink);
-            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
-
-            execute("DROP TABLE tn");
-            execute("DROP TABLE tp");
-
-            // LE mirrors GE: "c6 <= -1e-10" keeps 1e-30; pre-fix prunes on "min > nextUp(0.0)".
-            createBoundarySaturatedPartialParquetTyped("DOUBLE", "1e-30", "-5.0");
-            ParquetRowGroupFilter.resetRowGroupsSkipped();
-            sink.clear();
-            printSql("SELECT c6 FROM tp WHERE c6 <= -1e-10 ORDER BY ts", sink);
-            TestUtils.assertEquals("c6\n1.0E-30\n-5.0\n", sink);
-            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
-
-            // A bound a clear tolerance away from zero still prunes a group that lies wholly outside it.
-            execute("DROP TABLE tn");
-            execute("DROP TABLE tp");
-            createBoundarySaturatedPartialParquetTyped("DOUBLE", "-1e-30", "5.0");
-            ParquetRowGroupFilter.resetRowGroupsSkipped();
-            sink.clear();
-            printSql("SELECT c6 FROM tp WHERE c6 >= 1.0 ORDER BY ts", sink);
-            TestUtils.assertEquals("c6\n5.0\n", sink);
-            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-        });
+        //
+        // Switch the mode on the execution context, NOT with setProperty(). setProperty() writes the
+        // class-wide staticOverrides, which only @AfterClass resets, so every later setUp() in this
+        // class re-read the disabled mode and silently ran the rest of the class without JIT - and
+        // it did not even switch this test: setUp() primes the shared context from the configuration
+        // BEFORE the body runs, and SqlCodeGenerator reads the mode from the context alone, so these
+        // queries used to run with JIT on regardless of the override.
+        // testDoubleColumnNearToleranceMagnitudeKeepsJitModeForLaterTests pins the handback.
+        final int callerJitMode = sqlExecutionContext.getJitMode();
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        try {
+            assertDoubleColumnNearToleranceMagnitudePushdownNotFalsePruned();
+        } finally {
+            sqlExecutionContext.setJitMode(callerJitMode);
+        }
     }
 
     @Test
@@ -5707,6 +5761,47 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                 execute("DROP TABLE tn");
                 execute("DROP TABLE tp");
             }
+        });
+    }
+
+    private void assertDoubleColumnNearToleranceMagnitudePushdownNotFalsePruned() throws Exception {
+        assertMemoryLeak(() -> {
+            final StringSink sink = new StringSink();
+
+            // GE: pre-fix pushes nextDown(0.0) and prunes the -1e-30 group; the fix declines the pushdown.
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "-1e-30", "5.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            printSql("SELECT c6 FROM tp WHERE c6 >= 1e-10 ORDER BY ts", sink);
+            TestUtils.assertEquals("c6\n-1.0E-30\n5.0\n", sink);
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // EQ collapses the same way: the BETWEEN lo = nextDown(1e-10 - DOUBLE_TOLERANCE) = nextDown(0.0).
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            sink.clear();
+            printSql("SELECT c6 FROM tp WHERE c6 = 1e-10 ORDER BY ts", sink);
+            TestUtils.assertEquals("c6\n-1.0E-30\n", sink);
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // LE mirrors GE: "c6 <= -1e-10" keeps 1e-30; pre-fix prunes on "min > nextUp(0.0)".
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "1e-30", "-5.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            sink.clear();
+            printSql("SELECT c6 FROM tp WHERE c6 <= -1e-10 ORDER BY ts", sink);
+            TestUtils.assertEquals("c6\n1.0E-30\n-5.0\n", sink);
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // A bound a clear tolerance away from zero still prunes a group that lies wholly outside it.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "-1e-30", "5.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            sink.clear();
+            printSql("SELECT c6 FROM tp WHERE c6 >= 1.0 ORDER BY ts", sink);
+            TestUtils.assertEquals("c6\n5.0\n", sink);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
 

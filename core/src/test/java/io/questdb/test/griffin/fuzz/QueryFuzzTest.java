@@ -329,6 +329,29 @@ public class QueryFuzzTest extends AbstractCairoTest {
             Assert.assertTrue("FP-column reduction drift at scale stays tolerated",
                     QueryRunner.rowEqualsWithFpTolerance("1000000", "1000001", fpMask));
 
+            // The envelope is relative to the MAGNITUDE of the result, so a term much smaller than
+            // the sum fits inside it: for {1_000_000, 1_000_000, 1_000_000, 9} the tolerance at 3e6
+            // is roughly 23, and losing the 9 costs nothing. It cannot be tightened away either - a
+            // sum over a FLOAT column is typed DOUBLE, so the metadata cannot tell a
+            // float-precision accumulation from a double-precision one, and every FP aggregate has
+            // to keep the FLOAT-sized envelope.
+            // Characterizing the envelope as it stands, not requiring it: if the tolerance is ever
+            // tightened this assertion is the one to update.
+            Assert.assertTrue("the FP envelope currently absorbs a term far below the sum's magnitude",
+                    QueryRunner.rowEqualsWithFpTolerance("3000009", "3000000", fpMask));
+            // Which is why JoinClauseSupport.appendRowSetGuard projects an exact count of the
+            // matched slave rows next to every join aggregate: the count is an integer column,
+            // compared exactly, so the dropped row that hid in the sum is flagged by its neighbour.
+            // It does not catch a same-cardinality shift (one row dropped, one admitted) - that
+            // needs an absolute oracle.
+            final boolean[] sumAndCountMask = {true, false};
+            Assert.assertFalse("the exact matched-row count must flag the dropped term",
+                    QueryRunner.rowEqualsWithFpTolerance("3000009\t4", "3000000\t3", sumAndCountMask));
+            // ... while a genuine reduction-order difference over the SAME rows stays accepted, so
+            // the guard costs no tolerance.
+            Assert.assertTrue("reduction-order drift over an identical row set stays tolerated",
+                    QueryRunner.rowEqualsWithFpTolerance("3000009\t4", "3000009.5\t4", sumAndCountMask));
+
             // The mask a reconcile uses must be the AND of the two projections it compares,
             // not whichever side ran last. On the bind axis the two projections are not
             // guaranteed identical - bind values are bound as STRINGs, so the bind form's

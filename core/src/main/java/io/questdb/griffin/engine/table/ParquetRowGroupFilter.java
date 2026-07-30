@@ -209,6 +209,15 @@ public final class ParquetRowGroupFilter {
                     continue;
                 }
 
+                // This routine runs once per parquet partition, and a bound the arms below cannot
+                // materialise raises the same exception every time - a string bound on a TIMESTAMP
+                // column arrives as a StrConstant whose getLong() throws ImplicitCastException. When
+                // every value is a compile-time constant that answer is permanent, so take it from
+                // the condition instead of re-deriving it for the next thousand partitions.
+                if (condition.isSerializationDeclined()) {
+                    continue;
+                }
+
                 final int columnType = condition.getColumnType();
                 final long valuesOffset = filterValues.getAppendOffset();
                 boolean supported = true;
@@ -218,6 +227,12 @@ public final class ParquetRowGroupFilter {
                 // band (see putDoubleEq), which is the one rewrite that changes the count.
                 int effectiveOp = opType;
                 int effectiveCount = valueCount;
+                // Whether a decline below is a property of the values alone. The arms themselves and
+                // the generic catch are: they dispatch on the condition's own column type and value
+                // functions, and line 197 has already skipped any partition whose parquet type
+                // differs. A CairoException is not - its documented cause is a memory limit while
+                // appending, which the next partition may well clear - so it must not be cached.
+                boolean isDeclineDeterministic = false;
                 // A bound the arms below cannot materialise throws rather than returning a
                 // flag: PushdownFilterExtractor compiles every value standalone with no target
                 // type, so a string literal against a TIMESTAMP column arrives as a StrConstant
@@ -551,6 +566,7 @@ public final class ParquetRowGroupFilter {
                             supported = false;
                             break;
                     }
+                    isDeclineDeterministic = true;
                 } catch (CairoException e) {
                     // Debug, not error: declining one bound is a designed fallback that costs only
                     // pruning. The outer catch keeps error level -- losing the whole filter list is
@@ -563,10 +579,18 @@ public final class ParquetRowGroupFilter {
                 } catch (Exception e) {
                     LOG.debug().$("skipping filter condition [column=").$safe(condition.getColumnName()).$(", msg=").$(e).$(']').$();
                     supported = false;
+                    // The routine case: a string bound on a TIMESTAMP column raises
+                    // ImplicitCastException, and it will raise it again for every partition.
+                    isDeclineDeterministic = true;
                 }
 
                 if (!supported || valueCount > 0x00FFFFFF) { // 16_777_215, max value count that fits in 24-bit field of ColumnFilterPacked
                     filterValues.jumpTo(valuesOffset);
+                    // Only a constant-valued condition can be declined for good: a bind variable is
+                    // a runtime constant, and the next execution may bind a value that serializes.
+                    if (!supported && isDeclineDeterministic && condition.hasConstantValuesOnly()) {
+                        condition.setSerializationDeclined();
+                    }
                     continue;
                 }
 

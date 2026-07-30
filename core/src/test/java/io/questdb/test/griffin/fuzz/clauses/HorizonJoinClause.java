@@ -53,7 +53,8 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
  * keys the generator emits, both proven valid by {@code HorizonJoinTest}; a
  * projection with neither is a non-keyed single-row aggregate. At least one
  * aggregate is always emitted and the first is always over the slave so the
- * join actually contributes. The {@code RANGE}/{@code LIST} spec is bounded
+ * join actually contributes, and a trailing {@code count(p.ts)} is always projected - see
+ * {@link JoinClauseSupport#appendRowSetGuard}. The {@code RANGE}/{@code LIST} spec is bounded
  * to at most six offsets (RANGE; LIST emits two to four), each offset being a
  * separate ASOF pass.
  * <p>
@@ -66,9 +67,11 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
  */
 public final class HorizonJoinClause {
 
-    // Interval-literal unit chars for the horizon offsets, biased to minutes
-    // since the fuzz tables step rows 30 minutes apart over a few DAY partitions.
-    private static final char[] HORIZON_UNITS = {'m', 'm', 'h', 's'};
+    // Interval-literal unit chars for the horizon offsets. The fuzz tables step rows 30 minutes
+    // apart, so hours and whole-30-minute steps (see stepForUnit) give every offset its own ASOF
+    // match; seconds deliberately stay below the spacing, where several offsets resolve to the same
+    // slave row, and are kept to a minority of draws rather than a quarter of them.
+    private static final char[] HORIZON_UNITS = {'m', 'm', 'h', 'h', 's'};
     private static final String MASTER_ALIAS = "t";
     private static final String SLAVE_ALIAS = "p";
 
@@ -111,6 +114,12 @@ public final class HorizonJoinClause {
             JoinClauseSupport.appendAggregate(sql, rnd, overSlave ? slave : master, overSlave ? SLAVE_ALIAS : MASTER_ALIAS);
             sql.put(" AS a").put(i);
         }
+        // Pins how many slave rows the join matched, so a dropped or duplicated one cannot hide
+        // inside the FLOAT tolerance of a sum sitting next to it. It counts p.ts rather than the
+        // output rows: this shape aggregates once per (master row, offset) pair whether the ASOF
+        // probe matched or not, so count(*) here says nothing about the slave side.
+        JoinClauseSupport.appendRowSetGuard(sql, SLAVE_ALIAS, aggCount);
+        aggCount++;
 
         sql.put(" FROM ").put(master.getName()).put(' ').put(MASTER_ALIAS);
         sql.put(" HORIZON JOIN ").put(slave.getName()).put(' ').put(SLAVE_ALIAS);
@@ -152,7 +161,7 @@ public final class HorizonJoinClause {
         char unit = HORIZON_UNITS[rnd.nextInt(HORIZON_UNITS.length)];
         if (useList) {
             int n = 2 + rnd.nextInt(3); // 2..4 offsets
-            int step = 1 + rnd.nextInt(3);
+            int step = stepForUnit(rnd, unit);
             int center = rnd.nextInt(n);
             // A single step keeps the offsets strictly increasing and distinct
             // while straddling zero, so each one ASOF-matches a different row.
@@ -165,13 +174,29 @@ public final class HorizonJoinClause {
             }
             sql.put(") AS h");
         } else {
-            int step = 1 + rnd.nextInt(3);
+            int step = stepForUnit(rnd, unit);
             int before = rnd.nextInt(3); // 0..2 steps before zero
             int after = 1 + rnd.nextInt(3); // 1..3 steps after zero (zero + before + after = up to 6 offsets)
             sql.put(" RANGE FROM ").put(-step * before).put(unit)
                     .put(" TO ").put(step * after).put(unit)
                     .put(" STEP ").put(step).put(unit).put(" AS h");
         }
+    }
+
+    /**
+     * The offset step for a unit, sized against the fuzz tables' 30-minute row spacing.
+     * <p>
+     * A step below that spacing leaves consecutive offsets ASOF-matching the SAME slave row - the
+     * horizon degenerates into a repeated ASOF join and stops exercising multi-row windows. Minutes
+     * therefore step in whole 30-minute multiples. Seconds keep a sub-spacing step on purpose: a
+     * horizon whose offsets collapse onto one row is a legitimate shape and worth generating, just
+     * not worth most of the draws.
+     */
+    private static int stepForUnit(Rnd rnd, char unit) {
+        return switch (unit) {
+            case 'm' -> 30 * (1 + rnd.nextInt(3));
+            default -> 1 + rnd.nextInt(3);
+        };
     }
 
 }

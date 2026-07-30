@@ -59,7 +59,16 @@ final class JoinClauseSupport {
                 }
             }
             case 2, 3 -> {
-                String c = pickColumn(rnd, table, ColumnKind.NUMERIC);
+                // Bias to NUMERIC but exercise DECIMAL on a minority of draws, the same split
+                // WindowClause.pickArgKind uses. DECIMAL sum / avg over a join is part of the bug
+                // class this PR fixes, and NUMERIC covers BYTE..DOUBLE only, so DECIMAL never
+                // reached a join aggregate at all. The one legitimate failure a DECIMAL aggregate
+                // has is already an accepted skip in QueryRunner.isDecimalAggregationOverflow.
+                ColumnKind kind = rnd.nextInt(100) < 25 ? ColumnKind.DECIMAL : ColumnKind.NUMERIC;
+                String c = pickColumn(rnd, table, kind);
+                if (c == null && kind == ColumnKind.DECIMAL) {
+                    c = pickColumn(rnd, table, ColumnKind.NUMERIC);
+                }
                 if (c == null) {
                     sql.put("count(*)");
                 } else {
@@ -105,6 +114,35 @@ final class JoinClauseSupport {
                 sql.put(rnd.nextBoolean() ? " ASC" : " DESC");
             }
         }
+    }
+
+    /**
+     * Emits the row-set guard aggregate: {@code count(<slaveAlias>.ts)}, the number of SLAVE rows
+     * the join matched for the output row it sits on. The slave timestamp is the designated one and
+     * is never null, so the count is exactly that cardinality.
+     * <p>
+     * It counts the slave timestamp rather than {@code count(*)} because the two join shapes differ:
+     * a HORIZON JOIN updates its aggregates once per (master row, offset) pair whether or not the
+     * ASOF probe matched, so {@code count(*)} there is a purely master-side quantity that a dropped
+     * or duplicated slave match leaves untouched.
+     * <p>
+     * It is mandatory rather than one of the random picks because the FLOAT / DOUBLE cell
+     * comparison in {@code QueryRunner.rowEqualsWithFpTolerance} tolerates reduction-order drift
+     * relative to the MAGNITUDE of the result, and a term much smaller than the sum fits inside
+     * that envelope: for {@code {1_000_000, 1_000_000, 1_000_000, 9}} the tolerance at 3e6 is
+     * roughly 23, so losing the 9 costs nothing. The envelope cannot be tightened away - a
+     * {@code sum} over a FLOAT column is typed DOUBLE, so the metadata cannot tell a
+     * float-precision accumulation from a double-precision one - but an exact integer count cannot
+     * absorb a dropped or duplicated row. It is also the only thing that sees a dropped row under a
+     * {@code min} / {@code max} / {@code first} / {@code last} projection, where a non-extremal row
+     * leaves the aggregate itself unchanged.
+     * <p>
+     * What it does NOT catch: a window or horizon bound shifted by one interval drops a row at one
+     * end and admits one at the other, so the cardinality is unchanged and only the FP-tolerant sum
+     * moves. That shape needs an absolute oracle, not a count.
+     */
+    static void appendRowSetGuard(StringSink sql, String slaveAlias, int aggIndex) {
+        sql.put(", count(").put(slaveAlias).put(".ts) AS a").put(aggIndex);
     }
 
     // Picks a random column name of the given kind (any kind when {@code kind}

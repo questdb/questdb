@@ -400,6 +400,34 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testConstantArithNoFoldOnNonArithmeticRoot() throws Exception {
+        // Only + - * / may be a fold root. Both integer folders propagated the NULL sentinel
+        // before validating the node's own operator, so a comparison over two constant
+        // arithmetic subtrees - 2_097_152 * 2_097_152 * 2_097_152 is exactly the LONG sentinel
+        // and 65_536 * 32_768 exactly the INT one - answered LONG_NULL / INT_NULL for the '='
+        // node itself and replaced the whole comparison with one IMM. Each side must fold on
+        // its own and the comparison must survive.
+        serialize("(2_097_152 * 2_097_152 * 2_097_152) = (65_536 * 32_768)");
+        assertIR("(i32 -2147483648L)(i32 0L)(=)(ret)");
+        // Under a column predicate the collapsed IMM left the operand stack short and the IR
+        // failed to compile at all ("invalid opcode"), silently dropping the filter to Java.
+        serialize("along > 0 and (2_097_152 * 2_097_152 * 2_097_152) = (65_536 * 32_768)");
+        assertIR("(i32 -2147483648L)(i32 0L)(=)(i64 0L)(i64 along)(>)(&&)(ret)");
+        // Boolean equality of two comparisons is one predicate, so there the truthy IMM took the
+        // place of a comparison the backend then read as a value.
+        serialize("(anint > 0) = ((2_097_152 * 2_097_152 * 2_097_152) > (65_536 * 32_768))");
+        assertIR("(i32 -2147483648L)(i32 0L)(>)(i32 0L)(i32 anint)(>)(=)(ret)");
+        // Control: both sentinels under ONE arithmetic root still fold, to the INT sentinel.
+        serialize("anint = (2_097_152 * 2_097_152 * 2_097_152) + 65_536 * 32_768");
+        assertIR("(i32 -2147483648L)(i32 anint)(=)(ret)");
+        // Control: a '/' root reaches the tail of each folder, which the operator whitelist above
+        // now leaves for division alone. The INT-width fold of the sentinel child is 0, so this
+        // divides 0 by 2 rather than declining.
+        serialize("anint = (2_097_152 * 2_097_152 * 2_097_152) / 2");
+        assertIR("(i32 0L)(i32 anint)(=)(ret)");
+    }
+
+    @Test
     public void testConstantArithNoFoldOnNonConstantSubtree() throws Exception {
         // Subtree mixes constants with a column reference: not pure-constant,
         // so no fold and the arithmetic stays in the IR. The mixed I4 (anint)

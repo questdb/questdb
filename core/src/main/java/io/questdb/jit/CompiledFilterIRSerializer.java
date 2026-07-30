@@ -282,7 +282,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         // Java filter's getLong() recursion, wrapping any narrow (INT-width)
                         // sub-subtree - e.g. (2e9 + 2e9) + 5e9 emits 4_705_032_704, not the
                         // unwrapped 9e9. Compute it before markFoldedI8Imm() so a fallback throw
-                        // (never in practice, the subtree already folded) leaves no state set.
+                        // leaves no state set - the width-aware evaluator has its own reasons to
+                        // decline, e.g. 5_000_000_000 + 7 / (65_536 * 65_536), whose divisor is a
+                        // genuine 2^32 at long width but wraps to a zero divisor at INT width.
                         final long i8Imm = foldConstantArithWidthAware(node);
                         predicateContext.markFoldedI8Imm();
                         putOperand(IMM, I8_TYPE, i8Imm);
@@ -1503,6 +1505,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             long operand = foldConstantArithWidthAware(node.rhs);
             return operand == Numbers.LONG_NULL ? Numbers.LONG_NULL : -operand;
         }
+        // Reject a non-arithmetic token BEFORE folding either child. See tryFoldConstantArith0.
+        // Unreachable while descend() is the only caller - tryFoldConstantArith has already
+        // accepted the subtree by then - but the sentinel propagation below must never be the
+        // first thing a new caller reaches.
+        if (!isArithmeticOperation(node)) {
+            throw NumericException.INSTANCE;
+        }
         long left = foldConstantArithWidthAware(node.lhs);
         long right = foldConstantArithWidthAware(node.rhs);
         if (left == Numbers.LONG_NULL || right == Numbers.LONG_NULL) {
@@ -1517,13 +1526,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (Chars.equals(node.token, '*')) {
             return left * right;
         }
-        if (Chars.equals(node.token, '/')) {
-            if (right == 0L) {
-                throw NumericException.INSTANCE;
-            }
-            return left / right;
+        // isArithmeticOperation() above leaves only '/' here, and the tail re-checks rather than
+        // asserting: isArithmeticOperation() is shared with a dozen other call sites, so an operator
+        // added to it - QuestDB does have a '%' - would otherwise reach this division. An assert
+        // would catch that under -ea only, and every production JVM runs without it. Declining costs
+        // nothing: descend() emits the subtree as per-op IR instead.
+        if (!Chars.equals(node.token, '/')) {
+            throw NumericException.INSTANCE;
         }
-        throw NumericException.INSTANCE;
+        if (right == 0L) {
+            throw NumericException.INSTANCE;
+        }
+        return left / right;
     }
 
     private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
@@ -3348,6 +3362,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             long operand = tryFoldConstantArith(node.rhs);
             return operand == Numbers.LONG_NULL ? Numbers.LONG_NULL : -operand;
         }
+        // Reject a non-arithmetic token BEFORE folding either child, exactly as the
+        // floating-point folder does. The sentinel propagation below answers LONG_NULL for the
+        // CURRENT node, so validating the token after it let descend() mistake a comparison or
+        // boolean predicate over two constant subtrees for an arithmetic fold root and replace
+        // the whole predicate with an IMM - non-zero, which the IR reads as TRUE.
+        if (!isArithmeticOperation(node)) {
+            throw NumericException.INSTANCE;
+        }
         long left = tryFoldConstantArith(node.lhs);
         long right = tryFoldConstantArith(node.rhs);
         // MulLong / AddLong / SubLong / DivLong#getLong return LONG_NULL when
@@ -3369,18 +3391,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (Chars.equals(node.token, '*')) {
             return left * right;
         }
-        if (Chars.equals(node.token, '/')) {
-            if (right == 0L) {
-                // Decline the fold and let descend() emit the division as IR: the native
-                // int64_div (impl/x86.h) returns LONG_NULL for a zero divisor, which is what
-                // the Java filter's DivLong#getLong produces. ExpressionNode#applyLongFold
-                // models the same operator table and folds this case straight to LONG_NULL -
-                // a different spelling of the same result, not a disagreement.
-                throw NumericException.INSTANCE;
-            }
-            return left / right;
+        // isArithmeticOperation() above leaves only '/' here; see foldConstantArithWidthAware.
+        if (!Chars.equals(node.token, '/')) {
+            throw NumericException.INSTANCE;
         }
-        throw NumericException.INSTANCE;
+        if (right == 0L) {
+            // Decline the fold and let descend() emit the division as IR: the native
+            // int64_div (impl/x86.h) returns LONG_NULL for a zero divisor, which is what
+            // the Java filter's DivLong#getLong produces. ExpressionNode#applyLongFold
+            // models the same operator table and folds this case straight to LONG_NULL -
+            // a different spelling of the same result, not a disagreement.
+            throw NumericException.INSTANCE;
+        }
+        return left / right;
     }
 
     /**
@@ -3501,6 +3524,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             int operand = tryFoldConstantArithI4(node.rhs);
             return operand == Numbers.INT_NULL ? Numbers.INT_NULL : -operand;
         }
+        // Reject a non-arithmetic token BEFORE folding either child. See tryFoldConstantArith0.
+        if (!isArithmeticOperation(node)) {
+            throw NumericException.INSTANCE;
+        }
         int left = tryFoldConstantArithI4(node.lhs);
         int right = tryFoldConstantArithI4(node.rhs);
         // MulInt / AddInt / SubInt / DivInt#getInt return INT_NULL when either
@@ -3520,13 +3547,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (Chars.equals(node.token, '*')) {
             return left * right;
         }
-        if (Chars.equals(node.token, '/')) {
-            if (right == 0) {
-                throw NumericException.INSTANCE;
-            }
-            return left / right;
+        // isArithmeticOperation() above leaves only '/' here; see foldConstantArithWidthAware.
+        if (!Chars.equals(node.token, '/')) {
+            throw NumericException.INSTANCE;
         }
-        throw NumericException.INSTANCE;
+        if (right == 0) {
+            throw NumericException.INSTANCE;
+        }
+        return left / right;
     }
 
     private static class SqlWrapperException extends RuntimeException {
