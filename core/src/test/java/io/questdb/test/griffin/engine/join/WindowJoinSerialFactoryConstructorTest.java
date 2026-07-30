@@ -74,25 +74,65 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
 
     @Test
     public void testFastFactoryLeavesBaseFactoriesToTheCallerOnFailure() throws Exception {
-        assertConstructorFailureLeavesBasesToCaller(true);
+        assertConstructorFailureLeavesBasesToCaller(true, true, false);
     }
 
     @Test
     public void testFastFactoryReleasesEverythingOnClose() throws Exception {
-        assertConstructorSuccessCloses(true);
+        assertConstructorSuccessCloses(true, true, false);
+    }
+
+    @Test
+    public void testFastNonVectorizedFactoryLeavesBaseFactoriesToTheCallerOnFailure() throws Exception {
+        // allVectorized == false is the normal production shape whenever a join filter survives
+        // (SqlCodeGenerator sets allVectorized = joinFilter == null). It builds the keyed
+        // WindowJoinFastRecordCursor, whose constructor used to leak its two native maps on a throw.
+        assertConstructorFailureLeavesBasesToCaller(true, false, false);
+    }
+
+    @Test
+    public void testFastNonVectorizedFactoryReleasesEverythingOnClose() throws Exception {
+        assertConstructorSuccessCloses(true, false, false);
+    }
+
+    @Test
+    public void testFastNonVectorizedPrevailingFactoryLeavesBaseFactoriesToTheCallerOnFailure() throws Exception {
+        // include prevailing + a surviving join filter builds
+        // WindowJoinWithPrevailingAndJoinFilterFastRecordCursor, which extends
+        // WindowJoinFastRecordCursor and inherits its (previously leaking) constructor.
+        assertConstructorFailureLeavesBasesToCaller(true, false, true);
+    }
+
+    @Test
+    public void testFastNonVectorizedPrevailingFactoryReleasesEverythingOnClose() throws Exception {
+        assertConstructorSuccessCloses(true, false, true);
+    }
+
+    @Test
+    public void testFastNonVectorizedPrevailingNoFilterFactoryLeavesBaseFactoriesToTheCallerOnFailure() throws Exception {
+        // include prevailing + NO join filter builds WindowJoinWithPrevailingFastRecordCursor
+        // (the joinFilter == null && allVectorized == false shape: an INCLUDE PREVAILING window
+        // join over a non-vectorizable aggregate). It allocates a native prevailingCache after
+        // super(); the base ctor throw here still leaks the two maps without the guard, and this
+        // exercises the subclass's overridden close() with a null prevailingCache.
+        assertConstructorFailureLeavesBasesToCaller(true, false, true, false);
     }
 
     @Test
     public void testGeneralFactoryLeavesBaseFactoriesToTheCallerOnFailure() throws Exception {
-        assertConstructorFailureLeavesBasesToCaller(false);
+        assertConstructorFailureLeavesBasesToCaller(false, false, false);
     }
 
     @Test
     public void testGeneralFactoryReleasesEverythingOnClose() throws Exception {
-        assertConstructorSuccessCloses(false);
+        assertConstructorSuccessCloses(false, false, false);
     }
 
-    private static void assertConstructorFailureLeavesBasesToCaller(boolean fast) throws Exception {
+    private static void assertConstructorFailureLeavesBasesToCaller(boolean fast, boolean allVectorized, boolean includePrevailing) throws Exception {
+        assertConstructorFailureLeavesBasesToCaller(fast, allVectorized, includePrevailing, true);
+    }
+
+    private static void assertConstructorFailureLeavesBasesToCaller(boolean fast, boolean allVectorized, boolean includePrevailing, boolean withJoinFilter) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             final CairoConfiguration configuration = new FaultInjectingConfiguration(engine.getConfiguration());
@@ -100,18 +140,23 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
             final CountingFactory slaveFactory = new CountingFactory(baseFactory("slave"));
             final JoinRecordMetadata joinMetadata = new JoinRecordMetadata(engine.getConfiguration(), 0);
             // The complementary half of the contract: what the ctor DID adopt must still be freed.
-            // It holds native memory, so over-nulling would both leak and fail assertMemoryLeak.
-            final NativeFilter joinFilter = new NativeFilter();
+            // It holds native memory, so over-nulling would both leak and fail assertMemoryLeak. A
+            // null filter is the joinFilter == null && allVectorized == false shape (an INCLUDE
+            // PREVAILING window join over a non-vectorizable aggregate) that builds the keyed
+            // WindowJoinWithPrevailingFastRecordCursor.
+            final NativeFilter joinFilter = withJoinFilter ? new NativeFilter() : null;
 
             try {
-                newFactory(fast, configuration, masterFactory, slaveFactory, joinMetadata, joinFilter);
+                newFactory(fast, allVectorized, includePrevailing, configuration, masterFactory, slaveFactory, joinMetadata, joinFilter);
                 Assert.fail("expected the injected failure to propagate");
             } catch (FaultInjectedException ignore) {
             }
 
             Assert.assertEquals("the ctor must not close the master it does not own yet", 0, masterFactory.closeCount);
             Assert.assertEquals("the ctor must not close the slave it does not own yet", 0, slaveFactory.closeCount);
-            Assert.assertEquals("the adopted join filter must be closed exactly once", 1, joinFilter.closeCount);
+            if (joinFilter != null) {
+                Assert.assertEquals("the adopted join filter must be closed exactly once", 1, joinFilter.closeCount);
+            }
 
             // Exactly what SqlCodeGenerator's catch does. It must be the FIRST close of each.
             Misc.free(masterFactory);
@@ -123,7 +168,7 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertConstructorSuccessCloses(boolean fast) throws Exception {
+    private static void assertConstructorSuccessCloses(boolean fast, boolean allVectorized, boolean includePrevailing) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             final CountingFactory masterFactory = new CountingFactory(baseFactory("master"));
@@ -132,7 +177,7 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
             final NativeFilter joinFilter = new NativeFilter();
 
             final RecordCursorFactory factory =
-                    newFactory(fast, engine.getConfiguration(), masterFactory, slaveFactory, joinMetadata, joinFilter);
+                    newFactory(fast, allVectorized, includePrevailing, engine.getConfiguration(), masterFactory, slaveFactory, joinMetadata, joinFilter);
             // On success the factory owns all of them, so one close() releases each exactly once.
             factory.close();
 
@@ -156,6 +201,8 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
 
     private static RecordCursorFactory newFactory(
             boolean fast,
+            boolean allVectorized,
+            boolean includePrevailing,
             CairoConfiguration configuration,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
@@ -174,7 +221,7 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
                     masterFactory,
                     slaveFactory,
                     null,                    // columnIndex
-                    false,                   // includePrevailing
+                    includePrevailing,       // includePrevailing
                     0,                       // windowLo
                     0,                       // windowHi
                     groupByFunctions,
@@ -182,7 +229,7 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
                     0,                       // rightSymbolIndex
                     0,                       // leftSymbolIndex
                     joinFilter,
-                    true                     // allVectorized
+                    allVectorized            // allVectorized
             );
         }
         return new WindowJoinRecordCursorFactory(
@@ -192,7 +239,7 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
                 joinMetadata,
                 masterFactory,
                 slaveFactory,
-                false,                       // includePrevailing
+                includePrevailing,           // includePrevailing
                 null,                        // columnIndex
                 0,                           // windowLo
                 0,                           // windowHi

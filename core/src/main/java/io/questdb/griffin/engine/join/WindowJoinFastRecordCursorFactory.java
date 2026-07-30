@@ -584,42 +584,52 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 int valueCount
         ) {
             super(groupByFunctionsUpdater, valueCount);
-            this.crossIndex = columnIndex;
-            this.columnSplit = columnSplit;
-            this.groupByFunctions = groupByFunctions;
-            this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
-            GroupByUtils.setAllocator(groupByFunctions, allocator);
-            this.value = value;
-            this.masterTimestampIndex = masterTimestampIndex;
-            this.slaveTimestampIndex = slaveTimestampIndex;
-            if (masterTimestampType == slaveTimestampType) {
-                masterTimestampScale = slaveTimestampScale = 1L;
-            } else {
-                masterTimestampScale = ColumnType.getTimestampDriver(masterTimestampType).toNanosScale();
-                slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
+            // super() eagerly mallocs slaveData and slaveSymbolLookupMap. A throw below (e.g.
+            // getSqlAsOfJoinLookAhead) reaches the factory with this.cursor still null, so the
+            // factory's own catch cannot free them - close() must. It is safe during construction:
+            // super.close() frees the two maps unconditionally and everything else is behind
+            // if (isOpen), which is still false. Matches the WindowJoinFastVectRecordCursor twin.
+            try {
+                this.crossIndex = columnIndex;
+                this.columnSplit = columnSplit;
+                this.groupByFunctions = groupByFunctions;
+                this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
+                GroupByUtils.setAllocator(groupByFunctions, allocator);
+                this.value = value;
+                this.masterTimestampIndex = masterTimestampIndex;
+                this.slaveTimestampIndex = slaveTimestampIndex;
+                if (masterTimestampType == slaveTimestampType) {
+                    masterTimestampScale = slaveTimestampScale = 1L;
+                } else {
+                    masterTimestampScale = ColumnType.getTimestampDriver(masterTimestampType).toNanosScale();
+                    slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
+                }
+                this.slaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTimestampScale);
+                this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
+
+                this.internalJoinRecord = new JoinRecord(columnSplit);
+                this.groupByRecord = new VirtualRecord(groupByFunctions);
+                groupByRecord.of(value);
+                this.joinRecord = new JoinRecord(columnSplit);
+                if (columnIndex != null) {
+                    SelectedRecord sr = new SelectedRecord(columnIndex);
+                    sr.of(joinRecord);
+                    this.record = sr;
+                } else {
+                    this.record = joinRecord;
+                }
+
+                this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
+                this.slaveTimestamps = new GroupByLongList(INITIAL_LIST_CAPACITY);
+                this.slaveTimestamps.setAllocator(slaveAllocator);
+                this.slaveRowIds = new GroupByLongList(INITIAL_LIST_CAPACITY);
+                this.slaveRowIds.setAllocator(slaveAllocator);
+
+                this.lastSlaveTimestamp = Long.MIN_VALUE;
+            } catch (Throwable th) {
+                close();
+                throw th;
             }
-            this.slaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTimestampScale);
-            this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
-
-            this.internalJoinRecord = new JoinRecord(columnSplit);
-            this.groupByRecord = new VirtualRecord(groupByFunctions);
-            groupByRecord.of(value);
-            this.joinRecord = new JoinRecord(columnSplit);
-            if (columnIndex != null) {
-                SelectedRecord sr = new SelectedRecord(columnIndex);
-                sr.of(joinRecord);
-                this.record = sr;
-            } else {
-                this.record = joinRecord;
-            }
-
-            this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
-            this.slaveTimestamps = new GroupByLongList(INITIAL_LIST_CAPACITY);
-            this.slaveTimestamps.setAllocator(slaveAllocator);
-            this.slaveRowIds = new GroupByLongList(INITIAL_LIST_CAPACITY);
-            this.slaveRowIds.setAllocator(slaveAllocator);
-
-            this.lastSlaveTimestamp = Long.MIN_VALUE;
         }
 
         @Override
@@ -1464,7 +1474,15 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     valueCount
             );
 
-            this.prevailingCache = new WindowJoinPrevailingCache();
+            // super() already holds the two native maps (and its own allocators). If the cache's
+            // eager DirectIntLongHashMap malloc throws, close() must free them: super.close() frees
+            // the maps and this class's close() frees the (still-null, no-op) cache.
+            try {
+                this.prevailingCache = new WindowJoinPrevailingCache();
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override

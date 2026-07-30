@@ -277,8 +277,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // and observe the emitted IMM (markFoldedI4Imm/I8Imm) for the
                     // scalar-mode forcer and getExecHint() mixed-size detection.
                     if (arithExprType(node) == I8_TYPE) {
+                        // longVal is the unwrapped 64-bit fold, used above only to DETECT the
+                        // out-of-INT-range root. The emitted immediate must instead mirror the
+                        // Java filter's getLong() recursion, wrapping any narrow (INT-width)
+                        // sub-subtree - e.g. (2e9 + 2e9) + 5e9 emits 4_705_032_704, not the
+                        // unwrapped 9e9. Compute it before markFoldedI8Imm() so a fallback throw
+                        // (never in practice, the subtree already folded) leaves no state set.
+                        final long i8Imm = foldConstantArithWidthAware(node);
                         predicateContext.markFoldedI8Imm();
-                        putOperand(IMM, I8_TYPE, longVal);
+                        putOperand(IMM, I8_TYPE, i8Imm);
                     } else {
                         // Replicate the Java filter's per-op INT wrapping (getInt() recurses
                         // getInt()), which differs from (int) longVal for a non-modular operator
@@ -750,12 +757,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // (e.g. SHORT * SHORT for c1=200 yields -25536, not 40000); scalar mode upcasts
             // to int. This applies whether the predicate is all-narrow (maxSize <= 2) or
             // mixes narrow with wider operands -- both are unsafe under SIMD.
-            // Also force scalar when leaf promotion emits SX_I64 outside the conservatively
-            // selected four-lane mode, which is the only one that implements it.
+            // Also force scalar when leaf promotion emits an i64-widen leaf but the filter will
+            // NOT run the four-lane WIDE_LANE loop, which is the only one that implements SX_I64.
+            // getExecHint() emits WIDE_LANE only when isWideLaneMode AND hasEmittedWideLaneConversion;
+            // gating on isWideLaneMode alone left a hole where a wide-lane filter (e.g. a float
+            // comparison) suppressed the scalar force yet emitted no conversion, so the i64 leaf
+            // rode a SINGLE_SIZE (4-byte-lane) loop as an 8-byte immediate. Gate on the same
+            // condition as the hint so the IR and the hint stay consistent.
             forceScalarMode |= (predicateContext.hasArithmeticOperations
                     && (predicateContext.localTypesObserver.maxSize() <= 2
                     || predicateContext.localTypesObserver.hasNarrowInt()))
-                    || (!isWideLaneMode && i64WidenLeaves.size() > 0);
+                    || (!(isWideLaneMode && hasEmittedWideLaneConversion) && i64WidenLeaves.size() > 0);
 
             // Then backfill constants and symbol bind variables and clean up
             try {
@@ -1454,6 +1466,64 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return operandType;
         }
         return promoteArithType(cmpType, operandType);
+    }
+
+    /**
+     * Width-correct long fold, used ONLY to compute the immediate a LONG-width (I8) fold root
+     * emits. It mirrors the Java filter's {@code getLong()} recursion: a narrow (INT-width)
+     * node computes with per-op int wrapping and sign-extends, exactly as
+     * {@code AddInt}/{@code MulInt}#getLong() do ({@code Numbers.intToLong(getInt())}); only a
+     * genuine LONG-width node folds at 64-bit width.
+     * <p>
+     * It is deliberately separate from {@link #tryFoldConstantArith}, which folds every node at
+     * 64-bit width so its {@code (int) v != v} check can DETECT an out-of-INT-range result and
+     * flag a fold root. That detector must stay unwrapped; this evaluator must wrap narrow
+     * sub-subtrees. So {@code (2_000_000_000 + 2_000_000_000) + 5_000_000_000} folds the inner
+     * INT add to {@code -294_967_296} and emits {@code -294_967_296 + 5_000_000_000 =
+     * 4_705_032_704}, where the plain long fold kept the unwrapped {@code 9_000_000_000}.
+     * {@code Numbers.intToLong} maps {@code INT_NULL} onto {@code LONG_NULL}, so a narrow
+     * sub-subtree that collapses onto its sentinel still poisons the enclosing fold to NULL.
+     */
+    private long foldConstantArithWidthAware(ExpressionNode node) throws NumericException {
+        if (node == null) {
+            throw NumericException.INSTANCE;
+        }
+        // A narrow (I1/I2/I4) node wraps at INT width and sign-extends; the whole point of the
+        // separate evaluator is to catch it here rather than fold it at long width.
+        if (isNarrowIntTypeCode(arithExprType(node))) {
+            return Numbers.intToLong(tryFoldConstantArithI4(node));
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            return Numbers.parseLong(node.token);
+        }
+        if (node.type != ExpressionNode.OPERATION) {
+            throw NumericException.INSTANCE;
+        }
+        if (Chars.equals(node.token, '-') && node.lhs == null) {
+            long operand = foldConstantArithWidthAware(node.rhs);
+            return operand == Numbers.LONG_NULL ? Numbers.LONG_NULL : -operand;
+        }
+        long left = foldConstantArithWidthAware(node.lhs);
+        long right = foldConstantArithWidthAware(node.rhs);
+        if (left == Numbers.LONG_NULL || right == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        if (Chars.equals(node.token, '+')) {
+            return left + right;
+        }
+        if (Chars.equals(node.token, '-')) {
+            return left - right;
+        }
+        if (Chars.equals(node.token, '*')) {
+            return left * right;
+        }
+        if (Chars.equals(node.token, '/')) {
+            if (right == 0L) {
+                throw NumericException.INSTANCE;
+            }
+            return left / right;
+        }
+        throw NumericException.INSTANCE;
     }
 
     private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {

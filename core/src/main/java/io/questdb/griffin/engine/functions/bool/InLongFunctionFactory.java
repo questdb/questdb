@@ -64,13 +64,6 @@ public class InLongFunctionFactory implements FunctionFactory {
         int constCount = 0;
         int runtimeConstCount = 0;
         final int argCount = args.size() - 1;
-        // When the key (arg 0) is a narrow integer (INT/SHORT/BYTE), an INT/SHORT/BYTE-typed
-        // element is read at INT width so it wraps mod 2^32 exactly as EqInt and the JIT do.
-        // The key itself is always read once per row, at long width: an INT expression carries
-        // one value, and IntFunction.getLong() is Numbers.intToLong(getInt()), so widening the
-        // key is exact and Numbers.intToLong(INT_NULL) == LONG_NULL keeps NULL matching NULL.
-        // For a LONG/TIMESTAMP key every element widens to long anyway.
-        final boolean isNarrowIntKey = isNarrowInt(ColumnType.tagOf(args.getQuick(0).getType()));
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -100,14 +93,14 @@ public class InLongFunctionFactory implements FunctionFactory {
         if (constCount == argCount) {
             switch (argCount) {
                 case 1: {
-                    final long v = parseValue(argPositions, args.getQuick(1), 1, isNarrowIntKey);
+                    final long v = parseValue(argPositions, args.getQuick(1), 1);
                     final Function fn = new InLongSingleConstFunction(args.getQuick(0), v);
                     freeElements(args);
                     return fn;
                 }
                 case 2: {
-                    final long v0 = parseValue(argPositions, args.getQuick(1), 1, isNarrowIntKey);
-                    final long v1 = parseValue(argPositions, args.getQuick(2), 2, isNarrowIntKey);
+                    final long v0 = parseValue(argPositions, args.getQuick(1), 1);
+                    final long v1 = parseValue(argPositions, args.getQuick(2), 2);
                     final Function fn = new InLongTwoConstFunction(args.getQuick(0), v0, v1);
                     freeElements(args);
                     return fn;
@@ -116,7 +109,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                     DirectLongHashSet vals = null;
                     try {
                         vals = new DirectLongHashSet(argCount, MemoryTag.NATIVE_FUNC_RSS);
-                        parseToSet(args, argPositions, vals, isNarrowIntKey);
+                        parseToSet(args, argPositions, vals);
                         final Function fn = new InLongConstFunction(args.getQuick(0), vals);
                         freeElements(args);
                         return fn;
@@ -130,11 +123,11 @@ public class InLongFunctionFactory implements FunctionFactory {
         if (runtimeConstCount + constCount == argCount) {
             final IntList positions = new IntList();
             positions.addAll(argPositions);
-            return new InLongRuntimeConstFunction(args.getQuick(0), new ObjList<>(args), positions, isNarrowIntKey);
+            return new InLongRuntimeConstFunction(args.getQuick(0), new ObjList<>(args), positions);
         }
 
         // have to copy, args is mutable
-        return new InLongVarFunction(new ObjList<>(args), isNarrowIntKey);
+        return new InLongVarFunction(new ObjList<>(args));
     }
 
     /**
@@ -156,14 +149,6 @@ public class InLongFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static boolean isNarrowInt(int typeTag) {
-        return typeTag == ColumnType.BYTE || typeTag == ColumnType.SHORT || typeTag == ColumnType.INT;
-    }
-
-    private static boolean isNumericStringLike(int typeTag) {
-        return typeTag == ColumnType.STRING || typeTag == ColumnType.SYMBOL || typeTag == ColumnType.VARCHAR;
-    }
-
     // Every element that reaches here is constant or runtime-constant, so an unparseable one is a
     // query error reported at the element's own position rather than a silent LONG_NULL that would
     // match the NULL rows. Only the per-row path (InLongVarFunction) parses quietly, because it
@@ -180,27 +165,24 @@ public class InLongFunctionFactory implements FunctionFactory {
     private static void parseToSet(
             ObjList<Function> args,
             IntList argPositions,
-            DirectLongHashSet outSet,
-            boolean isNarrowIntKey
+            DirectLongHashSet outSet
     ) throws SqlException {
         for (int i = 1, n = args.size(); i < n; i++) {
-            outSet.add(parseValue(argPositions, args.getQuick(i), i, isNarrowIntKey));
+            outSet.add(parseValue(argPositions, args.getQuick(i), i));
         }
     }
 
-    private static long parseValue(IntList argPositions, Function func, int i, boolean isNarrowIntKey) throws SqlException {
+    private static long parseValue(IntList argPositions, Function func, int i) throws SqlException {
         long val;
         switch (ColumnType.tagOf(func.getType())) {
             case ColumnType.INT:
             case ColumnType.SHORT:
             case ColumnType.BYTE:
-                // Match '=' on a narrow-integer key: read the element at INT width so an
-                // overflowing INT arithmetic wraps (getInt) instead of widening (getLong).
-                // intToLong preserves a genuine INT_NULL element as LONG_NULL.
-                val = isNarrowIntKey ? Numbers.intToLong(func.getInt(null)) : func.getLong(null);
-                break;
             case ColumnType.TIMESTAMP:
             case ColumnType.LONG:
+                // A narrow-integer element carries one value: func.getLong() is
+                // Numbers.intToLong(getInt()) for every INT/SHORT/BYTE function, so it wraps
+                // overflowing INT arithmetic and maps INT_NULL to LONG_NULL exactly as '=' does.
                 val = func.getLong(null);
                 break;
             case ColumnType.STRING:
@@ -265,7 +247,6 @@ public class InLongFunctionFactory implements FunctionFactory {
     }
 
     private static class InLongRuntimeConstFunction extends NegatableBooleanFunction implements MultiArgFunction {
-        private final boolean isNarrowIntKey;
         private final Function keyFunc;
         private final DirectLongHashSet set;
         private final IntList valueFunctionPositions;
@@ -274,14 +255,12 @@ public class InLongFunctionFactory implements FunctionFactory {
         public InLongRuntimeConstFunction(
                 Function keyFunc,
                 ObjList<Function> valueFunctions,
-                IntList valueFunctionPositions,
-                boolean isNarrowIntKey
+                IntList valueFunctionPositions
         ) {
             this.keyFunc = keyFunc;
             // value functions also contain key function at 0 index.
             this.valueFunctions = valueFunctions;
             this.valueFunctionPositions = valueFunctionPositions;
-            this.isNarrowIntKey = isNarrowIntKey;
             this.set = new DirectLongHashSet(valueFunctions.size() - 1, MemoryTag.NATIVE_FUNC_RSS);
         }
 
@@ -305,7 +284,7 @@ public class InLongFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             MultiArgFunction.super.init(symbolTableSource, executionContext);
             set.clear();
-            parseToSet(valueFunctions, valueFunctionPositions, set, isNarrowIntKey);
+            parseToSet(valueFunctions, valueFunctionPositions, set);
         }
 
         @Override
@@ -390,7 +369,6 @@ public class InLongFunctionFactory implements FunctionFactory {
     private static class InLongVarFunction extends NegatableBooleanFunction implements MultiArgFunction {
         private static final int KIND_CONST = 5;
         private static final int KIND_LONG = 1;
-        private static final int KIND_NARROW_INT = 0;
         private static final int KIND_NONE = 4;
         private static final int KIND_STR = 2;
         private static final int KIND_VARCHAR = 3;
@@ -400,17 +378,9 @@ public class InLongFunctionFactory implements FunctionFactory {
         // Dynamic entries hold their args index. Constant entries hold -(run index + 1).
         private final IntList elementIndexes;
         private final IntList elementKinds;
-        // A compile-time snapshot of the KEY's width, unlike elementKinds, which init() refreshes.
-        // It cannot be refreshed in isolation: the ctor already baked it into constValues, so
-        // recomputing it would need those re-derived too. Re-binding the KEY of
-        // "WHERE $1 IN (col, ...)" to a different width is therefore unsupported - it reads the
-        // elements through the old width's accessor. Reachable only from the embedded API: every
-        // wire protocol reconciles parameter types and recompiles instead.
-        private final boolean isNarrowIntKey;
 
-        public InLongVarFunction(ObjList<Function> args, boolean isNarrowIntKey) {
+        public InLongVarFunction(ObjList<Function> args) {
             this.args = args;
-            this.isNarrowIntKey = isNarrowIntKey;
             final int n = args.size();
             // At most one run starts per IN element. Reserve every owner slot before allocating
             // native sets so constSets.add() cannot grow and strand a just-allocated set on OOM.
@@ -425,7 +395,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                     final Function func = args.getQuick(i);
                     final int tag = ColumnType.tagOf(func.getType());
                     if (func.isConstant()) {
-                        final long value = constElementValue(func, tag, isNarrowIntKey);
+                        final long value = constElementValue(func, tag);
                         if (currentConstKind != KIND_CONST) {
                             currentConstSet = null;
                             constSets.add(null);
@@ -491,12 +461,10 @@ public class InLongFunctionFactory implements FunctionFactory {
                 final Function func = args.getQuick(elementIndex);
                 final long inVal;
                 switch (kind) {
-                    case KIND_NARROW_INT:
-                        // Match '=' on a narrow-integer key: read the element at INT width so an
-                        // overflowing INT arithmetic wraps instead of widening.
-                        inVal = isNarrowIntKey ? Numbers.intToLong(func.getInt(rec)) : func.getLong(rec);
-                        break;
                     case KIND_LONG:
+                        // A narrow-integer element reads through getLong() too: it is
+                        // Numbers.intToLong(getInt()) for every INT/SHORT/BYTE function, so the
+                        // element wraps overflowing INT arithmetic and maps INT_NULL to LONG_NULL.
                         inVal = func.getLong(rec);
                         break;
                     case KIND_VARCHAR:
@@ -546,12 +514,11 @@ public class InLongFunctionFactory implements FunctionFactory {
             sink.val(args, 1);
         }
 
-        private static long constElementValue(Function func, int tag, boolean isNarrowIntKey) {
+        private static long constElementValue(Function func, int tag) {
             switch (tag) {
                 case ColumnType.BYTE:
                 case ColumnType.SHORT:
                 case ColumnType.INT:
-                    return isNarrowIntKey ? Numbers.intToLong(func.getInt(null)) : func.getLong(null);
                 case ColumnType.LONG:
                 case ColumnType.TIMESTAMP:
                     return func.getLong(null);
@@ -570,8 +537,7 @@ public class InLongFunctionFactory implements FunctionFactory {
          */
         private static int dynamicElementKind(int tag) {
             return switch (tag) {
-                case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT -> KIND_NARROW_INT;
-                case ColumnType.LONG, ColumnType.TIMESTAMP -> KIND_LONG;
+                case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.TIMESTAMP -> KIND_LONG;
                 case ColumnType.VARCHAR -> KIND_VARCHAR;
                 case ColumnType.STRING, ColumnType.SYMBOL -> KIND_STR;
                 default -> KIND_NONE;

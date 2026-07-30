@@ -33,34 +33,29 @@ import org.junit.Test;
 
 /**
  * Verifies that {@link io.questdb.griffin.engine.functions.bool.InLongFunctionFactory}
- * releases its native hash sets when a set allocation fails half-way through
- * building the IN-list function.
+ * releases its native hash set when an allocation fails half-way through building the
+ * IN-list function.
  * <p>
- * A split key - a narrow-integer key whose getLong() disagrees with its getInt(), i.e. INT
- * arithmetic such as {@code i32 * 3} - needs a second set for the elements it wraps against,
- * so both the constant-list path and the runtime-constant constructor allocate two
- * {@code DirectLongHashSet}s. If the second allocation trips the RSS memory limit after the
- * first has already succeeded, the first set must still be freed. The query fuzzer's malloc
- * fault injection surfaces exactly this kind of leak.
- * <p>
- * The key has to be an arithmetic expression: a plain {@code i32} column is width-stable
- * (isIntWidthStable), so it takes the single-set path and would leave both allocations here
- * untested.
+ * Both the constant-list path and the runtime-constant constructor allocate a
+ * {@code DirectLongHashSet} and then fill it from the IN elements. If any malloc along the
+ * way - the set's initial allocation or a rehash while adding elements - trips the RSS memory
+ * limit, the partially built set must still be freed. The query fuzzer's malloc fault
+ * injection surfaces exactly this kind of leak.
  */
 public class InLongFunctionFactoryOomTest extends AbstractCairoTest {
 
     @Test
     public void testConstListCleansUpWhenSetAllocationRunsOutOfMemory() throws Exception {
-        // A split key with both INT-range and LONG-range constant elements builds an INT-width
-        // set and a long-width set; a failure on the second must free the first.
+        // The all-constant path (3+ elements) allocates one DirectLongHashSet and fills it; a
+        // swept malloc failure at any point must free it.
         assertNoLeakOnCompileOom("SELECT * FROM x WHERE i32 * 3 IN (10, 20, 30, 40, 5_000_000_000)");
     }
 
     @Test
     public void testRuntimeConstCleansUpWhenSetAllocationRunsOutOfMemory() throws Exception {
-        // A split key with an INT constant element and a LONG runtime-constant (bind variable)
-        // element routes to InLongRuntimeConstFunction, whose constructor allocates both sets;
-        // a failure on the second must free the first.
+        // A runtime-constant (bind variable) element routes to InLongRuntimeConstFunction, whose
+        // constructor allocates the set and whose init() fills it; a swept malloc failure must
+        // free the set.
         bindVariableService.clear();
         bindVariableService.setLong(0, 100);
         assertNoLeakOnCompileOom("SELECT * FROM x WHERE i32 * 3 IN (5, $1)");
@@ -78,13 +73,13 @@ public class InLongFunctionFactoryOomTest extends AbstractCairoTest {
 
             boolean sawOom = false;
             // Sweep the native-memory ceiling across the compile allocation points. Some ceiling
-            // lets the first set allocate and trips the second; the pre-fix code then leaked the
-            // first set. Keep the step fine: the window that trips the SECOND allocation is one
-            // set wide (DirectLongHashSet's MIN_CAPACITY of 16 slots = 128 bytes here), and the
-            // ceiling drifts a little per iteration, so a coarse step walks straight over it. A
-            // step of 8 lands in that window ~11 times per sweep; a step of 64 lands in it zero
-            // times and the sweep stops catching the leak it exists to catch. The sweep is cheap
-            // regardless - a warm re-compile is well under a millisecond.
+            // lets earlier allocations through and trips the IN-list set's own malloc or a rehash
+            // while it fills; the set must be freed on that failure. Keep the step fine: the window
+            // that trips the set allocation is one set wide (DirectLongHashSet's MIN_CAPACITY of 16
+            // slots = 128 bytes here), and the ceiling drifts a little per iteration, so a coarse
+            // step walks straight over it. A step of 8 lands in that window ~11 times per sweep; a
+            // step of 64 lands in it zero times and the sweep stops catching the leak it exists to
+            // catch. The sweep is cheap regardless - a warm re-compile is well under a millisecond.
             for (int slack = 0; slack <= 32 * 1024; slack += 8) {
                 Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
                 try (RecordCursorFactory factory = select(query)) {

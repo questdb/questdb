@@ -893,12 +893,28 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNarrowKeyInJsonExtractShortElement() throws Exception {
+        // A json_extract(..)::short element carries one value: getShort (0 for an out-of-SHORT
+        // payload, since SHORT has no null sentinel), and every wider read sign-extends it. So the
+        // element contributes 0 to the IN list and matches a key of 0. This is the one narrow-int
+        // element whose getInt() and getLong() used to disagree (the base class re-parsed each
+        // width); JsonExtractShortFunction now derives both from getShort, which is why the IN
+        // factory can read every narrow element at long width without a per-key width branch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT)");
+            execute("INSERT INTO t VALUES (0), (5), (32768)");
+            assertQuery("SELECT k FROM t WHERE k IN (json_extract('{\"a\":5000000000}','$.a')::short) ORDER BY k")
+                    .noLeakCheck()
+                    .returns("k\n0\n");
+        });
+    }
+
+    @Test
     public void testNarrowKeyOverridingGetLongIsNotAssumedWidthStable() throws Exception {
-        // json_extract(..)::int implements Function directly rather than extending IntFunction, and its
-        // getInt() and getLong() are two independent native parses: an out-of-INT-range number reads as
-        // INT_NULL at INT width and as its full value at long width. It never declared that, and
-        // isIntWidthStable() defaulted to true, so IN probed the key with getLong() only and disagreed
-        // with both '=' and the projection - exactly the divergence the split key exists to close.
+        // json_extract(..)::int does not extend IntFunction, but JsonExtractIntFunction overrides
+        // getLong() as Numbers.intToLong(getInt()), so its INT and long widths agree: an
+        // out-of-INT-range number reads as INT_NULL at INT width and as LONG_NULL at long width.
+        // IN probes the key with getLong(), so it agrees with both '=' and the projection.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (j VARCHAR)");
             execute("INSERT INTO t VALUES ('{\"x\":5000000000}')");
@@ -929,9 +945,8 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
         // which for a narrow key is an exact sign extension of the value getInt() reports. Reading
         // it twice would matter for a non-deterministic key, whose second read is a fresh draw.
         //
-        // The list mixes an INT element with a LONG one on purpose: under the old split-key regime
-        // that made the key read at both widths. Now the element's declared width decides only the
-        // element's own value, never the key's.
+        // The list mixes an INT element with a LONG one on purpose: an element's declared width
+        // decides only that element's own value, never the key's.
         assertMemoryLeak(() -> {
             try (CountingIntKey key = new CountingIntKey(7)) {
                 // two-constant path

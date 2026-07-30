@@ -773,6 +773,52 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFoldIntSubtreeUnderLongRoot() throws Exception {
+        // A pure-INT sub-subtree nested under a LONG constant fold must wrap at INT width
+        // before the enclosing LONG op reads it, exactly as AddLong#getLong reads
+        // AddInt#getLong() = Numbers.intToLong(getInt()). For
+        //   (2_000_000_000 + 2_000_000_000) + 5_000_000_000
+        // the inner INT add wraps to -294_967_296, so the Java filter's bound is
+        // -294_967_296 + 5_000_000_000 = 4_705_032_704. The pre-fix JIT folded the WHOLE
+        // subtree at long width (4_000_000_000 + 5_000_000_000 = 9_000_000_000):
+        //   i64 > bound : Java keeps (4.705e9, +inf], the JIT only (9e9, +inf] -> under-returned
+        //   i64 < bound : Java keeps [-inf, 4.705e9), the JIT [-inf, 9e9)      -> over-returned
+        assertMemoryLeak(() -> {
+            execute("create table t (i64 long, k timestamp) timestamp(k) partition by day");
+            execute("insert into t values " +
+                    "(0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3_000_000_000, '2024-01-01T00:00:01.000000Z')," +
+                    "(6_000_000_000, '2024-01-01T00:00:02.000000Z')," +
+                    "(10_000_000_000, '2024-01-01T00:00:03.000000Z')");
+            // Java bound 4_705_032_704 keeps 6e9 and 10e9; the pre-fix JIT bound 9e9 dropped
+            // 6e9 (under-return).
+            assertJitMatchesJava("t where i64 > (2_000_000_000 + 2_000_000_000) + 5_000_000_000", true,
+                    "i64\tk\n" +
+                            "6000000000\t2024-01-01T00:00:02.000000Z\n" +
+                            "10000000000\t2024-01-01T00:00:03.000000Z\n");
+            // Opposite direction: Java keeps 0 and 3e9; the pre-fix JIT also kept 6e9
+            // (over-return), which is why the two directions together cannot both be vacuous.
+            assertJitMatchesJava("t where i64 < (2_000_000_000 + 2_000_000_000) + 5_000_000_000", true,
+                    "i64\tk\n" +
+                            "0\t2024-01-01T00:00:00.000000Z\n" +
+                            "3000000000\t2024-01-01T00:00:01.000000Z\n");
+            // Nested-LONG sub-op: (5_000_000_000 - 4_705_032_704) = 294_967_296 is a genuine
+            // LONG subtree, so the width-aware fold recurses into its operation while still
+            // wrapping the sibling INT add to -294_967_296. Their sum is exactly 0, and only the
+            // 0 row matches. The pre-fix JIT folded the whole thing at long width to
+            // 4_294_967_296 and matched nothing.
+            assertJitMatchesJava("t where i64 = (2_000_000_000 + 2_000_000_000) + (5_000_000_000 - 4_705_032_704)", true,
+                    "i64\tk\n" +
+                            "0\t2024-01-01T00:00:00.000000Z\n");
+            // Control: an all-LONG fold of the same shape was always correct
+            // (5_000_000_000 + 5_000_000_000 = 10_000_000_000), so '=' keeps only 10e9.
+            assertJitMatchesJava("t where i64 = 5_000_000_000 + 5_000_000_000", true,
+                    "i64\tk\n" +
+                            "10000000000\t2024-01-01T00:00:03.000000Z\n");
+        });
+    }
+
+    @Test
     public void testConstantFoldLongNullCollision() throws Exception {
         // The LONG analog of testConstantFoldIntNullCollision. An inner constant
         // product that lands EXACTLY on Long.MIN_VALUE (-2^63, the LONG null
@@ -1113,6 +1159,59 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     "rid\n");
             assertJitMatchesJava("select rid from dc where (nl + ((((1_000_000 * 1_000_000) + 1) + 2) + 3)) > 0", true,
                     "rid\n1\n4\n");
+        });
+    }
+
+    @Test
+    public void testFloatArithI64ConstUnderWideLaneRunsScalar() throws Exception {
+        // C6: a wide-lane FLOAT conjunct (afloat * 1.0 > <inexact float>) sets isWideLaneMode
+        // without emitting a width conversion, which used to SUPPRESS the scalar force for a
+        // sibling afloat + <out-of-INT constant>. That left the out-of-range LONG constant as an
+        // 8-byte immediate riding a SINGLE_SIZE (4-byte-lane) loop - an IR/hint mismatch. The
+        // filter now runs scalar (the four-lane WIDE_LANE loop is the only one that widens an
+        // i64 leaf, and this shape never emits that widening). All three modes must agree with
+        // the Java filter, and the results must be correct.
+        assertMemoryLeak(() -> {
+            execute("create table t (afloat float, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values " +
+                    "(0.5, 0)," +
+                    "(1.0, 1_000_000)," +
+                    "(1.5, 2_000_000)," +
+                    "(2.0, 3_000_000)," +
+                    "(-3.0, 4_000_000)," +
+                    "(5.0, 5_000_000)," +
+                    "(null, 6_000_000)");
+            // afloat * 1.0 > 1.00000003 keeps 1.5, 2.0, 5.0; afloat + 5e9 > 1.5 is true for every
+            // non-null row, so the AND keeps exactly those three.
+            final String expected = "afloat\tts\n" +
+                    "1.5\t1970-01-01T00:00:02.000000Z\n" +
+                    "2.0\t1970-01-01T00:00:03.000000Z\n" +
+                    "5.0\t1970-01-01T00:00:05.000000Z\n";
+            assertJitScalarAndVectorMatchJava("t where afloat * 1.0 > 1.00000003 and afloat + 5_000_000_000 > 1.5", expected);
+            // Reversed conjunct order is identical.
+            assertJitScalarAndVectorMatchJava("t where afloat + 5_000_000_000 > 1.5 and afloat * 1.0 > 1.00000003", expected);
+            // Subtraction of an out-of-range constant is the same shape.
+            assertJitScalarAndVectorMatchJava("t where afloat * 1.0 > 1.00000003 and afloat - 5_000_000_000 < -1.5", expected);
+        });
+    }
+
+    @Test
+    public void testFloatArithI64LeafAlongsideIntWidenStaysCorrect() throws Exception {
+        // C6 companion: hasEmittedWideLaneConversion is a single filter-wide flag, so an int-widen
+        // conjunct (anint < along, which emits SX_I64 and sets the flag) sitting next to an
+        // unconverted afloat + <out-of-INT constant> leaf can keep the filter on the WIDE_LANE
+        // hint. This pins that such mixes still match the Java filter across a full 600-row scan
+        // (many SIMD batches), so a future change to the width gating that reintroduced a lane
+        // mismatch here would redden. Parity across many rows; the filters keep every row, so the
+        // comparison is never vacuous.
+        assertMemoryLeak(() -> {
+            execute("create table t as (select cast(x as int) anint, (x * 2)::long along, " +
+                    "(cast(x as float) - 3.5) afloat, timestamp_sequence(0, 1_000_000) k " +
+                    "from long_sequence(600)) timestamp(k)");
+            assertJitMatchesJava("t where anint < along and afloat + 5_000_000_000 > 1.5", true, null);
+            assertJitMatchesJava("t where afloat + 5_000_000_000 > 1.5 and anint < along", true, null);
+            assertJitMatchesJava("t where anint < 5_000_000_000 and afloat + 5_000_000_000 > 1.5", true, null);
+            assertJitMatchesJava("t where anint < along and afloat * 1.0 > 1.5 and afloat + 5_000_000_000 > 1.5", true, null);
         });
     }
 

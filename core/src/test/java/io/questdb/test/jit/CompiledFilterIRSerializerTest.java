@@ -410,6 +410,34 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testFloatArithI64ConstantForcesScalarNotWideLane() throws Exception {
+        // C6: a wide-lane FLOAT conjunct (afloat * 1.0 > <inexact float>) sets isWideLaneMode but
+        // emits no width conversion, so hasEmittedWideLaneConversion stays false. A sibling
+        // afloat + <out-of-INT constant> then adds the LONG constant to i64WidenLeaves (an IMM I8
+        // in the IR) with no conversion. The scalar force must still fire: the i64 leaf has no
+        // SX_I64 (only the four-lane WIDE_LANE mode implements it) and the hint is not WIDE_LANE,
+        // so a vectorized SINGLE_SIZE loop would carry an 8-byte immediate under 4-byte lanes.
+        // Forcing scalar keeps the IR and the emitted hint consistent.
+        int options = serialize("afloat * 1.0 > 1.00000003 and afloat + 5_000_000_000 > 1.5", false, false, false);
+        assertOptionsHint("float wide-lane + out-of-INT constant", options, OptionsHint.SCALAR);
+
+        // Reversed conjunct order behaves the same.
+        options = serialize("afloat + 5_000_000_000 > 1.5 and afloat * 1.0 > 1.00000003", false, false, false);
+        assertOptionsHint("reversed order", options, OptionsHint.SCALAR);
+
+        // Control: a single afloat + <out-of-INT constant> conjunct was already scalar via the
+        // plain !isWideLaneMode branch, and stays scalar.
+        options = serialize("afloat + 5_000_000_000 > 1.5", false, false, false);
+        assertOptionsHint("single i64-leaf float conjunct", options, OptionsHint.SCALAR);
+
+        // Control: a genuine WIDE_LANE filter - an INT column vs a LONG column with an out-of-INT
+        // constant sibling, where SX_I64 is emitted so hasEmittedWideLaneConversion is true - must
+        // NOT be dragged to scalar by the fix.
+        options = serialize("anint < along and anint < 5_000_000_000", false, false, true);
+        assertOptionsHint("genuine wide-lane stays wide-lane", options, OptionsHint.WIDE_LANE);
+    }
+
+    @Test
     public void testFloatCmpConstWithNoExactFloat() throws Exception {
         // A FLOAT column always compares at DOUBLE width in the Java filter, so a constant with no
         // exact float must not be emitted as a 32-bit float - the nearest one selects different

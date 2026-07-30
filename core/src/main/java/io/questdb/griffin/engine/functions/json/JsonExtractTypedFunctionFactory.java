@@ -83,10 +83,17 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
 
         final int targetType = parseTargetType(position, args.getQuick(2));
         final int maxSize = configuration.getStrFunctionMaxBufferLength();
-        // An INT target needs the one-value variant; every other target derives a single width.
-        return ColumnType.tagOf(targetType) == ColumnType.INT
-                ? new JsonExtractIntFunction(targetType, json, path, maxSize)
-                : new JsonExtractFunction(targetType, json, path, maxSize);
+        // SHORT and INT are narrow: their wider reads must sign-extend the declared-width getter
+        // rather than re-parse per width, so each gets a one-value variant. Other targets keep the
+        // base's per-width parse.
+        switch (ColumnType.tagOf(targetType)) {
+            case ColumnType.SHORT:
+                return new JsonExtractShortFunction(targetType, json, path, maxSize);
+            case ColumnType.INT:
+                return new JsonExtractIntFunction(targetType, json, path, maxSize);
+            default:
+                return new JsonExtractFunction(targetType, json, path, maxSize);
+        }
     }
 
     private static int parseTargetType(int position, Function targetTypeFn) throws SqlException {

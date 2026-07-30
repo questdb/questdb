@@ -189,6 +189,57 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntWidthConsistencyAcrossWidenedReads() throws Exception {
+        // An INT (or SHORT) json_extract expression must carry ONE value: every widened read
+        // sign-extends the declared-width getter, exactly as IntFunction/ShortFunction do. The base
+        // class derived each width from its own native parse, so json_extract(t,'$.a')::int of an
+        // out-of-INT payload read NULL as an INT (getInt raises NUMBER_OUT_OF_RANGE) but the full
+        // number as a DOUBLE/FLOAT (independent queryPointerDouble). One expression, two values.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE j (id INT, f FLOAT, text VARCHAR)");
+            execute("INSERT INTO j VALUES " +
+                    "(1, 0.0, '{\"a\":42}')," +           // in range everywhere
+                    "(2, 0.0, '{\"a\":32768}')," +        // out of SHORT, in INT
+                    "(3, 0.0, '{\"a\":2147483648}')");    // out of INT (and SHORT)
+
+            // INT: getInt is the source; getLong (already correct) and getDouble/getFloat (the fix)
+            // must all agree. Row 3 is NULL at every width; pre-fix the + 0.0 read printed 2.147...E9.
+            assertQuery("SELECT id, " +
+                    "json_extract(text,'$.a')::int i, " +
+                    "json_extract(text,'$.a')::int + 0L l, " +
+                    "json_extract(text,'$.a')::int + 0.0 d, " +
+                    "f + json_extract(text,'$.a')::int ff " +
+                    "FROM j ORDER BY id")
+                    .expectSize()
+                    .returns("id\ti\tl\td\tff\n" +
+                            "1\t42\t42\t42.0\t42.0\n" +
+                            "2\t32768\t32768\t32768.0\t32768.0\n" +
+                            "3\tnull\tnull\tnull\tnull\n");
+
+            // SHORT: getShort is the source (out-of-SHORT reads 0, its only representation). The
+            // widened reads must derive from it, not re-parse; pre-fix + 0L/+ 0.0 printed the full
+            // number while ::short printed 0.
+            assertQuery("SELECT id, " +
+                    "json_extract(text,'$.a')::short s, " +
+                    "json_extract(text,'$.a')::short + 0L sl, " +
+                    "json_extract(text,'$.a')::short + 0.0 sd " +
+                    "FROM j ORDER BY id")
+                    .expectSize()
+                    .returns("id\ts\tsl\tsd\n" +
+                            "1\t42\t42\t42.0\n" +
+                            "2\t0\t0\t0.0\n" +
+                            "3\t0\t0\t0.0\n");
+
+            // The predicate path reads getDouble too: > 1.5 must exclude the out-of-INT row (NULL),
+            // matching what SELECT of ::int shows. Pre-fix it counted row 3 (2.147e9 > 1.5).
+            assertQuery("SELECT count() c FROM j WHERE json_extract(text,'$.a')::int > 1.5")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n2\n");
+        });
+    }
+
+    @Test
     public void testLong() throws Exception {
         testScenarios(ColumnType.LONG);
     }

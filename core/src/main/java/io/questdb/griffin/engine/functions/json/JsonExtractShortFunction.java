@@ -26,50 +26,54 @@ package io.questdb.griffin.engine.functions.json;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.Numbers;
 
 /**
- * The INT-typed {@code json_extract}, whose 64-bit reads sign-extend {@link #getInt(Record)}
- * instead of re-parsing the JSON at long width.
+ * The SHORT-typed {@code json_extract}, whose wider reads sign-extend {@link #getShort(Record)}
+ * instead of re-parsing the JSON at each width.
  * <p>
- * The base class derives each width from its own native parse, so a JSON number outside the INT
- * range reads as NULL under {@code queryPointerInt} (which raises {@code NUMBER_OUT_OF_RANGE}) and
- * as its full value under {@code queryPointerLong}. That gives one INT expression two values per
- * row: {@code SELECT j} prints null while {@code j + 0L} - which resolves {@code +(LL)} and reads
- * {@code getLong()} - prints the number. An INT expression carries exactly one value, the one its
- * four bytes hold, so every 64-bit read of it widens that value, as {@code IntFunction} does.
+ * The base class derives every width from its own native parse, so a JSON number outside the SHORT
+ * range reads as {@code 0} through {@code getShort} (SHORT has no null sentinel) but as its full
+ * value through {@code getLong} / {@code getDouble}. That gives one SHORT expression two values per
+ * row: {@code SELECT j} prints 0 while {@code j + 0L} - which resolves {@code +(LL)} and reads
+ * {@code getLong()} - prints the number. A SHORT expression carries exactly one value, the one its
+ * two bytes hold, so every wider read sign-extends that value, as {@code ShortFunction} does.
  * <p>
  * The type is fixed at compile time, so the factory picks this class rather than the base branching
  * on it per row.
  */
-public class JsonExtractIntFunction extends JsonExtractFunction {
+public class JsonExtractShortFunction extends JsonExtractFunction {
 
-    public JsonExtractIntFunction(int targetType, Function json, Function path, int maxSize) {
+    public JsonExtractShortFunction(int targetType, Function json, Function path, int maxSize) {
         super(targetType, json, path, maxSize);
     }
 
     @Override
     public long getDate(Record rec) {
-        return Numbers.intToLong(getInt(rec));
+        return getShort(rec);
     }
 
     @Override
     public double getDouble(Record rec) {
-        return Numbers.intToDouble(getInt(rec));
+        return getShort(rec);
     }
 
     @Override
     public float getFloat(Record rec) {
-        return Numbers.intToFloat(getInt(rec));
+        return getShort(rec);
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return getShort(rec);
     }
 
     @Override
     public long getLong(Record rec) {
-        return Numbers.intToLong(getInt(rec));
+        return getShort(rec);
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        return Numbers.intToLong(getInt(rec));
+        return getShort(rec);
     }
 }
