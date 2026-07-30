@@ -36,7 +36,6 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 /**
@@ -63,8 +62,7 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
                 createColumnTopLastTable(liveKeys, sqlExecutionContext);
 
                 final String query = "SELECT k, count() FROM tab";
-                printSql("EXPLAIN " + query);
-                TestUtils.assertContains(sink, "GroupBy vectorized: true");
+                assertQuery(query).noLeakCheck().assertsPlanContaining("GroupBy vectorized: true");
 
                 try (RecordCursorFactory factory = select(query)) {
                     drain(factory, sqlExecutionContext);
@@ -82,8 +80,7 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
                 createColumnTopTable(liveKeys, sqlExecutionContext);
 
                 final String query = "SELECT k, count() FROM tab";
-                printSql("EXPLAIN " + query);
-                TestUtils.assertContains(sink, "GroupBy vectorized: true");
+                assertQuery(query).noLeakCheck().assertsPlanContaining("GroupBy vectorized: true");
 
                 try (RecordCursorFactory factory = select(query)) {
                     drain(factory, sqlExecutionContext);

@@ -318,9 +318,13 @@ static jboolean kIntMinShort(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
             *reinterpret_cast<int32_t *>(pKey) = key;
             *reinterpret_cast<jlong *>(pVal) = val;
         } else {
+            // The guard is load-bearing here, unlike in kIntMaxShort: L_MIN doubles as the "no
+            // value yet" sentinel and the minimum jlong, so an unconditional MIN would always
+            // pick the sentinel. Only the narrowing is gratuitous -- past the guard, old is a
+            // sign-extended short, so (jshort) old is the identity.
             const jlong old = *reinterpret_cast<jlong *>(pVal);
             if (old != L_MIN) {
-                *reinterpret_cast<jlong *>(pVal) = MIN(val, (jshort) old);
+                *reinterpret_cast<jlong *>(pVal) = MIN((jlong) val, old);
             } else {
                 *reinterpret_cast<jlong *>(pVal) = val;
             }
@@ -347,12 +351,11 @@ static jboolean kIntMaxShort(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
             *reinterpret_cast<int32_t *>(pKey) = key;
             *reinterpret_cast<jlong *>(pVal) = val;
         } else {
+            // L_MIN is both the "no value yet" sentinel and the minimum jlong, so a full-width
+            // max resolves it without a guard. The defect was narrowing old to jshort, which
+            // read the sentinel back as 0 and clamped every negative maximum away.
             const jlong old = *reinterpret_cast<jlong *>(pVal);
-            if (old != L_MIN) {
-                *reinterpret_cast<jlong *>(pVal) = MAX(val, (jshort) old);
-            } else {
-                *reinterpret_cast<jlong *>(pVal) = val;
-            }
+            *reinterpret_cast<jlong *>(pVal) = MAX((jlong) val, old);
         }
     }
     return JNI_TRUE;
@@ -579,10 +582,7 @@ kIntSumLong256WrapUp(jlong pRosti, jint valueOffset, jlong n0, jlong n1, jlong n
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + 1];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
     const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
 
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
@@ -605,6 +605,12 @@ kIntSumLong256WrapUp(jlong pRosti, jint valueOffset, jlong n0, jlong n1, jlong n
         }
     }
 
+    // The null-key populate above can resize the map: that reallocates ctrl_ and slots_,
+    // frees the old block and changes capacity_. Re-read them so the sweep walks the live
+    // table rather than the freed one.
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto slots = map->slots_;
     for (size_t i = 0; i < capacity; i++) {
         ctrl_t c = ctrl[i];
         if (c > -1) {
@@ -890,10 +896,7 @@ static jboolean kIntSumLongWrapUp(jlong pRosti, jint valueOffset, jlong valueAtN
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + count_idx];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
     const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
 
     // Populate before the sweep: the sweep NULLs every slot whose count is still 0, and the
     // null-key slot may already exist with count 0.
@@ -915,6 +918,12 @@ static jboolean kIntSumLongWrapUp(jlong pRosti, jint valueOffset, jlong valueAtN
         }
     }
 
+    // The null-key populate above can resize the map: that reallocates ctrl_ and slots_,
+    // frees the old block and changes capacity_. Re-read them so the sweep walks the live
+    // table rather than the freed one.
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto slots = map->slots_;
     for (size_t i = 0; i < capacity; i++) {
         ctrl_t c = ctrl[i];
         if (c > -1) {
@@ -930,6 +939,12 @@ static jboolean kIntSumLongWrapUp(jlong pRosti, jint valueOffset, jlong valueAtN
 
 // A plain double-to-int cast is UB outside the destination range, which avg(long) sums
 // legitimately exceed -- that range is why its accumulator is 128 bits wide.
+//
+// The NaN and out-of-range arms below are range guards, not expected paths. Callers reach
+// here from avg()'s wrapUp(), whose accumulator only takes finite values
+// (AvgLongVectorAggregateFunction.aggregate() gates on Numbers.isFinite), and saturating the
+// 128-bit form would need a sum past 2^127, i.e. around 2^64 rows. They exist so the cast
+// below can never be UB, not because any query is expected to hit them.
 template<typename T>
 static T double_to_accumulator(jdouble d);
 
@@ -965,9 +980,11 @@ long128_t double_to_accumulator<long128_t>(jdouble d) {
         return long128_t(-0x7fffffffffffffffLL - 1, 0);
     }
     // Exact here: d's ulp is at least 1024, so neither the scaling nor the subtraction rounds.
-    const jdouble hi_d = std::floor(std::ldexp(d, -64));
+    // Scaling by a power-of-two literal rather than ldexp(): GCC does not fold a
+    // constant-exponent ldexp() without -ffast-math, so it would emit a libm call.
+    const jdouble hi_d = std::floor(d * 0x1p-64);
     const auto hi = static_cast<int64_t>(hi_d);
-    const auto lo = static_cast<uint64_t>(d - std::ldexp(hi_d, 64));
+    const auto lo = static_cast<uint64_t>(d - hi_d * 0x1p64);
     return long128_t(hi, lo);
 }
 
@@ -977,10 +994,7 @@ static jboolean kIntAvgLongWrapUp(jlong pRosti, jint valueOffset, jdouble valueA
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + count_idx];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
     const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
 
     // populate null value
     if (valueAtNullCount > 0) {
@@ -1001,6 +1015,12 @@ static jboolean kIntAvgLongWrapUp(jlong pRosti, jint valueOffset, jdouble valueA
         }
     }
 
+    // The null-key populate above can resize the map: that reallocates ctrl_ and slots_,
+    // frees the old block and changes capacity_. Re-read them so the sweep walks the live
+    // table rather than the freed one.
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto slots = map->slots_;
     for (size_t i = 0; i < capacity; i++) {
         ctrl_t c = ctrl[i];
         if (c > -1) {
@@ -1102,10 +1122,7 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + 1];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
     const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
 
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
@@ -1125,6 +1142,12 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
         }
     }
 
+    // The null-key populate above can resize the map: that reallocates ctrl_ and slots_,
+    // frees the old block and changes capacity_. Re-read them so the sweep walks the live
+    // table rather than the freed one.
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto slots = map->slots_;
     for (size_t i = 0; i < capacity; i++) {
         ctrl_t c = ctrl[i];
         if (c > -1) {
@@ -1278,10 +1301,7 @@ Java_io_questdb_std_Rosti_keyedIntKSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto c_offset = map->value_offsets_[valueOffset + 1];
     const auto count_offset = map->value_offsets_[valueOffset + 2];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
     const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
 
     // populate null value
     if (valueAtNullCount > 0) {
@@ -1297,14 +1317,33 @@ Java_io_questdb_std_Rosti_keyedIntKSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
             *reinterpret_cast<jdouble *>(dest + value_offset) = valueAtNull;
             *reinterpret_cast<jlong *>(dest + count_offset) = valueAtNullCount;
         } else {
+            // Kahan step, matching kIntKSumDouble's per-row loop: the compensation has to be
+            // written back, or the slot is left claiming a correction that no longer belongs to
+            // the value beside it. ksum's answer is the running sum alone -- unlike nsum, the
+            // sweep below deliberately does not fold c in -- so this changes no query result
+            // today; it keeps the pair self-consistent for anything that reads it later.
             const jdouble c = *reinterpret_cast<jdouble *>(dest + c_offset);
             const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
-            // y = d -c
-            *reinterpret_cast<jdouble *>(dest + value_offset) = sum + (valueAtNull - c);
-            *reinterpret_cast<jlong *>(dest + count_offset) += 1;
+            const jdouble y = valueAtNull - c;
+            const jdouble t = sum + y;
+            *reinterpret_cast<jdouble *>(dest + c_offset) = (t - sum) - y;
+            *reinterpret_cast<jdouble *>(dest + value_offset) = t;
+            // Add the whole count folded in, not one. valueAtNullCount is the number of
+            // column-top page frames the non-keyed accumulator absorbed -- aggregate() bumps
+            // it once per frame -- so += 1 dropped all but the first. It still does not match
+            // the keyed path's per-row count, and nothing reads this field except the sweep's
+            // count == 0 test, so no query result changes; this keeps it monotone in what was
+            // actually folded in, as keyedIntNSumDoubleWrapUp below does.
+            *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
         }
     }
 
+    // The null-key populate above can resize the map: that reallocates ctrl_ and slots_,
+    // frees the old block and changes capacity_. Re-read them so the sweep walks the live
+    // table rather than the freed one.
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto slots = map->slots_;
     for (size_t i = 0; i < capacity; i++) {
         ctrl_t c = ctrl[i];
         if (c > -1) {
@@ -1357,6 +1396,7 @@ Java_io_questdb_std_Rosti_keyedIntNSumDoubleMerge(JNIEnv *env, jclass cl, jlong 
             auto src = slots + (i << shift);
             auto key = *reinterpret_cast<int32_t *>(src);
             auto d = *reinterpret_cast<jdouble *>(src + value_offset);
+            auto srcC = *reinterpret_cast<jdouble *>(src + c_offset);
             auto count = *reinterpret_cast<jlong *>(src + count_offset);
 
             auto res = find(map_a, key);
@@ -1368,7 +1408,7 @@ Java_io_questdb_std_Rosti_keyedIntNSumDoubleMerge(JNIEnv *env, jclass cl, jlong 
                 }
                 *reinterpret_cast<int32_t *>(dest) = key;
                 *reinterpret_cast<jdouble *>(dest + value_offset) = d;
-                *reinterpret_cast<jdouble *>(dest + c_offset) = *reinterpret_cast<jdouble *>(src + c_offset);
+                *reinterpret_cast<jdouble *>(dest + c_offset) = srcC;
                 *reinterpret_cast<jlong *>(dest + count_offset) = count;
             } else {
                 // do not check for nans in merge, because we can't have them in map
@@ -1379,6 +1419,10 @@ Java_io_questdb_std_Rosti_keyedIntNSumDoubleMerge(JNIEnv *env, jclass cl, jlong 
                 } else {
                     *reinterpret_cast<jdouble *>(dest + c_offset) += (d - t) + sum;
                 }
+                // The source shard's total is d + srcC. The Neumaier step above folds in d
+                // only, so carry its compensation across as well -- the insert branch above
+                // copies it, and both must agree.
+                *reinterpret_cast<jdouble *>(dest + c_offset) += srcC;
                 *reinterpret_cast<jdouble *>(dest + value_offset) = t;
                 *reinterpret_cast<jlong *>(dest + count_offset) += count;
             }
@@ -1394,10 +1438,7 @@ Java_io_questdb_std_Rosti_keyedIntNSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto c_offset = map->value_offsets_[valueOffset + 1];
     const auto count_offset = map->value_offsets_[valueOffset + 2];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
     const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
 
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
@@ -1420,11 +1461,21 @@ Java_io_questdb_std_Rosti_keyedIntNSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
             } else {
                 *reinterpret_cast<jdouble *>(dest + c_offset) += (valueAtNull - t) + sum;
             }
+            // The incoming null-group total is valueAtNull + valueAtNullC. The Neumaier step
+            // above folds in valueAtNull only, so carry the accumulated compensation across
+            // as well -- the insert branch above stores it, and both must agree.
+            *reinterpret_cast<jdouble *>(dest + c_offset) += valueAtNullC;
             *reinterpret_cast<jdouble *>(dest + value_offset) = t;
             *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
         }
     }
 
+    // The null-key populate above can resize the map: that reallocates ctrl_ and slots_,
+    // frees the old block and changes capacity_. Re-read them so the sweep walks the live
+    // table rather than the freed one.
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto slots = map->slots_;
     for (size_t i = 0; i < capacity; i++) {
         ctrl_t c = ctrl[i];
         if (c > -1) {
@@ -1501,10 +1552,7 @@ Java_io_questdb_std_Rosti_keyedIntMinDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
                                                   jdouble valueAtNull) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
     const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
 
     // populate null value only if non-keyed aggregation did something useful
     if (valueAtNull < D_MAX) {
@@ -1525,6 +1573,12 @@ Java_io_questdb_std_Rosti_keyedIntMinDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
         }
     }
 
+    // The null-key populate above can resize the map: that reallocates ctrl_ and slots_,
+    // frees the old block and changes capacity_. Re-read them so the sweep walks the live
+    // table rather than the freed one.
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto slots = map->slots_;
     for (size_t i = 0; i < capacity; i++) {
         ctrl_t c = ctrl[i];
         if (c > -1) {
@@ -1600,10 +1654,7 @@ Java_io_questdb_std_Rosti_keyedIntMaxDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
                                                   jdouble valueAtNull) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
     const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
 
     if (valueAtNull > D_MIN) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
@@ -1623,6 +1674,12 @@ Java_io_questdb_std_Rosti_keyedIntMaxDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
         }
     }
 
+    // The null-key populate above can resize the map: that reallocates ctrl_ and slots_,
+    // frees the old block and changes capacity_. Re-read them so the sweep walks the live
+    // table rather than the freed one.
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto slots = map->slots_;
     for (size_t i = 0; i < capacity; i++) {
         ctrl_t c = ctrl[i];
         if (c > -1) {
@@ -1645,10 +1702,7 @@ Java_io_questdb_std_Rosti_keyedIntAvgDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + 1];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
     const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
 
     // populate null value
     if (valueAtNullCount > 0) {
@@ -1669,6 +1723,12 @@ Java_io_questdb_std_Rosti_keyedIntAvgDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
         }
     }
 
+    // The null-key populate above can resize the map: that reallocates ctrl_ and slots_,
+    // frees the old block and changes capacity_. Re-read them so the sweep walks the live
+    // table rather than the freed one.
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto slots = map->slots_;
     for (size_t i = 0; i < capacity; i++) {
         ctrl_t c = ctrl[i];
         if (c > -1) {
@@ -2262,12 +2322,10 @@ Java_io_questdb_std_Rosti_keyedIntMaxShortWrapUp(
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
         } else {
+            // The guard above puts accumulatedValue above I_MIN, hence above L_MIN, so the
+            // full-width max resolves the "no value yet" sentinel on its own.
             const jlong old = *reinterpret_cast<jlong *>(dest + value_offset);
-            if (old == L_MIN) {
-                *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
-            } else {
-                *reinterpret_cast<jlong *>(dest + value_offset) = MAX((jlong) accumulatedValue, old);
-            }
+            *reinterpret_cast<jlong *>(dest + value_offset) = MAX((jlong) accumulatedValue, old);
         }
     }
     return JNI_TRUE;

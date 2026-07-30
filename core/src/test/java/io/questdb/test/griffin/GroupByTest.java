@@ -1251,6 +1251,8 @@ public class GroupByTest extends AbstractCairoTest {
         });
     }
 
+
+
     @Test
     public void testGroupByInt32KeyColumnTop() throws Exception {
         // Reproduces https://github.com/questdb/questdb/issues/5150
@@ -1295,6 +1297,40 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByInt32KeyColumnTopAvgLongNegativeHugeSum() throws Exception {
+        // Mirror of testGroupByInt32KeyColumnTopAvgLongHugeSum on the negative side. Six rows
+        // of -2^62, not two: double_to_accumulator()'s in-range guard is half-open
+        // (d >= -2^63 && d < 2^63), so a -2^63 sum still takes the fast path and only a
+        // magnitude past -2^63 reaches the hi/lo split. -1.5 * 2^64 also makes the floor()
+        // load-bearing -- it must round the negative quotient down to -2, leaving a positive
+        // remainder; truncating towards zero leaves a negative one, which is undefined
+        // behaviour on the cast to uint64_t.
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day");
+            execute("""
+                    insert into x values
+                        ('2024-11-08T00:00:00.000000Z', -4_611_686_018_427_387_904),
+                        ('2024-11-08T00:00:01.000000Z', -4_611_686_018_427_387_904),
+                        ('2024-11-08T00:00:02.000000Z', -4_611_686_018_427_387_904),
+                        ('2024-11-08T00:00:03.000000Z', -4_611_686_018_427_387_904),
+                        ('2024-11-08T00:00:04.000000Z', -4_611_686_018_427_387_904),
+                        ('2024-11-08T00:00:05.000000Z', -4_611_686_018_427_387_904)""");
+            execute("alter table x add column id int");
+            execute("insert into x values ('2025-11-08T00:00:00.000000Z', -100, 42)");
+
+            assertQuery("select id, avg(v) from x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            id\tavg
+                            null\t-4.611686018427388E18
+                            42\t-100.0
+                            """);
+        });
+    }
+
+    @Test
     public void testGroupByInt32KeyColumnTopCountStar() throws Exception {
         assertMemoryLeak(() -> {
             createColumnTopTable(false, false);
@@ -1320,18 +1356,63 @@ public class GroupByTest extends AbstractCairoTest {
             execute("alter table x add column id int");
             execute("insert into x values ('2025-11-08T00:00:00.000000Z', 4.0, 20, 42)");
 
-            assertQuery("select id, sum(v) from x order by id").noLeakCheck().expectSize()
-                    .returns("id\tsum\nnull\t2.5\n42\t4.0\n");
-            assertQuery("select id, max(v) from x order by id").noLeakCheck().expectSize()
-                    .returns("id\tmax\nnull\t2.5\n42\t4.0\n");
-            assertQuery("select id, sum(l) from x order by id").noLeakCheck().expectSize()
-                    .returns("id\tsum\nnull\t10\n42\t20\n");
-            assertQuery("select id, ksum(v) from x order by id").noLeakCheck().expectSize()
-                    .returns("id\tksum\nnull\t2.5\n42\t4.0\n");
-            assertQuery("select id, nsum(v) from x order by id").noLeakCheck().expectSize()
-                    .returns("id\tnsum\nnull\t2.5\n42\t4.0\n");
-            assertQuery("select id, avg(l) from x order by id").noLeakCheck().expectSize()
-                    .returns("id\tavg\nnull\t10.0\n42\t20.0\n");
+            // Each assertion pins the plan: every defect these cover lives in the vectorized
+            // path only, so a silent fall back to the general path must fail the test rather
+            // than pass while covering nothing.
+            assertQuery("select id, sum(v) from x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            id\tsum
+                            null\t2.5
+                            42\t4.0
+                            """);
+            assertQuery("select id, max(v) from x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            id\tmax
+                            null\t2.5
+                            42\t4.0
+                            """);
+            assertQuery("select id, sum(l) from x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            id\tsum
+                            null\t10
+                            42\t20
+                            """);
+            assertQuery("select id, ksum(v) from x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            id\tksum
+                            null\t2.5
+                            42\t4.0
+                            """);
+            assertQuery("select id, nsum(v) from x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            id\tnsum
+                            null\t2.5
+                            42\t4.0
+                            """);
+            assertQuery("select id, avg(l) from x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            id\tavg
+                            null\t10.0
+                            42\t20.0
+                            """);
         });
     }
 
@@ -1381,6 +1462,30 @@ public class GroupByTest extends AbstractCairoTest {
                             id\tsum\tcount
                             null\t3\t2
                             42\t7\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testGroupByInt32KeyColumnTopMaxShortNegativeFold() throws Exception {
+        // The column-top frame's own max(s) entry inserts the NULL-key slot pre-initialized
+        // from slot_initial_values_, so max(s) reaches wrapUp() with its offset still at the
+        // L_MIN sentinel while its accumulator holds -5. Reading that offset as a jshort out
+        // of jlong storage yields 0 and clamps the negative maximum away.
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, s short, l long) timestamp(ts) partition by day");
+            execute("insert into x values ('2024-11-08T00:00:00.000000Z', -5, 1)");
+            execute("alter table x add column id int");
+            execute("insert into x values ('2025-11-08T00:00:00.000000Z', -7, 2, 42)");
+
+            assertQuery("select id, sum(l), max(s), min(s) from x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            id\tsum\tmax\tmin
+                            null\t1\t-5\t-5
+                            42\t2\t-7\t-7
                             """);
         });
     }
@@ -1500,9 +1605,9 @@ public class GroupByTest extends AbstractCairoTest {
                     return workerCount;
                 }
             });
-            WorkerPoolUtils.setupQueryJobs(pool, engine);
-            pool.start(null);
             try {
+                WorkerPoolUtils.setupQueryJobs(pool, engine);
+                pool.start(null);
                 try (SqlExecutionContext parallelCtx = new SqlExecutionContextImpl(engine, workerCount)
                         .with(securityContext, bindVariableService, null, -1, circuitBreaker)) {
                     parallelCtx.initNow();
@@ -1641,6 +1746,19 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createColumnTopTable(false, true);
 
+            // Pin the conversion: the active partition is skipped by design, so exactly the two
+            // column-top partitions become parquet. Without this the test would silently
+            // degenerate into a duplicate of testGroupByInt32KeyColumnTop if the conversion
+            // ever stopped happening.
+            assertQuery("select count() from table_partitions('x') where isParquet")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            2
+                            """);
+
             assertQuery("select id, max(id2) from x order by id")
                     .noLeakCheck()
                     .expectSize()
@@ -1707,6 +1825,49 @@ public class GroupByTest extends AbstractCairoTest {
                             null\t1\t10\t1.5\t1.0\t10.0\t1.5\t1.5\t1.5\t0x01\t1\t1
                             42\t2\t20\t2.5\t2.0\t20.0\t2.5\t2.5\t2.5\t0x02\t1\t1
                             """);
+        });
+    }
+
+    @Test
+    public void testGroupByInt32KeyColumnTopVectorizedMatchesGeneralPlan() throws Exception {
+        // Issue 5150 was a divergence between the two plans, not a wrong value in isolation, so
+        // per-family plan agreement is the strongest available oracle: each aggregate is asserted
+        // once through the rosti path and once through the general path, forced off vectorization
+        // by an arithmetically neutral "+ 0" on its argument.
+        //
+        // "+ 0" does not defeat vectorization for an integer sum: the optimizer rewrites
+        // sum(vi + 0) into sum(vi) + count(vi) * 0 and keeps the rosti path (same for "* 1").
+        // Those two use a CASE instead, which it does not fold. Each assertion pins both plans,
+        // so a future rewrite that quietly moves one side is a failure rather than a silent
+        // collapse into comparing the same plan against itself.
+        //
+        // SHORT is excluded deliberately: "vs + 0" widens to INT, and INT has a NULL sentinel
+        // where SHORT has none, so an empty group renders null instead of 0. That is a type
+        // semantics difference rather than a plan divergence. SHORT is covered instead by
+        // testGroupByInt32KeyColumnTopMinMaxShortNegative and ...MaxShortNegativeFold.
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, vi int, vl long, vd double) timestamp(ts) partition by day");
+            execute("insert into x values ('2024-11-08T00:00:00.000000Z', 2, 20, 2.5)");
+            execute("alter table x add column id int");
+            execute("insert into x values ('2025-11-08T00:00:00.000000Z', 3, 30, 3.5, 42)");
+
+            assertPlansAgree("sum(vi)", "sum(case when true then vi else vi end)", "sum", "2", "3");
+            assertPlansAgree("min(vi)", "min(vi + 0)", "min", "2", "3");
+            assertPlansAgree("max(vi)", "max(vi + 0)", "max", "2", "3");
+            assertPlansAgree("avg(vi)", "avg(vi + 0)", "avg", "2.0", "3.0");
+            assertPlansAgree("count(vi)", "count(vi + 0)", "count", "1", "1");
+
+            assertPlansAgree("sum(vl)", "sum(case when true then vl else vl end)", "sum", "20", "30");
+            assertPlansAgree("min(vl)", "min(vl + 0)", "min", "20", "30");
+            assertPlansAgree("max(vl)", "max(vl + 0)", "max", "20", "30");
+            assertPlansAgree("avg(vl)", "avg(vl + 0)", "avg", "20.0", "30.0");
+
+            assertPlansAgree("sum(vd)", "sum(vd + 0)", "sum", "2.5", "3.5");
+            assertPlansAgree("min(vd)", "min(vd + 0)", "min", "2.5", "3.5");
+            assertPlansAgree("max(vd)", "max(vd + 0)", "max", "2.5", "3.5");
+            assertPlansAgree("avg(vd)", "avg(vd + 0)", "avg", "2.5", "3.5");
+            assertPlansAgree("ksum(vd)", "ksum(vd + 0)", "ksum", "2.5", "3.5");
+            assertPlansAgree("nsum(vd)", "nsum(vd + 0)", "nsum", "2.5", "3.5");
         });
     }
 
@@ -4295,6 +4456,28 @@ public class GroupByTest extends AbstractCairoTest {
         final int close = errorMessage.indexOf(']');
         final int position = Integer.parseInt(errorMessage.substring(1, close));
         assertQuery(query).fails(position, errorMessage.substring(close + 2));
+    }
+
+    private void assertPlansAgree(
+            String vectorizedAggregate,
+            String generalAggregate,
+            String columnName,
+            String nullGroupValue,
+            String keyedGroupValue
+    ) throws Exception {
+        final String expected = "id\t" + columnName + '\n'
+                + "null\t" + nullGroupValue + '\n'
+                + "42\t" + keyedGroupValue + '\n';
+        assertQuery("select id, " + vectorizedAggregate + " from x order by id")
+                .noLeakCheck()
+                .expectSize()
+                .withPlanContaining("GroupBy vectorized: true")
+                .returns(expected);
+        assertQuery("select id, " + generalAggregate + " from x order by id")
+                .noLeakCheck()
+                .expectSize()
+                .withPlanContaining("Async Group By")
+                .returns(expected);
     }
 
     private void createColumnTopTable(boolean isWal, boolean isParquet) throws Exception {
