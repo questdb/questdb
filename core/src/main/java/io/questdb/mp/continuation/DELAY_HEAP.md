@@ -48,20 +48,21 @@ The poison sentinel wakes a consumer blocked on an empty or future-only heap.
 If shutdown races after `take()` has removed a real entry, that consumer owns
 the entry and calls its shutdown hook rather than dropping it.
 
-## Sequence: a query calling sleep() on a fiber
+## Sequence: a request calling sleep() on a fiber
 
-`SleepFunctionFactory` never sleeps the carrier thread. It waits in chunks of
-`cairo.query.continuation.wake.interval.millis` so a cancelled or disconnected
-query is detected within one interval even though the timer is the only wake
-source. Each chunk arms a fresh timer registration, suspends the fiber, and
-frees the carrier for other work.
+The argument to `sleep()` is seconds. `SleepFunctionFactory` never blocks the
+carrier thread. It divides the requested duration into chunks no longer than
+`griffin.query.continuation.wake.interval`. Each chunk arms a timer and, when
+the circuit breaker exposes one, a cancellation signal. The timer drives the
+normal sleep deadline; the chunks also bound how long a cancellation or
+disconnect without a signal can go unchecked.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant CL as Client
     participant CA as Carrier A
-    participant F as Query fiber
+    participant F as Request fiber
     participant CO as FiberWaitCoordinator
     participant TS as TimerShards
     participant DH as DelayHeap shard
@@ -69,132 +70,218 @@ sequenceDiagram
     participant RQ as FiberRunQueue
     participant CB as Carrier B
 
-    CL->>CA: SELECT sleep(30000)
-    CA->>F: mount, execute until sleep()
-    loop one chunk per wake interval, until deadline
-        F->>F: circuit breaker check, remaining time check
-        F->>F: token = tryBeginWaitBuild
-        opt query has a FiberCancellationSignal
+    CL->>CA: execute sleep(30)
+    CA->>F: launch request task and mount
+    F->>F: execute SQL until sleep()
+    loop one chunk per wake interval, until the deadline
+        F->>F: check circuit breaker and remaining time
+        F->>F: token = tryBeginWaitBuild(1 or 2 sources)
+        opt a FiberCancellationSignal is available
             F->>CO: armCancellation(token, signal, generation)
         end
         F->>CO: armTimer(token, chunk)
-        CO->>TS: FiberTimerWaitRegistration.register()
-        TS->>DH: offer(registration) under the heap monitor
-        DH-->>TT: notify() if this is the new earliest deadline
-        F->>F: suspendWait(token) yields the continuation
-        Note over CA: Carrier A is free and mounts other fibers
-        TT->>DH: take() waits until the deadline expires
-        DH-->>TT: expired registration
-        TT->>CO: expire() fires the token with REASON_TIMER
-        CO->>RQ: enqueue(query fiber)
-        CB->>RQ: drain
-        CB->>F: mount, suspendWait returns REASON_TIMER
-        F->>CO: teardownWait(token) disarms the losing sources
+        CO->>TS: register(timerRegistration)
+        TS->>DH: offer(timerRegistration)
+        Note over TT,DH: The timer thread waits in take()
+        DH-->>TT: notify() if the registration became the heap head
+        F->>F: suspendWait(token) seals the wait
+        alt a source fired before the continuation yielded
+            CO-->>F: return the pending reason without enqueueing
+        else the fiber reached WAITING
+            F-->>CA: yield the continuation
+            Note over CA: Carrier A returns to the worker loop
+            DH-->>TT: take() returns the expired registration
+            TT->>CO: expire() fires REASON_TIMER
+            CO->>RQ: enqueue the runnable fiber
+            CB->>RQ: drain
+            CB->>F: mount; suspendWait() returns REASON_TIMER
+        end
+        F->>CO: teardownWait(token)
     end
-    F-->>CL: sleep() returns, query completes
+    F-->>CL: return the query result
 ```
 
-The wait token multiplexes every armed source into a single park: the first
-source to fire wins the token and wakes the fiber; `teardownWait()` cancels
-the losers (here the cancellation registration, or the timer when the
-cancellation fires first). The resumed fiber may run on any carrier, not
-necessarily the one it suspended on.
+The wait token multiplexes every accepted source into one logical park. The
+first source wins. A source that fires while the wait is still building or
+parking records a pending resume, so `suspendWait()` returns without yielding
+or touching the run queue. A source that fires after the fiber reaches
+`WAITING` moves it to `RUNNABLE` and enqueues it. `teardownWait()` cancels the
+losing registrations. Any carrier may resume the fiber.
 
 ### wait_wal_table() differences
 
-`WaitWalFunction.waitInFiber()` arms one more source before the timer: a
-`FiberWalWaitRegistration` registered with the table's `SeqTxnTracker`. The
-timer is a fallback that bounds how long a cancellation or disconnect can go
-unnoticed; the expected wake is the WAL apply job reaching the requested
-`seqTxn`. The wake loop re-checks `writerTxn` and re-arms until the
-transaction is visible.
+`WaitWalFunction.waitInFiber()` adds a `FiberWalWaitRegistration` to the
+sources used above. The table's `SeqTxnTracker` fires it when `writerTxn`
+reaches the requested `seqTxn`, or when the table becomes terminal. The timer
+provides a periodic circuit-breaker fallback. The loop re-checks
+`writerTxn`, table state, and the circuit breaker after every wake, then
+re-arms if the transaction is still not visible.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant F as Query fiber
+    participant F as Request fiber
     participant CO as FiberWaitCoordinator
     participant ST as SeqTxnTracker
-    participant WA as WAL apply job
+    participant WQ as FiberWalWaitQueue
+    participant WA as WAL apply or table lifecycle
     participant TT as Timer thread
+    participant CS as Cancellation signal
 
-    F->>CO: armCancellation, acquireWal(token, seqTxn)
-    F->>ST: registerWaiter(walRegistration)
-    F->>CO: tryAcceptSource, armTimer(token, wakeInterval)
-    F->>F: suspendWait(token)
-    par WAL applied first
-        WA->>ST: writerTxn reaches seqTxn
-        ST->>CO: fire(token, REASON_WAL)
-    and wake interval elapses first
-        TT->>CO: fire(token, REASON_TIMER)
+    F->>F: observe writerTxn below target seqTxn
+    F->>F: token = tryBeginWaitBuild(2 or 3 sources)
+    opt a FiberCancellationSignal is available
+        F->>CO: armCancellation(token, signal, generation)
     end
-    Note over CO: exactly one source wins the token
-    CO->>F: wake, re-check writerTxn and circuit breaker, re-arm if still behind
+    F->>CO: acquireWal(token, targetSeqTxn)
+    F->>ST: registerWaiter(walRegistration)
+    ST->>WQ: register(walRegistration)
+    F->>CO: tryAcceptSource(token)
+    F->>CO: armTimer(token, wakeInterval)
+    F->>F: suspendWait(token)
+    par WAL progress or terminal table state
+        WA->>ST: update writerTxn or table state
+        ST->>WQ: fire(writerTxn, isTerminal)
+        WQ->>CO: fire(token, REASON_WAL)
+    and wake interval elapses
+        TT->>CO: fire(token, REASON_TIMER)
+    and cancellation, when armed
+        CS->>CO: fire(token, REASON_CANCEL)
+    end
+    Note over CO: Only the first source wins
+    CO-->>F: resume now or mark the fiber runnable
+    F->>CO: teardownWait(token)
+    F->>F: re-check state and re-arm if still behind
 ```
 
-## Sequence: parallel GROUP BY parked on a full reduce queue
+## Sequence: parallel GROUP BY waiting for PageFrame progress
 
-A parallel GROUP BY (`UnorderedPageFrameSequence.dispatchAndAwait()`) can
-suspend mid-query when the reduce queue is full and work-stealing finds no
-claimable cursor. The fiber parks on the dispatcher's progress wait queue;
-any reducer completing any frame signals progress. A timer registration is
-armed alongside as the cancellation-check fallback, which is what ties this
-path to `DelayHeap`.
+A parallel GROUP BY uses `UnorderedPageFrameSequence`. One place its request
+fiber can suspend is a full reduce queue when work-stealing cannot make
+immediate progress. Before it waits, the sequence releases its publication
+permit. This keeps quiesce from waiting on a permit held by a parked fiber.
+
+The dispatcher's progress event covers more than completed reductions. For
+an unordered task, `consumeUnordered()` releases the queue slot and signals
+progress before it launches the reducer fiber. Reduction completion later
+counts down the sequence latch and signals progress again.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant CA as Carrier A
-    participant QF as Query fiber
-    participant PQ as Reduce queue
+    participant QF as Request fiber
+    participant PQ as Unordered reduce queue
     participant D as PageFrameReduceDispatcher
     participant CO as FiberWaitCoordinator
-    participant CB as Carrier B
+    participant PJ as PageFrameReduceJob
     participant RF as Reducer fiber
+    participant FS as PageFrame sequence
     participant RQ as FiberRunQueue
+    participant CB as Carrier B
 
-    Note over QF: dispatchAndAwait publishes page frames
-    QF->>D: observedProgress = getProgressVersion()
+    QF->>D: tryAcquirePublication()
+    QF->>D: observed = getProgressVersion()
     QF->>PQ: reducePubSeq.next()
     PQ-->>QF: -1, queue is full
-    QF->>QF: stealWork() finds no claimable cursor
-    QF->>QF: token = tryBeginWaitBuild
+    QF->>D: releasePublication()
+    QF->>QF: stealWork() makes no immediate progress
+    QF->>QF: token = tryBeginWaitBuild(2 or 3 sources)
     QF->>CO: armEvent(token, progressWaitQueue)
-    QF->>CO: armCancellation(token, signal, generation)
-    QF->>CO: armTimer(token, wakeInterval)
-    QF->>D: re-check progressVersion vs observedProgress
-    alt progress happened between observation and arming
-        D-->>QF: REASON_PROGRESS without suspending
-    else no progress yet
-        QF->>QF: suspendWait(token) yields the continuation
-        Note over CA: Carrier A is free and can mount reducer fibers of this very query
-        CB->>RF: mount, batch-reduce queued frames
-        RF->>PQ: subSeq.done(cursor) releases the slot
-        RF->>D: signalProgress bumps progressVersion, fires progressWaitQueue
-        D->>CO: fire(token, REASON_PROGRESS)
-        CO->>RQ: enqueue(query fiber)
-        CA->>RQ: drain
-        CA->>QF: mount, suspendWait returns REASON_PROGRESS
+    opt a FiberCancellationSignal is available
+        QF->>CO: armCancellation(token, signal, generation)
     end
-    QF->>CO: teardownWait(token) disarms timer and cancellation
-    QF->>PQ: retry reducePubSeq.next() and publish the frame
+    QF->>CO: armTimer(token, wakeInterval)
+    QF->>D: compare progressVersion with observed
+    alt progress already changed
+        D-->>QF: return REASON_PROGRESS without yielding
+    else no progress yet
+        QF-->>CA: suspendWait(token) yields
+        Note over CA: Carrier A returns to the worker loop
+        CB->>PJ: run PageFrameReduceJob
+        PJ->>D: consumeUnordered()
+        D->>PQ: subSeq.next() claims a task
+        D->>PQ: clear task; subSeq.done(cursor) releases the slot
+        D->>D: signalProgress() increments the version
+        D->>CO: fire(token, REASON_PROGRESS)
+        CO->>RQ: enqueue the request fiber
+        D->>RF: launch the reserved reducer fiber
+        CA->>RQ: drain
+        CA->>QF: mount; suspendWait() returns REASON_PROGRESS
+    end
+    QF->>CO: teardownWait(token)
+    QF->>D: tryAcquirePublication()
+    QF->>PQ: retry publication
+    RF->>RF: reduce the frame
+    RF->>FS: doneLatch.countDown()
+    RF->>D: signalProgress()
 ```
 
-Reading `observedProgress` before observing the full queue is the lost-wakeup
-guard: if a reducer completes and bumps the version after the queue-full
-observation but before `suspendWait()`, the armed-state re-check returns
-`REASON_PROGRESS` immediately instead of parking against a signal that
-already fired. The same choreography parks the collect phase (`await()`)
-until the done latch reaches the queued-frame count, and a `REASON_TIMER`
-wake re-checks the circuit breaker so a parked query stays cancellable.
+Reading `observed` before observing the full queue closes the lost-wakeup
+window. If progress occurs before the wait seals, the version re-check or the
+wait token returns immediately instead of parking after the event. The same
+progress wait supports the collect phase until its done latch reaches the
+queued-frame count. A timer wake re-checks the circuit breaker. The diagram
+shows the normal `WAITING` path; an early progress signal follows the
+no-enqueue path shown in the `sleep()` sequence.
+
+## Sequence: reducer fiber waiting inside GROUP BY
+
+The request fiber is not the only suspendable execution context. A
+PageFrame-based GROUP BY reducer running in `PageFrameFiberTask` may reach
+`PerWorkerLocks.acquireSlot()` deep inside aggregate evaluation. If every
+per-worker aggregate slot is busy, the reducer registers a slot waiter,
+retries acquisition to close the release race, and then parks.
+`releaseSlot()` hands the slot directly to one waiter without making it
+globally free in between.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CA as Carrier A
+    participant RF as Reducer fiber
+    participant PL as PerWorkerLocks
+    participant SQ as FiberSlotWaitQueue
+    participant CO as FiberWaitCoordinator
+    participant R2 as Other reducer
+    participant RQ as FiberRunQueue
+    participant CB as Carrier B
+
+    RF->>PL: tryAcquireSlot()
+    PL-->>RF: no slot
+    RF->>RF: token = tryBeginWaitBuild(1 or 2 sources)
+    RF->>CO: acquireSlot(token)
+    RF->>SQ: register(slotRegistration)
+    RF->>CO: tryAcceptSource(token)
+    opt a FiberCancellationSignal is available
+        RF->>CO: armCancellation(token, signal, generation)
+    end
+    RF->>PL: retry tryAcquireSlot()
+    PL-->>RF: still no slot
+    RF-->>CA: suspendWait(token) yields
+    Note over CA: Carrier A can run unrelated jobs or fibers
+    R2->>PL: releaseSlot(slot)
+    PL->>SQ: transfer(slot)
+    SQ->>CO: fire(token, REASON_SLOT)
+    CO->>RQ: enqueue the reducer fiber
+    CB->>RQ: drain
+    CB->>RF: mount; suspendWait() returns REASON_SLOT
+    RF->>RF: takeSlot() and continue aggregation
+    RF->>PL: releaseSlot(slot) in finally
+```
+
+If cancellation wins after the queue grants a slot but before the reducer
+takes it, registration cleanup returns that granted slot through
+`releaseSlot()`. This prevents cancellation from leaking a slot for the
+lifetime of the cached GROUP BY atom.
 
 ## Complexity
 
-Insert and expiry are `O(log n)`. `PriorityQueue.remove(Object)` is `O(n)`, so
-cancelling many losing timers on one shard can become expensive. An indexed
-intrusive heap would be the next step if cancellation profiles make this
-cost material; it must preserve the no-yield monitor rule and zero-allocation
-steady state.
+Insert, expiry, and removal are `O(log n)`. Each entry stores its heap index,
+so cancelling a losing timer never scans the shard. A shard serializes its
+operations on one monitor; `TimerShards` spreads registrations across those
+monitors. The backing `ObjList` grows at a new high-water mark and retains
+that capacity for later registrations.
 
 ## Tests
 
