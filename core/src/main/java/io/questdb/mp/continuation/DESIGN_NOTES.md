@@ -16,6 +16,38 @@ Only `Fiber` mounts a continuation. Production code must not wrap a
 gateways. Code outside a mounted fiber receives no implicit suspension
 permission.
 
+```mermaid
+flowchart TB
+    subgraph P["FIBER_HOST WorkerPool"]
+        R["FiberRuntime<br/>(one per pool)"]
+        Q["FiberRunQueue"]
+        FP["FiberPool"]
+        F["reusable Fiber"]
+        C["one long-lived Continuation"]
+        T["assigned FiberTask"]
+        O["ordinary Job.run()"]
+
+        subgraph W["carrier workers - plain Java"]
+            L["Worker.loopBody()<br/>never suspends"]
+            J["runJobs()"]
+            D["call fiberRuntime.drain(mountBudget)"]
+            L --> J
+            L --> D
+        end
+
+        J --> O
+        D --> R
+        R -->|owns| Q
+        R -->|owns| FP
+        Q -->|holds runnable entries| F
+        FP -->|retains and reuses| F
+        R -->|drives mount and unmount| F
+        F -->|owns| C
+        C -->|runs| T
+        C -. yield returns control .-> R
+    end
+```
+
 ## Task ownership
 
 `FiberTask.scheduleState` packs an incarnation and state into one CAS word.
@@ -29,6 +61,55 @@ The stable states are:
 - `ARMING*`: the runtime publishes a park while ready, cancel, and disconnect
   signals may race;
 - `DONE` or `CANCELLED`: callbacks and ownership release have completed.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "ARMING_SIGNALLED" as SIGNALLED
+    state "ARMING_CANCELLED" as CANCELLING
+    state "ARMING_DISCONNECTED" as DISCONNECTING
+
+    [*] --> IDLE
+    IDLE --> OWNED: claim(current incarnation)
+    IDLE --> CANCELLED: cancel before launch
+
+    OWNED --> ARMING: beginArming()
+    OWNED --> DONE: complete or fail
+    OWNED --> CANCELLED: abandon
+
+    ARMING --> IDLE: resolveArming() / PARK_IDLE
+    ARMING --> SIGNALLED: ready or concurrent launch
+    ARMING --> CANCELLING: cancel
+    ARMING --> DISCONNECTING: disconnect
+
+    SIGNALLED --> OWNED: resolveArming() / PARK_RELAUNCH
+    SIGNALLED --> CANCELLING: cancel
+    SIGNALLED --> DISCONNECTING: disconnect
+    CANCELLING --> CANCELLED: resolveArming() / PARK_CANCEL
+    CANCELLING --> DISCONNECTING: disconnect wins
+    DISCONNECTING --> CANCELLED: resolveArming() / PARK_DISCONNECT
+
+    ARMING --> OWNED: abortArming()
+    SIGNALLED --> OWNED: abortArming()
+    CANCELLING --> OWNED: abortArming()
+    DISCONNECTING --> OWNED: abortArming()
+
+    DONE --> IDLE: reopen() / incarnation + 1
+    CANCELLED --> IDLE: reopen() / incarnation + 1
+
+    note right of IDLE
+        scheduleState packs the state and incarnation.
+        Reopen is the only edge that changes incarnation.
+    end note
+    note right of DISCONNECTING
+        DISCONNECT overrides CANCEL, which overrides READY.
+        A lower-priority signal never downgrades the state.
+    end note
+```
+
+The diagram shows transitions within one incarnation. A launch, signal, or
+cancellation carrying an older incarnation returns stale or false without
+changing the recycled task.
 
 The runtime increments `outstandingTaskCount` before publishing an owned task.
 Exactly one terminal path decrements it. `onError()` or `onAbandoned()` runs
@@ -53,6 +134,47 @@ runs the assigned task, publishes one outcome, and yields again. Quiesce marks
 the fiber for retirement; the body abandons an assigned task that never began
 and then returns.
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Carrier A
+    participant R as FiberRuntime
+    participant F as Reusable Fiber
+    participant C as Long-lived continuation
+    participant T1 as FiberTask A
+    participant B as Carrier B
+    participant T2 as FiberTask B
+
+    Note over A,B: A resume may use the same or another carrier
+    R->>F: stage Task A and enqueue
+    A->>R: drain()
+    R->>F: RUNNABLE to MOUNTED
+    F->>C: continuation.run()
+    C->>T1: runStep()
+    opt Task A suspends inside a deep call
+        T1->>F: suspendWait(token)
+        C-->>R: Continuation.yield(); unmount
+        Note over A,R: Carrier A returns to the plain worker loop
+        Note over R,F: A source makes the same Fiber runnable
+        B->>R: drain()
+        R->>F: mount
+        F->>C: resume the same continuation
+        C-->>T1: continue with the frozen Java stack
+    end
+    T1-->>C: return done
+    C-->>R: publish one outcome and yield between tasks
+    R->>F: finalize the outcome and return the Fiber to FiberPool
+    Note over F,C: When retained, the Fiber and enlarged stack chunk stay allocated
+
+    R->>F: stage Task B on the same Fiber and enqueue
+    B->>R: drain()
+    R->>F: mount
+    F->>C: resume the same continuation
+    C->>T2: runStep()
+    T2-->>C: return an outcome
+    C-->>R: yield between tasks
+```
+
 The mount driver must never leave a failed fiber in `MOUNTED`. If driver code
 cannot recover or retry a mount, it must terminally complete the owned task,
 retire the fiber, unregister it, and balance all runtime counters.
@@ -69,9 +191,50 @@ retire the fiber, unregister it, and balance all runtime counters.
 6. suspend if no source fired early;
 7. cancel losing registrations and `consume(token)`.
 
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "UNARMED" as Unarmed
+    state "BUILDING" as Building
+    state "ARMED" as Armed
+    state "FIRING" as Firing
+    state "FIRED" as Fired
+    state "ABORTED" as Aborted
+
+    [*] --> Unarmed
+    Unarmed --> Building: beginBuild() / token + 1
+    Building --> Building: accept source registration
+    Building --> Building: early fire() / set pendingReason once
+    Building --> Armed: seal() / no pending reason
+    Building --> Firing: seal() / promote pendingReason
+    Building --> Aborted: abort()
+    Armed --> Firing: first fire() / freeze wakeReason
+    Armed --> Aborted: abort()
+    Firing --> Fired: target.fireWait() succeeds
+    Fired --> Unarmed: consume() / return wakeReason
+    Aborted --> Unarmed: consume() / REASON_ABORTED
+
+    note left of Building
+        Timer, WAL, capacity, progress, slot,
+        cancellation, and shutdown use the same token.
+    end note
+    note right of Firing
+        wakeReason cannot change.
+        Other sources may help finish the winning fire.
+        PARKING becomes RESUME_PENDING without enqueueing.
+        WAITING becomes RUNNABLE and is enqueued.
+    end note
+```
+
 A source that fires during build records a pending reason. Sealing promotes
 that reason through the same firing path used by a later wake. Timer, WAL,
-shutdown, cancellation, and disconnect therefore share one arbitration point.
+capacity, progress, slot, shutdown, and cancellation therefore share one
+arbitration point.
+
+The diagram covers one token. A stale callback with another token cannot move
+the coordinator. `teardownWait()` requests cancellation of every losing
+registration before the coordinator returns to `UNARMED`; each registration
+detaches and returns to its pool only after its source releases ownership.
 
 Every acquired registration increments both coordinator-local and
 runtime-visible in-flight counts. Expiry, cancellation, shutdown, rejected
