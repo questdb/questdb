@@ -104,43 +104,33 @@ public class RostiTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeyedIntKSumDoubleWrapUpAddsWholeFoldedCount() throws Exception {
-        // valueAtNullCount is the number of column-top page frames the non-keyed accumulator
-        // absorbed -- aggregate() bumps it once per frame, not once per row -- so it does not
-        // match the keyed path's per-row count either way. += 1 dropped all but the first frame.
-        // Nothing reads the field except the sweep's count == 0 test, so no query result
-        // changes; this keeps it monotone in what was actually folded in.
+    public void testKeyedIntKSumDoubleWrapUpKeepsTheSlotSelfConsistent() throws Exception {
+        // Pins two internal invariants of the ksum slot rather than a query result: ksum reports
+        // the running sum alone, and the sweep reads the count only to test it against zero, so
+        // neither field below reaches a user today.
+        //
+        // The compensation must be written back, or the slot is left claiming a correction for a
+        // value it no longer sits beside. Seeding a NON-ZERO c is what makes that visible: the
+        // Kahan step starts from y = valueAtNull - c, so a zero seed leaves that read dead.
+        //
+        // The count must gain the whole folded count. valueAtNullCount is the number of column-top
+        // page frames the non-keyed accumulator absorbed -- aggregate() bumps it once per frame,
+        // not once per row -- so it does not match the keyed path's per-row count either way;
+        // += 1 dropped all but the first frame, and this keeps it monotone in what was folded in.
+        //
+        // 2^53 has an ulp of 2, so adding y = 1.0 - 0.5 rounds straight back off and the residual
+        // is exactly -0.5.
         assertMemoryLeak(() -> {
             final long pRosti = allocCompensatedSumRosti();
             try {
                 Assert.assertTrue(Rosti.keyedIntDistinct(pRosti, Rosti.getInitialValueSlot(pRosti, 0), 1));
+                seedSingleSlot(pRosti, VALUE_OFFSET, 9_007_199_254_740_992.0, 0.5, 2);
 
-                Assert.assertTrue(Rosti.keyedIntKSumDoubleWrapUp(pRosti, VALUE_OFFSET, 2.5, 3));
+                Assert.assertTrue(Rosti.keyedIntKSumDoubleWrapUp(pRosti, VALUE_OFFSET, 1.0, 3));
 
-                Assert.assertEquals(3, readSingleSlotLong(pRosti, VALUE_OFFSET + 2));
-                Assert.assertEquals(2.5, readSingleSlotDouble(pRosti, VALUE_OFFSET), 0.0);
-            } finally {
-                Rosti.free(pRosti);
-            }
-        });
-    }
-
-    @Test
-    public void testKeyedIntKSumDoubleWrapUpWritesBackCompensation() throws Exception {
-        // Kahan keeps the answer in the running sum and the pending correction in c, so wrapUp()
-        // must write c back rather than leave the slot claiming a correction for a value it no
-        // longer sits beside. 2^53 + 1 rounds to 2^53, leaving a residual of exactly -1.
-        assertMemoryLeak(() -> {
-            final long pRosti = allocCompensatedSumRosti();
-            try {
-                Assert.assertTrue(Rosti.keyedIntDistinct(pRosti, Rosti.getInitialValueSlot(pRosti, 0), 1));
-                seedSingleSlot(pRosti, VALUE_OFFSET, 9_007_199_254_740_992.0, 0.0, 2);
-
-                Assert.assertTrue(Rosti.keyedIntKSumDoubleWrapUp(pRosti, VALUE_OFFSET, 1.0, 1));
-
-                // The value is unchanged by the rounding, so only the compensation shows the bug.
                 Assert.assertEquals(9_007_199_254_740_992.0, readSingleSlotDouble(pRosti, VALUE_OFFSET), 0.0);
-                Assert.assertEquals(-1.0, readSingleSlotDouble(pRosti, VALUE_OFFSET + 1), 0.0);
+                Assert.assertEquals(-0.5, readSingleSlotDouble(pRosti, VALUE_OFFSET + 1), 0.0);
+                Assert.assertEquals(5, readSingleSlotLong(pRosti, VALUE_OFFSET + 2));
             } finally {
                 Rosti.free(pRosti);
             }
@@ -187,8 +177,11 @@ public class RostiTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedIntNSumDoubleWrapUpFoldsCompensationIntoFreshNullSlot() throws Exception {
-        // No pre-existing slot, so wrapUp() takes its insert branch. That branch always stored
-        // valueAtNullC; the merge branch above did not. Both must agree on the same inputs.
+        // No pre-existing slot, so wrapUp() takes its insert branch, which stores valueAtNull and
+        // valueAtNullC in separate fields. What makes 2.5 come back is the ORDER of the two halves
+        // of wrapUp: the sweep folds c into the value, so it has to run after the populate. Swap
+        // them and the fresh slot's compensation is never folded and the answer is 2.0 -- that
+        // order swap, not the insert branch's storing of c, is what this pins.
         assertMemoryLeak(() -> {
             final long pRosti = allocCompensatedSumRosti();
             try {
@@ -383,11 +376,20 @@ public class RostiTest extends AbstractCairoTest {
     // that the sweep reached every live group. Returns whether the populate resized the map, which
     // is the arrangement the caller is really after.
     private static boolean assertWrapUpSweepsEveryGroup(WrapUpCase c, int liveKeys) {
-        final long pRosti = Rosti.alloc(c.types, 16);
-        Assert.assertNotEquals(0, pRosti);
-        final long sizeAtAlloc = Rosti.getAllocMemory(pRosti);
+        // The key buffer first: an allocation failure between the two would strand whichever came
+        // before it, and the rosti is the one nothing else would free.
         final long keysSize = 4L * liveKeys;
         final long pKeys = Unsafe.malloc(keysSize, MemoryTag.NATIVE_DEFAULT);
+        final long pRosti;
+        final long sizeAtAlloc;
+        try {
+            pRosti = Rosti.alloc(c.types, 16);
+            Assert.assertNotEquals(0, pRosti);
+            sizeAtAlloc = Rosti.getAllocMemory(pRosti);
+        } catch (Throwable th) {
+            Unsafe.free(pKeys, keysSize, MemoryTag.NATIVE_DEFAULT);
+            throw th;
+        }
         try {
             Unsafe.putInt(Rosti.getInitialValueSlot(pRosti, 0), Numbers.INT_NULL);
             c.initializer.init(pRosti);
@@ -440,11 +442,20 @@ public class RostiTest extends AbstractCairoTest {
         types.add(ColumnType.INT);      // key
         types.add(ColumnType.LONG);     // sum
         types.add(ColumnType.LONG);     // count
-        final long pRosti = Rosti.alloc(types, 16);
-        Assert.assertNotEquals(0, pRosti);
-        final long sizeAtAlloc = Rosti.getAllocMemory(pRosti);
+        // The key buffer first: an allocation failure between the two would strand whichever came
+        // before it, and the rosti is the one nothing else would free.
         final long keysSize = 4L * liveKeys;
         final long pKeys = Unsafe.malloc(keysSize, MemoryTag.NATIVE_DEFAULT);
+        final long pRosti;
+        final long sizeAtAlloc;
+        try {
+            pRosti = Rosti.alloc(types, 16);
+            Assert.assertNotEquals(0, pRosti);
+            sizeAtAlloc = Rosti.getAllocMemory(pRosti);
+        } catch (Throwable th) {
+            Unsafe.free(pKeys, keysSize, MemoryTag.NATIVE_DEFAULT);
+            throw th;
+        }
         try {
             // Mirrors SumLongVectorAggregateFunction.initRosti() plus the factory's null key.
             Unsafe.putInt(Rosti.getInitialValueSlot(pRosti, 0), Numbers.INT_NULL);
@@ -513,9 +524,12 @@ public class RostiTest extends AbstractCairoTest {
             Assert.assertTrue(Rosti.keyedIntDistinct(pRosti, Rosti.getInitialValueSlot(pRosti, 0), 1));
             seedSingleSlot(pRosti, VALUE_OFFSET, seedSum, seedCompensation, 2);
 
-            Assert.assertTrue(Rosti.keyedIntNSumDoubleWrapUp(pRosti, VALUE_OFFSET, valueAtNull, 1, valueAtNullC));
+            // Folding three frames' worth, so the count is pinned the way ksum's is: the slot has
+            // to gain the whole valueAtNullCount, not one.
+            Assert.assertTrue(Rosti.keyedIntNSumDoubleWrapUp(pRosti, VALUE_OFFSET, valueAtNull, 3, valueAtNullC));
 
             Assert.assertEquals(expected, readSingleSlotDouble(pRosti, VALUE_OFFSET), 0.0);
+            Assert.assertEquals(5, readSingleSlotLong(pRosti, VALUE_OFFSET + 2));
         } finally {
             Rosti.free(pRosti);
         }

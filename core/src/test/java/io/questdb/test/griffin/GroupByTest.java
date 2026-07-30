@@ -1648,6 +1648,32 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByInt32KeyColumnTopNSumCompensation() throws Exception {
+        // Kahan compensation across frames: 1e16 + 1 - 1e16 must be 1.0, not 0.0. Workers fold
+        // their own compensation before it is merged, so this pins the folded value only.
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v double) timestamp(ts) partition by day");
+            execute("""
+                    insert into x values
+                        ('2024-11-06T00:00:00.000000Z', 1e16),
+                        ('2024-11-07T00:00:00.000000Z', 1.0),
+                        ('2024-11-08T00:00:00.000000Z', -1e16)""");
+            execute("alter table x add column id int");
+            execute("insert into x values ('2025-11-08T00:00:00.000000Z', 100.0, 42)");
+
+            assertQuery("select id, nsum(v) from x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            id\tnsum
+                            null\t1.0
+                            42\t100.0
+                            """);
+        });
+    }
+
+    @Test
     public void testGroupByInt32KeyColumnTopNonPartitioned() throws Exception {
         // A table without PARTITION BY still gets column tops from ALTER TABLE ADD COLUMN.
         assertMemoryLeak(() -> {
@@ -1685,32 +1711,6 @@ public class GroupByTest extends AbstractCairoTest {
                             id\tmax
                             null\tnull
                             42\t42
-                            """);
-        });
-    }
-
-    @Test
-    public void testGroupByInt32KeyColumnTopNSumCompensation() throws Exception {
-        // Kahan compensation across frames: 1e16 + 1 - 1e16 must be 1.0, not 0.0. Workers fold
-        // their own compensation before it is merged, so this pins the folded value only.
-        assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v double) timestamp(ts) partition by day");
-            execute("""
-                    insert into x values
-                        ('2024-11-06T00:00:00.000000Z', 1e16),
-                        ('2024-11-07T00:00:00.000000Z', 1.0),
-                        ('2024-11-08T00:00:00.000000Z', -1e16)""");
-            execute("alter table x add column id int");
-            execute("insert into x values ('2025-11-08T00:00:00.000000Z', 100.0, 42)");
-
-            assertQuery("select id, nsum(v) from x order by id")
-                    .noLeakCheck()
-                    .expectSize()
-                    .withPlanContaining("GroupBy vectorized: true")
-                    .returns("""
-                            id\tnsum
-                            null\t1.0
-                            42\t100.0
                             """);
         });
     }

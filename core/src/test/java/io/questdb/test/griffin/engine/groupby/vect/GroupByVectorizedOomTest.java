@@ -46,12 +46,16 @@ import org.junit.Test;
  * the already-reopened buffer (512 bytes, {@code NATIVE_DEFAULT}). The query fuzzer's
  * malloc fault injection surfaced this leak.
  * <p>
- * The cursor-open sweep runs in {@link AbstractOomSweepTest#assertCursorOpenOomSweep}. The parquet
- * sweep below targets a later operation and keeps its own loop: it compiles and opens above the
- * ceiling, then arms it for the {@code hasNext()} drain, where {@code buildRosti} publishes work
- * before the fault lands. Both compile a fresh factory per point: a reused one would let a later
- * success clean up a stranded partial allocation, and would hand the parquet survivor live pools
- * instead of the freed ones it must dereference.
+ * Three sweeps live here, each with its own fault mechanism. The cursor-open one runs in
+ * {@link AbstractOomSweepTest#assertCursorOpenOomSweep} against an RSS ceiling. The parquet one
+ * targets a later operation and keeps its own loop against the same ceiling: it compiles and opens
+ * above it, then arms it for the {@code hasNext()} drain, where {@code buildRosti} publishes work
+ * before the fault lands. The column-top one arms rosti's own malloc hook instead, because
+ * {@code Unsafe.setRssMemLimit} cannot reach allocations rosti makes for itself.
+ * <p>
+ * The two ceiling sweeps compile a fresh factory per point: a reused one would let a later success
+ * clean up a stranded partial allocation, and would hand the parquet survivor live pools instead of
+ * the freed ones it must dereference.
  */
 public class GroupByVectorizedOomTest extends AbstractOomSweepTest {
 
