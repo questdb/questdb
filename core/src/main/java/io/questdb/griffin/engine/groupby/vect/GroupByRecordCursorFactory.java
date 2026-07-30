@@ -604,6 +604,17 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
                 for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
                     final long frameRowCount = frameAddressCache.getFrameSize(frameIndex);
+                    if (frameRowCount == 0) {
+                        // An empty frame contributes nothing to either accumulator, and dispatching it
+                        // is not merely wasteful: count(x) folds in a row on any non-zero value address
+                        // without consulting the row count, so its wrapUp() would create a group no row
+                        // belongs to - and a group created there, after an earlier aggregate's sweep has
+                        // run, renders 0 where it should render null. The table-reader cursors never
+                        // emit an empty frame (FullFwd and IntervalFwd skip empty partitions, and both
+                        // the native and parquet splitters advance by at least one row); read_parquet
+                        // does not check for an empty row group.
+                        continue;
+                    }
                     for (int vafIndex = 0; vafIndex < vafCount; vafIndex++) {
                         final VectorAggregateFunction vaf = vafList.getQuick(vafIndex);
                         // when column index = -1 we assume that vector function does not have value
