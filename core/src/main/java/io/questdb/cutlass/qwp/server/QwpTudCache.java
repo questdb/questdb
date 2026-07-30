@@ -217,6 +217,26 @@ public class QwpTudCache implements QuietCloseable {
         } while (droppedTableFound);
     }
 
+    /**
+     * Whether ANY live table in this cache still holds rows appended but not committed.
+     * <p>
+     * This is the FACT behind {@code QwpIngressProcessorState.uncommittedDeferredRows}: the per-table
+     * force-commit at the max-uncommitted-rows cap covers whichever tables crossed the cap and no others,
+     * so "did a deferred frame run" is not the same question as "is anything still uncommitted". Asking
+     * lets the cumulative-ack watermark advance once coverage IS complete instead of staying pinned to the
+     * group-closing frame.
+     */
+    public boolean hasUncommittedRows() {
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            WalTableUpdateDetails tud = tableUpdateDetails.get(keys.get(i));
+            if (tud != null && !tud.isDropped() && !tud.isFirstRow()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
         boolean droppedTableFound;
         do {

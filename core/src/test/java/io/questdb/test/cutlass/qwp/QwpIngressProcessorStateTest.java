@@ -222,6 +222,50 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The deferred-rows clamp is a FACT about what is uncommitted, not a sticky flag.
+     * <p>
+     * A deferred frame used to mark the clamp unconditionally, so the cumulative-ack watermark stayed
+     * pinned to the group-closing frame even after the per-table force-commit had covered the whole
+     * group. That never over-claims -- but it makes a mid-group reconnect replay rows that ARE durable,
+     * duplicating them. Deriving the flag lets the watermark advance the moment coverage is complete.
+     * <p>
+     * With no tables holding rows (nothing was appended), refresh must report full coverage and release
+     * the clamp; an explicit mark must still hold it.
+     */
+    @Test
+    public void testDeferredClampIsDerivedFromWhatIsActuallyUncommitted() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setHighestProcessedSequence(2);
+
+                // Sticky mark: the clamp holds and the watermark refuses to advance.
+                state.markUncommittedDeferredRows();
+                Assert.assertTrue(state.hasUncommittedDeferredRows());
+                state.setHighestProcessedSequence(5);
+                Assert.assertEquals("clamped while rows are uncommitted",
+                        2, state.getHighestProcessedSequence());
+
+                // Derived: nothing is actually uncommitted, so the clamp releases and the
+                // watermark may advance -- the rows are durable, so replaying them would
+                // duplicate rather than protect.
+                Assert.assertFalse("refresh must report full coverage when nothing is uncommitted",
+                        state.refreshUncommittedDeferredRows());
+                Assert.assertFalse(state.hasUncommittedDeferredRows());
+                state.setHighestProcessedSequence(5);
+                Assert.assertEquals("watermark advances once coverage is complete",
+                        5, state.getHighestProcessedSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
     @Test
     public void testCollectDurableProgressMultiTable() throws Exception {
         assertMemoryLeak(() -> {
