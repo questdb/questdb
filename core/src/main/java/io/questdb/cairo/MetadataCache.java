@@ -895,7 +895,13 @@ public class MetadataCache implements QuietCloseable {
             final String hydratedPredicate = table.getExpiryPredicate();
             final boolean isPolicySnapshotAffected = (hydratedPredicate != null && !hydratedPredicate.isEmpty())
                     || expiryPolicySnapshot.tableIds.contains(token.getTableId());
-            if (hasPendingExpiryPublication || (fullyHydrated && isPolicySnapshotAffected)) {
+            // Republish once the cache is trustworthy as the discovery source: fully hydrated, or given up
+            // (cacheComplete without full hydration). The give-up case is essential -- a policied object first
+            // hydrated after give-up would otherwise never enter the published snapshot, and the cleanup
+            // fallback (hydrateAllTables) short-circuits on cacheComplete, so discovery would never see it and
+            // reclamation would stall. During active startup both flags are false, so per-table republishing
+            // stays suppressed and the single batch publish in latchCacheCompleteIfWarmed() covers every policy.
+            if (hasPendingExpiryPublication || ((fullyHydrated || cacheComplete) && isPolicySnapshotAffected)) {
                 publishActiveExpiryPolicySnapshot();
             }
             LOG.debug().$("hydrated metadata [table=").$(token).I$();
@@ -1487,7 +1493,11 @@ public class MetadataCache implements QuietCloseable {
             // ILP auto-ADD-COLUMN path included - O(all tables) for no observable change.
             final boolean isPolicySnapshotAffected = (expiryPredicate != null && !expiryPredicate.isEmpty())
                     || expiryPolicySnapshot.tableIds.contains(tableToken.getTableId());
-            if (hasPendingExpiryPublication || (fullyHydrated && isPolicySnapshotAffected)) {
+            // Trust the cache as the discovery source once fully hydrated or given up (cacheComplete): a
+            // policied object first hydrated after give-up must still reach the snapshot, since the cleanup
+            // fallback short-circuits on cacheComplete. Active startup leaves both flags false, so the single
+            // batch publish still covers every policy without per-table rebuilds.
+            if (hasPendingExpiryPublication || ((fullyHydrated || cacheComplete) && isPolicySnapshotAffected)) {
                 publishActiveExpiryPolicySnapshot();
             }
             LOG.info().$("hydrated [table=").$(table.getTableToken()).I$();
@@ -1510,9 +1520,11 @@ public class MetadataCache implements QuietCloseable {
                 final CairoTable toTab = new CairoTable(toTableToken, fromTab);
                 tableMap.put(toTableToken.getTableName(), toTab);
                 // Rename keeps the table id, so the snapshot needs a rebuild only when it references
-                // this table - cleanup discovery must see the renamed token.
+                // this table - cleanup discovery must see the renamed token. Trust the cache as the discovery
+                // source once fully hydrated or given up (cacheComplete), so a policied view renamed after
+                // give-up does not leave a stale token that discovery skips forever.
                 final String renamedPredicate = toTab.getExpiryPredicate();
-                if (fullyHydrated
+                if ((fullyHydrated || cacheComplete)
                         && ((renamedPredicate != null && !renamedPredicate.isEmpty())
                         || expiryPolicySnapshot.tableIds.contains(toTableToken.getTableId()))) {
                     publishActiveExpiryPolicySnapshot();
