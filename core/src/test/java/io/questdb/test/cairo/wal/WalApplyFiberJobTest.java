@@ -208,6 +208,29 @@ public class WalApplyFiberJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQuiesceDuringLaunchReleasesIdleLease() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wal_fiber_quiesce (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            execute("INSERT INTO wal_fiber_quiesce VALUES (42, '2026-01-01T00:00:00.000000Z')");
+
+            final AtomicReference<FiberRuntime> runtimeRef = new AtomicReference<>();
+            final FiberRuntime runtime = new FiberRuntime(1, 1, () -> runtimeRef.get().beginQuiesce());
+            runtimeRef.set(runtime);
+            final WalApplyFiberJob job = new WalApplyFiberJob(engine, 0, runtime);
+            try {
+                Assert.assertTrue(job.run(Job.RUNNING_STATUS));
+                Assert.assertEquals(FiberRuntimeState.QUIESCING, runtime.state());
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(job.getExecutorCount(), job.getFreeExecutorCount());
+                close(runtime);
+            } finally {
+                close(runtime, job);
+            }
+        });
+    }
+
+    @Test
     public void testSaturationLeavesNotificationQueued() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE wal_fiber_saturation (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");

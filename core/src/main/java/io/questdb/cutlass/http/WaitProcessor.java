@@ -227,8 +227,9 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
     }
 
     private static void freeRetry(RetryHolder retryHolder) {
-        if (retryHolder.retry != null && retryHolder.retry.isRetryCloseOwner(retryHolder.taskIncarnation)) {
-            Misc.free(retryHolder.retry);
+        final Retry retry = retryHolder.retry;
+        if (retry != null && retry.claimRetryClose(retryHolder.taskIncarnation)) {
+            Misc.free(retry);
         }
         retryHolder.clear();
     }

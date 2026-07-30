@@ -2501,6 +2501,34 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testMatViewRefreshWorkerCountZeroDisablesRefresh() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath(), "0");
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+
+        Assert.assertEquals(0, configuration.getMatViewRefreshPoolConfiguration().getWorkerCount());
+        Assert.assertFalse(configuration.getMatViewRefreshPoolConfiguration().isEnabled());
+    }
+
+    @Test
+    public void testWorkerPoolFiberCapacityDerivedDefaults() throws Exception {
+        assertDerivedFiberDefaults(workerPoolConfiguration(1), 64, 16);
+        assertDerivedFiberDefaults(workerPoolConfiguration(8), 64, 16);
+        assertDerivedFiberDefaults(workerPoolConfiguration(9), 72, 18);
+        assertDerivedFiberDefaults(workerPoolConfiguration(16), 128, 32);
+
+        // Zero-valued properties must select the same derive branch through the prop configuration.
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.WORKER_FIBER_MAX_LIVE.getPropertyPath(), "0");
+        properties.setProperty(PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "0");
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        assertDerivedFiberDefaults(configuration.getSharedWorkerPoolNetworkConfiguration());
+        assertDerivedFiberDefaults(configuration.getSharedWorkerPoolQueryConfiguration());
+        assertDerivedFiberDefaults(configuration.getSharedWorkerPoolWriteConfiguration());
+        assertDerivedFiberDefaults(configuration.getWalApplyPoolConfiguration());
+    }
+
+    @Test
     public void testWorkerPoolFiberCapacityProperties() throws Exception {
         final Properties properties = new Properties();
         properties.setProperty(PropertyKey.WORKER_FIBER_MAX_LIVE.getPropertyPath(), "37");
@@ -2653,6 +2681,39 @@ public class PropServerConfigurationTest {
                 WorkerPoolMode.LEGACY,
                 newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
         );
+    }
+
+    private static void assertDerivedFiberDefaults(WorkerPoolConfiguration configuration) {
+        final int workerCount = configuration.getWorkerCount();
+        assertDerivedFiberDefaults(
+                configuration,
+                Math.max(64, 8 * workerCount),
+                Math.max(16, 2 * workerCount)
+        );
+    }
+
+    private static void assertDerivedFiberDefaults(
+            WorkerPoolConfiguration configuration,
+            int expectedMaxLiveCount,
+            int expectedRetainedCount
+    ) {
+        Assert.assertEquals(configuration.getPoolName(), expectedMaxLiveCount, configuration.getFiberMaxLiveCount());
+        Assert.assertEquals(configuration.getPoolName(), expectedRetainedCount, configuration.getFiberRetainedCount());
+        Assert.assertEquals(configuration.getPoolName(), 64, configuration.getFiberMountBudget());
+    }
+
+    private static WorkerPoolConfiguration workerPoolConfiguration(int workerCount) {
+        return new WorkerPoolConfiguration() {
+            @Override
+            public String getPoolName() {
+                return "testing";
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+        };
     }
 
     private static void assertWorkerPoolFiberConfiguration(

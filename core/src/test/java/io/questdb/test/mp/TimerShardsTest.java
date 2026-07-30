@@ -79,6 +79,12 @@ public class TimerShardsTest {
     }
 
     @Test
+    public void testNonPowerOfTwoShardCountIsExact() {
+        TimerShards shards = new TimerShards(3, "test-timer", LOG);
+        Assert.assertEquals(3, shards.getShardCount());
+    }
+
+    @Test
     public void testRacesFireAndShutdown() throws InterruptedException {
         TimerShards shards = new TimerShards(1, "test-timer", LOG);
         shards.start();

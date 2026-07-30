@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Decimal128;
@@ -162,6 +163,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public synchronized void clearCancelledFlag(AtomicBoolean expected) {
         circuitBreaker.clearCancelledFlag(expected);
         simpleCircuitBreaker.clearCancelledFlag(expected);
+    }
+
+    @Override
+    public synchronized void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        circuitBreaker.clearCancelledFlag(expected, expectedGeneration);
+        simpleCircuitBreaker.clearCancelledFlag(expected, expectedGeneration);
     }
 
     @Override
@@ -515,6 +522,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public synchronized void setCancelledFlag(AtomicBoolean cancelled) {
         circuitBreaker.setCancelledFlag(cancelled);
         simpleCircuitBreaker.setCancelledFlag(cancelled);
+    }
+
+    @Override
+    public synchronized void setCancelledFlag(CancellationBinding source) {
+        circuitBreaker.setCancelledFlag(source);
+        simpleCircuitBreaker.setCancelledFlag(source);
+    }
+
+    @Override
+    public synchronized void setCancelledFlag(AtomicBoolean cancelled, long generation) {
+        circuitBreaker.setCancelledFlag(cancelled, generation);
+        simpleCircuitBreaker.setCancelledFlag(cancelled, generation);
     }
 
     @Override

@@ -575,7 +575,7 @@ public class ServerMain implements Closeable {
                             memoryConfig::getMemoryUsageLogInterval
                     ));
                     WorkerPoolUtils.setupAsyncMunmapJob(sharedPoolQuery, engine);
-                    WorkerPoolUtils.setupQueryJobs(sharedPoolQuery, engine);
+                    WorkerPoolUtils.setupQueryJobs(sharedPoolQuery, engine, sharedPoolQuery != sharedPoolNetwork);
 
                     if (!config.getCairoConfiguration().isReadOnlyInstance()) {
                         QueryTracingJob queryTracingJob = new QueryTracingJob(engine);

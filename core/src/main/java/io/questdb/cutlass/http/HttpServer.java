@@ -112,7 +112,10 @@ public class HttpServer implements Closeable {
                     && networkSharedPool.isFiberHost()) {
                 fiberRuntime = networkSharedPool.getFiberRuntime();
             }
-            selectorFactory = new HttpRequestProcessorSelectorFactory(workerCount);
+            selectorFactory = new HttpRequestProcessorSelectorFactory(
+                    workerCount,
+                    fiberRuntime == null ? workerCount : networkSharedPool.getFiberRetainedCount()
+            );
             if (configuration instanceof HttpFullFatServerConfiguration serverConfiguration
                     && serverConfiguration.isQueryCacheEnabled()) {
                 selectCache = new ConcurrentAssociativeCache<>(serverConfiguration.getConcurrentCacheConfiguration());
@@ -159,7 +162,9 @@ public class HttpServer implements Closeable {
             Misc.free(rescheduleContext, t);
             Misc.free(selectorFactory, t);
             Misc.free(httpContextFactory, t);
-            Misc.free(selectCache, t);
+            if (selectCache != NO_OP_CACHE) {
+                Misc.free(selectCache, t);
+            }
             throw t;
         }
     }
@@ -368,7 +373,10 @@ public class HttpServer implements Closeable {
         Misc.free(selectorFactory);
         Misc.freeObjListAndClear(closeables);
         Misc.free(httpContextFactory);
-        Misc.free(selectCache);
+        // NO_OP_CACHE is a JVM-wide singleton shared by every cache-disabled server.
+        if (selectCache != NO_OP_CACHE) {
+            Misc.free(selectCache);
+        }
     }
 
     @TestOnly
@@ -575,15 +583,16 @@ public class HttpServer implements Closeable {
      */
     static class HttpRequestProcessorSelectorFactory implements Closeable {
         private final ObjList<FactoryHolder> factoryHolders = new ObjList<>();
+        private final int maxRecycledSelectors;
         private int nextHandlerId = 0;
         private final ObjList<HttpRequestProcessorSelectorImpl> recycledSelectors = new ObjList<>();
-        // Per-worker selectors used by gen-0 (the initial Jobs registered to
-        // the pool). These selectors are NOT pooled -- they live for the
-        // server's lifetime so the per-worker fast path doesn't have to
-        // re-acquire across iterations.
+        // Per-worker selectors used by the Jobs registered to the pool in legacy mode. These
+        // selectors are NOT pooled -- they live for the server's lifetime so the per-worker fast
+        // path doesn't have to re-acquire across iterations.
         private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
 
-        HttpRequestProcessorSelectorFactory(int workerCount) {
+        HttpRequestProcessorSelectorFactory(int workerCount, int maxRecycledSelectors) {
+            this.maxRecycledSelectors = Math.max(1, maxRecycledSelectors);
             this.selectors = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
                 selectors.add(null);
@@ -658,8 +667,14 @@ public class HttpServer implements Closeable {
 
         void release(HttpRequestProcessorSelectorImpl selector) {
             synchronized (recycledSelectors) {
-                recycledSelectors.add(selector);
+                if (recycledSelectors.size() < maxRecycledSelectors) {
+                    recycledSelectors.add(selector);
+                    return;
+                }
             }
+            // Every selector carries a full processor set, including a SqlCompiler, so retaining one
+            // per concurrently suspended fiber would outgrow the legacy per-worker footprint.
+            Misc.free(selector);
         }
 
         private static void populate(HttpRequestProcessorSelectorImpl selector, FactoryHolder holder) {

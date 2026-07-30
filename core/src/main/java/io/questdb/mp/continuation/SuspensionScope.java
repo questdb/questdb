@@ -43,19 +43,52 @@ public final class SuspensionScope {
         final CarrierScope scope = SCOPE.get();
         final FiberCancellationSignal previous = scope.cancellationSignal;
         scope.cancellationSignal = cancellationSignal;
+        scope.cancellationSignalGeneration = cancellationSignal != null
+                ? cancellationSignal.getGeneration()
+                : CancellationBinding.NO_GENERATION;
         return previous;
+    }
+
+    public static CancellationBinding getCancellationBindingScratch() {
+        return SCOPE.get().cancellationBindingScratch;
     }
 
     public static @Nullable FiberCancellationSignal getCancellationSignal() {
         return SCOPE.get().cancellationSignal;
     }
 
+    public static long getCancellationSignalGeneration() {
+        return SCOPE.get().cancellationSignalGeneration;
+    }
+
     public static @Nullable Mode getMode() {
         return SCOPE.get().mode;
     }
 
+    // Distinct from Fiber.isMounted(): a mounted fiber inside a BLOCKING scope must make blocking
+    // progress instead of parking.
+    public static boolean isFiberMode() {
+        return SCOPE.get().mode == Mode.FIBER;
+    }
+
+    // The shared scope handle halves the carrier-identity lookups of an enter/restore pair; only
+    // valid when no suspension can occur in between, which BLOCKING guarantees.
+    public static @Nullable Mode enterBlocking(CarrierScope scope) {
+        final Mode previous = scope.mode;
+        scope.mode = Mode.BLOCKING;
+        return previous;
+    }
+
     public static void initializeCarrier() {
         SCOPE.get();
+    }
+
+    public static void restoreMode(CarrierScope scope, @Nullable Mode mode) {
+        scope.mode = mode;
+    }
+
+    public static CarrierScope scope() {
+        return SCOPE.get();
     }
 
     public static void restore(@Nullable Mode mode) {
@@ -63,11 +96,21 @@ public final class SuspensionScope {
     }
 
     public static void restoreCancellationSignal(@Nullable FiberCancellationSignal cancellationSignal) {
-        SCOPE.get().cancellationSignal = cancellationSignal;
+        restoreCancellationSignal(
+                cancellationSignal,
+                cancellationSignal != null
+                        ? cancellationSignal.getGeneration()
+                        : CancellationBinding.NO_GENERATION
+        );
     }
 
-    static CarrierScope scope() {
-        return SCOPE.get();
+    public static void restoreCancellationSignal(
+            @Nullable FiberCancellationSignal cancellationSignal,
+            long cancellationSignalGeneration
+    ) {
+        final CarrierScope scope = SCOPE.get();
+        scope.cancellationSignal = cancellationSignal;
+        scope.cancellationSignalGeneration = cancellationSignalGeneration;
     }
 
     private SuspensionScope() {
@@ -79,8 +122,11 @@ public final class SuspensionScope {
         FORBIDDEN
     }
 
-    static final class CarrierScope {
+    // Opaque outside this package: the fields stay package-private.
+    public static final class CarrierScope {
+        final CancellationBinding cancellationBindingScratch = new CancellationBinding();
         FiberCancellationSignal cancellationSignal;
+        long cancellationSignalGeneration = CancellationBinding.NO_GENERATION;
         Fiber fiber;
         Mode mode;
     }

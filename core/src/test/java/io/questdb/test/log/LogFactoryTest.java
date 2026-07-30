@@ -100,6 +100,19 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testCloseRetriesAfterHaltRefusal() {
+        try (LogFactory factory = new LogFactory()) {
+            factory.setHaltRefusedForTesting(true);
+            factory.close();
+            Assert.assertFalse(factory.isClosed());
+
+            factory.setHaltRefusedForTesting(false);
+            factory.close();
+            Assert.assertTrue(factory.isClosed());
+        }
+    }
+
+    @Test
     public void testDefaultLevel() {
         try (LogFactory factory = new LogFactory()) {
             factory.add(new LogWriterConfig(LogLevel.ALL, LogConsoleWriter::new));

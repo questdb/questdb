@@ -65,6 +65,7 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -185,6 +186,52 @@ public class HttpFiberTest extends AbstractTest {
     }
 
     @Test
+    public void testCloseDoesNotWaitForArmingRetry() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final DefaultHttpServerConfiguration configuration =
+                    new DefaultHttpServerConfiguration(new DefaultTestCairoConfiguration(root));
+            final TestHttpDispatcher dispatcher = new TestHttpDispatcher();
+            final WaitProcessor waitProcessor = new WaitProcessor(
+                    configuration.getWaitProcessorConfiguration(),
+                    dispatcher
+            );
+            final DisconnectingHttpConnectionContext context =
+                    new DisconnectingHttpConnectionContext(configuration);
+            final HttpConnectionFiberTask task = HttpConnectionFiberTask.createForTesting(context, dispatcher);
+            final long taskIncarnation = task.getIncarnation();
+            Thread closeThread = null;
+            try {
+                task.setScheduleStateForTesting(FiberTask.STATE_IDLE, FiberTask.STATE_ARMING);
+                waitProcessor.reschedule(context, taskIncarnation);
+                Assert.assertTrue(waitProcessor.runSerially());
+
+                closeThread = new Thread(waitProcessor::close);
+                closeThread.start();
+                closeThread.join(1_000);
+                final boolean isCloseComplete = !closeThread.isAlive();
+                if (!isCloseComplete) {
+                    task.setScheduleStateForTesting(FiberTask.STATE_ARMING, FiberTask.STATE_IDLE);
+                }
+                closeThread.join(5_000);
+
+                Assert.assertFalse(closeThread.isAlive());
+                Assert.assertTrue("wait processor close blocked on an arming retry", isCloseComplete);
+                Assert.assertEquals(FiberTask.STATE_ARMING_DISCONNECTED, task.getScheduleState());
+            } finally {
+                if (closeThread != null && closeThread.isAlive()) {
+                    if (task.getScheduleState() == FiberTask.STATE_ARMING) {
+                        task.setScheduleStateForTesting(FiberTask.STATE_ARMING, FiberTask.STATE_IDLE);
+                    }
+                    closeThread.join(5_000);
+                }
+                waitProcessor.close();
+                task.closeForTesting();
+                context.close();
+            }
+        });
+    }
+
+    @Test
     public void testCsvImportRetryResumesMultipartOnFiber() throws Exception {
         final HttpQueryTestBuilder builder = new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -249,6 +296,50 @@ public class HttpFiberTest extends AbstractTest {
                         );
                     }
                 }));
+    }
+
+    @Test
+    public void testAbandonedTaskDisconnectsConnection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final AtomicInteger abandonedRetryCount = new AtomicInteger();
+            DisconnectingHttpConnectionContext context = null;
+            HttpConnectionFiberTask task = null;
+            try {
+                context = new DisconnectingHttpConnectionContext(
+                        new DefaultHttpServerConfiguration(new DefaultTestCairoConfiguration(root))
+                ) {
+                    @Override
+                    public void abandonRetry() {
+                        abandonedRetryCount.incrementAndGet();
+                        super.abandonRetry();
+                    }
+                };
+                final TestHttpDispatcher dispatcher = new TestHttpDispatcher();
+                task = HttpConnectionFiberTask.createForTesting(context, dispatcher);
+
+                Assert.assertEquals(
+                        LaunchResult.LAUNCHED,
+                        task.launchForTesting(runtime, IOOperation.READ)
+                );
+                runtime.beginQuiesce();
+                Assert.assertEquals(1, runtime.drain(8));
+
+                Assert.assertTrue(task.isCancelled());
+                Assert.assertEquals(1, abandonedRetryCount.get());
+                Assert.assertEquals(1, dispatcher.disconnectCount);
+                Assert.assertEquals(IODispatcher.DISCONNECT_REASON_SERVER_SHUTDOWN, dispatcher.disconnectReason);
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+            } finally {
+                closeFiberRuntime(runtime);
+                if (task != null) {
+                    task.closeForTesting();
+                }
+                if (context != null) {
+                    context.close();
+                }
+            }
+        });
     }
 
     @Test

@@ -164,6 +164,7 @@ public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
+    private static final WorkerPoolMode WORKER_POOL_MODE = getWorkerPoolMode(generateRandom(LOG));
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
 
     private TestUtils() {
@@ -1832,8 +1833,14 @@ public final class TestUtils {
         return rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
     }
 
+    /**
+     * The mode every unpinned {@link io.questdb.test.mp.TestWorkerPool} runs in, drawn once per JVM
+     * so a fiber-host-only failure is reproducible from the single seed logged at class load, and so
+     * pools that interact within one test agree on a mode. Tests whose expected values depend on the
+     * mode must pin it explicitly rather than rely on this.
+     */
     public static WorkerPoolMode getWorkerPoolMode() {
-        return getWorkerPoolMode(generateRandom(LOG));
+        return WORKER_POOL_MODE;
     }
 
     public static WorkerPoolMode getWorkerPoolMode(Rnd rnd) {

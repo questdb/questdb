@@ -37,6 +37,7 @@ import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfigurationWrapper;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PlainSocketFactory;
@@ -74,33 +75,38 @@ public class HttpServerCtorThrowSelfCleanTest extends AbstractCairoTest {
     @Test
     public void testDefaultProcessorFailureClosesHandler() throws Exception {
         assertMemoryLeak(() -> {
-            final AtomicInteger closeCount = new AtomicInteger();
-            final HttpServerConfiguration configuration = new HttpServerConfigurationBuilder()
-                    .withBaseDir(root)
-                    .withPort(0)
-                    .build(new DefaultTestCairoConfiguration(root));
-            try (
-                    WorkerPool workerPool = new TestWorkerPool(1);
-                    HttpServer server = new HttpServer(configuration, workerPool, PlainSocketFactory.INSTANCE)
-            ) {
-                try {
-                    server.bind(new HttpRequestHandlerFactory() {
-                        @Override
-                        public ObjHashSet<String> getUrls() {
-                            return urls(HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL);
-                        }
+            for (WorkerPoolMode workerPoolMode : WorkerPoolMode.values()) {
+                final AtomicInteger closeCount = new AtomicInteger();
+                final HttpServerConfiguration configuration = new HttpServerConfigurationBuilder()
+                        .withBaseDir(root)
+                        .withPort(0)
+                        .build(new DefaultTestCairoConfiguration(root));
+                try (
+                        WorkerPool workerPool = new TestWorkerPool(1, workerPoolMode);
+                        HttpServer server = new HttpServer(configuration, workerPool, PlainSocketFactory.INSTANCE)
+                ) {
+                    try {
+                        server.bind(new HttpRequestHandlerFactory() {
+                            @Override
+                            public ObjHashSet<String> getUrls() {
+                                return urls(HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL);
+                            }
 
-                        @Override
-                        public HttpRequestHandler newInstance() {
-                            return new CloseTrackingHandler(closeCount, true);
+                            @Override
+                            public HttpRequestHandler newInstance() {
+                                return new CloseTrackingHandler(closeCount, true);
+                            }
+                        });
+                        if (workerPool.isFiberHost()) {
+                            server.createSelectorForTesting();
                         }
-                    });
-                    Assert.fail();
-                } catch (RuntimeException e) {
-                    Assert.assertEquals("default processor failure", e.getMessage());
+                        Assert.fail();
+                    } catch (RuntimeException e) {
+                        Assert.assertEquals("default processor failure", e.getMessage());
+                    }
                 }
+                Assert.assertEquals(1, closeCount.get());
             }
-            Assert.assertEquals(1, closeCount.get());
         });
     }
 
@@ -122,51 +128,57 @@ public class HttpServerCtorThrowSelfCleanTest extends AbstractCairoTest {
     @Test
     public void testSelectorCreateFailureClosesPartialSelector() throws Exception {
         assertMemoryLeak(() -> {
-            final AtomicInteger closeCount = new AtomicInteger();
-            final AtomicInteger failingFactoryCalls = new AtomicInteger();
-            final HttpServerConfiguration configuration = new HttpServerConfigurationBuilder()
-                    .withBaseDir(root)
-                    .withPort(0)
-                    .build(new DefaultTestCairoConfiguration(root));
-            try (
-                    WorkerPool workerPool = new TestWorkerPool(1);
-                    HttpServer server = new HttpServer(configuration, workerPool, PlainSocketFactory.INSTANCE)
-            ) {
-                server.bind(new HttpRequestHandlerFactory() {
-                    @Override
-                    public ObjHashSet<String> getUrls() {
-                        return urls("/close-tracking");
-                    }
-
-                    @Override
-                    public HttpRequestHandler newInstance() {
-                        return new CloseTrackingHandler(closeCount, false);
-                    }
-                });
-                server.bind(new HttpRequestHandlerFactory() {
-                    @Override
-                    public ObjHashSet<String> getUrls() {
-                        return urls("/failing");
-                    }
-
-                    @Override
-                    public HttpRequestHandler newInstance() {
-                        if (failingFactoryCalls.getAndIncrement() > 0) {
-                            throw new RuntimeException("create failure");
+            for (WorkerPoolMode workerPoolMode : WorkerPoolMode.values()) {
+                final AtomicInteger closeCount = new AtomicInteger();
+                final AtomicInteger failingFactoryCalls = new AtomicInteger();
+                final HttpServerConfiguration configuration = new HttpServerConfigurationBuilder()
+                        .withBaseDir(root)
+                        .withPort(0)
+                        .build(new DefaultTestCairoConfiguration(root));
+                try (
+                        WorkerPool workerPool = new TestWorkerPool(1, workerPoolMode);
+                        HttpServer server = new HttpServer(configuration, workerPool, PlainSocketFactory.INSTANCE)
+                ) {
+                    server.bind(new HttpRequestHandlerFactory() {
+                        @Override
+                        public ObjHashSet<String> getUrls() {
+                            return urls("/close-tracking");
                         }
-                        return requestHeader -> null;
-                    }
-                });
 
-                try {
-                    server.createSelectorForTesting();
-                    Assert.fail();
-                } catch (RuntimeException e) {
-                    Assert.assertEquals("create failure", e.getMessage());
+                        @Override
+                        public HttpRequestHandler newInstance() {
+                            return new CloseTrackingHandler(closeCount, false);
+                        }
+                    });
+                    server.bind(new HttpRequestHandlerFactory() {
+                        @Override
+                        public ObjHashSet<String> getUrls() {
+                            return urls("/failing");
+                        }
+
+                        @Override
+                        public HttpRequestHandler newInstance() {
+                            if (failingFactoryCalls.getAndIncrement() > 0) {
+                                throw new RuntimeException("create failure");
+                            }
+                            return requestHeader -> null;
+                        }
+                    });
+
+                    if (workerPool.isFiberHost()) {
+                        server.createSelectorForTesting();
+                    }
+                    final int closeCountBeforeFailure = closeCount.get();
+                    try {
+                        server.createSelectorForTesting();
+                        Assert.fail();
+                    } catch (RuntimeException e) {
+                        Assert.assertEquals("create failure", e.getMessage());
+                    }
+                    Assert.assertEquals(closeCountBeforeFailure + 1, closeCount.get());
                 }
-                Assert.assertEquals(1, closeCount.get());
+                Assert.assertEquals(2, closeCount.get());
             }
-            Assert.assertEquals(2, closeCount.get());
         });
     }
 

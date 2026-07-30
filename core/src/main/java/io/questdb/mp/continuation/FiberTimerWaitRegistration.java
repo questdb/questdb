@@ -74,6 +74,11 @@ public final class FiberTimerWaitRegistration extends FiberWaitRegistrationNode<
 
     @Override
     public int compareTo(@NotNull Delayed other) {
+        // deadlines order identically to remaining delays but need no clock read under the shard
+        // monitor; the fallback only serves foreign Delayed types such as the shutdown sentinel
+        if (other instanceof FiberTimerWaitRegistration registration) {
+            return Long.compare(deadlineMillis, registration.deadlineMillis);
+        }
         return Long.compare(getDelay(TimeUnit.NANOSECONDS), other.getDelay(TimeUnit.NANOSECONDS));
     }
 

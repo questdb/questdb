@@ -127,13 +127,17 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
             IODispatcher<HttpConnectionContext> dispatcher,
             @Nullable Runnable beforeLaunchFailureSignalForTesting
     ) {
-        return new HttpConnectionFiberTask(
+        final HttpConnectionFiberTask task = new HttpConnectionFiberTask(
                 context,
                 dispatcher,
-                new HttpServer.HttpRequestProcessorSelectorFactory(1),
+                new HttpServer.HttpRequestProcessorSelectorFactory(1, 1),
                 null,
                 beforeLaunchFailureSignalForTesting
         );
+        if (context != null) {
+            context.setFiberTaskForTesting(task);
+        }
+        return task;
     }
 
     @TestOnly

@@ -143,9 +143,13 @@ public class FiberRunQueueTest {
                 Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(tasks.getQuick(i)));
             }
             Assert.assertEquals(burstSize, runtime.drain(burstSize));
-            // capacity is reserved as the live-fiber registry grows, so it settles
-            // once every fiber of the burst exists
-            final int settledCapacity = runtime.getRunQueueCapacity();
+            // Capacity is fixed at construction from the live-fiber limit, so a burst that fills
+            // every live slot must still fit without put() ever reporting a full ring.
+            final int capacity = runtime.getRunQueueCapacity();
+            Assert.assertTrue(
+                    "run queue must hold every live fiber [capacity=" + capacity + ", burstSize=" + burstSize + ']',
+                    capacity >= burstSize
+            );
             Assert.assertEquals(burstSize, runtime.getCreatedFiberCount());
 
             for (int round = 0; round < 100; round++) {
@@ -157,7 +161,7 @@ public class FiberRunQueueTest {
                 }
                 Assert.assertEquals(burstSize, runtime.getQueuedCount());
                 Assert.assertEquals(burstSize, runtime.drain(burstSize));
-                Assert.assertEquals(settledCapacity, runtime.getRunQueueCapacity());
+                Assert.assertEquals(capacity, runtime.getRunQueueCapacity());
                 Assert.assertEquals(burstSize, runtime.getCreatedFiberCount());
             }
         } finally {

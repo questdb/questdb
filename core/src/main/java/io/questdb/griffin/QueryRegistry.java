@@ -271,7 +271,7 @@ public class QueryRegistry {
             throw th;
         }
 
-        executionContext.setCancelledFlag(e.cancelled);
+        executionContext.setCancelledFlag(e.cancelled, e.cancelledGeneration);
         return queryId;
     }
 
@@ -294,7 +294,7 @@ public class QueryRegistry {
 
         final Entry e = registry.remove(queryId);
         if (e != null) {
-            executionContext.clearCancelledFlag(e.cancelled);
+            executionContext.clearCancelledFlag(e.cancelled, e.cancelledGeneration);
             // Release the per-workload memory tracker if this register() call
             // acquired it. A null e.memoryTracker means the registration was
             // nested under an outer workload that owns the tracker; in that
@@ -362,6 +362,7 @@ public class QueryRegistry {
 
         private final FiberCancellationSignal cancelled = new FiberCancellationSignal();
         private final StringSink query = new StringSink();
+        private long cancelledGeneration;
         private long changedAtNs;
         private boolean isWAL;
         // Packs query id and state into one CAS word to guard pooled Entry reuse.
@@ -396,7 +397,7 @@ public class QueryRegistry {
         }
 
         public void cancel() {
-            cancelled.cancel();
+            cancelled.cancel(cancelledGeneration);
         }
 
         @Override
@@ -404,7 +405,7 @@ public class QueryRegistry {
             query.clear();
             registeredAtNs = 0;
             changedAtNs = 0;
-            cancelled.reset();
+            cancelledGeneration = cancelled.reopen();
             memoryTracker = null;
             poolName = null;
             workerId = -1;
@@ -416,6 +417,10 @@ public class QueryRegistry {
 
         public AtomicBoolean getCancelled() {
             return cancelled;
+        }
+
+        public long getCancelledGeneration() {
+            return cancelledGeneration;
         }
 
         public long getChangedAtNs() {

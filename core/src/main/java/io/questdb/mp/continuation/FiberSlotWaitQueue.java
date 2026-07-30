@@ -28,12 +28,18 @@ public final class FiberSlotWaitQueue {
     private FiberSlotWaitRegistration head;
     private final SlotReleaser slotReleaser;
     private FiberSlotWaitRegistration tail;
+    // Volatile only for transfer()'s unlocked fast path; every write is under this monitor.
+    private volatile int waiterCount;
 
     public FiberSlotWaitQueue(SlotReleaser slotReleaser) {
         if (slotReleaser == null) {
             throw new IllegalArgumentException("slot releaser must not be null");
         }
         this.slotReleaser = slotReleaser;
+    }
+
+    public boolean hasWaiters() {
+        return waiterCount != 0;
     }
 
     public synchronized SourceRegistrationResult register(FiberSlotWaitRegistration registration) {
@@ -52,10 +58,14 @@ public final class FiberSlotWaitQueue {
             tail.nextQueue = registration;
         }
         tail = registration;
+        waiterCount++;
         return SourceRegistrationResult.ACCEPTED;
     }
 
     public boolean transfer(int slot) {
+        if (waiterCount == 0) {
+            return false;
+        }
         FiberSlotWaitRegistration registration = null;
         synchronized (this) {
             while ((registration = head) != null) {
@@ -100,6 +110,7 @@ public final class FiberSlotWaitQueue {
         }
         registration.nextQueue = null;
         registration.prevQueue = null;
+        waiterCount--;
         if (isClearingQueue) {
             registration.queue = null;
         }

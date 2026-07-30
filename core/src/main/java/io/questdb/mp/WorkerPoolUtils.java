@@ -68,6 +68,22 @@ public class WorkerPoolUtils {
             WorkerPool sharedPoolQuery,
             CairoEngine cairoEngine
     ) {
+        setupQueryJobs(sharedPoolQuery, cairoEngine, false);
+    }
+
+    /**
+     * @param isFiberDispatcherAllowed pass true only when {@code sharedPoolQuery} is dedicated to
+     *                                 query work. A pool that also hosts protocol fibers must not
+     *                                 own the dispatcher: those fibers are the ones publishing into
+     *                                 it, and {@link PageFrameReduceDispatcher#tryAcquirePublication()}
+     *                                 refuses same-runtime fan-out, which would fail every parallel
+     *                                 query instead of reducing in line.
+     */
+    public static void setupQueryJobs(
+            WorkerPool sharedPoolQuery,
+            CairoEngine cairoEngine,
+            boolean isFiberDispatcherAllowed
+    ) {
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
         final MessageBus messageBus = cairoEngine.getMessageBus();
 
@@ -80,7 +96,7 @@ public class WorkerPoolUtils {
         }
 
         if (configuration.isSqlParallelFilterEnabled() || configuration.isSqlParallelGroupByEnabled()) {
-            if (sharedPoolQuery.isFiberHost()) {
+            if (isFiberDispatcherAllowed && sharedPoolQuery.isFiberHost()) {
                 final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
                         cairoEngine,
                         messageBus,

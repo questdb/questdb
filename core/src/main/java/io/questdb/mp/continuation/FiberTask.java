@@ -53,6 +53,9 @@ public abstract class FiberTask {
     private static final long MAX_INCARNATION = Long.MAX_VALUE >>> STATE_SHIFT;
     private static final long SCHEDULE_STATE_OFFSET = Unsafe.getFieldOffset(FiberTask.class, "scheduleState");
     private static final long STATE_MASK = 7;
+    private FiberCancellationSignal cancellationSignal;
+    private long cancellationSignalGeneration = CancellationBinding.NO_GENERATION;
+    private long cancellationSignalIncarnation;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long scheduleState = pack(1);
 
@@ -167,6 +170,18 @@ public abstract class FiberTask {
         }
     }
 
+    public final boolean tryCancelIdle(long expectedIncarnation) {
+        while (true) {
+            final long current = scheduleState;
+            if (incarnation(current) != expectedIncarnation || state(current) != STATE_IDLE) {
+                return false;
+            }
+            if (Unsafe.cas(this, SCHEDULE_STATE_OFFSET, current, withState(current, STATE_CANCELLED))) {
+                return true;
+            }
+        }
+    }
+
     public final boolean tryReopen() {
         while (true) {
             final long current = scheduleState;
@@ -221,6 +236,19 @@ public abstract class FiberTask {
         return (int) (scheduleState & STATE_MASK);
     }
 
+    private static void validateCancellationBinding(
+            @Nullable FiberCancellationSignal cancellationSignal,
+            long cancellationSignalGeneration
+    ) {
+        if (cancellationSignal == null) {
+            if (cancellationSignalGeneration != CancellationBinding.NO_GENERATION) {
+                throw new IllegalArgumentException("null cancellation signal cannot have a generation");
+            }
+        } else if (cancellationSignalGeneration < 0) {
+            throw new IllegalArgumentException("fiber cancellation generation must be non-negative");
+        }
+    }
+
     private static long withState(long scheduleState, int state) {
         return (scheduleState & ~STATE_MASK) | state;
     }
@@ -247,6 +275,20 @@ public abstract class FiberTask {
             if (Unsafe.cas(this, SCHEDULE_STATE_OFFSET, current, withState(current, STATE_ARMING))) {
                 return true;
             }
+        }
+    }
+
+    final void captureCancellationBinding() {
+        final long incarnation = getIncarnation();
+        if (cancellationSignalIncarnation != incarnation) {
+            final FiberCancellationSignal cancellationSignal = getCancellationSignal();
+            final long cancellationSignalGeneration = cancellationSignal != null
+                    ? getCancellationSignalGeneration(cancellationSignal)
+                    : CancellationBinding.NO_GENERATION;
+            validateCancellationBinding(cancellationSignal, cancellationSignalGeneration);
+            this.cancellationSignal = cancellationSignal;
+            this.cancellationSignalGeneration = cancellationSignalGeneration;
+            cancellationSignalIncarnation = incarnation;
         }
     }
 
@@ -277,6 +319,14 @@ public abstract class FiberTask {
                 return CLAIM_TERMINAL;
             }
         }
+    }
+
+    final @Nullable FiberCancellationSignal getBoundCancellationSignal() {
+        return cancellationSignal;
+    }
+
+    final long getBoundCancellationSignalGeneration() {
+        return cancellationSignalGeneration;
     }
 
     final void markCancelledFromOwned() {
@@ -313,6 +363,10 @@ public abstract class FiberTask {
 
     final void notifyError(Throwable th) {
         onError(th);
+    }
+
+    protected long getCancellationSignalGeneration(FiberCancellationSignal cancellationSignal) {
+        return cancellationSignal.getGeneration();
     }
 
     protected void onAbandoned() {
@@ -366,6 +420,19 @@ public abstract class FiberTask {
                 return result;
             }
         }
+    }
+
+    final void updateCancellationBinding(
+            @Nullable FiberCancellationSignal cancellationSignal,
+            long cancellationSignalGeneration
+    ) {
+        validateCancellationBinding(cancellationSignal, cancellationSignalGeneration);
+        final long incarnation = getIncarnation();
+        if (cancellationSignalIncarnation != incarnation) {
+            throw new IllegalStateException("fiber task cancellation binding is stale");
+        }
+        this.cancellationSignal = cancellationSignal;
+        this.cancellationSignalGeneration = cancellationSignalGeneration;
     }
 
     protected abstract boolean runStep();

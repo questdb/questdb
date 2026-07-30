@@ -430,6 +430,16 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFunctionWithNonParallelArgumentDisablesAsyncFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s STRING, x DOUBLE)");
+            try (RecordCursorFactory factory = select("SELECT * FROM tab WHERE atan2(x, length((s)::symbol)) > -10")) {
+                assertSerialFilter(factory);
+            }
+        });
+    }
+
+    @Test
     public void testFullQueueNegativeLimit() throws Exception {
         testFullQueue("x where a > 0.42 limit -3");
     }
@@ -618,6 +628,16 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonParallelFilterFunctionDisablesAsyncFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s STRING, x DOUBLE)");
+            try (RecordCursorFactory factory = select("SELECT * FROM tab WHERE length((s)::symbol) > 0")) {
+                assertSerialFilter(factory);
+            }
+        });
+    }
+
+    @Test
     public void testPageFrameSequenceJit() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
@@ -627,6 +647,20 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testPageFrameSequenceNonJit() throws Exception {
         testPageFrameSequence(SqlJitMode.JIT_MODE_DISABLED, AsyncFilteredRecordCursorFactory.class);
+    }
+
+    @Test
+    public void testParallelFilterFunctionKeepsAsyncFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s STRING, x DOUBLE)");
+            try (RecordCursorFactory factory = select("SELECT * FROM tab WHERE atan2(x, x) > -10")) {
+                Assert.assertFalse(containsFactory(factory, FilteredRecordCursorFactory.class));
+                Assert.assertTrue(
+                        containsFactory(factory, AsyncFilteredRecordCursorFactory.class)
+                                || containsFactory(factory, AsyncJitFilteredRecordCursorFactory.class)
+                );
+            }
+        });
     }
 
     @Test
@@ -771,6 +805,22 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     resetTaskCapacities();
                 }, new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration())
         );
+    }
+
+    private static void assertSerialFilter(RecordCursorFactory factory) {
+        Assert.assertTrue(containsFactory(factory, FilteredRecordCursorFactory.class));
+        Assert.assertFalse(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+        Assert.assertFalse(containsFactory(factory, AsyncJitFilteredRecordCursorFactory.class));
+    }
+
+    private static boolean containsFactory(RecordCursorFactory factory, Class<?> factoryClass) {
+        while (factory != null) {
+            if (factoryClass.isInstance(factory)) {
+                return true;
+            }
+            factory = factory.getBaseFactory();
+        }
+        return false;
     }
 
     private static Class<?> getClass(SqlExecutionCircuitBreaker circuitBreaker) {

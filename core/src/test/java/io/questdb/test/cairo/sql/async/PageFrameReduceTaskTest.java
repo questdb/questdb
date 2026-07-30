@@ -25,11 +25,14 @@
 package io.questdb.test.cairo.sql.async;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.network.NetworkError;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
@@ -112,6 +115,103 @@ public class PageFrameReduceTaskTest extends AbstractTest {
         );
         Assert.assertFalse(exception.isCancellation());
         Assert.assertTrue(exception.isInterruption());
+    }
+
+    @Test
+    public void testAsyncQueryErrorStateThrowErrorPreservesCairoExceptionAsFlyweight() {
+        final AsyncQueryErrorState error = new AsyncQueryErrorState();
+        error.setError(CairoException.nonCritical().put("reducer failed"));
+
+        try {
+            error.throwError();
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "reducer failed");
+        }
+    }
+
+    @Test
+    public void testAsyncQueryErrorStateThrowErrorPreservesCairoErrorType() {
+        final AsyncQueryErrorState error = new AsyncQueryErrorState();
+        final CairoError cause = new CairoError("fatal reducer failure");
+        error.setError(cause);
+
+        try {
+            error.throwError();
+            Assert.fail();
+        } catch (CairoError e) {
+            Assert.assertSame(cause, e);
+        }
+    }
+
+    @Test
+    public void testAsyncQueryErrorStateThrowErrorPreservesErrorType() {
+        final AsyncQueryErrorState error = new AsyncQueryErrorState();
+        final OutOfMemoryError oom = new OutOfMemoryError("Java heap space");
+        error.setError(oom);
+
+        try {
+            error.throwError();
+            Assert.fail();
+        } catch (OutOfMemoryError e) {
+            Assert.assertSame(oom, e);
+        }
+    }
+
+    @Test
+    public void testAsyncQueryErrorStateThrowErrorPreservesNetworkErrorSnapshot() {
+        final AsyncQueryErrorState error = new AsyncQueryErrorState();
+        final NetworkError source = NetworkError.instance(42, "network failure");
+        error.setError(source);
+        NetworkError.instance(99, "reused carrier error");
+
+        try {
+            error.throwError();
+            Assert.fail();
+        } catch (NetworkError e) {
+            Assert.assertNotSame(source, e);
+            Assert.assertEquals(42, e.getErrno());
+            TestUtils.assertContains(e.getFlyweightMessage(), "network failure");
+        }
+    }
+
+    @Test
+    public void testAsyncQueryErrorStateThrowErrorPreservesRuntimeExceptionType() {
+        final AsyncQueryErrorState error = new AsyncQueryErrorState();
+        final IllegalStateException cause = new IllegalStateException("broken reducer");
+        error.setError(cause);
+
+        try {
+            error.throwError();
+            Assert.fail();
+        } catch (IllegalStateException e) {
+            Assert.assertSame(cause, e);
+        }
+
+        error.clear();
+        error.setError(CairoException.nonCritical().put("flyweight"));
+        try {
+            error.throwError();
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "flyweight");
+        }
+    }
+
+    @Test
+    public void testAsyncQueryErrorStateThrowErrorPreservesTableReferenceOutOfDateException() {
+        final AsyncQueryErrorState error = new AsyncQueryErrorState();
+        final TableReferenceOutOfDateException cause = TableReferenceOutOfDateException.of("tab");
+        error.setError(cause);
+
+        Assert.assertSame(cause, error.buildException());
+        try {
+            error.throwError();
+            Assert.fail();
+        } catch (TableReferenceOutOfDateException e) {
+            Assert.assertSame(cause, e);
+            TestUtils.assertContains(e.getFlyweightMessage(), "tab");
+        }
     }
 
     @Test

@@ -24,7 +24,9 @@
 
 package io.questdb.test.mp;
 
+import io.questdb.Metrics;
 import io.questdb.mp.Job;
+import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.continuation.Fiber;
@@ -37,6 +39,7 @@ import io.questdb.mp.continuation.FiberWalWaitRegistration;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -91,6 +94,52 @@ public class FiberWorkerPoolTest {
                 releaseTask.countDown();
                 pool.halt(TimeUnit.SECONDS.toNanos(10));
             }
+        });
+    }
+
+    @Test
+    public void testLegacyPoolRotatesJobOrder() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int recordLimit = 32;
+            final StringBuilder order = new StringBuilder(recordLimit);
+            final CountDownLatch filled = new CountDownLatch(1);
+            final class RecordingJob implements Job {
+                private final char id;
+
+                private RecordingJob(char id) {
+                    this.id = id;
+                }
+
+                @Override
+                public boolean run(@NotNull WorkerContext workerContext) {
+                    if (order.length() < recordLimit) {
+                        order.append(id);
+                        if (order.length() == recordLimit) {
+                            filled.countDown();
+                        }
+                    }
+                    return false;
+                }
+            }
+            final WorkerPool pool = new TestWorkerPool(
+                    "legacy-job-rotation-test",
+                    1,
+                    Metrics.DISABLED,
+                    WorkerPoolMode.LEGACY
+            );
+            pool.assign(new RecordingJob('a'));
+            pool.assign(new RecordingJob('b'));
+            pool.start();
+            try {
+                Assert.assertTrue(filled.await(10, TimeUnit.SECONDS));
+            } finally {
+                Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(10)));
+            }
+            // without rotation the sequence is a strict "abab..." alternation; an adjacent repeat
+            // is the rotation's observable signature
+            final String sequence = order.toString();
+            Assert.assertTrue(sequence, sequence.indexOf("aa") >= 0 || sequence.indexOf("bb") >= 0);
+            Assert.assertTrue(sequence, sequence.indexOf('a') >= 0 && sequence.indexOf('b') >= 0);
         });
     }
 

@@ -160,7 +160,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.locks.StampedLock;
 
 import static io.questdb.griffin.CompiledQuery.*;
 
@@ -223,7 +223,11 @@ public class CairoEngine implements Closeable, WriterSource {
     // a single static volatile read with no side effect when no test installed a hook.
     @TestOnly
     private static volatile Runnable roleSwitchMintObserver;
-    private final ReentrantReadWriteLock roleSwitchLock = new ReentrantReadWriteLock();
+    // StampedLock views let a suspended fiber release its read hold after resuming on another
+    // carrier. Read fences may nest, but each lexical acquisition releases one shared hold.
+    private final StampedLock roleSwitchLock = new StampedLock();
+    private final Lock roleSwitchReadLock = roleSwitchLock.asReadLock();
+    private final Lock roleSwitchWriteLock = roleSwitchLock.asWriteLock();
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
@@ -1146,7 +1150,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public Lock getRoleSwitchReadLock() {
-        return roleSwitchLock.readLock();
+        return roleSwitchReadLock;
     }
 
     public int getRoleSwitchReadLockCount() {
@@ -1154,7 +1158,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public Lock getRoleSwitchWriteLock() {
-        return roleSwitchLock.writeLock();
+        return roleSwitchWriteLock;
     }
 
     public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {

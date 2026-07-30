@@ -278,7 +278,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     return workerCount;
                 }
             });
-            WorkerPoolUtils.setupQueryJobs(queryPool, engine);
+            WorkerPoolUtils.setupQueryJobs(queryPool, engine, true);
             final WorkerPool writerPool = TestWorkerPool.createWithRandomMode(new WorkerPoolConfiguration() {
                 @Override
                 public String getPoolName() {

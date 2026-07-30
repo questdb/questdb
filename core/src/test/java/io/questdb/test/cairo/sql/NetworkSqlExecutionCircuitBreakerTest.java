@@ -312,6 +312,37 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWrapperPreservesCancellationGeneration() throws Exception {
+        assertMemoryLeak(() -> {
+            final SqlExecutionCircuitBreakerConfiguration config =
+                    new DefaultSqlExecutionCircuitBreakerConfiguration();
+            try (
+                    NetworkSqlExecutionCircuitBreaker ownerBreaker =
+                            new NetworkSqlExecutionCircuitBreaker(engine, config);
+                    SqlExecutionCircuitBreakerWrapper wrapper =
+                            new SqlExecutionCircuitBreakerWrapper(engine, config)
+            ) {
+                final FiberCancellationSignal signal = new FiberCancellationSignal();
+                final long staleGeneration = signal.getGeneration();
+                ownerBreaker.setCancelledFlag(signal, staleGeneration);
+                final long currentGeneration = signal.reopen();
+
+                wrapper.init(ownerBreaker);
+                try {
+                    wrapper.statefulThrowExceptionIfTrippedNoThrottle();
+                    Assert.fail("expected stale cancellation binding to fail closed");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isInterruption());
+                    Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, e.getInterruptionReason());
+                }
+
+                wrapper.cancel();
+                Assert.assertFalse(signal.isCancelled(currentGeneration));
+            }
+        });
+    }
+
     private static void assertConditionalClearLinearizesWithCancel(SqlExecutionCircuitBreaker breaker) throws Exception {
         FiberCancellationSignal signal = new FiberCancellationSignal();
         breaker.setCancelledFlag(signal);

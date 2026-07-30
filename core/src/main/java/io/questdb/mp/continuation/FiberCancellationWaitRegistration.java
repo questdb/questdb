@@ -37,6 +37,7 @@ public final class FiberCancellationWaitRegistration extends FiberWaitRegistrati
     FiberCancellationWaitRegistration prevSignal;
     private FiberCancellationSignal cancellationSignal;
     private final FiberWaitCoordinator coordinator;
+    private long expectedGeneration;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile int state = STATE_FREE;
     private long token;
@@ -80,8 +81,13 @@ public final class FiberCancellationWaitRegistration extends FiberWaitRegistrati
         return result;
     }
 
+    long getExpectedGeneration() {
+        return expectedGeneration;
+    }
+
     private void clear() {
         cancellationSignal = null;
+        expectedGeneration = CancellationBinding.NO_GENERATION;
         nextFire = null;
         nextSignal = null;
         prevSignal = null;
@@ -140,8 +146,9 @@ public final class FiberCancellationWaitRegistration extends FiberWaitRegistrati
         return Unsafe.cas(this, STATE_OFFSET, STATE_QUEUED, STATE_NEW);
     }
 
-    void of(long token, FiberCancellationSignal cancellationSignal) {
+    void of(long token, FiberCancellationSignal cancellationSignal, long expectedGeneration) {
         this.cancellationSignal = cancellationSignal;
+        this.expectedGeneration = expectedGeneration;
         nextActive = null;
         nextFire = null;
         nextFree = null;

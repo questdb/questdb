@@ -51,6 +51,8 @@ import org.junit.Test;
 
 import java.lang.reflect.Proxy;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Lock;
 
 /**
  * Verifies that the HTTP /exec write executors -- InsertOperationImpl (plain INSERT) and
@@ -338,6 +340,32 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals("writer.commit() must not be called on a read-only node", 0, commitCalled.get());
                 Assert.assertTrue("buffered rows must be rolled back", rollbackCalled.get() >= 1);
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchReadLockCanBeReleasedAfterCarrierMigration() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicReference<Throwable> error = new AtomicReference<>();
+                final Lock lock = primaryEngine.getRoleSwitchReadLock();
+                lock.lock();
+                final Thread resumedCarrier = new Thread(() -> {
+                    try {
+                        lock.lock();
+                        lock.unlock();
+                        lock.unlock();
+                    } catch (Throwable th) {
+                        error.set(th);
+                    }
+                });
+                resumedCarrier.start();
+                resumedCarrier.join();
+                if (error.get() != null) {
+                    throw new AssertionError("role-switch read lock is bound to its acquiring carrier", error.get());
+                }
+                Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
             }
         });
     }

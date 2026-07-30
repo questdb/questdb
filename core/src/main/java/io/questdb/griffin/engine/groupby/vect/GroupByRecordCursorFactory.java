@@ -688,7 +688,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             if (aggregateError.hasError()) {
-                throw aggregateError.buildException();
+                aggregateError.throwError();
             }
 
             // merge maps only when cursor was fetched successfully

@@ -25,6 +25,7 @@
 package io.questdb.test.mp;
 
 import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeQuiesceListener;
 import io.questdb.mp.continuation.FiberRuntimeState;
@@ -252,6 +253,59 @@ public class FiberRuntimeTest {
             Assert.assertEquals(0, runtime.getOutstandingTaskCount());
 
             close(runtime);
+        });
+    }
+
+    @Test
+    public void testCancellationGenerationRemainsBoundAcrossResume() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
+            final long taskGeneration = cancellationSignal.getGeneration();
+            final CancellationGenerationTask task = new CancellationGenerationTask(
+                    cancellationSignal,
+                    taskGeneration
+            );
+            final FiberRuntime runtime = new FiberRuntime(1);
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertFalse(task.isDone());
+
+                final long nextGeneration = cancellationSignal.reopen();
+                Assert.assertNotEquals(taskGeneration, nextGeneration);
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertTrue(task.isDone());
+                Assert.assertEquals(taskGeneration, task.resumedGeneration);
+                Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, task.secondWaitReason);
+            } finally {
+                cancellationSignal.cancel();
+                close(runtime);
+            }
+        });
+    }
+
+    @Test
+    public void testCancellationGenerationRemainsBoundAcrossTaskPark() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
+            final long taskGeneration = cancellationSignal.getGeneration();
+            final CancellationGenerationParkTask task = new CancellationGenerationParkTask(cancellationSignal);
+            final FiberRuntime runtime = new FiberRuntime(1);
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertFalse(task.isDone());
+
+                Assert.assertNotEquals(taskGeneration, cancellationSignal.reopen());
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertTrue(task.isDone());
+                Assert.assertEquals(taskGeneration, task.resumedGeneration);
+            } finally {
+                close(runtime);
+            }
         });
     }
 
@@ -891,6 +945,81 @@ public class FiberRuntimeTest {
         @Override
         protected void onDone() {
             callbackOrder = callbackOrder * 10 + 2;
+        }
+    }
+
+    private static class CancellationGenerationParkTask extends FiberTask {
+        private final FiberCancellationSignal cancellationSignal;
+        private long resumedGeneration;
+        private int runCount;
+
+        private CancellationGenerationParkTask(FiberCancellationSignal cancellationSignal) {
+            this.cancellationSignal = cancellationSignal;
+        }
+
+        @Override
+        public FiberCancellationSignal getCancellationSignal() {
+            return cancellationSignal;
+        }
+
+        @Override
+        protected boolean runStep() {
+            if (++runCount == 1) {
+                return false;
+            }
+            resumedGeneration = SuspensionScope.getCancellationSignalGeneration();
+            return true;
+        }
+    }
+
+    private static class CancellationGenerationTask extends FiberTask {
+        private final FiberCancellationSignal cancellationSignal;
+        private final long generation;
+        private long resumedGeneration;
+        private int secondWaitReason;
+
+        private CancellationGenerationTask(FiberCancellationSignal cancellationSignal, long generation) {
+            this.cancellationSignal = cancellationSignal;
+            this.generation = generation;
+        }
+
+        @Override
+        public FiberCancellationSignal getCancellationSignal() {
+            return cancellationSignal;
+        }
+
+        @Override
+        protected long getCancellationSignalGeneration(FiberCancellationSignal cancellationSignal) {
+            return generation;
+        }
+
+        @Override
+        protected boolean runStep() {
+            Assert.assertEquals(generation, SuspensionScope.getCancellationSignalGeneration());
+            Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, awaitCancellation());
+            resumedGeneration = SuspensionScope.getCancellationSignalGeneration();
+            secondWaitReason = awaitCancellation();
+            return true;
+        }
+
+        private int awaitCancellation() {
+            final Fiber fiber = Objects.requireNonNull(Fiber.current());
+            final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
+            final long token = fiber.beginWaitBuild(1);
+            try {
+                if (!coordinator.armCancellation(
+                        token,
+                        cancellationSignal,
+                        SuspensionScope.getCancellationSignalGeneration()
+                )) {
+                    throw new IllegalStateException("cancellation wait registration failed");
+                }
+                return fiber.suspendWait(token);
+            } catch (RuntimeException | Error th) {
+                coordinator.abort(token);
+                coordinator.consume(token);
+                throw th;
+            }
         }
     }
 

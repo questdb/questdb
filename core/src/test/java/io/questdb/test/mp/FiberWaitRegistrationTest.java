@@ -26,6 +26,7 @@ package io.questdb.test.mp;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.continuation.DelayedFireable;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.FiberCancellationWaitRegistration;
 import io.questdb.mp.continuation.FiberEventWaitQueue;
@@ -42,12 +43,14 @@ import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
 import java.lang.management.ManagementFactory;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Delayed;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -208,6 +211,95 @@ public class FiberWaitRegistrationTest {
         Assert.assertEquals(0, target.fireCount);
         Assert.assertTrue(coordinator.abort(token));
         Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(token));
+    }
+
+    @Test
+    public void testCancellationStaleGenerationFailsClosed() {
+        final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
+        final long staleGeneration = cancellationSignal.getGeneration();
+        final long currentGeneration = cancellationSignal.reopen();
+
+        final TestTarget staleTarget = new TestTarget();
+        final FiberWaitCoordinator staleCoordinator = new FiberWaitCoordinator(staleTarget);
+        final long staleToken = staleCoordinator.beginBuild(1);
+        final FiberCancellationWaitRegistration staleRegistration = staleCoordinator.acquireCancellation(
+                staleToken,
+                cancellationSignal,
+                staleGeneration
+        );
+        Assert.assertSame(SourceRegistrationResult.ACCEPTED, staleRegistration.register());
+        Assert.assertTrue(staleCoordinator.tryAcceptSource(staleToken));
+        Assert.assertTrue(staleCoordinator.seal(staleToken));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, staleCoordinator.consume(staleToken));
+        Assert.assertEquals(1, staleTarget.fireCount);
+
+        final TestTarget currentTarget = new TestTarget();
+        final FiberWaitCoordinator currentCoordinator = new FiberWaitCoordinator(currentTarget);
+        final long currentToken = currentCoordinator.beginBuild(1);
+        final FiberCancellationWaitRegistration currentRegistration = currentCoordinator.acquireCancellation(
+                currentToken,
+                cancellationSignal,
+                currentGeneration
+        );
+        Assert.assertSame(SourceRegistrationResult.ACCEPTED, currentRegistration.register());
+        Assert.assertTrue(currentCoordinator.tryAcceptSource(currentToken));
+        Assert.assertTrue(currentCoordinator.seal(currentToken));
+
+        Assert.assertFalse(cancellationSignal.cancel(staleGeneration));
+        Assert.assertEquals(0, currentTarget.fireCount);
+        Assert.assertTrue(cancellationSignal.cancel(currentGeneration));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, currentCoordinator.consume(currentToken));
+        Assert.assertEquals(1, currentTarget.fireCount);
+    }
+
+    @Test
+    public void testCancellationStaleRegistrationCannotAttachAfterReopen() throws Exception {
+        final CountDownLatch registrationStarted = new CountDownLatch(1);
+        final CountDownLatch resumeRegistration = new CountDownLatch(1);
+        final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal(() -> {
+            registrationStarted.countDown();
+            try {
+                if (!resumeRegistration.await(10, TimeUnit.SECONDS)) {
+                    throw new AssertionError("timed out waiting to resume cancellation registration");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
+        });
+        final long staleGeneration = cancellationSignal.getGeneration();
+        final TestTarget target = new TestTarget();
+        final FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
+        final long token = coordinator.beginBuild(1);
+        final FiberCancellationWaitRegistration registration = coordinator.acquireCancellation(
+                token,
+                cancellationSignal,
+                staleGeneration
+        );
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final Thread registrationThread = new Thread(() -> {
+            try {
+                Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register());
+            } catch (Throwable th) {
+                failure.set(th);
+            }
+        }, "stale-cancellation-registration");
+
+        registrationThread.start();
+        try {
+            Assert.assertTrue(registrationStarted.await(10, TimeUnit.SECONDS));
+            cancellationSignal.reopen();
+        } finally {
+            resumeRegistration.countDown();
+            registrationThread.join(10_000);
+        }
+
+        Assert.assertFalse(registrationThread.isAlive());
+        Assert.assertNull(failure.get());
+        Assert.assertTrue(coordinator.tryAcceptSource(token));
+        Assert.assertTrue(coordinator.seal(token));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, coordinator.consume(token));
+        Assert.assertEquals(1, target.fireCount);
     }
 
     @Test
@@ -545,8 +637,7 @@ public class FiberWaitRegistrationTest {
     public void testTimerRegistrationCleanupFailureDiscardsHolder() {
         final TimerShards timerShards = new TimerShards(1, "test-timer", LOG);
         timerShards.start();
-        final FiberWaitCoordinator blockerCoordinator = registerTimerBlockers(timerShards);
-        final long blockerToken = blockerCoordinator.currentToken();
+        registerTimerBlockers(timerShards);
         try {
             final TestTarget target = new TestTarget();
             final FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
@@ -554,7 +645,7 @@ public class FiberWaitRegistrationTest {
             final FiberTimerWaitRegistration registration = coordinator.acquireTimer(
                     token,
                     timerShards,
-                    new FailOnSecondHeapComparisonClock(),
+                    new FailOnHeapComparisonClock(),
                     60_000
             );
             final TestCleanupException cleanupError = new TestCleanupException();
@@ -594,8 +685,6 @@ public class FiberWaitRegistrationTest {
             Assert.assertTrue(coordinator.abort(nextToken));
             Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(nextToken));
         } finally {
-            blockerCoordinator.shutdown();
-            blockerCoordinator.consume(blockerToken);
             timerShards.shutdown();
         }
     }
@@ -604,8 +693,7 @@ public class FiberWaitRegistrationTest {
     public void testTimerRegistrationFailureReleasesHolder() {
         final TimerShards timerShards = new TimerShards(1, "test-timer", LOG);
         timerShards.start();
-        final FiberWaitCoordinator blockerCoordinator = registerTimerBlockers(timerShards);
-        final long blockerToken = blockerCoordinator.currentToken();
+        registerTimerBlockers(timerShards);
         try {
             final TestTarget target = new TestTarget();
             final FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
@@ -613,7 +701,7 @@ public class FiberWaitRegistrationTest {
             final FiberTimerWaitRegistration registration = coordinator.acquireTimer(
                     token,
                     timerShards,
-                    new FailOnSecondHeapComparisonClock(),
+                    new FailOnHeapComparisonClock(),
                     60_000
             );
 
@@ -643,8 +731,6 @@ public class FiberWaitRegistrationTest {
             Assert.assertTrue(coordinator.abort(nextToken));
             Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(nextToken));
         } finally {
-            blockerCoordinator.shutdown();
-            blockerCoordinator.consume(blockerToken);
             timerShards.shutdown();
         }
     }
@@ -816,21 +902,16 @@ public class FiberWaitRegistrationTest {
         Assert.assertEquals(FiberWaitCoordinator.REASON_WAL, coordinator.consume(token));
     }
 
-    private static FiberWaitCoordinator registerTimerBlockers(TimerShards timerShards) {
-        final FiberWaitCoordinator coordinator = new FiberWaitCoordinator(new TestTarget());
-        final long token = coordinator.beginBuild(3);
+    private static void registerTimerBlockers(TimerShards timerShards) {
+        // Plain entries rather than FiberTimerWaitRegistrations: sift comparisons against a foreign
+        // Delayed type take the getDelay() fallback, which is what lets FailOnHeapComparisonClock
+        // inject a registration failure inside DelayHeap.offer().
         for (int i = 0; i < 3; i++) {
-            final FiberTimerWaitRegistration registration = coordinator.acquireTimer(
-                    token,
-                    timerShards,
-                    MillisecondClockImpl.INSTANCE,
-                    120_000
+            Assert.assertSame(
+                    SourceRegistrationResult.ACCEPTED,
+                    timerShards.register(new BlockerEntry(MillisecondClockImpl.INSTANCE.getTicks() + 120_000))
             );
-            Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register());
-            Assert.assertTrue(coordinator.tryAcceptSource(token));
         }
-        Assert.assertTrue(coordinator.seal(token));
-        return coordinator;
     }
 
     private static void runRegistrationCycle(
@@ -865,13 +946,51 @@ public class FiberWaitRegistrationTest {
         }
     }
 
-    private static final class FailOnSecondHeapComparisonClock implements MillisecondClock {
+    private static final class BlockerEntry implements DelayedFireable {
+        private final long deadlineMillis;
+        private int heapIndex;
+
+        private BlockerEntry(long deadlineMillis) {
+            this.deadlineMillis = deadlineMillis;
+        }
+
+        @Override
+        public int compareTo(@NotNull Delayed other) {
+            return Long.compare(getDelay(TimeUnit.NANOSECONDS), other.getDelay(TimeUnit.NANOSECONDS));
+        }
+
+        @Override
+        public void expire() {
+        }
+
+        @Override
+        public long getDelay(@NotNull TimeUnit unit) {
+            return unit.convert(deadlineMillis - MillisecondClockImpl.INSTANCE.getTicks(), TimeUnit.MILLISECONDS);
+        }
+
+        @Override
+        public int getHeapIndex() {
+            return heapIndex;
+        }
+
+        @Override
+        public void setHeapIndex(int heapIndex) {
+            this.heapIndex = heapIndex;
+        }
+
+        @Override
+        public void shutdown() {
+        }
+    }
+
+    private static final class FailOnHeapComparisonClock implements MillisecondClock {
         private int invocationCount;
 
         @Override
         public long getTicks() {
-            // acquireTimer() and the first heap level consume the two successful reads.
-            if (invocationCount++ < 2) {
+            // acquireTimer() consumes the only successful read; the first sift comparison against
+            // a BlockerEntry takes the getDelay() fallback and throws.
+            if (invocationCount++ < 1) {
                 return MillisecondClockImpl.INSTANCE.getTicks();
             }
             throw new TestRegistrationException();

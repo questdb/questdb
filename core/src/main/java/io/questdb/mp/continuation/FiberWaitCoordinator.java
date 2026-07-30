@@ -103,6 +103,17 @@ public final class FiberWaitCoordinator {
         if (cancellationSignal == null) {
             throw new IllegalArgumentException("cancellation signal must not be null");
         }
+        return acquireCancellation(token, cancellationSignal, cancellationSignal.getGeneration());
+    }
+
+    public synchronized FiberCancellationWaitRegistration acquireCancellation(
+            long token,
+            FiberCancellationSignal cancellationSignal,
+            long expectedGeneration
+    ) {
+        if (cancellationSignal == null) {
+            throw new IllegalArgumentException("cancellation signal must not be null");
+        }
         checkBuilding(token);
         FiberCancellationWaitRegistration registration = freeCancellationRegistrations;
         if (registration == null) {
@@ -110,7 +121,7 @@ public final class FiberWaitCoordinator {
         } else {
             freeCancellationRegistrations = registration.nextFree;
         }
-        registration.of(token, cancellationSignal);
+        registration.of(token, cancellationSignal, expectedGeneration);
         target.onWaitRegistrationAcquired();
         inFlightRegistrationCount++;
         activeCancellationRegistrations = linkActive(activeCancellationRegistrations, registration);
@@ -195,7 +206,19 @@ public final class FiberWaitCoordinator {
     }
 
     public boolean armCancellation(long token, FiberCancellationSignal cancellationSignal) {
-        final FiberCancellationWaitRegistration registration = acquireCancellation(token, cancellationSignal);
+        return armCancellation(token, cancellationSignal, cancellationSignal.getGeneration());
+    }
+
+    public boolean armCancellation(
+            long token,
+            FiberCancellationSignal cancellationSignal,
+            long expectedGeneration
+    ) {
+        final FiberCancellationWaitRegistration registration = acquireCancellation(
+                token,
+                cancellationSignal,
+                expectedGeneration
+        );
         return registration.register() == SourceRegistrationResult.ACCEPTED && tryAcceptSource(token);
     }
 

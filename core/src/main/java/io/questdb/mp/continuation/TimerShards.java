@@ -28,6 +28,7 @@ import io.questdb.log.Log;
 import io.questdb.mp.CarrierIdentity;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.TimeUnit;
 
@@ -62,13 +63,13 @@ import java.util.concurrent.TimeUnit;
  * A stopped instance cannot restart.
  */
 public final class TimerShards {
-    private boolean isShutdownComplete;
-    private boolean isShutdownRequested;
     private final Log log;
-    private volatile boolean running;
     private final ObjList<DelayHeap<DelayedFireable>> shards;
     private final String threadNamePrefix;
     private final ObjList<Thread> threads;
+    private boolean isShutdownComplete;
+    private boolean isShutdownRequested;
+    private volatile boolean running;
 
     public TimerShards(int shardCount, @NotNull String threadNamePrefix, @NotNull Log log) {
         if (shardCount < 1) {
@@ -82,6 +83,11 @@ public final class TimerShards {
         }
         this.threadNamePrefix = threadNamePrefix;
         this.log = log;
+    }
+
+    @TestOnly
+    public int getShardCount() {
+        return shards.size();
     }
 
     /**

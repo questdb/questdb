@@ -58,6 +58,7 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
@@ -100,7 +101,6 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Lock;
 import java.util.function.Consumer;
 
@@ -174,6 +174,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final ObjList<String> pgResultSetColumnNames;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
+    private final CancellationBinding queryCancellation = new CancellationBinding();
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
     boolean isCopy;
@@ -204,7 +205,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // not to be confused with prepared statements that come on the
     // PostgresSQL wire.
     private Utf8Sequence preparedStatementNameToDeallocate;
-    private AtomicBoolean queryCancelledFlag;
     private MemoryTracker queryMemoryTracker;
     private boolean selectIsCacheable = true;
     private long sqlAffectedRowCount = 0;
@@ -275,7 +275,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (tas != null) {
             // close cursor in case it is open
             cursor = Misc.free(cursor);
-            queryCancelledFlag = null;
+            queryCancellation.clear();
             queryMemoryTracker = null;
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
@@ -357,7 +357,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         namedPortal = null;
         namedStatement = null;
         preparedStatementNameToDeallocate = null;
-        queryCancelledFlag = null;
+        queryCancellation.clear();
         queryMemoryTracker = null;
         sqlAffectedRowCount = 0;
         sqlReturnRowCount = 0;
@@ -385,7 +385,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void closeSuspendedCursor() {
         cursor = Misc.free(cursor);
-        queryCancelledFlag = null;
+        queryCancellation.clear();
         queryMemoryTracker = null;
         stateSuspended = false;
     }
@@ -942,7 +942,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             switch (stateSync) {
                 case SYNC_DATA_EXHAUSTED:
                     cursor = Misc.free(cursor);
-                    queryCancelledFlag = null;
+                    queryCancellation.clear();
                     queryMemoryTracker = null;
                     stateSuspended = false;
                     outCommandComplete(utf8Sink, sqlReturnRowCount);
@@ -1686,7 +1686,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     if (factory != null) {
                         try {
                             cursor = factory.getCursor(sqlExecutionContext);
-                            queryCancelledFlag = sqlExecutionContext.getCircuitBreaker().getCancelledFlag();
+                            sqlExecutionContext.getCircuitBreaker().copyCancelledFlagTo(queryCancellation);
                             queryMemoryTracker = sqlExecutionContext.getMemoryTracker();
                             // when factory is not null, and we can obtain cursor without issues
                             // we would exit early
@@ -2631,7 +2631,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink, int columnCount) {
-        sqlExecutionContext.setCancelledFlag(queryCancelledFlag);
+        sqlExecutionContext.setCancelledFlag(queryCancellation);
         sqlExecutionContext.setMemoryTracker(queryMemoryTracker);
         if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
             sqlExecutionContext.getCircuitBreaker().resetTimer();

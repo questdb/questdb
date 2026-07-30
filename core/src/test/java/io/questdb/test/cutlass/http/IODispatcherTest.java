@@ -5524,6 +5524,62 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testProcessIOQueuePropagatesContextInitFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            final SOCountDownLatch closeLatch = new SOCountDownLatch(1);
+            final AssertionError failure = new AssertionError("context init failure");
+            final IODispatcherConfiguration dispatcherConfiguration = new DefaultIODispatcherConfiguration() {
+                @Override
+                public int getBindPort() {
+                    return 0;
+                }
+            };
+
+            try (IODispatcher<HelloContext> dispatcher = IODispatchers.create(
+                    dispatcherConfiguration,
+                    fd -> new HelloContext(fd, closeLatch) {
+                        @Override
+                        protected void doInit() {
+                            throw failure;
+                        }
+                    }
+            )) {
+                long clientFd = Net.socketTcp(true);
+                final long buffer = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+                final long sockAddr = Net.sockaddr("127.0.0.1", dispatcher.getPort());
+                try {
+                    TestUtils.assertConnect(clientFd, sockAddr);
+                    Unsafe.putByte(buffer, (byte) '.');
+                    Assert.assertEquals(1, Net.send(clientFd, buffer, 1));
+                    assertEventually(() -> {
+                        dispatcher.run();
+                        Assert.assertTrue(dispatcher.hasPendingIOEvents());
+                    });
+
+                    Throwable propagated = null;
+                    try {
+                        dispatcher.processIOQueue((_, _, _) -> true);
+                    } catch (Throwable th) {
+                        propagated = th;
+                    }
+                    Assert.assertSame(failure, propagated);
+
+                    assertEventually(() -> {
+                        dispatcher.run();
+                        Assert.assertEquals(0, dispatcher.getConnectionCount());
+                        Assert.assertEquals(0, closeLatch.getCount());
+                    });
+                } finally {
+                    Net.freeSockAddr(sockAddr);
+                    Unsafe.free(buffer, 1, MemoryTag.NATIVE_DEFAULT);
+                    Net.close(clientFd);
+                }
+            }
+            Assert.assertEquals(0, closeLatch.getCount());
+        });
+    }
+
+    @Test
     public void testQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
         getSimpleTester().run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {

@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -67,6 +68,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     default void clearCancelledFlag(AtomicBoolean expected) {
         getCircuitBreaker().clearCancelledFlag(expected);
         getSimpleCircuitBreaker().clearCancelledFlag(expected);
+    }
+
+    default void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        getCircuitBreaker().clearCancelledFlag(expected, expectedGeneration);
+        getSimpleCircuitBreaker().clearCancelledFlag(expected, expectedGeneration);
     }
 
     void clearWindowContext();
@@ -299,6 +305,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setCacheHit(boolean value);
 
     void setCancelledFlag(AtomicBoolean cancelled);
+
+    default void setCancelledFlag(CancellationBinding source) {
+        getCircuitBreaker().setCancelledFlag(source);
+        getSimpleCircuitBreaker().setCancelledFlag(source);
+    }
+
+    default void setCancelledFlag(AtomicBoolean cancelled, long generation) {
+        getCircuitBreaker().setCancelledFlag(cancelled, generation);
+        getSimpleCircuitBreaker().setCancelledFlag(cancelled, generation);
+    }
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
 

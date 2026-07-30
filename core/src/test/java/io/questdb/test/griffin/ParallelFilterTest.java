@@ -1438,7 +1438,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
         @Override
         public int getState() {
-            if (cancelledFlag == null) {
+            if (getCancelledFlag() == null) {
                 npeCounter.incrementAndGet();
             }
             return super.getState();

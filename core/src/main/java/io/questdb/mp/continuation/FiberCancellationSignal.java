@@ -30,10 +30,14 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class FiberCancellationSignal extends AtomicBoolean {
+    private static final long CANCELLED_MASK = 1;
+    private static final long INITIAL_GENERATION = 1;
+    private static final long MAX_GENERATION = Long.MAX_VALUE >>> 1;
     private static final long serialVersionUID = 1L;
     private final transient @Nullable Runnable beforeRegisterForTesting;
     private int firingRegistrationCount;
     private FiberCancellationWaitRegistration registrations;
+    private volatile long state = pack(INITIAL_GENERATION, false);
 
     public FiberCancellationSignal() {
         this(null);
@@ -45,26 +49,88 @@ public final class FiberCancellationSignal extends AtomicBoolean {
     }
 
     public void cancel() {
+        cancel(getGeneration());
+    }
+
+    public boolean cancel(long expectedGeneration) {
+        final FiberCancellationWaitRegistration fireHead;
+        synchronized (this) {
+            final long state = this.state;
+            if (generation(state) != expectedGeneration) {
+                return false;
+            }
+            this.state = state | CANCELLED_MASK;
+            set(true);
+            fireHead = detachRegistrations();
+        }
+        fireRegistrations(fireHead);
+        return true;
+    }
+
+    public long getGeneration() {
+        return generation(state);
+    }
+
+    public boolean isCancelled(long expectedGeneration) {
+        final long state = this.state;
+        return generation(state) != expectedGeneration || (state & CANCELLED_MASK) != 0;
+    }
+
+    public long reopen() {
+        final FiberCancellationWaitRegistration fireHead;
+        final long nextGeneration;
+        synchronized (this) {
+            final long generation = generation(state);
+            if (generation == MAX_GENERATION) {
+                throw new IllegalStateException("fiber cancellation generation exhausted");
+            }
+            nextGeneration = generation + 1;
+            fireHead = detachRegistrations();
+            state = pack(nextGeneration, false);
+            set(false);
+        }
+        fireRegistrations(fireHead);
+        return nextGeneration;
+    }
+
+    public synchronized void reset() {
+        reset(getGeneration());
+    }
+
+    public synchronized boolean reset(long expectedGeneration) {
+        if (generation(state) != expectedGeneration) {
+            return false;
+        }
+        if (registrations != null || firingRegistrationCount != 0) {
+            throw new IllegalStateException("cannot reset cancellation signal with an active wait");
+        }
+        state = pack(expectedGeneration, false);
+        set(false);
+        return true;
+    }
+
+    private FiberCancellationWaitRegistration detachRegistrations() {
         FiberCancellationWaitRegistration fireHead = null;
         FiberCancellationWaitRegistration fireTail = null;
-        synchronized (this) {
-            set(true);
-            FiberCancellationWaitRegistration registration = registrations;
-            while (registration != null) {
-                final FiberCancellationWaitRegistration next = registration.nextSignal;
-                if (registration.markFiring()) {
-                    unlink(registration);
-                    firingRegistrationCount++;
-                    if (fireHead == null) {
-                        fireHead = registration;
-                    } else {
-                        fireTail.nextFire = registration;
-                    }
-                    fireTail = registration;
+        FiberCancellationWaitRegistration registration = registrations;
+        while (registration != null) {
+            final FiberCancellationWaitRegistration next = registration.nextSignal;
+            if (registration.markFiring()) {
+                unlink(registration);
+                firingRegistrationCount++;
+                if (fireHead == null) {
+                    fireHead = registration;
+                } else {
+                    fireTail.nextFire = registration;
                 }
-                registration = next;
+                fireTail = registration;
             }
+            registration = next;
         }
+        return fireHead;
+    }
+
+    private void fireRegistrations(FiberCancellationWaitRegistration fireHead) {
         Throwable failure = null;
         while (fireHead != null) {
             final FiberCancellationWaitRegistration next = fireHead.nextFire;
@@ -90,11 +156,12 @@ public final class FiberCancellationSignal extends AtomicBoolean {
         }
     }
 
-    public synchronized void reset() {
-        if (registrations != null || firingRegistrationCount != 0) {
-            throw new IllegalStateException("cannot reset cancellation signal with an active wait");
-        }
-        set(false);
+    private static long generation(long state) {
+        return state >>> 1;
+    }
+
+    private static long pack(long generation, boolean isCancelled) {
+        return (generation << 1) | (isCancelled ? CANCELLED_MASK : 0);
     }
 
     SourceRegistrationResult register(FiberCancellationWaitRegistration registration) {
@@ -104,7 +171,9 @@ public final class FiberCancellationSignal extends AtomicBoolean {
         }
         final boolean isCancelled;
         synchronized (this) {
-            isCancelled = get();
+            final long state = this.state;
+            isCancelled = generation(state) != registration.getExpectedGeneration()
+                    || (state & CANCELLED_MASK) != 0;
             if (!isCancelled) {
                 registration.nextSignal = registrations;
                 registration.prevSignal = null;

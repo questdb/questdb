@@ -101,6 +101,8 @@ public class LogFactory implements Closeable {
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
     private final StringSink sink = new StringSink();
     private boolean configured = false;
+    @TestOnly
+    private volatile boolean isHaltRefusedForTesting;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
 
@@ -135,8 +137,7 @@ public class LogFactory implements Closeable {
 
     public static synchronized void closeInstance() {
         LogFactory logFactory = INSTANCE;
-        if (logFactory != null) {
-            logFactory.close(true);
+        if (logFactory != null && logFactory.closeInternal(true)) {
             INSTANCE = null;
         }
     }
@@ -247,30 +248,7 @@ public class LogFactory implements Closeable {
     }
 
     public void close(boolean flush) {
-        if (closed.compareAndSet(false, true)) {
-            haltThread();
-            for (int i = 0, n = jobs.size(); i < n; i++) {
-                LogWriter job = jobs.get(i);
-                try {
-                    if (job != null && flush) {
-                        try {
-                            // noinspection StatementWithEmptyBody
-                            while (job.run(Job.TERMINATING_STATUS)) {
-                                // Keep running the job until it returns false to log all the buffered messages
-                            }
-                        } catch (Exception th) {
-                            // Exception means we cannot log anymore. Perhaps network is down or disk is full.
-                            // Switch to the next job.
-                        }
-                    }
-                } finally {
-                    Misc.freeIfCloseable(job);
-                }
-            }
-            for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
-                Misc.free(scopeConfigs.getQuick(i));
-            }
-        }
+        closeInternal(flush);
     }
 
     public Log create(Class<?> clazz) {
@@ -405,6 +383,16 @@ public class LogFactory implements Closeable {
         deferredLoggers.clear();
 
         startThread();
+    }
+
+    @TestOnly
+    public boolean isClosed() {
+        return closed.get();
+    }
+
+    @TestOnly
+    public void setHaltRefusedForTesting(boolean isHaltRefusedForTesting) {
+        this.isHaltRefusedForTesting = isHaltRefusedForTesting;
     }
 
     public void startThread() {
@@ -572,6 +560,43 @@ public class LogFactory implements Closeable {
         }
     }
 
+    private synchronized boolean closeInternal(boolean flush) {
+        if (!closed.compareAndSet(false, true)) {
+            return true;
+        }
+        try {
+            if (!haltThread()) {
+                closed.set(false);
+                return false;
+            }
+        } catch (Throwable th) {
+            closed.set(false);
+            throw th;
+        }
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            LogWriter job = jobs.get(i);
+            try {
+                if (job != null && flush) {
+                    try {
+                        // noinspection StatementWithEmptyBody
+                        while (job.run(Job.TERMINATING_STATUS)) {
+                            // Keep running the job until it returns false to log all the buffered messages
+                        }
+                    } catch (Exception th) {
+                        // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+                        // Switch to the next job.
+                    }
+                }
+            } finally {
+                Misc.freeIfCloseable(job);
+            }
+        }
+        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+            Misc.free(scopeConfigs.getQuick(i));
+        }
+        return true;
+    }
+
     private void configure(InputStream fis, String rootDir) throws IOException {
         Properties properties = new Properties();
         properties.load(fis);
@@ -710,10 +735,17 @@ public class LogFactory implements Closeable {
         return scopeConfigMap.get(k);
     }
 
-    private void haltThread() {
-        if (running.compareAndSet(true, false)) {
-            loggingWorkerPool.halt();
+    private boolean haltThread() {
+        if (isHaltRefusedForTesting) {
+            return false;
         }
+        if (running.compareAndSet(true, false)) {
+            if (!loggingWorkerPool.halt(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
+                running.set(true);
+                return false;
+            }
+        }
+        return true;
     }
 
     @TestOnly

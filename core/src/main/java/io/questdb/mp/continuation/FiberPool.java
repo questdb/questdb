@@ -25,6 +25,7 @@
 package io.questdb.mp.continuation;
 
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -244,24 +245,31 @@ public final class FiberPool {
     }
 
     private synchronized Fiber tryAcquireSlow() {
-        if (isClosed) {
-            throw new IllegalStateException("fiber pool is closed");
+        while (true) {
+            if (isClosed) {
+                throw new IllegalStateException("fiber pool is closed");
+            }
+            final Fiber retainedFiber = freeList.tryDequeue();
+            if (retainedFiber != null) {
+                retainedCount.decrementAndGet();
+                retainedFiber.reserve();
+                return retainedFiber;
+            }
+            if (liveFibers.size() < maxLive) {
+                final Fiber fiber = new Fiber(this, beforeWaitFireForTesting);
+                fiber.setRegistryIndex(liveFibers.size());
+                liveFibers.add(fiber);
+                createdCount.incrementAndGet();
+                fiber.reserve();
+                return fiber;
+            }
+            // release() bumps retainedCount before the lock-free put, so a positive count with an
+            // empty dequeue is a publication in flight, not saturation
+            if (retainedCount.get() == 0) {
+                return null;
+            }
+            Os.pause();
         }
-        final Fiber retainedFiber = freeList.tryDequeue();
-        if (retainedFiber != null) {
-            retainedCount.decrementAndGet();
-            retainedFiber.reserve();
-            return retainedFiber;
-        }
-        if (liveFibers.size() >= maxLive) {
-            return null;
-        }
-        final Fiber fiber = new Fiber(this, beforeWaitFireForTesting);
-        fiber.setRegistryIndex(liveFibers.size());
-        liveFibers.add(fiber);
-        createdCount.incrementAndGet();
-        fiber.reserve();
-        return fiber;
     }
 
     private synchronized void unregisterFiber(Fiber fiber) {

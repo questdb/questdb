@@ -27,6 +27,8 @@ package io.questdb.cairo.sql.async;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.network.NetworkError;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
@@ -39,10 +41,14 @@ public final class AsyncQueryErrorState {
     private volatile boolean hasError;
     private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
     private boolean isOutOfMemory;
+    private Throwable retainedError;
 
     public synchronized RuntimeException buildException() {
         if (!hasError) {
             throw new IllegalStateException("async query error is not set");
+        }
+        if (retainedError instanceof TableReferenceOutOfDateException exception) {
+            return exception;
         }
         return switch (errorKind) {
             case AsyncQueryErrorKind.KIND_IMPLICIT_CAST ->
@@ -64,6 +70,7 @@ public final class AsyncQueryErrorState {
         errorMessagePosition = 0;
         interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
         isOutOfMemory = false;
+        retainedError = null;
         hasError = false;
     }
 
@@ -83,16 +90,62 @@ public final class AsyncQueryErrorState {
             errorMessagePosition = e.getPosition();
             interruptionReason = e.getInterruptionReason();
             isOutOfMemory = e.isOutOfMemory();
-        } else if (th instanceof FlyweightMessageContainer e) {
-            errorMessage.put(e.getFlyweightMessage());
-            errorMessagePosition = e.getPosition();
-        } else {
-            errorMessage.put("unexpected async query error");
-            final String message = th.getMessage();
-            if (message != null) {
-                errorMessage.put(": ").put(message);
+        } else if (th instanceof TableReferenceOutOfDateException e) {
+            retainedError = e;
+            copyFlyweightMessage(e);
+        } else if (th instanceof NetworkError e) {
+            retainedError = e.detachedCopy();
+            copyFlyweightMessage(e);
+        } else if (th instanceof Error e) {
+            retainedError = e;
+            if (e instanceof FlyweightMessageContainer flyweight) {
+                copyFlyweightMessage(flyweight);
+            } else {
+                copyUnexpectedMessage(e);
             }
+        } else if (th instanceof FlyweightMessageContainer e) {
+            copyFlyweightMessage(e);
+        } else {
+            // Neither a flyweight nor thread-confined, so the instance itself survives the hand-off
+            // and throwError() can preserve its type.
+            retainedError = th;
+            copyUnexpectedMessage(th);
         }
         hasError = true;
+    }
+
+    /**
+     * Throws the recorded failure. An {@link Error}, a non-flyweight {@link RuntimeException}, or a
+     * per-instance {@link TableReferenceOutOfDateException} is rethrown as the original instance.
+     * Flyweight Cairo failures are rebuilt on the calling thread.
+     */
+    public void throwError() {
+        final Throwable retained;
+        synchronized (this) {
+            if (!hasError) {
+                throw new IllegalStateException("async query error is not set");
+            }
+            retained = retainedError;
+        }
+        if (retained instanceof Error error) {
+            throw error;
+        }
+        if (retained instanceof RuntimeException runtimeException) {
+            throw runtimeException;
+        }
+        throw buildException();
+    }
+
+    private void copyFlyweightMessage(FlyweightMessageContainer error) {
+        errorMessage.put(error.getFlyweightMessage());
+        errorMessagePosition = error.getPosition();
+    }
+
+    private void copyUnexpectedMessage(Throwable error) {
+        errorMessage.put("unexpected async query error");
+        final String message = error.getMessage();
+        if (message != null) {
+            errorMessage.put(": ").put(message);
+        }
     }
 }

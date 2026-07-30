@@ -41,13 +41,14 @@ public class GroupByVectorAggregateJob extends AbstractQueueConsumerJob<VectorAg
     @Override
     protected boolean doRun(long cursor, WorkerContext workerContext) {
         final VectorAggregateEntry entry = queue.get(cursor).entry;
-        final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
+        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
+        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
         try {
             entry.run(workerContext.carrierId(), subSeq, cursor);
         } catch (Throwable th) {
             LOG.error().$("vectorized reduce error [ex=").$(th).I$();
         } finally {
-            SuspensionScope.restore(previousMode);
+            SuspensionScope.restoreMode(suspensionScope, previousMode);
         }
         return true;
     }

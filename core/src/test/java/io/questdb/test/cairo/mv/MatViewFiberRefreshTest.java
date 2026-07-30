@@ -243,7 +243,7 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
             execute(
                     "create materialized view price_1h with base base_price as " +
                             "select b.sym, last(b.price) as price, b.ts " +
-                            "from base_price b cross join sleep(5.0) s " +
+                            "from base_price b cross join sleep(60.0) s " +
                             "where s.sleep is not null sample by 1h"
             );
             execute("insert into base_price (sym, price, ts) values('gbpusd', 1.5, '2024-09-10T13:01')");
@@ -255,7 +255,9 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
             pool.start();
             try {
                 awaitParkedRefresh(runtime);
-                Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(10)));
+                // Budget is far below the parked timer, so only a shutdown-driven wake can drain in
+                // time; letting the timer expire on its own would not satisfy this.
+                Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(5)));
                 Assert.assertEquals(FiberRuntimeState.CLOSED, runtime.state());
                 Assert.assertEquals(0, runtime.getOutstandingTaskCount());
             } finally {

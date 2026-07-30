@@ -211,6 +211,10 @@ public class WorkerPool implements Closeable {
         }
     }
 
+    public int getFiberRetainedCount() {
+        return fiberRetainedCount;
+    }
+
     public FiberRuntime getFiberRuntime() {
         if (fiberRuntime == null) {
             throw new IllegalStateException("worker pool does not host fibers [pool=" + poolName + ']');
@@ -231,7 +235,9 @@ public class WorkerPool implements Closeable {
     }
 
     public void halt() {
-        halt(DEFAULT_HALT_TIMEOUT_NANOS);
+        if (!halt(DEFAULT_HALT_TIMEOUT_NANOS, false, true)) {
+            LOG.critical().$("worker pool retained live resources on halt [pool=").$(poolName).I$();
+        }
     }
 
     /**
@@ -258,12 +264,12 @@ public class WorkerPool implements Closeable {
      * live object graph after the deadline
      */
     public boolean halt(long timeoutNanos) {
-        return halt(timeoutNanos, false);
+        return halt(timeoutNanos, false, false);
     }
 
     @TestOnly
     public void haltAndAssertCleanForTest(long timeoutNanos) {
-        halt(timeoutNanos, true);
+        halt(timeoutNanos, true, false);
     }
 
     public boolean isFiberHost() {
@@ -468,7 +474,7 @@ public class WorkerPool implements Closeable {
         );
     }
 
-    private boolean halt(long timeoutNanos, boolean isStrict) {
+    private boolean halt(long timeoutNanos, boolean isStrict, boolean isTerminal) {
         synchronized (haltLock) {
             if (isHaltComplete) {
                 return true;
@@ -485,9 +491,11 @@ public class WorkerPool implements Closeable {
                 isStartAttempted = true;
             }
             final FiberRuntime runtime = fiberRuntime;
+            boolean isRuntimeDrained = true;
             if (runtime != null) {
                 runtime.beginQuiesce();
                 if (!runtime.awaitClosed(deadline)) {
+                    isRuntimeDrained = false;
                     if (isStrict) {
                         throw fiberRuntimeHaltTimeout(timeoutNanos, runtime);
                     }
@@ -502,10 +510,15 @@ public class WorkerPool implements Closeable {
                             .$(", retained=").$(runtime.getRetainedFiberCount())
                             .$(", finalizing=").$(runtime.getFinalizerCount())
                             .$(", budgetExhaustions=").$(runtime.getBudgetExhaustionCount()).I$();
-                    return false;
+                    if (!isTerminal) {
+                        // carriers keep running: they drive the drain, so a retry can still complete
+                        return false;
+                    }
                 }
             }
             boolean isWorkerHaltComplete = true;
+            // a drain that burned the whole budget leaves nothing to join the carriers with
+            final long workerDeadline = isRuntimeDrained ? deadline : System.nanoTime() + timeoutNanos;
             if (isStartAttempted) {
                 // Signal halt to every spawned worker UNCONDITIONALLY, before clearing or freeing.
                 // start() may have stalled between running=true and started.countDown() (e.g. an OOM
@@ -525,14 +538,14 @@ public class WorkerPool implements Closeable {
                         workers.getQuick(i).halt();
                     }
                 }
-                if (started.await(remaining(deadline))) {
+                if (started.await(remaining(workerDeadline))) {
                     // start() completed: every worker is now in the list. Re-signal to catch any
                     // worker spawned after the first pass but before started counted down (the flag
                     // is idempotent), then wait for them to exit.
                     for (int i = 0, n = workers.size(); i < n; i++) {
                         workers.getQuick(i).halt();
                     }
-                    if (!halted.await(remaining(deadline))) {
+                    if (!halted.await(remaining(workerDeadline))) {
                         isWorkerHaltComplete = false;
                         if (isStrict) {
                             throw workerPoolHaltTimeout(timeoutNanos, true);
@@ -551,7 +564,7 @@ public class WorkerPool implements Closeable {
                             .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
                 }
             }
-            if (!isWorkerHaltComplete) {
+            if (!isRuntimeDrained || !isWorkerHaltComplete) {
                 return false;
             }
             if (runtime != null) {

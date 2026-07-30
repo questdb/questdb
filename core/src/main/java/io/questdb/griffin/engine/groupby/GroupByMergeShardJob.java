@@ -89,11 +89,12 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
     @Override
     protected boolean doRun(long cursor, WorkerContext workerContext) {
         final GroupByMergeShardTask task = queue.get(cursor);
-        final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
+        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
+        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
         try {
             run(workerContext.carrierId(), task, subSeq, cursor, null);
         } finally {
-            SuspensionScope.restore(previousMode);
+            SuspensionScope.restoreMode(suspensionScope, previousMode);
         }
         return true;
     }

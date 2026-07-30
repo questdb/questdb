@@ -46,8 +46,6 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
-import io.questdb.mp.continuation.Fiber;
-import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
@@ -60,13 +58,10 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
-    private static final int CANCEL_REASON_UNSET = -1;
+public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrameSequence implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
-    private final AtomicInteger cancelReason = new AtomicInteger(CANCEL_REASON_UNSET);
-    private final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
     private final MillisecondClock clock;
     private final LongList frameRowCounts = new LongList();
     private final PageFrameReduceTaskFactory localTaskFactory;
@@ -145,11 +140,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 .I$();
 
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        final boolean canPark = dispatcher != null && isFiberSuspendable();
         while (!done) {
-            final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-            final long observedProgress = dispatcher != null && Fiber.isMounted()
-                    ? dispatcher.getProgressVersion()
-                    : 0;
+            // Sampled before the work checks below: a producer that signals progress after the
+            // checks but before the sample would otherwise be missed and this fiber would park.
+            final long observedProgress = canPark ? dispatcher.getProgressVersion() : 0;
             // First check the local task: maybe we were reducing locally and got interrupted by an exception?
             if (localTask != null && localTask.getFrameSequence() == this && dispatchStartFrameIndex == localTask.getFrameIndex() + 1) {
                 collectedFrameIndex = localTask.getFrameIndex();
@@ -199,10 +195,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     if (dispatcher != null) {
                         dispatcher.signalProgress();
                     }
-                } else if (dispatcher != null && Fiber.isMounted()) {
-                    if (!awaitProgress(dispatcher, observedProgress, true)) {
-                        Os.pause();
-                    }
+                } else if (canPark) {
+                    awaitProgress(dispatcher, observedProgress, true);
                 } else {
                     Os.pause();
                 }
@@ -212,37 +206,15 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         // It could be the case that one of the workers reduced a page frame, then marked the task as done,
         // but haven't incremented reduce counter yet. In this case, we wait for the desired counter value.
         while (true) {
-            final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-            final long observedProgress = dispatcher != null && Fiber.isMounted()
-                    ? dispatcher.getProgressVersion()
-                    : 0;
+            final long observedProgress = canPark ? dispatcher.getProgressVersion() : 0;
             if (reduceFinishedCounter.get() == dispatchStartFrameIndex) {
                 break;
             }
-            if (dispatcher != null && Fiber.isMounted()) {
-                if (!awaitProgress(dispatcher, observedProgress, true)) {
-                    Os.pause();
-                }
+            if (canPark) {
+                awaitProgress(dispatcher, observedProgress, true);
             } else {
                 Os.pause();
             }
-        }
-    }
-
-    public CairoException buildInterruptionException() {
-        final int reason = getCancelReason();
-        if (reason == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            return CairoException.queryCancelled();
-        }
-        if (reason == SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION) {
-            return CairoException.queryDisconnected(getCircuitBreaker().getFd());
-        }
-        return CairoException.queryTimedOut();
-    }
-
-    public void cancel(int reason) {
-        if (cancelReason.compareAndSet(CANCEL_REASON_UNSET, reason)) {
-            cancellationSignal.cancel();
         }
     }
 
@@ -291,16 +263,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return atom;
     }
 
-    public int getCancelReason() {
-        final int reason = cancelReason.get();
-        return reason == CANCEL_REASON_UNSET ? SqlExecutionCircuitBreaker.STATE_OK : reason;
-    }
-
-    public FiberCancellationSignal getCancellationSignal() {
-        return cancellationSignal;
-    }
-
     // warning: the circuit breaker may be thread unsafe, so don't use it concurrently
+    @Override
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
         return sqlExecutionContext.getCircuitBreaker();
     }
@@ -366,10 +330,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return taskType;
     }
 
-    public boolean isActive() {
-        return cancelReason.get() == CANCEL_REASON_UNSET;
-    }
-
+    @Override
     public boolean isUninterruptible() {
         return uninterruptible;
     }
@@ -403,11 +364,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         }
 
         assert collectedFrameIndex < frameCount - 1;
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        final boolean canPark = dispatcher != null && isFiberSuspendable();
         while (true) {
-            final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-            final long observedProgress = dispatcher != null && Fiber.isMounted()
-                    ? dispatcher.getProgressVersion()
-                    : 0;
+            // Sampled before collectSubSeq.next() so a producer signalling progress between the
+            // failed collect and the sample cannot be missed.
+            final long observedProgress = canPark ? dispatcher.getProgressVersion() : 0;
             long cursor = collectSubSeq.next();
             if (cursor > -1) {
                 PageFrameReduceTask task = reduceQueue.get(cursor);
@@ -435,11 +397,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     continue;
                 }
                 if (dispatcher != null) {
-                    if (Fiber.isMounted()) {
+                    if (canPark) {
                         final boolean isDraining = !isActive();
-                        if (!awaitProgress(dispatcher, observedProgress, isDraining)) {
-                            Os.pause();
-                        }
+                        awaitProgress(dispatcher, observedProgress, isDraining);
                         continue;
                     }
                     if (!isActive()) {
@@ -485,8 +445,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();
             done = false;
-            cancellationSignal.reset();
-            cancelReason.set(CANCEL_REASON_UNSET);
+            resetCancellation();
             reduceFinishedCounter.set(0);
             reduceStartedCounter.set(0);
             workStealingStrategy.of(reduceStartedCounter);
@@ -623,36 +582,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             reduceFinishedCounter.set(0);
             reduceStartedCounter.set(0);
             workStealingStrategy.of(reduceStartedCounter);
-            cancellationSignal.reset();
-            cancelReason.set(CANCEL_REASON_UNSET);
+            resetCancellation();
         }
-    }
-
-    private boolean awaitProgress(
-            PageFrameReduceDispatcher dispatcher,
-            long observedProgress,
-            boolean isDraining
-    ) {
-        final boolean hasProgress;
-        try {
-            hasProgress = dispatcher.awaitProgress(
-                    observedProgress,
-                    isDraining || uninterruptible ? null : SuspensionScope.getCancellationSignal(),
-                    isDraining || uninterruptible ? null : sqlExecutionContext.getCircuitBreaker()
-            );
-        } catch (CairoException e) {
-            if (isInterruptionSuperseded(e)) {
-                return false;
-            }
-            throw e;
-        }
-        if (!hasProgress && !isDraining) {
-            if (hasNonInterruptionWon(SqlExecutionCircuitBreaker.STATE_CANCELLED)) {
-                return false;
-            }
-            throw buildInterruptionException();
-        }
-        return hasProgress;
     }
 
     private void buildAddressCache() {
@@ -703,126 +634,124 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         final MCSequence reduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-
-        if (dispatcher != null && !dispatcher.tryAcquirePublication()) {
-            cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
-            return false;
-        }
-        try {
-            return dispatch0(dispatchLimit, countOnly, reduceSubSeq, reducePubSeq);
-        } finally {
-            if (dispatcher != null) {
-                dispatcher.releasePublication();
-            }
-        }
+        return dispatch0(dispatchLimit, countOnly, dispatcher, reduceSubSeq, reducePubSeq);
     }
 
     private boolean dispatch0(
             int dispatchLimit,
             boolean countOnly,
+            PageFrameReduceDispatcher dispatcher,
             MCSequence reduceSubSeq,
             MPSequence reducePubSeq
     ) {
+        boolean hasPublication = dispatcher == null || dispatcher.tryAcquirePublication();
+        if (!hasPublication) {
+            cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+            return false;
+        }
         boolean idle = true;
         boolean dispatched = false;
         final int collectedFrameCount = collectedFrameIndex + 1;
 
-        long cursor;
-        int i = dispatchStartFrameIndex;
-        OUT:
-        for (; i < frameCount; i++) {
-            // We cannot process work on this thread. If we do the consumer will
-            // never get the executions results. Consumer only picks ready to go
-            // tasks from the queue.
+        try {
+            long cursor;
+            int i = dispatchStartFrameIndex;
+            OUT:
+            for (; i < frameCount; i++) {
+                // We cannot process work on this thread. If we do the consumer will
+                // never get the executions results. Consumer only picks ready to go
+                // tasks from the queue.
 
-            while (true) {
-                final int totalDispatched = dispatchStartFrameIndex - collectedFrameCount;
-                // Treat situation when we hit the dispatch limit as if it was a full queue (-1).
-                if (totalDispatched >= dispatchLimit) {
-                    cursor = -1;
-                } else {
-                    cursor = reducePubSeq.next();
+                while (true) {
+                    final int totalDispatched = dispatchStartFrameIndex - collectedFrameCount;
+                    // Treat situation when we hit the dispatch limit as if it was a full queue (-1).
+                    if (totalDispatched >= dispatchLimit) {
+                        cursor = -1;
+                    } else {
+                        cursor = reducePubSeq.next();
+                        if (cursor > -1) {
+                            reduceQueue.get(cursor).of(this, i, countOnly);
+                            reducePubSeq.done(cursor);
+                        }
+                    }
                     if (cursor > -1) {
-                        reduceQueue.get(cursor).of(this, i, countOnly);
-                        reducePubSeq.done(cursor);
+                        LOG.debug()
+                                .$("dispatched [shard=").$(shard)
+                                .$(", id=").$(getId())
+                                .$(", frameIndex=").$(i)
+                                .$(", frameCount=").$(frameCount)
+                                .$(", cursor=").$(cursor)
+                                .I$();
+                        dispatchStartFrameIndex = i + 1;
+                        dispatched = true;
+                        break;
+                    } else if (cursor == -1) {
+                        if (!workStealingStrategy.shouldSteal(collectedFrameCount)) {
+                            return dispatched;
+                        }
+                        // start stealing work to unload the queue
+                        idle = false;
+                        if (dispatcher != null) {
+                            dispatcher.releasePublication();
+                            hasPublication = false;
+                        }
+                        if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker)) {
+                            if (reduceFinishedCounter.get() > collectedFrameCount) {
+                                // We have something to collect, so let's do it!
+                                return true;
+                            }
+                            if (dispatcher != null) {
+                                hasPublication = dispatcher.tryAcquirePublication();
+                                if (!hasPublication) {
+                                    cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+                                    return dispatched;
+                                }
+                            }
+                            continue;
+                        }
+                        break OUT;
+                    } else {
+                        Os.pause();
                     }
                 }
-                if (cursor > -1) {
-                    LOG.debug()
-                            .$("dispatched [shard=").$(shard)
-                            .$(", id=").$(getId())
-                            .$(", frameIndex=").$(i)
-                            .$(", frameCount=").$(frameCount)
-                            .$(", cursor=").$(cursor)
-                            .I$();
-                    dispatchStartFrameIndex = i + 1;
-                    dispatched = true;
-                    break;
-                } else if (cursor == -1) {
-                    if (!workStealingStrategy.shouldSteal(collectedFrameCount)) {
-                        return dispatched;
-                    }
-                    // start stealing work to unload the queue
-                    idle = false;
-                    if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker)) {
-                        if (reduceFinishedCounter.get() > collectedFrameCount) {
-                            // We have something to collect, so let's do it!
-                            return true;
-                        }
+            }
+
+            if (dispatcher != null && hasPublication) {
+                dispatcher.releasePublication();
+                hasPublication = false;
+            }
+
+            if (reduceFinishedCounter.get() > collectedFrameCount) {
+                // We have something to collect, so let's do it!
+                return true;
+            }
+
+            // Reduce counter is here to provide safe backoff point
+            // for job stealing code. It is needed because queue is shared
+            // and there is possibility of never ending stealing if we don't
+            // specifically count only our items
+
+            // join the gang to consume published tasks
+            while (reduceFinishedCounter.get() < dispatchStartFrameIndex) {
+                idle = false;
+                if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker)) {
+                    if (isActive()) {
                         continue;
                     }
-                    break OUT;
-                } else {
-                    Os.pause();
                 }
+                break;
+            }
+
+            if (idle) {
+                stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker);
+            }
+
+            return dispatched;
+        } finally {
+            if (dispatcher != null && hasPublication) {
+                dispatcher.releasePublication();
             }
         }
-
-        if (reduceFinishedCounter.get() > collectedFrameCount) {
-            // We have something to collect, so let's do it!
-            return true;
-        }
-
-        // Reduce counter is here to provide safe backoff point
-        // for job stealing code. It is needed because queue is shared
-        // and there is possibility of never ending stealing if we don't
-        // specifically count only our items
-
-        // join the gang to consume published tasks
-        while (reduceFinishedCounter.get() < dispatchStartFrameIndex) {
-            idle = false;
-            if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker)) {
-                if (isActive()) {
-                    continue;
-                }
-            }
-            break;
-        }
-
-        if (idle) {
-            stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker);
-        }
-
-        return dispatched;
-    }
-
-    private boolean hasNonInterruptionWon(int interruptionReason) {
-        cancel(interruptionReason);
-        return cancelReason.get() == SqlExecutionCircuitBreaker.STATE_OK;
-    }
-
-    private boolean isInterruptionSuperseded(CairoException exception) {
-        final int interruptionReason = exception.getInterruptionReason();
-        if (interruptionReason == SqlExecutionCircuitBreaker.STATE_OK) {
-            return false;
-        }
-        if (hasNonInterruptionWon(interruptionReason)) {
-            return true;
-        }
-        if (getCancelReason() != interruptionReason) {
-            throw buildInterruptionException();
-        }
-        return false;
     }
 
     private void reduceLocally(boolean countOnly) {
@@ -834,9 +763,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         }
         localTask.of(this, dispatchStartFrameIndex++, countOnly);
 
-        final SuspensionScope.Mode previousMode = SuspensionScope.enter(
-                SuspensionScope.Mode.BLOCKING
-        );
+        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
+
+        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
         try {
             LOG.debug()
                     .$("reducing locally [shard=").$(shard)
@@ -869,7 +798,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             localTask.setErrorMsg(th);
             cancel(interruptReason);
         } finally {
-            SuspensionScope.restore(previousMode);
+            SuspensionScope.restoreMode(suspensionScope, previousMode);
             reduceFinishedCounter.incrementAndGet();
         }
     }

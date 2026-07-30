@@ -27,15 +27,19 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
+import java.lang.management.ManagementFactory;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -136,6 +140,44 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCancellationSignalIsReusedAcrossEntryLifecycles() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = newSingleEntryRegistry();
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                context.setUseSimpleCircuitBreaker(true);
+                final long oldQueryId = registry.register("SELECT old", context);
+                final QueryRegistry.Entry entry = registry.getEntry(oldQueryId);
+                Assert.assertNotNull(entry);
+                final FiberCancellationSignal signal = (FiberCancellationSignal) entry.getCancelled();
+                final long oldGeneration = entry.getCancelledGeneration();
+                final AtomicBooleanCircuitBreaker staleBreaker = new AtomicBooleanCircuitBreaker(engine);
+                staleBreaker.setCancelledFlag(signal, oldGeneration);
+
+                registry.unregister(oldQueryId, context);
+
+                final long newQueryId = registry.register("SELECT new", context);
+                final QueryRegistry.Entry reusedEntry = registry.getEntry(newQueryId);
+                Assert.assertSame(entry, reusedEntry);
+                Assert.assertSame(signal, reusedEntry.getCancelled());
+                Assert.assertNotEquals(oldGeneration, reusedEntry.getCancelledGeneration());
+                Assert.assertTrue(signal.isCancelled(oldGeneration));
+                Assert.assertFalse(signal.isCancelled(reusedEntry.getCancelledGeneration()));
+
+                staleBreaker.cancel();
+                Assert.assertTrue(staleBreaker.checkIfTripped());
+                Assert.assertFalse(signal.isCancelled(reusedEntry.getCancelledGeneration()));
+
+                context.clearCancelledFlag(signal, oldGeneration);
+                Assert.assertSame(signal, context.getCircuitBreaker().getCancelledFlag());
+                Assert.assertTrue(registry.cancel(newQueryId, context));
+                Assert.assertTrue(signal.isCancelled(reusedEntry.getCancelledGeneration()));
+
+                registry.unregister(newQueryId, context);
+            }
+        });
+    }
+
+    @Test
     public void testDeniedCrossUserCancelReactivatesEntry() throws Exception {
         assertMemoryLeak(() -> {
             final QueryRegistry registry = engine.getQueryRegistry();
@@ -165,6 +207,37 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 }
                 Assert.assertNull(registry.getEntry(queryId));
             }
+        });
+    }
+
+    @Test
+    public void testEntryClearAllocatesNoJavaHeap() throws Exception {
+        assertMemoryLeak(() -> {
+            final java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
+            Assume.assumeTrue(mxBean instanceof com.sun.management.ThreadMXBean);
+            final com.sun.management.ThreadMXBean threadMXBean = (com.sun.management.ThreadMXBean) mxBean;
+            Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
+            if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
+                threadMXBean.setThreadAllocatedMemoryEnabled(true);
+            }
+
+            final QueryRegistry.Entry entry = new QueryRegistry.Entry();
+            for (int i = 0; i < 10_000; i++) {
+                entry.clear();
+            }
+
+            long minAllocatedBytes = Long.MAX_VALUE;
+            for (int round = 0; round < 5; round++) {
+                final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+                for (int i = 0; i < 100_000; i++) {
+                    entry.clear();
+                }
+                minAllocatedBytes = Math.min(
+                        minAllocatedBytes,
+                        threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore
+                );
+            }
+            Assert.assertEquals(0, minAllocatedBytes);
         });
     }
 
@@ -429,14 +502,15 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                         for (int i = 0; i < iterations && fault.get() == null; i++) {
                             final long queryId = registry.register("SELECT " + slot, context);
                             final QueryRegistry.Entry entry = registry.getEntry(queryId);
-                            final AtomicBoolean cancelledFlag = entry.getCancelled();
+                            final FiberCancellationSignal cancelledFlag = (FiberCancellationSignal) entry.getCancelled();
+                            final long cancelledGeneration = entry.getCancelledGeneration();
                             final boolean isCancellable = (queryId & 1) == 0;
                             if (isCancellable) {
                                 liveCancellableIds.set(slot, queryId);
                             }
                             // work window for cancellers to race against
                             for (int j = 0; j < 20; j++) {
-                                if (!isCancellable && cancelledFlag.get()) {
+                                if (!isCancellable && cancelledFlag.isCancelled(cancelledGeneration)) {
                                     throw new AssertionError("stale canceller cancelled query " + queryId);
                                 }
                                 Os.pause();
@@ -445,9 +519,6 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                                 liveCancellableIds.set(slot, -1);
                             }
                             registry.unregister(queryId, context);
-                            if (!isCancellable && cancelledFlag.get()) {
-                                throw new AssertionError("stale canceller cancelled query " + queryId + " around unregister");
-                            }
                         }
                     } catch (Throwable t) {
                         fault.compareAndSet(null, t);

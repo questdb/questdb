@@ -41,6 +41,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionSuspension;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.FiberWaitCoordinator;
@@ -51,6 +52,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * {@code sleep(seconds)} is a table function that parks the current SQL
@@ -199,9 +202,15 @@ public class SleepFunctionFactory implements FunctionFactory {
             if (fiber != null) {
                 final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
                 FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
+                long cancellationSignalGeneration = SuspensionScope.getCancellationSignalGeneration();
                 if (cancellationSignal == null) {
-                    final Object cancelledFlag = executionContext.getCircuitBreaker().getCancelledFlag();
-                    cancellationSignal = cancelledFlag instanceof FiberCancellationSignal signal ? signal : null;
+                    final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
+                    executionContext.getCircuitBreaker().copyCancelledFlagTo(cancellationBinding);
+                    final AtomicBoolean cancelledFlag = cancellationBinding.getFlag();
+                    if (cancelledFlag instanceof FiberCancellationSignal signal) {
+                        cancellationSignal = signal;
+                        cancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
+                    }
                 }
                 while (true) {
                     long now = clock.getTicks();
@@ -211,9 +220,17 @@ public class SleepFunctionFactory implements FunctionFactory {
                     }
                     executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
                     long chunk = Math.min(remaining, wakeIntervalMillis);
-                    long token = fiber.beginWaitBuild(cancellationSignal == null ? 1 : 2);
+                    long token = fiber.tryBeginWaitBuild(cancellationSignal == null ? 1 : 2);
+                    if (token == Fiber.TOKEN_REFUSED) {
+                        throw CairoException.nonCritical().put("sleep aborted, connection closing");
+                    }
                     try {
-                        if (cancellationSignal != null && !coordinator.armCancellation(token, cancellationSignal)) {
+                        if (cancellationSignal != null
+                                && !coordinator.armCancellation(
+                                token,
+                                cancellationSignal,
+                                cancellationSignalGeneration
+                        )) {
                             throw CairoException.nonCritical().put("sleep aborted, connection closing");
                         }
                         if (!coordinator.armTimer(token, shards, clock, chunk)) {

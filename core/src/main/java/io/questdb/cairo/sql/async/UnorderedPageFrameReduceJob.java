@@ -140,9 +140,8 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                             .$(", got=").$(taskSequenceId)
                             .I$();
                 } else {
-                    final SuspensionScope.Mode previousMode = SuspensionScope.enter(
-                            SuspensionScope.Mode.BLOCKING
-                    );
+                    final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
+                    final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
                     try {
                         if (frameSequence.isActive()) {
                             circuitBreaker.init(frameSequence.getCircuitBreaker());
@@ -169,7 +168,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                         frameSequence.setError(th);
                         frameSequence.cancel(interruptReason);
                     } finally {
-                        SuspensionScope.restore(previousMode);
+                        SuspensionScope.restoreMode(suspensionScope, previousMode);
                         frameSequence.getDoneLatch().countDown();
                     }
                 }

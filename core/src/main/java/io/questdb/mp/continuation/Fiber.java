@@ -35,6 +35,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public final class Fiber implements FiberWaitCoordinator.Target {
+    public static final long TOKEN_REFUSED = 0;
     public static final int YIELD_FREE = 0;
     public static final int YIELD_WAIT = 1;
     static final int EXECUTION_DONE = 6;
@@ -62,12 +63,14 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private static final long RETIREMENT_STATE_OFFSET = Unsafe.getFieldOffset(Fiber.class, "retirementState");
     private static final ContinuationScope SCOPE = new ContinuationScope("questdb-fiber");
     private static final long WAIT_ADMISSION_OFFSET = Unsafe.getFieldOffset(Fiber.class, "waitAdmission");
-    private final Continuation continuation;
+    private final PinnableContinuation continuation;
     private final Rnd fiberAsyncRandom;
     private final Rnd fiberRandom;
     private final Outcome outcomeScratch = new Outcome();
     private final FiberPool pool;
     private final FiberWaitCoordinator waitCoordinator;
+    private FiberCancellationSignal assignedCancellationSignal;
+    private long assignedCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
     private FiberTask assignedTask;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long executionState = packExecutionState(0, EXECUTION_FREE);
@@ -87,7 +90,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private int yieldReason = YIELD_WAIT;
 
     Fiber(FiberPool pool, @Nullable Runnable beforeWaitFireForTesting) {
-        this.continuation = new Continuation(SCOPE, this::taskRunnerLoop);
+        this.continuation = new PinnableContinuation(this::taskRunnerLoop);
         this.fiberAsyncRandom = new Rnd();
         this.fiberRandom = new Rnd();
         this.pool = pool;
@@ -126,30 +129,11 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     public long beginWaitBuild(int sourceCount) {
-        if (!pool.beginWaitArm()) {
+        final long token = tryBeginWaitBuild(sourceCount);
+        if (token == TOKEN_REFUSED) {
             throw new IllegalStateException("fiber runtime is quiescing");
         }
-        waitAdmission = 1;
-        try {
-            final long token = waitCoordinator.beginBuild(sourceCount);
-            if (token > EXECUTION_TOKEN_MASK) {
-                throw new IllegalStateException("fiber wait token exhausted");
-            }
-            if (!Unsafe.cas(
-                    this,
-                    EXECUTION_STATE_OFFSET,
-                    packExecutionState(0, EXECUTION_MOUNTED),
-                    packExecutionState(token, EXECUTION_PARKING)
-            )) {
-                waitCoordinator.abort(token);
-                waitCoordinator.consume(token);
-                throw new IllegalStateException("fiber is not mounted");
-            }
-            return token;
-        } catch (Throwable th) {
-            releaseWaitAdmission();
-            throw th;
-        }
+        return token;
     }
 
     @Override
@@ -253,6 +237,41 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return waitCoordinator.consume(token);
     }
 
+    /**
+     * Begins a wait build, returning {@link #TOKEN_REFUSED} instead of throwing when the runtime
+     * has closed admission. Callers that treat a quiescing runtime as a normal shutdown outcome
+     * must use this over {@link #beginWaitBuild(int)}.
+     */
+    public long tryBeginWaitBuild(int sourceCount) {
+        if (!pool.beginWaitArm()) {
+            return TOKEN_REFUSED;
+        }
+        if (!Unsafe.cas(this, WAIT_ADMISSION_OFFSET, 0, 1)) {
+            pool.endWaitArm();
+            throw new IllegalStateException("fiber wait admission is already held");
+        }
+        try {
+            final long token = waitCoordinator.beginBuild(sourceCount);
+            if (token > EXECUTION_TOKEN_MASK) {
+                throw new IllegalStateException("fiber wait token exhausted");
+            }
+            if (!Unsafe.cas(
+                    this,
+                    EXECUTION_STATE_OFFSET,
+                    packExecutionState(0, EXECUTION_MOUNTED),
+                    packExecutionState(token, EXECUTION_PARKING)
+            )) {
+                waitCoordinator.abort(token);
+                waitCoordinator.consume(token);
+                throw new IllegalStateException("fiber is not mounted");
+            }
+            return token;
+        } catch (Throwable th) {
+            releaseWaitAdmission();
+            throw th;
+        }
+    }
+
     private static int executionState(long executionState) {
         return (int) (executionState & EXECUTION_STATE_MASK);
     }
@@ -295,9 +314,15 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private void abandonAssignedTask() {
         if (assignedTask != null) {
             outcomeTask = assignedTask;
-            assignedTask = null;
+            clearAssignedTask();
             outcomeType = OUTCOME_ABANDONED;
         }
+    }
+
+    private void clearAssignedTask() {
+        assignedCancellationSignal = null;
+        assignedCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
+        assignedTask = null;
     }
 
     private void releaseWaitAdmission() {
@@ -312,7 +337,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 || notificationState != NOTIFICATION_IDLE) {
             throw new IllegalStateException("fiber cannot roll back unpublished task");
         }
-        assignedTask = null;
+        clearAssignedTask();
         executionState = packExecutionState(0, EXECUTION_RESERVED);
     }
 
@@ -328,7 +353,11 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         } catch (Throwable th) {
             error = th;
         }
-        assignedTask = null;
+        if (error == null && !isDone) {
+            final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+            task.updateCancellationBinding(scope.cancellationSignal, scope.cancellationSignalGeneration);
+        }
+        clearAssignedTask();
         outcomeError = error;
         outcomeTask = task;
         outcomeType = error != null ? OUTCOME_ERROR : isDone ? OUTCOME_DONE : OUTCOME_PARKED;
@@ -384,7 +413,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 : outcomeTask != null
                   ? outcomeTask
                   : mountedOutcome.task;
-        assignedTask = null;
+        clearAssignedTask();
         outcomeError = null;
         outcomeTask = null;
         outcomeType = OUTCOME_NONE;
@@ -461,7 +490,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     void markRetired() {
-        assignedTask = null;
+        clearAssignedTask();
         executionState = packExecutionState(0, EXECUTION_DONE);
         outcomeError = null;
         outcomeTask = null;
@@ -469,7 +498,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     void onSuspendRefused() {
-        pool.getRuntime().onInlineSuspendViolation();
+        pool.getRuntime().onInlineSuspendViolation(continuation.takePinnedReason());
         while (true) {
             final long current = executionState;
             final int state = executionState(current);
@@ -581,14 +610,25 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
         final Fiber previousFiber = scope.fiber;
         final FiberCancellationSignal previousCancellationSignal = scope.cancellationSignal;
+        final long previousCancellationSignalGeneration = scope.cancellationSignalGeneration;
         final SuspensionScope.Mode previousMode = scope.mode;
-        scope.cancellationSignal = assignedTask != null ? assignedTask.getCancellationSignal() : null;
+        scope.cancellationSignal = assignedCancellationSignal;
+        scope.cancellationSignalGeneration = assignedCancellationSignalGeneration;
         scope.fiber = this;
         scope.mode = SuspensionScope.Mode.FIBER;
         try {
             continuation.run();
         } finally {
+            if (assignedTask != null) {
+                assignedCancellationSignal = scope.cancellationSignal;
+                assignedCancellationSignalGeneration = scope.cancellationSignalGeneration;
+                assignedTask.updateCancellationBinding(
+                        assignedCancellationSignal,
+                        assignedCancellationSignalGeneration
+                );
+            }
             scope.cancellationSignal = previousCancellationSignal;
+            scope.cancellationSignalGeneration = previousCancellationSignalGeneration;
             scope.fiber = previousFiber;
             scope.mode = previousMode;
         }
@@ -602,6 +642,9 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         if (assignedTask != null || executionState != packExecutionState(0, EXECUTION_RESERVED)) {
             throw new IllegalStateException("fiber is not reserved");
         }
+        task.captureCancellationBinding();
+        assignedCancellationSignal = task.getBoundCancellationSignal();
+        assignedCancellationSignalGeneration = task.getBoundCancellationSignalGeneration();
         assignedTask = task;
         if (!Unsafe.cas(
                 this,
@@ -609,7 +652,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 packExecutionState(0, EXECUTION_RESERVED),
                 packExecutionState(0, EXECUTION_RUNNABLE)
         )) {
-            assignedTask = null;
+            clearAssignedTask();
             throw new IllegalStateException("fiber is not reserved");
         }
     }
@@ -690,6 +733,27 @@ public final class Fiber implements FiberWaitCoordinator.Target {
             error = null;
             task = null;
             type = OUTCOME_NONE;
+        }
+    }
+
+    // onPinned() throws by default; recording the reason and returning normally is what makes
+    // Continuation.yield report a refused suspend through its return value
+    private static final class PinnableContinuation extends Continuation {
+        private Pinned pinnedReason;
+
+        private PinnableContinuation(Runnable body) {
+            super(SCOPE, body);
+        }
+
+        @Override
+        protected void onPinned(Pinned reason) {
+            pinnedReason = reason;
+        }
+
+        private CharSequence takePinnedReason() {
+            final Pinned reason = pinnedReason;
+            pinnedReason = null;
+            return reason != null ? reason.name() : "UNKNOWN";
         }
     }
 }

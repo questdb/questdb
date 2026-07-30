@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.FiberSlotWaitQueue;
@@ -42,6 +43,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 
 /**
@@ -61,6 +63,7 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
     // the count down. Volatile so that a reducer on any thread sees the latch a test installs on the
     // owner thread, which is what lets an atom keep a final reference to its locks.
     private volatile CountDownLatch testAcquireLatch;
+    private volatile @Nullable Runnable testBeforeSlotRelease;
 
     public PerWorkerLocks(@NotNull CairoConfiguration configuration, int workerCount) {
         // Every parallel operator that builds locks is gated on sharedQueryWorkerCount > 0
@@ -96,7 +99,7 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
         }
         final SuspensionScope.Mode mode = SuspensionScope.getMode();
         if (mode == SuspensionScope.Mode.FIBER) {
-            final int fiberSlot = awaitSlot(workerId);
+            final int fiberSlot = awaitSlot(workerId, sqlCircuitBreaker);
             if (fiberSlot > -1) {
                 try {
                     sqlCircuitBreaker.statefulThrowExceptionIfTripped();
@@ -133,7 +136,12 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
         }
         final SuspensionScope.Mode mode = SuspensionScope.getMode();
         if (mode == SuspensionScope.Mode.FIBER) {
-            final int fiberSlot = awaitSlot(carrierId);
+            final int fiberSlot = awaitSlot(
+                    carrierId,
+                    circuitBreaker instanceof SqlExecutionCircuitBreaker sqlCircuitBreaker
+                            ? sqlCircuitBreaker
+                            : null
+            );
             if (fiberSlot > -1 && !circuitBreaker.checkIfTripped()) {
                 countDownTestAcquireLatch();
                 return fiberSlot;
@@ -186,8 +194,16 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
     @Override
     public void releaseSlot(int slot) {
         if (slot > -1) {
-            if (!slotWaitQueue.transfer(slot)) {
-                locks.set(INTS_PER_SLOT * slot, 0);
+            final int lockIndex = INTS_PER_SLOT * slot;
+            while (!slotWaitQueue.transfer(slot)) {
+                final Runnable beforeSlotRelease = testBeforeSlotRelease;
+                if (beforeSlotRelease != null) {
+                    beforeSlotRelease.run();
+                }
+                locks.set(lockIndex, 0);
+                if (!slotWaitQueue.hasWaiters() || !locks.compareAndSet(lockIndex, 0, 1)) {
+                    return;
+                }
             }
         }
     }
@@ -202,21 +218,40 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
         testAcquireLatch = latch;
     }
 
-    private int awaitSlot(int slotStart) {
+    @TestOnly
+    public void setTestBeforeSlotRelease(@Nullable Runnable beforeSlotRelease) {
+        testBeforeSlotRelease = beforeSlotRelease;
+    }
+
+    private int awaitSlot(int slotStart, @Nullable SqlExecutionCircuitBreaker circuitBreaker) {
         final Fiber fiber = Fiber.current();
         if (fiber == null || !Fiber.isMounted()) {
             throw CairoException.nonCritical().put("reducer slot wait requires a mounted fiber");
         }
         final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
-        final FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
-        final long token = fiber.beginWaitBuild(cancellationSignal == null ? 1 : 2);
+        FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
+        long cancellationSignalGeneration = SuspensionScope.getCancellationSignalGeneration();
+        if (cancellationSignal == null && circuitBreaker != null) {
+            final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
+            circuitBreaker.copyCancelledFlagTo(cancellationBinding);
+            final AtomicBoolean cancelledFlag = cancellationBinding.getFlag();
+            if (cancelledFlag instanceof FiberCancellationSignal signal) {
+                cancellationSignal = signal;
+                cancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
+            }
+        }
+        final long token = fiber.tryBeginWaitBuild(cancellationSignal == null ? 1 : 2);
+        if (token == Fiber.TOKEN_REFUSED) {
+            return -1;
+        }
         try {
             final FiberSlotWaitRegistration slotRegistration = coordinator.acquireSlot(token);
             if (slotRegistration.register(slotWaitQueue) != SourceRegistrationResult.ACCEPTED
                     || !coordinator.tryAcceptSource(token)) {
                 throw new IllegalStateException("reducer slot wait registration failed");
             }
-            if (cancellationSignal != null && !coordinator.armCancellation(token, cancellationSignal)) {
+            if (cancellationSignal != null
+                    && !coordinator.armCancellation(token, cancellationSignal, cancellationSignalGeneration)) {
                 throw new IllegalStateException("reducer cancellation registration failed");
             }
 

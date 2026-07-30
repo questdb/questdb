@@ -126,6 +126,55 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReleaseDoesNotLoseWaiterRegisteredDuringRelease() throws Exception {
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, 1);
+        final int heldSlot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        final FiberRuntime runtime = new FiberRuntime(2, 2);
+        final SlotTask task = new SlotTask(locks, null);
+        final CountDownLatch releasePaused = new CountDownLatch(1);
+        final CountDownLatch resumeRelease = new CountDownLatch(1);
+        final AtomicReference<Throwable> releaseFailure = new AtomicReference<>();
+        final Thread releaseThread = new Thread(() -> {
+            try {
+                locks.releaseSlot(heldSlot);
+            } catch (Throwable th) {
+                releaseFailure.set(th);
+            }
+        });
+        locks.setTestBeforeSlotRelease(() -> {
+            releasePaused.countDown();
+            try {
+                if (!resumeRelease.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("release did not resume");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
+        });
+        try {
+            releaseThread.start();
+            Assert.assertTrue(releasePaused.await(5, TimeUnit.SECONDS));
+            Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertEquals(1, runtime.getParkedFiberCount());
+
+            resumeRelease.countDown();
+            releaseThread.join(5_000);
+            Assert.assertFalse(releaseThread.isAlive());
+            Assert.assertNull(releaseFailure.get());
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertTrue(task.hasRun);
+            Assert.assertEquals(0, locks.getAcquiredSlotCount());
+        } finally {
+            resumeRelease.countDown();
+            locks.setTestBeforeSlotRelease(null);
+            releaseThread.join(5_000);
+            close(runtime);
+        }
+    }
+
+    @Test
     public void testReleaseTransfersSlotToParkedFiber() {
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, 1);
         final int heldSlot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);

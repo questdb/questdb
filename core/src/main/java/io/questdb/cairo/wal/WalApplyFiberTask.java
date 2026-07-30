@@ -153,16 +153,19 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
         this.isReusable = false;
         runVersion = 0;
         executorPool.release(executor);
-        if (isReusable && !isDropped) {
-            reopen();
-        }
-        if (!Unsafe.cas(
-                this,
-                LEASE_STATE_OFFSET,
-                LEASE_BOUND,
-                isDropped ? LEASE_EVICTED : LEASE_IDLE
-        )) {
-            throw new IllegalStateException("WAL apply fiber lease is not bound");
+        try {
+            if (isReusable && !isDropped) {
+                reopen();
+            }
+        } finally {
+            if (!Unsafe.cas(
+                    this,
+                    LEASE_STATE_OFFSET,
+                    LEASE_BOUND,
+                    isDropped ? LEASE_EVICTED : LEASE_IDLE
+            )) {
+                throw new IllegalStateException("WAL apply fiber lease is not bound");
+            }
         }
         if (isDropped) {
             job.evict(this);

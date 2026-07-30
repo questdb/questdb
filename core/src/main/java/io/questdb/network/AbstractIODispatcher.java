@@ -228,6 +228,15 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                         .$(", e=").$safe(e.getFlyweightMessage())
                         .I$();
                 disconnect(connectionContext, DISCONNECT_REASON_TLS_SESSION_INIT_FAILED);
+            } catch (Throwable th) {
+                try {
+                    disconnect(connectionContext, DISCONNECT_REASON_SERVER_ERROR);
+                } catch (Throwable cleanupError) {
+                    if (cleanupError != th) {
+                        th.addSuppressed(cleanupError);
+                    }
+                }
+                throw th;
             }
         }
 
