@@ -98,12 +98,7 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
 
     @Override
     public @Nullable SymbolTable newSymbolTable() {
-        AbstractCastToSymbolFunction copy = newFunc();
-        copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
-        copy.symbols.clear();
-        copy.symbols.addAll(this.symbols);
-        copy.next = this.next;
-        return copy;
+        return new CastToSymbolTable(symbols);
     }
 
     @Override
@@ -154,9 +149,4 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
         symbols.add(str);
         return str;
     }
-
-    /**
-     * Creates a new instance of this function for symbol table copying.
-     */
-    protected abstract AbstractCastToSymbolFunction newFunc();
 }

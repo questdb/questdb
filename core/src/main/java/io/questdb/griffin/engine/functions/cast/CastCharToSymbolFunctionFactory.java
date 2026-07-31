@@ -86,10 +86,5 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
             symbols.add(str);
             return str;
         }
-
-        @Override
-        protected AbstractCastToSymbolFunction newFunc() {
-            return new Func(arg);
-        }
     }
 }

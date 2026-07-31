@@ -250,32 +250,27 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
             // The textual widths render the declared boolean, not the JSON token underneath it. Row 3
             // is the discriminator - the base returned the raw token 1 where the declared value is
             // false - and row 6 pins that a non-boolean string renders as false rather than as itself.
-            // SYMBOL is absent on purpose. json_extract(..)::<type>::symbol reads correctly on the
-            // first cursor pass and NULL on a re-read, for every target type including the ones this
-            // PR left alone - json_extract(..)::double::symbol reproduces it, and its whole call chain
-            // (JsonExtractFunction, Cast*ToSymbolFunctionFactory, SymbolFunctionMemoizer and the
-            // memoization wiring in SqlCodeGenerator) is identical to master. That defect is separate
-            // from the one-value rule and is tracked on its own; asserting it here would only make
-            // this test red for someone else's reason.
             assertQuery("""
                     SELECT id,
                       json_extract(text,'$.a')::boolean::varchar vc,
                       b::varchar vc_control,
                       json_extract(text,'$.a')::boolean::string st,
                       b::string st_control,
+                      json_extract(text,'$.a')::boolean::symbol sy,
+                      b::symbol sy_control,
                       json_extract(text,'$.a')::boolean::char ch,
                       b::char ch_control
                     FROM j ORDER BY id""")
                     .expectSize()
                     .returns("""
-                            id\tvc\tvc_control\tst\tst_control\tch\tch_control
-                            1\ttrue\ttrue\ttrue\ttrue\tT\tT
-                            2\tfalse\tfalse\tfalse\tfalse\tF\tF
-                            3\tfalse\tfalse\tfalse\tfalse\tF\tF
-                            4\tfalse\tfalse\tfalse\tfalse\tF\tF
-                            5\tfalse\tfalse\tfalse\tfalse\tF\tF
-                            6\tfalse\tfalse\tfalse\tfalse\tF\tF
-                            7\tfalse\tfalse\tfalse\tfalse\tF\tF
+                            id\tvc\tvc_control\tst\tst_control\tsy\tsy_control\tch\tch_control
+                            1\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\tT\tT
+                            2\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\tF\tF
+                            3\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\tF\tF
+                            4\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\tF\tF
+                            5\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\tF\tF
+                            6\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\tF\tF
+                            7\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\tF\tF
                             """);
 
             // The predicate path reads the widened getter too, so a filter on the 64-bit read must
