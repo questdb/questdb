@@ -25,27 +25,43 @@
   a process with no cadence sweep still carried. Class A and Class B are both
   closed as mechanisms, so is the residual each of them left, so is the
   restart-scoped lag in collecting it, and so is the one disposition that was
-  neither, under both collectors rather than one; what is
-  left is policy, and it is open decisions 1 and 2 rather than code. **The horizon
-  ships disabled** - the default of `cairo.live.view.checkpoint.retention.micros`
-  is zero - so nothing bounds a default install's *retained* state until a human
-  settles that default; what the cadence bounds is the garbage beside it.
+  neither, under both collectors rather than one.
+  **Scope decision, 2026-07-31: the retention horizon is not shipping.** The brief
+  was metadata GC, section 1 widened it to bound retained state too, and that
+  widening is withdrawn - so Class A is the deliverable and Phase 3 comes back out.
+  What remains is the four follow-up tasks in section 12, of which task 1 is that
+  removal and task 2 is the regression guard it must not take with it. Class A
+  itself needs no further code. The consequence, stated because it is the point:
+  **nothing bounds a default install's retained checkpoint state**, and task 3
+  requires the PR body to say so; what the cadence and the reconciler bound is the
+  garbage beside it.
   The original three semantic questions in section 6 were traced on 2026-07-30 and
   came back clear.
 
 ---
 
-## 1. Scope, and one correction to it
+## 1. Scope, and one correction to it - the correction withdrawn
 
 The brief was `_checkpoints/meta/`. That is the right primary target - it is the
 only surface with **no** reclamation mechanism whatsoever - but the plan below
-also bounds `_checkpoints/data/`, because the two share a root cause and the data
+also covers `_checkpoints/data/`, because the two share a root cause and the data
 side needs no new machinery once that cause is addressed.
 
 `data/` is not fine today. Its garbage collection works (reference counts plus
 `PurgeSweep`), but nothing ever releases a reference in the steady state, so its
-retained-state growth is unbounded in exactly the same way `meta/`'s is. Phases 1
-and 3 fix both at once; Phase 2 is metadata-only.
+retained-state growth is unbounded in exactly the same way `meta/`'s is. Phase 1
+addresses both at once; Phase 2 is metadata-only.
+
+**The second correction this section originally made is withdrawn.** It read that
+the plan "also bounds" the two directories, and Phase 3 - the retention horizon -
+was how it proposed to do that. Bounding retained state means deciding to stop
+keeping live boundaries, which is a policy feature rather than a collector, and
+the scope decision of 2026-07-31 (section 11) takes it back out. So this plan
+reclaims garbage in both directories and bounds neither: what a generation cannot
+reach is collected, and what it can reach stays for as long as the boundary
+naming it does. Task 1 in section 12 removes Phase 3; sections 2 through 10 are
+left as written, because the growth model and the trade-offs they record are what
+a future retention proposal would start from.
 
 The live view's own table (partitions) is explicitly out of scope - TTL support
 lands separately.
@@ -1496,12 +1512,18 @@ the format case, which went to `LiveViewCheckpointLifecycleTest`
   when the sweep is made to skip boundary segments.
 - Reference-count invariant computed independently, which is worth building the
   page-level walker for once boundary closures are counted too. **Not done, and
-  it is still the gap.** What the cases assert is the two consequences - some
-  superseded segment went, and no segment a surviving root names went - plus the
-  restart and the from-base recompute. Computing the expected count instead needs
+  closed as an accepted gap on 2026-07-31.** What the cases assert is the two
+  consequences - some superseded segment went, and no segment a surviving root
+  names went - plus the restart and the from-base recompute. Computing the
+  expected count instead needs
   a page-level walk of every boundary's partition maps, which no reader exposes;
   the top-level roots are reachable through public APIs but the map pages below
   them are not, and those are exactly where the cross-boundary sharing lives.
+  The judgement is that the in-writer assertion holding the release pre-pass
+  against the path copy, plus a restore that recomputes at a zero fault count,
+  covers enough of it to not be worth a test-only walker. Reopen it if a
+  reference-count bug ever reaches a branch, since this is the assertion that
+  would have named it directly.
 
 **Phase 3** - landed in `LiveViewCheckpointRetentionHorizonTest`, plus tree-level
 cases in `LiveViewCheckpointTimelineTest` / `LiveViewCheckpointRowPositionDeltaTest`
@@ -1742,17 +1764,31 @@ worker, under the same serialization the reconciliation sweep always had.
 
 ## 11. Open decisions for a human
 
-1. **Horizon policy.** *Partly settled by what shipped:* Phase 3 took an
+**Settled on 2026-07-31, and it changes what this plan delivers.** The brief was
+metadata GC - reclaiming the garbage in `_checkpoints/meta/` - and the plan
+widened it in section 1 to bound retained state as well, because Class A alone
+leaves the store growing. That widening is withdrawn: **the retention horizon is
+not shipping.** The deliverable is Class A, which Phases 2a, 2b, 4, 5, 6 and 7
+close and which is on by default. Task 1 in section 12 removes Phase 3, and
+decisions 1 and 2 below go with it. Section 1's correction to the scope stands as
+a record of why the horizon was proposed, not as something this plan does.
+
+1. ~~**Horizon policy.**~~ **Withdrawn** with Phase 3. Phase 3 took an
    event-time window, `cairo.live.view.checkpoint.retention.micros`, because the
    floor it implies is one `O(log N)` probe while a boundary count would need
-   navigation the timeline reader does not expose (section 5.4). What is still
-   open is the end state decision 1 originally named: deriving that window from
-   the view's TTL once TTL lands, so the checkpoint horizon never sits below data
-   the view still retains. Until then the two are set independently and an
-   operator can put the horizon below the TTL.
-2. **Default horizon - now the only thing between the mechanism and a bounded
-   default.** It ships at zero, which disables retention, so a default install
-   grows exactly as it did before Phase 3. Section 6.4 narrows the question: a
+   navigation the timeline reader does not expose (section 5.4). The end state
+   this decision named - deriving that window from the view's TTL once TTL lands,
+   so the checkpoint horizon never sits below data the view still retains - has no
+   horizon to apply to once task 1 lands. It comes back only if checkpoint
+   retention is proposed again as its own change.
+2. ~~**Default horizon.**~~ **Withdrawn** with Phase 3, and it was the only
+   thing between the mechanism and a bounded default - so with the mechanism gone,
+   a default install's *retained* checkpoint state is unbounded and nothing in
+   this plan bounds it. That is the accepted outcome of the scope decision above,
+   and task 3 requires the PR body to say it plainly rather than leave it implied.
+   The analysis below is kept because it is what any future retention proposal
+   starts from. It shipped at zero, which disables retention, so a default install
+   grew exactly as it did before Phase 3. Section 6.4 narrows the question: a
    view whose every window function localizes pays nothing for a short horizon,
    because the dependency rather than the checkpoint supplies the repair floor.
    Only a view carrying a non-localizable function pays, and only on corrections
@@ -1768,15 +1804,19 @@ worker, under the same serialization the reconciliation sweep always had.
    `a2712f7217` on `puzpuzpuz_live_view`, and Phases 2a, 2b and 3 followed it on
    the same branch. None of them needed data-page access outside the checkpoint
    storage layer.
-4. **What the PR body says.** The old line - "Live-view disk growth is unbounded
+4. **What the PR body says.** *Now tracked as task 3, whose two clauses are the
+   conclusion; what follows is how the wording got there.* The old line -
+   "Live-view disk growth is unbounded
    in V1; operators size retention upstream" - was wrong on the second clause: no
-   upstream retention setting bounds `_checkpoints/`. Phase 3 makes the first
-   clause conditional rather than false. There *is* now a live-view config key
-   that bounds the checkpoint store, and it is off by default, so the accurate
-   line is that growth is bounded by `cairo.live.view.checkpoint.retention.micros`
-   when set and unbounded when it is not. Phase 4 closed the residual that used to
-   qualify even that - the segment catalogue's own tree - so with a horizon set
-   there is no term left that grows with the view's age, only with what it holds.
+   upstream retention setting bounds `_checkpoints/`. Phase 3 made the first
+   clause conditional rather than false, and removing Phase 3 makes it flatly true
+   again for retained state: with no horizon there is no live-view config key that
+   bounds the checkpoint store. What did *not* revert with it is everything below,
+   which is why the honest line is two clauses rather than one - the garbage half
+   is bounded and on by default, and the retained half is not bounded at all.
+   Phase 4 closed the residual that used to
+   qualify even that - the segment catalogue's own tree - so nothing is left that
+   grows with the view's *age* as opposed to with what it holds.
    Phase 5 closed the last qualifier after that: unlinking used to wait for a
    restart, so a long-running process held every superseded segment whether a
    horizon was set or not, and now it collects on a seal cadence
@@ -1821,7 +1861,148 @@ worker, under the same serialization the reconciliation sweep always had.
    `[L, H)` only, so the boundary it publishes images the keys that range
    carried rather than the key set the boundary originally described. Whether a
    restore from such a boundary is meant to come back with fewer keys is a
-   question for the repair design, not for this plan. Phase 3 shipped without it
-   being answered. The horizon does not reshape a boundary - it retires whole ones
-   - but it does shrink the set a restore or a resume can fall back to, so a
-   narrowed boundary has fewer intact neighbours under it than it used to.
+   question for the repair design, not for this plan. **Tracked as task 4**, which
+   is where the concrete steps are; it stays listed here because the disposition -
+   bug, or intended semantics that want documenting - is still a human's call and
+   the task's first step is to establish which.
+
+---
+
+## 12. Follow-up tasks
+
+Open work, in the order it should be taken. Tasks 1 and 2 come from the scope
+decision at the head of section 11 and land together; tasks 3 and 4 are
+independent of each other.
+
+### Task 1 - remove the retention horizon (Phase 3)
+
+**Why:** the deliverable is metadata GC. Retention is a policy mechanism that
+decides to stop keeping live boundaries, which is a different feature, and it
+ships disabled - so removing it costs a default install nothing and takes ~450
+lines of production code, a config key and a public surface out of #6939.
+
+`d7bf14f612` is the commit, but do not expect `git revert` to apply: Phases 4, 5,
+6 and 7 all landed on top of it and two of them reference it.
+
+**Remove:**
+
+- `LiveViewCheckpointTimelineWriter.truncateBelow` and its recursion, result pool
+  and javadoc (~161 lines; the low-side mirror of `truncateAbove`, which stays).
+- `LiveViewCheckpointRowPositionDeltaWriter`'s low-side prune (~221 lines) and the
+  `LiveViewCheckpointRowPositionDeltaNode` / `LiveViewCheckpointTimelineNode`
+  helpers Phase 3 added for it (~73 lines across the two).
+- `LiveViewCheckpointTimelineStoreWriter.publishTruncateBelow` and its
+  `RetentionResult`, less the `retiredCheckpointCount` maintenance - see below.
+- `LiveViewRefreshJob.maybeTrimCheckpointTimeline` and its call in the
+  `if (sealed)` maintenance block, where retention currently runs ahead of
+  compaction and the sweep. The comment there explaining that ordering needs
+  rewriting for the two passes that remain.
+- The config key end to end: `PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS`,
+  the `PropServerConfiguration` read, `CairoConfiguration.getLiveViewCheckpointRetentionMicros`,
+  the wrapper and default implementations, the `server.conf` template entry and
+  the `ServerMainTest` line that counts it.
+- `LiveViewCheckpointRetentionHorizonTest` (627 lines), the retention cases in
+  `LiveViewCheckpointTimelineTest` (268) and `LiveViewCheckpointRowPositionDeltaTest`
+  (174), and `LiveViewFuzzTest.testFuzzCheckpointRetentionHorizon` (18).
+
+**Keep, and this is the one piece that looks removable and is not:**
+`LiveViewCheckpointSuperblock.retiredCheckpointCount` and the
+`SLOT_FORMAT_VERSION` bump that carries it. Section 5.4 records that the counter
+was **already wrong before Phase 3** - `publishTruncate` has always dropped
+boundaries without adjusting `nextCheckpointId`, so `checkpoint_timeline_entries`
+over-reported after a high-side truncate - and the high-side truncate maintains
+the field too (`LiveViewCheckpointTimelineStoreWriter.java:893`, against the
+retention site at `:1081`). Removing the field would reintroduce that bug. Live
+views are unreleased, so leaving the format version where it is costs nothing and
+avoids a second bump.
+
+**Acceptance:** no `retention` symbol left in `core/src/main` outside the WAL and
+base-table senses of the word; `checkpoint_timeline_entries` still correct across
+a high-side truncate; the `io.questdb.test.cairo.lv` package green.
+
+### Task 2 - re-point Phase 6 and 7's non-seal failure injection
+
+**Blocks task 1 from being complete.** Do not let it be dropped silently, because
+it is a regression guard on the GC work that is shipping.
+
+Phase 6 exists for the files a publication renames into place and then fails to
+commit. Proving that needs a failure in a publication that is **not** a seal: a
+failed seal re-arms the reconciliation that reads the id ceiling, which is
+exactly the case that was never broken. The only such injection point today is
+`TEST_FAIL_AFTER_RETENTION_METADATA_PUBLISH`
+(`LiveViewCheckpointTimelineStoreWriter.java:94`, fired at `:1068`), and it fires
+inside the retention publication task 1 removes.
+
+Two cases depend on it -
+`LiveViewCheckpointMetadataReclamationTest.testTheCadenceSweepCollectsTheOrphansOfAFailedPublication`
+and `testAReconciliationCollectsTheOrphansTheIdCeilingRuleCannotReach` - and both
+are red-before/green-after guards, one for Phase 6 and one for Phase 7.
+
+**Do:** add the equivalent stage to `publishCompaction` and point both cases at
+it. Compaction is the natural replacement - it is one of the three publications
+section 5.7 names as producing this shape, it re-arms no reconciliation either,
+and `cairo.live.view.checkpoint.compaction.interval` already drives it from a
+test. Section 8's Phase 6 entry currently records "the same shape from a failed
+compaction" as *not covered*; this converts that line rather than adding to it.
+
+**Acceptance:** both cases still fail against a build with Phase 6's pass disabled
+and pass with it, and section 8's Phase 6 and 7 entries are updated to name the
+new stage.
+
+### Task 3 - rewrite the #6939 PR body
+
+Decision 4 below carries the wording history. Task 1 makes the current draft wrong
+again: with retention removed there is no live-view config key that bounds the
+checkpoint store, so the accurate statement is two clauses rather than one.
+
+- **Garbage is collected, by default.** Superseded metadata and data segments, the
+  catalogue entries naming them, and the files a failed publication left are
+  reclaimed on a seal cadence (`cairo.live.view.checkpoint.purge.interval`,
+  default one, zero to disable) and again at every reconciliation. Nothing in
+  `_checkpoints/` that a generation cannot reach survives a running process or a
+  restart.
+- **Retained state is not bounded.** Every sealed boundary stays reachable, so the
+  store grows with the view's history. Phase 1's elision makes that proportional
+  to the keys that actually change per seal rather than to the whole key set, which
+  is a large constant but not a bound. State it plainly; do not imply an upstream
+  retention setting sizes it, which is the error the original line made.
+
+### Task 4 - the narrowed key set a localized repair leaves behind
+
+This is decision 5, tracked as work rather than as a question, per the scope
+discussion on 2026-07-31. It is **pre-existing repair behaviour, unrelated to
+reclamation** - Phase 1 only made it visible - so it neither blocks nor is blocked
+by tasks 1 to 3, and it may well belong outside #6939 entirely. Establishing that
+is step 3.
+
+**The observation** (section 5.1, found while writing the Phase 1 capture test):
+`RepairCapture.capture` (`LiveViewCheckpointTimelineStoreWriter.java:2678`)
+freezes the runtime's window state as the new root version of each boundary the
+replay crosses. A localized repair replays `[L, H)` over runtime state the scratch
+overlay has taken out of the way, so the state it freezes covers the keys that
+range carried, not the key set the boundary originally described. A restore from
+such a re-versioned boundary therefore comes back with fewer keys than the
+boundary it replaced.
+
+**Steps:**
+
+1. Reproduce it directly, at the level the claim is made: seal a boundary over a
+   wide key set, drive a localized repair whose `[L, H)` touches one key, and
+   compare the restored key set against the one the original boundary described.
+   The Phase 1 capture case in `LiveViewCheckpointStatePageElisionTest` is the
+   nearest existing fixture, but it asserts page sharing rather than key coverage.
+2. Decide which it is. Either the replay is meant to carry the untouched keys
+   forward - in which case a re-versioned boundary is losing state and this is a
+   correctness bug - or a repair is meant to re-version only what it replayed, in
+   which case the restore contract needs to say so and the callers that fall back
+   to a re-versioned boundary need to tolerate a narrower key set.
+3. Route it. If it is a bug, size the fix against `capture` and the scratch
+   overlay and decide whether it lands in #6939 or its own PR. If it is intended,
+   the deliverable is javadoc on `RepairCapture.capture` and on the restore path,
+   plus a test that pins the narrowing so it cannot change silently.
+
+**What is already known, and bounds the urgency:** nothing in this plan reshapes a
+boundary. Phase 3 would have shrunk the set a restore could fall back to - fewer
+intact neighbours under a narrowed boundary - but task 1 removes it, so the
+population that meets a narrowed boundary is whatever it was before this work
+started.
