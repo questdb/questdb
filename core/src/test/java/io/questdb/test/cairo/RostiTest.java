@@ -166,11 +166,46 @@ public class RostiTest extends AbstractCairoTest {
         // merge() is key-agnostic, so this needs no column top at all: the key is INT_NULL only
         // because it is the convenient seed.
         assertMemoryLeak(() -> {
-            // abs(sum) >= d: first arm of the Neumaier step.
-            assertMergeCarriesCompensation(8.0, 0.25, 2.0, 0.5, 10.75);
-            // abs(sum) < d: second arm.
-            assertMergeCarriesCompensation(2.0, 0.25, 8.0, 0.5, 10.75);
+            // abs(sum) >= abs(d): first arm of the Neumaier step.
+            assertMergeCarriesCompensation(8.0, 0.25, 2.0, 0.5, 10.75, 0.75);
+            // abs(sum) < abs(d): second arm.
+            assertMergeCarriesCompensation(2.0, 0.25, 8.0, 0.5, 10.75, 0.75);
         });
+    }
+
+    @Test
+    public void testKeyedIntNSumDoubleMergeComparesAddendMagnitude() throws Exception {
+        // The Neumaier step picks its arm by comparing the running sum against the addend, and the
+        // comparison has to be between MAGNITUDES: abs(sum) >= abs(d). Compare abs(sum) against a
+        // raw d and every negative addend takes the first arm, which then computes the correction
+        // from the wrong pair. vec_agg_vanilla.cpp and vec_agg.cpp already had the magnitude form,
+        // so the two paths disagreed on the same data.
+        //
+        // 2^60 has an ulp of 256, so the destination's 1.0 rounds straight off the merged sum and
+        // owes a correction of exactly 1. Only the second arm produces it: (d - t) + sum is
+        // (-2^60 + 2^60) + 1. The first arm computes (sum - t) + d = (1 + 2^60) + (-2^60), and
+        // 1 + 2^60 rounds back to 2^60, so it contributes 0 and the destination's 1.0 is lost.
+        //
+        // Both slots also carry their own non-zero compensation, so the expected 1.75 is the seeded
+        // 0.25 plus the step's 1 plus the source's 0.5, and the wrong arm leaves 0.75.
+        assertMemoryLeak(() -> assertMergeCarriesCompensation(
+                1.0, 0.25, -1_152_921_504_606_846_976.0, 0.5, -1_152_921_504_606_846_976.0, 1.75));
+    }
+
+    @Test
+    public void testKeyedIntNSumDoubleWrapUpComparesAddendMagnitude() throws Exception {
+        // The mirror of testKeyedIntNSumDoubleMergeComparesAddendMagnitude on wrapUp()'s populate
+        // branch, where the addend is the null group's running sum handed over by the Java side. It
+        // is an ordinary DOUBLE column value, so it is negative as often as not, and comparing
+        // abs(sum) against a raw valueAtNull sends every negative one down the first arm.
+        //
+        // Same arithmetic: the slot's 1.0 rounds off a sum of -2^60 and owes a correction of
+        // exactly 1, which only (valueAtNull - t) + sum produces. The first arm's
+        // (sum - t) + valueAtNull is (1 + 2^60) + (-2^60), and 1 + 2^60 rounds back to 2^60, so it
+        // contributes 0. Expected 1.75 is the seeded 0.25 plus the step's 1 plus the incoming 0.5;
+        // the wrong arm leaves 0.75.
+        assertMemoryLeak(() -> assertWrapUpFoldsIntoSeededSlot(
+                1.0, 0.25, -1_152_921_504_606_846_976.0, 0.5, -1_152_921_504_606_846_976.0, 1.75));
     }
 
     @Test
@@ -189,10 +224,10 @@ public class RostiTest extends AbstractCairoTest {
         // compensation, so the assertion also fails if wrapUp() overwrites the slot's
         // compensation instead of adding to it.
         assertMemoryLeak(() -> {
-            // abs(sum) >= valueAtNull: takes the first arm of the Neumaier step.
-            assertWrapUpFoldsIntoSeededSlot(8.0, 0.25, 2.0, 0.5, 10.75);
-            // abs(sum) < valueAtNull: takes the second arm.
-            assertWrapUpFoldsIntoSeededSlot(2.0, 0.25, 8.0, 0.5, 10.75);
+            // abs(sum) >= abs(valueAtNull): takes the first arm of the Neumaier step.
+            assertWrapUpFoldsIntoSeededSlot(8.0, 0.25, 2.0, 0.5, 10.75, 0.75);
+            // abs(sum) < abs(valueAtNull): takes the second arm.
+            assertWrapUpFoldsIntoSeededSlot(2.0, 0.25, 8.0, 0.5, 10.75, 0.75);
         });
     }
 
@@ -362,7 +397,8 @@ public class RostiTest extends AbstractCairoTest {
             double compensationA,
             double sumB,
             double compensationB,
-            double expected
+            double expected,
+            double expectedCompensation
     ) {
         final long pRostiA = allocCompensatedSumRosti();
         try {
@@ -379,6 +415,12 @@ public class RostiTest extends AbstractCairoTest {
                 Assert.assertTrue(Rosti.keyedIntNSumDoubleWrapUp(pRostiA, VALUE_OFFSET, 0.0, 0, 0.0));
 
                 Assert.assertEquals(expected, readSingleSlotDouble(pRostiA, VALUE_OFFSET), 0.0);
+                // The sweep folds the compensation into the value and leaves the field itself
+                // alone, so this reads what the merge step decided. The step's own contribution
+                // can never show up in the value: it is the rounding residual of a single
+                // addition, so at most half an ulp of that value, and folding it back rounds
+                // straight off again. Pinning the field is the only way to see which arm ran.
+                Assert.assertEquals(expectedCompensation, readSingleSlotDouble(pRostiA, VALUE_OFFSET + 1), 0.0);
             } finally {
                 Rosti.free(pRostiB);
             }
@@ -416,7 +458,8 @@ public class RostiTest extends AbstractCairoTest {
             double seedCompensation,
             double valueAtNull,
             double valueAtNullC,
-            double expected
+            double expected,
+            double expectedCompensation
     ) {
         final long pRosti = allocCompensatedSumRosti();
         try {
@@ -429,6 +472,12 @@ public class RostiTest extends AbstractCairoTest {
             Assert.assertTrue(Rosti.keyedIntNSumDoubleWrapUp(pRosti, VALUE_OFFSET, valueAtNull, 3, valueAtNullC));
 
             Assert.assertEquals(expected, readSingleSlotDouble(pRosti, VALUE_OFFSET), 0.0);
+            // The sweep folds the compensation into the value and leaves the field itself alone,
+            // so this reads what the populate step decided. The step's own contribution can never
+            // show up in the value: it is the rounding residual of a single addition, so at most
+            // half an ulp of that value, and folding it back rounds straight off again. Pinning
+            // the field is the only way to see which arm ran.
+            Assert.assertEquals(expectedCompensation, readSingleSlotDouble(pRosti, VALUE_OFFSET + 1), 0.0);
         } finally {
             Rosti.free(pRosti);
         }

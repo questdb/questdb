@@ -233,6 +233,10 @@ inline uint64_t CapacityToGrowth(uint64_t capacity) {
     return capacity - capacity / 8;
 }
 
+// Callers must bring size_ in line with the map's new contents before calling this: the
+// subtraction runs on uint64_t, so a size_ above the new capacity's growth limit wraps
+// growth_left_ to a huge value, and a map that believes it has that much headroom never
+// resizes and writes past its arena.
 inline void reset_growth_left(rosti_t *map) {
     map->growth_left_ = CapacityToGrowth(map->capacity_) - map->size_;
 }
@@ -480,22 +484,27 @@ inline bool reset(rosti_t *map, uint64_t newSize) {
     if (map->capacity_ > newSize) {
         auto *old_init = map->slot_initial_values_;
         const uint64_t old_capacity = map->capacity_;
+        const uint64_t old_size = map->size_;
+        const uint64_t old_growth_left = map->growth_left_;
+        // initialize_slots() calls reset_growth_left(), which subtracts size_, so reset() empties
+        // the map before handing over: shrinking a populated map with size_ still set wraps
+        // growth_left_ and the map goes on to overrun its smaller arena.
         map->capacity_ = newSize;
+        map->size_ = 0;
         if (initialize_slots(&map)) {
-            // Empty the map only once the new arena is in place. Zeroing size_ up front left a
-            // failed reset() reporting an empty map while the old arena still held every entry,
-            // and callers that skip empty maps -- the vector aggregate merge among them -- would
-            // then drop those groups from the result.
-            map->size_ = 0;
-            reset_growth_left(map);
             cpySlot(map->slot_initial_values_, old_init, map->slot_size_);
             if (old_init) {
                 free(old_init);
             }
             return true;
-        } else {
-            map->capacity_ = old_capacity;
         }
+        // The allocation failed, the old arena still holds every entry, so reset() puts the
+        // counters back as they were. A map left reporting an empty size_ would drop those
+        // groups: callers that skip empty maps -- the vector aggregate merge among them --
+        // never look at their contents again.
+        map->capacity_ = old_capacity;
+        map->size_ = old_size;
+        map->growth_left_ = old_growth_left;
         return false;
     } else {
         clear(map);

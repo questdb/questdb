@@ -1246,6 +1246,38 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByHourStoredNullTimestampKey() throws Exception {
+        // A non-designated timestamp column can hold NULL, and the vectorized hour key reads that
+        // column straight off the page. timestamp_to_hour() mirrors Micros.getHourOfDay(), but
+        // MicrosTimestampDriver.getHourOfDay() maps LONG_NULL to INT_NULL first; without the same
+        // guard the stored NULL falls into the negative-timestamp arm, which computes
+        // 23 + ((LONG_NULL + 1) / HOUR_MICROS) % 24 = 19 and files those rows under hour 19.
+        //
+        // The row at 19:30 is here so the guard cannot be satisfied by breaking hour 19 generally:
+        // it must still report its own group of one, separate from the two NULL rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-11-08T00:00:00.000000Z', '2024-11-08T05:00:00.000000Z'),
+                        ('2024-11-08T00:00:01.000000Z', NULL),
+                        ('2024-11-08T00:00:02.000000Z', '2024-11-08T19:30:00.000000Z'),
+                        ('2024-11-08T00:00:03.000000Z', NULL)""");
+
+            assertQuery("SELECT hour(ts2) h, count() FROM x ORDER BY h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            h\tcount
+                            null\t2
+                            5\t1
+                            19\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testGroupByIndexOutsideSelectList() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab as (select x, x%2 as y from long_sequence(2))");
@@ -2068,6 +2100,42 @@ public class GroupByTest extends AbstractCairoTest {
             } finally {
                 pool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
             }
+        });
+    }
+
+    @Test
+    public void testGroupByInt32KeyNSumComparesAddendMagnitude() throws Exception {
+        // The Neumaier step picks its arm by comparing the running sum against the addend, and the
+        // comparison has to be between MAGNITUDES: abs(sum) >= abs(x). Comparing abs(sum) against a
+        // raw x makes every negative addend take the first arm, which then computes the correction
+        // from the wrong pair.
+        //
+        // Row by row, in table order: 1.0 leaves sum=1, c=0. Adding -1e100 rounds sum to -1e100 and
+        // owes a correction of 1, which only the second arm produces -- (x - t) + sum = 0 + 1. The
+        // first arm computes (sum - t) + x = (1 + 1e100) + (-1e100), and 1 + 1e100 rounds straight
+        // back to 1e100, so it yields 0 and the 1.0 is gone. Adding 1e100 returns the sum to 0 and
+        // leaves the correction alone, so the answer is whatever the middle row banked: 1.0 with
+        // the magnitude comparison, 0.0 without it.
+        //
+        // The plan pins the worker count as well as the path: the per-row loop is what orders these
+        // three values, so they all have to reach the same shard, and a fall back to the row-wise
+        // group by would test a step that was always correct.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, id INT, d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-11-08T00:00:00.000000Z', 42, 1.0),
+                        ('2024-11-08T01:00:00.000000Z', 42, -1e100),
+                        ('2024-11-08T02:00:00.000000Z', 42, 1e100)""");
+
+            assertQuery("SELECT id, nsum(d) FROM x ORDER BY id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true workers: 1")
+                    .returns("""
+                            id\tnsum
+                            42\t1.0
+                            """);
         });
     }
 

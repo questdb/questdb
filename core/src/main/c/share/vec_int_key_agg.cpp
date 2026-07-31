@@ -45,7 +45,7 @@ struct long128_t {
 
     long128_t &operator=(int64_t v);
 
-    constexpr long128_t operator-(long128_t v) const;
+    constexpr long128_t operator-() const;
 
     explicit operator double() const;
 
@@ -61,34 +61,48 @@ inline long128_t &long128_t::operator+=(long128_t other) {
     return *this;
 }
 
+// Both helpers add the high halves through uint64_t. int64_t overflow is undefined, and
+// double_to_accumulator() deliberately saturates to long128_t(L_MAX, UL_MAX) and
+// long128_t(L_MIN, 0), so kIntAvgLongWrapUp() can hand exactly those bounds to operator+.
+// Unsigned addition wraps by definition, which is the two's complement result this type wants.
 constexpr long128_t signed_add_carry(const long128_t &result, const long128_t &lhs) {
-    return (result.lo < lhs.lo) ? long128_t(result.hi + 1, result.lo) : result;
+    return (result.lo < lhs.lo)
+           ? long128_t(static_cast<int64_t>(static_cast<uint64_t>(result.hi) + 1), result.lo)
+           : result;
 }
 
 constexpr long128_t operator+(long128_t lhs, long128_t rhs) {
-    return signed_add_carry(long128_t(lhs.hi + rhs.hi, lhs.lo + rhs.lo), lhs);
+    return signed_add_carry(
+            long128_t(static_cast<int64_t>(static_cast<uint64_t>(lhs.hi) + static_cast<uint64_t>(rhs.hi)),
+                      lhs.lo + rhs.lo),
+            lhs);
 }
 
+// Hex floats, so each bound reads as the power of two it is rather than as a digit string a
+// reader has to count. The scalings below use them rather than ldexp(): GCC does not fold a
+// constant-exponent ldexp() without -ffast-math, so it emits a libm call. cast_positive() runs
+// once per group in avg(long)'s wrapUp sweep, where that call dominated -- 40.7 ms against
+// 10.7 ms over 10M groups.
+constexpr jdouble TWO_POW_63 = 0x1p63;
+constexpr jdouble TWO_POW_64 = 0x1p64;
+constexpr jdouble TWO_POW_127 = 0x1p127;
+constexpr jdouble TWO_POW_MINUS_64 = 0x1p-64;
+
 inline double cast_positive(long128_t v) {
-    // Scaling by a power-of-two literal rather than ldexp(), for the reason given at
-    // double_to_accumulator(): GCC does not fold a constant-exponent ldexp() without
-    // -ffast-math, so it emits a libm call. This one runs once per group in avg(long)'s
-    // wrapUp sweep, where the call dominated: 40.7 ms against 10.7 ms over 10M groups.
-    return static_cast<double>(v.lo) + static_cast<double>(v.hi) * 0x1p64;
+    return static_cast<double>(v.lo) + static_cast<double>(v.hi) * TWO_POW_64;
 }
 
 long128_t::operator double() const {
     // if negative and not minimal - cast absolute value
     if (hi < 0 && hi != std::numeric_limits<int64_t>::min() && lo != 0) {
-        long128_t abs = operator-(*this);
-        return -cast_positive(abs);
+        return -cast_positive(-*this);
     } else {
         return cast_positive(*this);
     }
 }
 
-constexpr long128_t long128_t::operator-(long128_t v) const {
-    return {~v.hi + (v.lo == 0), ~v.lo + 1};
+constexpr long128_t long128_t::operator-() const {
+    return {static_cast<int64_t>(~static_cast<uint64_t>(hi) + (lo == 0)), ~lo + 1};
 }
 
 struct long256_t {
@@ -147,9 +161,16 @@ inline int32_t timestamp_to_hour(jlong ptr, int i) {
     const auto timestamp = p[i];
     if (PREDICT_TRUE(timestamp > -1)) {
         return ((timestamp / HOUR_UNIT) % DAY_HOURS);
-    } else {
-        return DAY_HOURS - 1 + (((timestamp + 1) / HOUR_UNIT) % DAY_HOURS);
     }
+    // MicrosTimestampDriver.getHourOfDay() maps LONG_NULL to INT_NULL, and the row-wise plan
+    // calls it. Without this the arithmetic below buckets a stored NULL as hour 19, so the two
+    // plans disagree and a stored NULL splits from the column-top NULL group. I_MIN is also the
+    // INT null key, so these rows land in that group rather than one of their own. The check
+    // sits below the positive branch to keep it off the common path.
+    if (PREDICT_FALSE(timestamp == L_MIN)) {
+        return I_MIN;
+    }
+    return DAY_HOURS - 1 + (((timestamp + 1) / HOUR_UNIT) % DAY_HOURS);
 }
 
 inline int32_t micro_to_hour(jlong ptr, int i) {
@@ -175,15 +196,16 @@ static jboolean kIntMaxInt(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pI
         const int32_t key = to_int(pKeys, i);
         const jint val = pi[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto pKey = map->slots_ + res.first;
-        auto pVal = pKey + value_offset;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto pKey = map->slots_ + res.first;
+            auto pVal = pKey + value_offset;
             *reinterpret_cast<int32_t *>(pKey) = key;
             *reinterpret_cast<jint *>(pVal) = val;
         } else {
+            auto pVal = map->slots_ + res.first + value_offset;
             const jint old = *reinterpret_cast<jint *>(pVal);
             *reinterpret_cast<jint *>(pVal) = MAX(val, old);
         }
@@ -200,15 +222,16 @@ static jboolean kIntMaxLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong p
         const int32_t key = to_int(pKeys, i);
         const jlong val = pl[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto pKey = map->slots_ + res.first;
-        auto pVal = pKey + value_offset;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto pKey = map->slots_ + res.first;
+            auto pVal = pKey + value_offset;
             *reinterpret_cast<int32_t *>(pKey) = key;
             *reinterpret_cast<jlong *>(pVal) = val;
         } else {
+            auto pVal = map->slots_ + res.first + value_offset;
             const jlong old = *reinterpret_cast<jlong *>(pVal);
             *reinterpret_cast<jlong *>(pVal) = MAX(val, old);
         }
@@ -226,15 +249,16 @@ kIntMaxDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong 
         const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto pKey = map->slots_ + res.first;
-        auto pVal = pKey + value_offset;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto pKey = map->slots_ + res.first;
+            auto pVal = pKey + value_offset;
             *reinterpret_cast<int32_t *>(pKey) = key;
             *reinterpret_cast<jdouble *>(pVal) = std::isnan(d) ? D_MIN : d;
         } else {
+            auto pVal = map->slots_ + res.first + value_offset;
             const jdouble old = *reinterpret_cast<jdouble *>(pVal);
             *reinterpret_cast<jdouble *>(pVal) = MAX(std::isnan(d) ? D_MIN : d, old);
         }
@@ -251,17 +275,18 @@ static jboolean kIntMinInt(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pI
         const int32_t key = to_int(pKeys, i);
         const jint val = pi[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto pKey = map->slots_ + res.first;
-        auto pVal = pKey + value_offset;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto pKey = map->slots_ + res.first;
+            auto pVal = pKey + value_offset;
             *reinterpret_cast<int32_t *>(pKey) = key;
             if (val != I_MIN) {
                 *reinterpret_cast<jint *>(pVal) = val;
             }
         } else if (val != I_MIN) {
+            auto pVal = map->slots_ + res.first + value_offset;
             const jint old = *reinterpret_cast<jint *>(pVal);
             if (old != I_MIN) {
                 *reinterpret_cast<jint *>(pVal) = MIN(val, old);
@@ -282,17 +307,18 @@ static jboolean kIntMinLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong p
         const int32_t key = to_int(pKeys, i);
         const jlong val = pi[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto pKey = map->slots_ + res.first;
-        auto pVal = pKey + value_offset;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto pKey = map->slots_ + res.first;
+            auto pVal = pKey + value_offset;
             *reinterpret_cast<int32_t *>(pKey) = key;
             if (val != L_MIN) {
                 *reinterpret_cast<jlong *>(pVal) = val;
             }
         } else if (val != L_MIN) {
+            auto pVal = map->slots_ + res.first + value_offset;
             const jlong old = *reinterpret_cast<jlong *>(pVal);
             if (old != L_MIN) {
                 *reinterpret_cast<jlong *>(pVal) = MIN(val, old);
@@ -313,12 +339,12 @@ static jboolean kIntMinShort(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
         const int32_t key = to_int(pKeys, i);
         const jshort val = pi[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto pKey = map->slots_ + res.first;
-        auto pVal = pKey + value_offset;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto pKey = map->slots_ + res.first;
+            auto pVal = pKey + value_offset;
             *reinterpret_cast<int32_t *>(pKey) = key;
             *reinterpret_cast<jlong *>(pVal) = val;
         } else {
@@ -326,6 +352,7 @@ static jboolean kIntMinShort(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
             // value yet" sentinel and the minimum jlong, so an unconditional MIN would always
             // pick the sentinel. Only the narrowing is gratuitous -- past the guard, old is a
             // sign-extended short, so (jshort) old is the identity.
+            auto pVal = map->slots_ + res.first + value_offset;
             const jlong old = *reinterpret_cast<jlong *>(pVal);
             if (old != L_MIN) {
                 *reinterpret_cast<jlong *>(pVal) = MIN((jlong) val, old);
@@ -346,18 +373,20 @@ static jboolean kIntMaxShort(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
         const int32_t key = to_int(pKeys, i);
         const jshort val = pi[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto pKey = map->slots_ + res.first;
-        auto pVal = pKey + value_offset;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto pKey = map->slots_ + res.first;
+            auto pVal = pKey + value_offset;
             *reinterpret_cast<int32_t *>(pKey) = key;
             *reinterpret_cast<jlong *>(pVal) = val;
         } else {
-            // L_MIN is both the "no value yet" sentinel and the minimum jlong, so a full-width
-            // max resolves it without a guard. The defect was narrowing old to jshort, which
-            // read the sentinel back as 0 and clamped every negative maximum away.
+            // Read the slot at its full jlong width. L_MIN is both the "no value yet" sentinel
+            // and the minimum jlong, so the max below resolves it without a separate guard --
+            // narrowing to jshort would read the sentinel back as 0 and clamp every negative
+            // maximum away.
+            auto pVal = map->slots_ + res.first + value_offset;
             const jlong old = *reinterpret_cast<jlong *>(pVal);
             *reinterpret_cast<jlong *>(pVal) = MAX((jlong) val, old);
         }
@@ -375,15 +404,16 @@ kIntMinDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong 
         const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto pKey = map->slots_ + res.first;
-        auto pVal = pKey + value_offset;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto pKey = map->slots_ + res.first;
+            auto pVal = pKey + value_offset;
             *reinterpret_cast<int32_t *>(pKey) = key;
             *reinterpret_cast<jdouble *>(pVal) = std::isnan(d) ? D_MAX : d;
         } else {
+            auto pVal = map->slots_ + res.first + value_offset;
             const jdouble old = *reinterpret_cast<jdouble *>(pVal);
             *reinterpret_cast<jdouble *>(pVal) = MIN((std::isnan(d) ? D_MAX : d), old);
         }
@@ -399,11 +429,11 @@ static jboolean kIntCountLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong
         const int32_t key = to_int(pKeys, i);
         const jlong val = pl[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = key;
             if (PREDICT_FALSE(val == L_MIN)) {
                 *reinterpret_cast<jlong *>(dest + value_offset) = 0;
@@ -411,6 +441,7 @@ static jboolean kIntCountLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong
                 *reinterpret_cast<jlong *>(dest + value_offset) = 1;
             }
         } else {
+            auto dest = map->slots_ + res.first;
             if (PREDICT_TRUE(val > L_MIN)) {
                 *reinterpret_cast<jlong *>(dest + value_offset) += 1;
             }
@@ -426,14 +457,15 @@ static jboolean kIntCountWrapUp(jlong pRosti, jint valueOffset, jlong valueAtNul
     if (valueAtNull > -1) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jlong *>(dest + value_offset) = valueAtNull;
         } else {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<jlong *>(dest + value_offset) += valueAtNull;
         }
     }
@@ -453,11 +485,11 @@ static jboolean kIntSumLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong p
         const int32_t key = to_int(pKeys, i);
         const jlong val = pl[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = key;
             if (PREDICT_FALSE(val == L_MIN)) {
                 *reinterpret_cast<T *>(dest + value_offset) = 0;
@@ -467,6 +499,7 @@ static jboolean kIntSumLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong p
                 *reinterpret_cast<jlong *>(dest + count_offset) = 1;
             }
         } else if (PREDICT_TRUE(val > L_MIN)) {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<T *>(dest + value_offset) += val;
             *reinterpret_cast<jlong *>(dest + count_offset) += 1;
         }
@@ -486,15 +519,16 @@ static jboolean kIntSumShort(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
         const int32_t key = to_int(pKeys, i);
         const jshort val = ps[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = key;
             *reinterpret_cast<T *>(dest + value_offset) = val;
             *reinterpret_cast<jlong *>(dest + count_offset) = 1;
         } else {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<T *>(dest + value_offset) += val;
             *reinterpret_cast<jlong *>(dest + count_offset) += 1;
         }
@@ -514,11 +548,11 @@ kIntSumLong256(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong c
         const int32_t key = to_int(pKeys, i);
         const long256_t &val = pl[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = key;
             long256_t &dst = *reinterpret_cast<long256_t *>(dest + value_offset);
             if (PREDICT_FALSE(val.is_null())) {
@@ -529,6 +563,7 @@ kIntSumLong256(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong c
                 *reinterpret_cast<jlong *>(dest + count_offset) = 1;
             }
         } else if (PREDICT_TRUE(!val.is_null())) {
+            auto dest = map->slots_ + res.first;
             long256_t &dst = *reinterpret_cast<long256_t *>(dest + value_offset);
             dst += val;
             *reinterpret_cast<jlong *>(dest + count_offset) += 1;
@@ -593,17 +628,18 @@ kIntSumLong256WrapUp(jlong pRosti, jint valueOffset, jlong n0, jlong n1, jlong n
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             long256_t &dst = *reinterpret_cast<long256_t *>(dest + value_offset);
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             dst = long256_t(n0, n1, n2, n3);
             *reinterpret_cast<jlong *>(dest + count_offset) = valueAtNullCount;
         } else {
+            auto dest = map->slots_ + res.first;
             long256_t &dst = *reinterpret_cast<long256_t *>(dest + value_offset);
             long256_t valueAtNull(n0, n1, n2, n3);
             dst += valueAtNull;
@@ -644,20 +680,21 @@ kIntNSumDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong
         const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = key;
             *reinterpret_cast<jdouble *>(dest + value_offset) = std::isnan(d) ? 0 : d;
             *reinterpret_cast<jdouble *>(dest + c_offset) = 0.;
             *reinterpret_cast<jlong *>(dest + count_offset) = std::isnan(d) ? 0 : 1;
         } else {
+            auto dest = map->slots_ + res.first;
             const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
             const jdouble x = std::isnan(d) ? 0 : d;
             const jdouble t = sum + x;
-            if (std::abs(sum) >= x) {
+            if (std::abs(sum) >= std::abs(x)) {
                 *reinterpret_cast<jdouble *>(dest + c_offset) += (sum - t) + x;
             } else {
                 *reinterpret_cast<jdouble *>(dest + c_offset) += (x - t) + sum;
@@ -678,11 +715,11 @@ static jboolean kIntCountInt(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
         const int32_t key = to_int(pKeys, i);
         const jint val = pi[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = key;
             if (PREDICT_FALSE(val == I_MIN)) {
                 *reinterpret_cast<jlong *>(dest + value_offset) = 0;
@@ -690,6 +727,7 @@ static jboolean kIntCountInt(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
                 *reinterpret_cast<jlong *>(dest + value_offset) = 1;
             }
         } else if (PREDICT_TRUE(val > I_MIN)) {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<jlong *>(dest + value_offset) += 1;
         }
     }
@@ -706,11 +744,11 @@ static jboolean kIntSumInt(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pI
         const int32_t key = to_int(pKeys, i);
         const jint val = pi[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = key;
             if (PREDICT_FALSE(val == I_MIN)) {
                 *reinterpret_cast<jlong *>(dest + value_offset) = 0;
@@ -720,6 +758,7 @@ static jboolean kIntSumInt(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pI
                 *reinterpret_cast<jlong *>(dest + count_offset) = 1;
             }
         } else if (PREDICT_TRUE(val > I_MIN)) {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<jlong *>(dest + value_offset) += val;
             *reinterpret_cast<jlong *>(dest + count_offset) += 1;
         }
@@ -732,11 +771,11 @@ static jboolean kIntDistinct(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
     for (int i = 0; i < count; i++) {
         const int32_t key = to_int(pKeys, i);
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = key;
         }
     }
@@ -753,14 +792,15 @@ kIntCountDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlon
         const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = key;
             *reinterpret_cast<jlong *>(dest + count_offset) = std::isnan(d) ? 0 : 1;
         } else {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<jlong *>(dest + count_offset) += std::isnan(d) ? 0 : 1;
         }
     }
@@ -779,15 +819,16 @@ kIntSumDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong 
         const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = key;
             *reinterpret_cast<jdouble *>(dest + value_offset) = std::isnan(d) ? 0 : d;
             *reinterpret_cast<jlong *>(dest + count_offset) = std::isnan(d) ? 0 : 1;
         } else {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<jdouble *>(dest + value_offset) += std::isnan(d) ? 0 : d;
             *reinterpret_cast<jlong *>(dest + count_offset) += std::isnan(d) ? 0 : 1;
         }
@@ -808,11 +849,11 @@ kIntKSumDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong
         const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = key;
             *reinterpret_cast<jdouble *>(dest + value_offset) = std::isnan(d) ? 0 : d;
             *reinterpret_cast<jdouble *>(dest + c_offset) = 0.;
@@ -822,6 +863,7 @@ kIntKSumDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong
             // exists, but it must not run the Kahan step: folding a zero leaves t == sum and
             // assigns (t - sum) - y == 0 to the compensation, wiping the correction the slot had
             // pending. One NULL row in a group degraded the rest of it to naive summation.
+            auto dest = map->slots_ + res.first;
             const jdouble c = *reinterpret_cast<jdouble *>(dest + c_offset);
             const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
             const jdouble y = d - c;
@@ -841,14 +883,15 @@ static jboolean kIntCount(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong cou
     for (int i = 0; i < count; i++) {
         auto const key = to_int(pKeys, i);
         auto res = find(map, key);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = key;
             *reinterpret_cast<jlong *>(dest + value_offset) = 1;
         } else {
+            auto dest = map->slots_ + res.first;
             (*reinterpret_cast<jlong *>(dest + value_offset))++;
         }
     }
@@ -913,16 +956,17 @@ static jboolean kIntSumLongWrapUp(jlong pRosti, jint valueOffset, jlong valueAtN
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jlong *>(dest + value_offset) = valueAtNull;
             *reinterpret_cast<jlong *>(dest + count_offset) = valueAtNullCount;
         } else {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<jlong *>(dest + value_offset) += valueAtNull;
             *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
         }
@@ -947,21 +991,20 @@ static jboolean kIntSumLongWrapUp(jlong pRosti, jint valueOffset, jlong valueAtN
     return JNI_TRUE;
 }
 
+// Converts avg()'s accumulated null-group sum to the integer accumulator the slot holds.
+//
 // A plain double-to-int cast is UB outside the destination range, which avg(long) sums
 // legitimately exceed -- that range is why its accumulator is 128 bits wide.
 //
-// The NaN and out-of-range arms below are range guards, not expected paths. Callers reach
-// here from avg()'s wrapUp(), whose accumulator only takes finite values
+// The NaN and out-of-range arms are range guards, not expected paths. Callers reach here from
+// avg()'s wrapUp(), whose accumulator only takes finite values
 // (AvgLongVectorAggregateFunction.aggregate() gates on Numbers.isFinite), and saturating the
-// 128-bit form would need a sum past 2^127, i.e. around 2^64 rows. They exist so the cast
-// below can never be UB, not because any query is expected to hit them.
-// Hex floats, so the bounds read as the powers of two they are rather than as digit strings
-// a reader has to count.
-constexpr jdouble TWO_POW_63 = 0x1p63;
-constexpr jdouble TWO_POW_127 = 0x1p127;
-
+// 128-bit form would need a sum past 2^127, i.e. around 2^64 rows. They exist so the cast can
+// never be UB, not because any query is expected to hit them.
+//
 // Only the two specializations below are meant to exist; anything else is a caller mistake
-// rather than something to resolve at link time.
+// rather than something to resolve at link time. Both inherit the internal linkage this
+// primary template declares.
 template<typename T>
 static T double_to_accumulator(jdouble d) = delete;
 
@@ -994,11 +1037,9 @@ long128_t double_to_accumulator<long128_t>(jdouble d) {
         return long128_t(L_MIN, 0);
     }
     // Exact here: d's ulp is at least 1024, so neither the scaling nor the subtraction rounds.
-    // Scaling by a power-of-two literal rather than ldexp(): GCC does not fold a
-    // constant-exponent ldexp() without -ffast-math, so it would emit a libm call.
-    const jdouble hi_d = std::floor(d * 0x1p-64);
+    const jdouble hi_d = std::floor(d * TWO_POW_MINUS_64);
     const auto hi = static_cast<int64_t>(hi_d);
-    const auto lo = static_cast<uint64_t>(d - hi_d * 0x1p64);
+    const auto lo = static_cast<uint64_t>(d - hi_d * TWO_POW_64);
     return long128_t(hi, lo);
 }
 
@@ -1014,16 +1055,17 @@ static jboolean kIntAvgLongWrapUp(jlong pRosti, jint valueOffset, jdouble valueA
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<T *>(dest + value_offset) = double_to_accumulator<T>(valueAtNull);
             *reinterpret_cast<jlong *>(dest + count_offset) = valueAtNullCount;
         } else {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<T *>(dest + value_offset) += double_to_accumulator<T>(valueAtNull);
             *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
         }
@@ -1112,16 +1154,17 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleMerge(JNIEnv *env, jclass cl, jlong p
             auto count = *reinterpret_cast<jlong *>(src + count_offset);
 
             auto res = find(map_a, key);
-            if (PREDICT_FALSE(res.first == UL_MAX)) {
-                return JNI_FALSE;
-            }
             // maps must have identical structure to use "shift" from map B on map A
-            auto dest = map_a->slots_ + res.first;
             if (PREDICT_FALSE(res.second)) {
+                if (PREDICT_FALSE(res.first == UL_MAX)) {
+                    return JNI_FALSE;
+                }
+                auto dest = map_a->slots_ + res.first;
                 *reinterpret_cast<int32_t *>(dest) = key;
                 *reinterpret_cast<jdouble *>(dest + value_offset) = d;
                 *reinterpret_cast<jlong *>(dest + count_offset) = count;
             } else {
+                auto dest = map_a->slots_ + res.first;
                 *reinterpret_cast<jdouble *>(dest + value_offset) += d;
                 *reinterpret_cast<jlong *>(dest + count_offset) += count;
             }
@@ -1143,16 +1186,17 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jdouble *>(dest + value_offset) = valueAtNull;
             *reinterpret_cast<jlong *>(dest + count_offset) = valueAtNullCount;
         } else {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<jdouble *>(dest + value_offset) += valueAtNull;
             *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
         }
@@ -1247,15 +1291,16 @@ Java_io_questdb_std_Rosti_keyedIntCountMerge(JNIEnv *env, jclass cl, jlong pRost
             auto key = *reinterpret_cast<int32_t *>(src);
             auto count = *reinterpret_cast<jlong *>(src + value_offset);
             auto res = find(map_a, key);
-            if (PREDICT_FALSE(res.first == UL_MAX)) {
-                return JNI_FALSE;
-            }
             // maps must have identical structure to use "shift" from map B on map A
-            auto dest = map_a->slots_ + res.first;
             if (PREDICT_FALSE(res.second)) {
+                if (PREDICT_FALSE(res.first == UL_MAX)) {
+                    return JNI_FALSE;
+                }
+                auto dest = map_a->slots_ + res.first;
                 *reinterpret_cast<int32_t *>(dest) = key;
                 *reinterpret_cast<jlong *>(dest + value_offset) = count;
             } else {
+                auto dest = map_a->slots_ + res.first;
                 (*reinterpret_cast<jlong *>(dest + value_offset)) += count;
             }
         }
@@ -1286,18 +1331,19 @@ Java_io_questdb_std_Rosti_keyedIntKSumDoubleMerge(JNIEnv *env, jclass cl, jlong 
             auto count = *reinterpret_cast<jlong *>(src + count_offset);
 
             auto res = find(map_a, key);
-            if (PREDICT_FALSE(res.first == UL_MAX)) {
-                return JNI_FALSE;
-            }
             // maps must have identical structure to use "shift" from map B on map A
-            auto dest = map_a->slots_ + res.first;
             if (PREDICT_FALSE(res.second)) {
+                if (PREDICT_FALSE(res.first == UL_MAX)) {
+                    return JNI_FALSE;
+                }
+                auto dest = map_a->slots_ + res.first;
                 *reinterpret_cast<int32_t *>(dest) = key;
                 *reinterpret_cast<jdouble *>(dest + value_offset) = d;
                 *reinterpret_cast<jdouble *>(dest + c_offset) = cc;
                 *reinterpret_cast<jlong *>(dest + count_offset) = count;
             } else {
                 // do not check for nans in merge, because we can't have them in map
+                auto dest = map_a->slots_ + res.first;
                 const jdouble c = *reinterpret_cast<jdouble *>(dest + c_offset);
                 const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
                 // Both slots hold a (sum, c) pair standing for sum - c, so the Kahan step has to
@@ -1328,12 +1374,12 @@ Java_io_questdb_std_Rosti_keyedIntKSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jdouble *>(dest + value_offset) = valueAtNull;
             *reinterpret_cast<jlong *>(dest + count_offset) = valueAtNullCount;
@@ -1341,8 +1387,9 @@ Java_io_questdb_std_Rosti_keyedIntKSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
             // Kahan step, matching kIntKSumDouble's per-row loop: the compensation has to be
             // written back, or the slot is left claiming a correction that no longer belongs to
             // the value beside it. ksum's answer is the running sum alone -- unlike nsum, the
-            // sweep below deliberately does not fold c in -- so this changes no query result
-            // today; it keeps the pair self-consistent for anything that reads it later.
+            // sweep below deliberately does not fold c in -- so no SQL result observes c. The
+            // invariant it holds is that value and c always describe the same running sum.
+            auto dest = map->slots_ + res.first;
             const jdouble c = *reinterpret_cast<jdouble *>(dest + c_offset);
             const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
             const jdouble y = valueAtNull - c;
@@ -1351,9 +1398,9 @@ Java_io_questdb_std_Rosti_keyedIntKSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
             *reinterpret_cast<jdouble *>(dest + value_offset) = t;
             // Add the whole count folded in, not one. valueAtNullCount is the number of
             // column-top page frames the non-keyed accumulator absorbed -- aggregate() bumps
-            // it once per frame -- so += 1 dropped all but the first. It still does not match
-            // the keyed path's per-row count, and nothing reads this field except the sweep's
-            // count == 0 test, so no query result changes; this keeps it monotone in what was
+            // it once per frame. The field counts frames, not rows, so it does not match the
+            // keyed path's per-row count either way, and only the sweep's count == 0 test
+            // reads it. The invariant it holds is that the count stays monotone in what was
             // actually folded in, as keyedIntNSumDoubleWrapUp below does.
             *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
         }
@@ -1421,21 +1468,22 @@ Java_io_questdb_std_Rosti_keyedIntNSumDoubleMerge(JNIEnv *env, jclass cl, jlong 
             auto count = *reinterpret_cast<jlong *>(src + count_offset);
 
             auto res = find(map_a, key);
-            if (PREDICT_FALSE(res.first == UL_MAX)) {
-                return JNI_FALSE;
-            }
             // maps must have identical structure to use "shift" from map B on map A
-            auto dest = map_a->slots_ + res.first;
             if (PREDICT_FALSE(res.second)) {
+                if (PREDICT_FALSE(res.first == UL_MAX)) {
+                    return JNI_FALSE;
+                }
+                auto dest = map_a->slots_ + res.first;
                 *reinterpret_cast<int32_t *>(dest) = key;
                 *reinterpret_cast<jdouble *>(dest + value_offset) = d;
                 *reinterpret_cast<jdouble *>(dest + c_offset) = srcC;
                 *reinterpret_cast<jlong *>(dest + count_offset) = count;
             } else {
                 // do not check for nans in merge, because we can't have them in map
+                auto dest = map_a->slots_ + res.first;
                 const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
                 const jdouble t = sum + d;
-                if (std::abs(sum) >= d) {
+                if (std::abs(sum) >= std::abs(d)) {
                     *reinterpret_cast<jdouble *>(dest + c_offset) += (sum - t) + d;
                 } else {
                     *reinterpret_cast<jdouble *>(dest + c_offset) += (d - t) + sum;
@@ -1466,20 +1514,21 @@ Java_io_questdb_std_Rosti_keyedIntNSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jdouble *>(dest + value_offset) = valueAtNull;
             *reinterpret_cast<jdouble *>(dest + c_offset) = valueAtNullC;
             *reinterpret_cast<jlong *>(dest + count_offset) = valueAtNullCount;
         } else {
+            auto dest = map->slots_ + res.first;
             const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
             const jdouble t = sum + valueAtNull;
-            if (std::abs(sum) >= valueAtNull) {
+            if (std::abs(sum) >= std::abs(valueAtNull)) {
                 *reinterpret_cast<jdouble *>(dest + c_offset) += (sum - t) + valueAtNull;
             } else {
                 *reinterpret_cast<jdouble *>(dest + c_offset) += (valueAtNull - t) + sum;
@@ -1581,15 +1630,16 @@ Java_io_questdb_std_Rosti_keyedIntMinDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
     if (valueAtNull < D_MAX) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jdouble *>(dest + value_offset) = valueAtNull;
         } else {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<jdouble *>(dest + value_offset) = MIN(valueAtNull,
                                                                     *reinterpret_cast<jdouble *>(dest +
                                                                                                  value_offset));
@@ -1653,16 +1703,17 @@ Java_io_questdb_std_Rosti_keyedIntMaxDoubleMerge(JNIEnv *env, jclass cl, jlong p
             auto key = *reinterpret_cast<int32_t *>(src);
             auto d = *reinterpret_cast<jdouble *>(src + value_offset);
             auto res = find(map_a, key);
-            if (PREDICT_FALSE(res.first == UL_MAX)) {
-                return JNI_FALSE;
-            }
             // maps must have identical structure to use "shift" from map B on map A
-            auto pKey = map_a->slots_ + res.first;
-            auto pVal = pKey + value_offset;
             if (PREDICT_FALSE(res.second)) {
+                if (PREDICT_FALSE(res.first == UL_MAX)) {
+                    return JNI_FALSE;
+                }
+                auto pKey = map_a->slots_ + res.first;
+                auto pVal = pKey + value_offset;
                 *reinterpret_cast<int32_t *>(pKey) = key;
                 *reinterpret_cast<jdouble *>(pVal) = std::isnan(d) ? D_MIN : d;
             } else {
+                auto pVal = map_a->slots_ + res.first + value_offset;
                 const jdouble old = *reinterpret_cast<jdouble *>(pVal);
                 *reinterpret_cast<jdouble *>(pVal) = MAX(std::isnan(d) ? D_MIN : d, old);
             }
@@ -1682,15 +1733,16 @@ Java_io_questdb_std_Rosti_keyedIntMaxDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
     if (valueAtNull > D_MIN) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jdouble *>(dest + value_offset) = valueAtNull;
         } else {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<jdouble *>(dest + value_offset) = MAX(valueAtNull,
                                                                     *reinterpret_cast<jdouble *>(dest +
                                                                                                  value_offset));
@@ -1731,16 +1783,17 @@ Java_io_questdb_std_Rosti_keyedIntAvgDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jdouble *>(dest + value_offset) = valueAtNull;
             *reinterpret_cast<jlong *>(dest + count_offset) = valueAtNullCount;
         } else {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<jdouble *>(dest + value_offset) += valueAtNull;
             *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
         }
@@ -1903,16 +1956,17 @@ Java_io_questdb_std_Rosti_keyedIntMinIntMerge(JNIEnv *env, jclass cl, jlong pRos
             auto key = *reinterpret_cast<int32_t *>(src);
             auto val = *reinterpret_cast<jint *>(src + value_offset);
             auto res = find(map_a, key);
-            if (PREDICT_FALSE(res.first == UL_MAX)) {
-                return JNI_FALSE;
-            }
             // maps must have identical structure to use "shift" from map B on map A
-            auto dest = map_a->slots_ + res.first;
-            auto pVal = dest + value_offset;
             if (PREDICT_FALSE(res.second)) {
+                if (PREDICT_FALSE(res.first == UL_MAX)) {
+                    return JNI_FALSE;
+                }
+                auto dest = map_a->slots_ + res.first;
+                auto pVal = dest + value_offset;
                 *reinterpret_cast<int32_t *>(dest) = key;
                 *reinterpret_cast<jint *>(pVal) = val;
             } else if (PREDICT_TRUE(val > I_MIN)) {
+                auto pVal = map_a->slots_ + res.first + value_offset;
                 const jint old = *reinterpret_cast<jint *>(pVal);
                 if (PREDICT_TRUE(old > I_MIN)) {
                     *reinterpret_cast<jint *>(pVal) = MIN(val, old);
@@ -1934,15 +1988,16 @@ Java_io_questdb_std_Rosti_keyedIntMinIntWrapUp(JNIEnv *env, jclass cl, jlong pRo
     if (valueAtNull > I_MIN) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jint *>(dest + value_offset) = valueAtNull;
         } else {
+            auto dest = map->slots_ + res.first;
             const jint old = *reinterpret_cast<jint *>(dest + value_offset);
             if (old != I_MIN) {
                 *reinterpret_cast<jint *>(dest + value_offset) = MIN(valueAtNull, old);
@@ -1992,16 +2047,17 @@ Java_io_questdb_std_Rosti_keyedIntMaxIntMerge(JNIEnv *env, jclass cl, jlong pRos
             auto key = *reinterpret_cast<int32_t *>(src);
             auto val = *reinterpret_cast<jint *>(src + value_offset);
             auto res = find(map_a, key);
-            if (PREDICT_FALSE(res.first == UL_MAX)) {
-                return JNI_FALSE;
-            }
             // maps must have identical structure to use "shift" from map B on map A
-            auto dest = map_a->slots_ + res.first;
-            auto pVal = dest + value_offset;
             if (PREDICT_FALSE(res.second)) {
+                if (PREDICT_FALSE(res.first == UL_MAX)) {
+                    return JNI_FALSE;
+                }
+                auto dest = map_a->slots_ + res.first;
+                auto pVal = dest + value_offset;
                 *reinterpret_cast<int32_t *>(dest) = key;
                 *reinterpret_cast<jint *>(pVal) = val;
             } else {
+                auto pVal = map_a->slots_ + res.first + value_offset;
                 const jint old = *reinterpret_cast<jint *>(pVal);
                 *reinterpret_cast<jint *>(pVal) = MAX(val, old);
             }
@@ -2220,16 +2276,17 @@ Java_io_questdb_std_Rosti_keyedIntMinLongMerge(JNIEnv *env, jclass cl, jlong pRo
             auto key = *reinterpret_cast<int32_t *>(src);
             auto val = *reinterpret_cast<jlong *>(src + value_offset);
             auto res = find(map_a, key);
-            if (PREDICT_FALSE(res.first == UL_MAX)) {
-                return JNI_FALSE;
-            }
             // maps must have identical structure to use "shift" from map B on map A
-            auto dest = map_a->slots_ + res.first;
-            auto pVal = dest + value_offset;
             if (PREDICT_FALSE(res.second)) {
+                if (PREDICT_FALSE(res.first == UL_MAX)) {
+                    return JNI_FALSE;
+                }
+                auto dest = map_a->slots_ + res.first;
+                auto pVal = dest + value_offset;
                 *reinterpret_cast<int32_t *>(dest) = key;
                 *reinterpret_cast<jlong *>(pVal) = val;
             } else if (PREDICT_TRUE(val > L_MIN)) {
+                auto pVal = map_a->slots_ + res.first + value_offset;
                 const jlong old = *reinterpret_cast<jlong *>(pVal);
                 if (PREDICT_TRUE(old > L_MIN)) {
                     *reinterpret_cast<jlong *>(pVal) = MIN(val, old);
@@ -2252,15 +2309,16 @@ Java_io_questdb_std_Rosti_keyedIntMinLongWrapUp(JNIEnv *env, jclass cl, jlong pR
     if (valueAtNull > L_MIN) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jlong *>(dest + value_offset) = valueAtNull;
         } else {
+            auto dest = map->slots_ + res.first;
             const jlong old = *reinterpret_cast<jlong *>(dest + value_offset);
             if (old != L_MIN) {
                 *reinterpret_cast<jlong *>(dest + value_offset) = MIN(valueAtNull, old);
@@ -2282,15 +2340,16 @@ Java_io_questdb_std_Rosti_keyedIntMinShortWrapUp(JNIEnv *env, jclass cl, jlong p
     if (accumulatedValue > I_MIN) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
         } else {
+            auto dest = map->slots_ + res.first;
             const jlong old = *reinterpret_cast<jlong *>(dest + value_offset);
             if (old == L_MIN || accumulatedValue < old) {
                 *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
@@ -2310,15 +2369,16 @@ Java_io_questdb_std_Rosti_keyedIntMaxLongWrapUp(
     if (valueAtNull > L_MIN) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jlong *>(dest + value_offset) = valueAtNull;
         } else {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<jlong *>(dest + value_offset) = MAX(
                     valueAtNull,
                     *reinterpret_cast<jlong *>(dest + value_offset)
@@ -2338,17 +2398,18 @@ Java_io_questdb_std_Rosti_keyedIntMaxShortWrapUp(
     if (accumulatedValue > I_MIN) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
         } else {
             // The guard above puts accumulatedValue above I_MIN, hence above L_MIN, so the
             // full-width max resolves the "no value yet" sentinel on its own.
+            auto dest = map->slots_ + res.first;
             const jlong old = *reinterpret_cast<jlong *>(dest + value_offset);
             *reinterpret_cast<jlong *>(dest + value_offset) = MAX((jlong) accumulatedValue, old);
         }
@@ -2366,15 +2427,16 @@ Java_io_questdb_std_Rosti_keyedIntMaxIntWrapUp(JNIEnv *env, jclass cl, jlong pRo
     if (valueAtNull > I_MIN) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        if (PREDICT_FALSE(res.first == UL_MAX)) {
-            return JNI_FALSE;
-        }
         // maps must have identical structure to use "shift" from map B on map A
-        auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jint *>(dest + value_offset) = valueAtNull;
         } else {
+            auto dest = map->slots_ + res.first;
             *reinterpret_cast<jint *>(dest + value_offset) = MAX(valueAtNull,
                                                                  *reinterpret_cast<jint *>(dest + value_offset));
         }
@@ -2420,16 +2482,17 @@ Java_io_questdb_std_Rosti_keyedIntMaxLongMerge(JNIEnv *env, jclass cl, jlong pRo
             auto key = *reinterpret_cast<int32_t *>(src);
             auto val = *reinterpret_cast<jlong *>(src + value_offset);
             auto res = find(map_a, key);
-            if (PREDICT_FALSE(res.first == UL_MAX)) {
-                return JNI_FALSE;
-            }
             // maps must have identical structure to use "shift" from map B on map A
-            auto dest = map_a->slots_ + res.first;
-            auto pVal = dest + value_offset;
             if (PREDICT_FALSE(res.second)) {
+                if (PREDICT_FALSE(res.first == UL_MAX)) {
+                    return JNI_FALSE;
+                }
+                auto dest = map_a->slots_ + res.first;
+                auto pVal = dest + value_offset;
                 *reinterpret_cast<int32_t *>(dest) = key;
                 *reinterpret_cast<jlong *>(pVal) = val;
             } else {
+                auto pVal = map_a->slots_ + res.first + value_offset;
                 const jlong old = *reinterpret_cast<jlong *>(pVal);
                 *reinterpret_cast<jlong *>(pVal) = MAX(val, old);
             }
