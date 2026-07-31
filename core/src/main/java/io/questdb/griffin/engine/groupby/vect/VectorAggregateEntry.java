@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -39,10 +40,15 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class VectorAggregateEntry implements Mutable {
     private ExecutionCircuitBreaker circuitBreaker;
     private CountDownLatchSPI doneLatch;
+    // doRun() logs and discards whatever escapes run(), so a failed worker cannot report itself and
+    // the coordinator would publish the surviving shards as the answer. runWhatsLeft() already
+    // holds this contract for the stolen path.
+    private AtomicReference<Throwable> firstWorkerError;
     private int frameIndex;
     private ObjList<PageFrameMemoryPool> frameMemoryPools;
     private long frameRowCount;
@@ -100,13 +106,11 @@ public class VectorAggregateEntry implements Mutable {
                 }
             } else {
                 if (pRosti != null && frameRowCount > 0) {
-                    // Every row in this frame has a null key. wrapUp() only creates that group when the
-                    // value it folds in is non-null, so record row presence here; the coordinator
-                    // materializes the group once, in the rosti that survives the merge.
-                    // The factory clears the flag only between drains, so within a drain it travels
-                    // false -> true once. The guard read drops the repeat stores, which leaves a single
-                    // cache line invalidation instead of one per (frame, vaf) that lands here. A worker
-                    // reading a stale false pays one redundant store and nothing else.
+                    // Every row here has a null key. wrapUp() creates that group only when the value
+                    // it folds in is non-null, so record row presence and let the coordinator
+                    // materialize it once, after the merge. The flag only travels false -> true
+                    // within a drain, so the guard read trades one redundant store by a worker
+                    // reading a stale false for a cache line invalidation per (frame, vaf).
                     if (!hasNullKeyRows.get()) {
                         hasNullKeyRows.set(true);
                     }
@@ -130,6 +134,7 @@ public class VectorAggregateEntry implements Mutable {
         this.raf = null;
         this.perWorkerLocks = null;
         this.circuitBreaker = null;
+        this.firstWorkerError = null;
         this.frameRowCount = 0;
         this.keyColIndex = -1;
         this.valueColIndex = -1;
@@ -150,6 +155,7 @@ public class VectorAggregateEntry implements Mutable {
         AtomicInteger startedCounter = this.startedCounter;
         CountDownLatchSPI doneLatch = this.doneLatch;
         PerWorkerLocks perWorkerLocks = this.perWorkerLocks;
+        AtomicReference<Throwable> firstWorkerError = this.firstWorkerError;
 
         seq.done(cursor);
         aggregate(
@@ -167,7 +173,8 @@ public class VectorAggregateEntry implements Mutable {
                 perWorkerLocks,
                 circuitBreaker,
                 startedCounter,
-                doneLatch
+                doneLatch,
+                firstWorkerError
         );
     }
 
@@ -186,12 +193,12 @@ public class VectorAggregateEntry implements Mutable {
             PerWorkerLocks perWorkerLocks,
             ExecutionCircuitBreaker circuitBreaker,
             AtomicInteger startedCounter,
-            CountDownLatchSPI doneLatch
+            CountDownLatchSPI doneLatch,
+            AtomicReference<Throwable> firstWorkerError
     ) {
-        // GroupByVectorAggregateJob.doRun() swallows any Throwable that escapes run(), so a throw
-        // before the countdown leaves the coordinator spinning forever in runWhatsLeft(), which has
-        // no circuit-breaker exit. The try therefore covers the counter bump and the breaker probe
-        // as well as the aggregation itself, and the finally is the single countdown site.
+        // A throw before the countdown leaves the coordinator spinning in runWhatsLeft(), which has
+        // no breaker exit. The try covers the counter bump and breaker probe too, and the finally is
+        // the single countdown site.
         try {
             startedCounter.incrementAndGet();
 
@@ -199,21 +206,32 @@ public class VectorAggregateEntry implements Mutable {
                 return;
             }
 
-            aggregateUnsafe(
-                    workerId,
-                    oomCounter,
-                    hasNullKeyRows,
-                    frameIndex,
-                    frameRowCount,
-                    keyColIndex,
-                    valueColIndex,
-                    pRosti,
-                    frameMemoryPools,
-                    raf,
-                    func,
-                    perWorkerLocks,
-                    circuitBreaker
-            );
+            try {
+                aggregateUnsafe(
+                        workerId,
+                        oomCounter,
+                        hasNullKeyRows,
+                        frameIndex,
+                        frameRowCount,
+                        keyColIndex,
+                        valueColIndex,
+                        pRosti,
+                        frameMemoryPools,
+                        raf,
+                        func,
+                        perWorkerLocks,
+                        circuitBreaker
+                );
+            } catch (Throwable th) {
+                // navigateTo() decodes a parquet row group through JNI, so a corrupt file lands here
+                // as a CairoException, not just OutOfMemoryError. Record it for buildRosti() to
+                // raise after the drain, and trip the breaker to stop the workers still running.
+                firstWorkerError.compareAndSet(null, th);
+                if (circuitBreaker instanceof AtomicBooleanCircuitBreaker sharedCircuitBreaker) {
+                    sharedCircuitBreaker.cancel();
+                }
+                throw th;
+            }
         } finally {
             doneLatch.countDown();
         }
@@ -234,7 +252,8 @@ public class VectorAggregateEntry implements Mutable {
             @NotNull AtomicBoolean hasNullKeyRows,
             @Nullable RostiAllocFacade raf,
             @NotNull PerWorkerLocks perWorkerLocks,
-            @NotNull ExecutionCircuitBreaker circuitBreaker
+            @NotNull ExecutionCircuitBreaker circuitBreaker,
+            @NotNull AtomicReference<Throwable> firstWorkerError
     ) {
         this.frameIndex = frameIndex;
         this.frameRowCount = frameRowCount;
@@ -250,5 +269,6 @@ public class VectorAggregateEntry implements Mutable {
         this.raf = raf;
         this.perWorkerLocks = perWorkerLocks;
         this.circuitBreaker = circuitBreaker;
+        this.firstWorkerError = firstWorkerError;
     }
 }

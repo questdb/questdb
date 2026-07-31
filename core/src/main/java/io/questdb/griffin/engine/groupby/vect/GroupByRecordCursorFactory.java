@@ -75,6 +75,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
@@ -85,6 +86,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RostiRecordCursor cursor;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final ObjectPool<VectorAggregateEntry> entryPool;
+    // First failure from a queued worker. doRun() logs and discards it, so without this the
+    // coordinator merges the shards that did succeed into a silently partial result.
+    private final AtomicReference<Throwable> firstWorkerError = new AtomicReference<>();
     private final PageFrameAddressCache frameAddressCache;
     // any worker that sees a page frame whose key column is a column top raises this flag;
     // insertNullKeyConditionally() consumes it once, after the drain, and materializes the null
@@ -570,6 +574,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // and the next entry through hasNext()/calculateSize()/a shared cursor would otherwise
             // read a stale flag and insert a null group no page frame justified.
             hasNullKeyRows.set(false);
+            firstWorkerError.set(null);
 
             int queuedCount = 0;
             int ownCount = 0;
@@ -643,7 +648,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                 hasNullKeyRows,
                                 raf,
                                 perWorkerLocks,
-                                sharedCircuitBreaker
+                                sharedCircuitBreaker,
+                                firstWorkerError
                         );
 
                         while (true) {
@@ -719,6 +725,21 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 // worker is using it.
                 frameAddressCache.unfreezeCoveredReaders();
                 Misc.freeObjListAndKeepObjects(frameMemoryPools);
+            }
+
+            // Ahead of the OOM tally: a worker's throw names the concrete cause, the tally only
+            // reports that some rosti could not grow.
+            final Throwable workerError = firstWorkerError.get();
+            if (workerError != null) {
+                resetRostiMemorySize();
+                if (workerError instanceof RuntimeException re) {
+                    throw re;
+                }
+                if (workerError instanceof Error err) {
+                    throw err;
+                }
+                throw CairoException.nonCritical()
+                        .put("vectorized aggregation failed [error=").put(workerError.getMessage()).put(']');
             }
 
             if (oomCounter.get() > 0) {
