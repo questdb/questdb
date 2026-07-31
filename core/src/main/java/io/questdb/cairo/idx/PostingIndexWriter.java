@@ -216,6 +216,9 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean isPoisoned;
     private int keyCapacity;
     private int keyCount;
+    // The owning table's PER-TABLE EFFECTIVE commit mode; CommitMode.UNSET (default) => defer to the global
+    // cairo.commit.mode, so a transient writer that is never threaded a mode is byte-identical to before.
+    private int tableCommitMode = CommitMode.UNSET;
     // In-memory mirror of the head entry's MAX_VALUE field. setMaxValue
     // updates it directly; flush/seal callsites read it back without going
     // to mmap. Persisted to the head entry on every chain publish (or via
@@ -511,10 +514,22 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void commit() {
         checkNotPoisoned();
+        // flushAllPending() is UNCONDITIONAL and must stay so: it publishes buffered native-memory postings
+        // into the memory-mapped .pk/.pv files. Only the DURABILITY flush below is mode-gated -- without the
+        // publish, readers would see keyCount=0 until the writer is closed.
         flushAllPending();
-        if (configuration.getCommitMode() != CommitMode.NOSYNC) {
-            sync(configuration.getCommitMode() == CommitMode.ASYNC);
+        // Per-table EFFECTIVE mode + appliesColumnSync (SYNC/ASYNC only). See IndexWriter.setCommitMode:
+        // under ADAPTIVE the posting index is re-derivable from the durable WAL like the column it indexes,
+        // and the durable epoch forces sync(false) on every indexer before its filesystem-wide syncfs.
+        final int commitMode = CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
+        if (CommitMode.appliesColumnSync(commitMode)) {
+            sync(commitMode == CommitMode.ASYNC);
         }
+    }
+
+    @Override
+    public void setCommitMode(int commitMode) {
+        this.tableCommitMode = commitMode;
     }
 
     // Sync order is .pv before .pk: a torn write must never leave the chain head
@@ -554,8 +569,13 @@ public class PostingIndexWriter implements IndexWriter {
         } else {
             flushAllPendingDense();
         }
-        int commitMode = configuration.getCommitMode();
-        if (commitMode != CommitMode.NOSYNC) {
+        // Same gate as commit(): per-table EFFECTIVE mode + appliesColumnSync (SYNC/ASYNC only). The seal
+        // this method performs is index DATA, re-derived from the column it indexes, so under ADAPTIVE it
+        // stays lazy and is made durable by the epoch (which calls sync(false) on every indexer explicitly
+        // before its filesystem-wide syncfs). Keeping this on the global mode while commit() used the
+        // table's would have left the two halves of one writer disagreeing.
+        final int commitMode = CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
+        if (CommitMode.appliesColumnSync(commitMode)) {
             boolean async = commitMode == CommitMode.ASYNC;
             if (valueMem.isOpen()) {
                 valueMem.sync(async);
@@ -1146,6 +1166,15 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
 
+            if (!isInit && valueMemSize > 0) {
+                LPSZ pvName = PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn);
+                long pvActual = ff.length(pvName);
+                if (valueMemSize > pvActual) {
+                    throw CairoException.critical(0)
+                            .put("posting index value file too short [expected=").put(valueMemSize)
+                            .put(", actual=").put(pvActual).put(", path=").put(pvName).put(']');
+                }
+            }
             valueMem.of(
                     ff,
                     PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn),

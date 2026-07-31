@@ -412,9 +412,14 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
 
     protected void clear(boolean truncate, byte truncateMode) {
         reset();
-        if (metaMem != null) {
-            metaMem.close(truncate, truncateMode);
+        // Free roMetaMem even if metaMem.close throws (a close-time fd-sync fault, real or crash-simulated),
+        // so a fault on one metadata memory cannot leak the other.
+        try {
+            if (metaMem != null) {
+                metaMem.close(truncate, truncateMode);
+            }
+        } finally {
+            Misc.free(roMetaMem);
         }
-        Misc.free(roMetaMem);
     }
 }

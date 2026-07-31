@@ -32,6 +32,8 @@ import io.questdb.mp.CountedConcurrentQueue;
 import io.questdb.mp.ValueHolder;
 import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.std.CarrierLocal;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
@@ -45,6 +47,75 @@ public class SeqTxnTracker {
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
     private final CountedConcurrentQueue<WaiterHolder> waiters = CountedConcurrentQueue.create(WaiterHolder::new);
+    // The table's PER-TABLE EFFECTIVE commit mode (already resolved against the global cairo.commit.mode
+    // via CommitMode.effectiveCommitMode). CommitMode.UNSET means "not yet published" — every consumer
+    // (WalWriter durability, the apply lazy gate, the epoch trigger, the WAL-purge floor, recovery,
+    // wal_tables()) must fall back to the global mode while this is UNSET. Published from the table's
+    // _meta: at CREATE (registerTable, from the TableStructure), at writer open (TableWriter), and lazily
+    // by TableSequencerAPI.resolveEffectiveCommitMode for any WAL-side reader that needs it before either.
+    // volatile: written by a writer/apply thread, read by WalWriter/purge/observability threads.
+    private volatile int commitMode = io.questdb.cairo.CommitMode.UNSET;
+    // Sequencer transaction that last changed commitMode. -1 denotes metadata/registration initialization.
+    private long commitModeSeqTxn = -1;
+    // The last seqTxn that has been made durable as an adaptive epoch.
+    // Default 0 means "no epoch committed yet — retain all WAL" (safe conservative default for a
+    // fresh adaptive table; the epoch job advances this as epochs are confirmed durable).
+    // Read by WalPurgeJob to floor the purge seqTxn for ADAPTIVE commit mode only.
+    private volatile long durableEpochSeqTxn = 0;
+    // In-memory counter: incremented each time RecoveryCoordinator successfully restores a durable
+    // epoch cut for this table (i.e. an actual roll-forward happened). Resets to 0 on restart
+    // (counts rollbacks since process start). Exposed via wal_tables() as an operator signal that
+    // recovery was required for this table in the current process lifetime.
+    private volatile long recoveryIncarnation = 0;
+    // Wall-clock ms of the last durable epoch fired for this table (adaptive cadence gate). 0 => none
+    // yet (so the first apply batch under adaptive is eligible to epoch). Read+written ONLY by the
+    // apply worker that holds the table writer (single-threaded per table) -> no CAS needed.
+    private long lastEpochTs = 0;
+    // Rows applied to this table since its last durable epoch (adaptive backlog gate). Reset to 0 in
+    // ApplyWal2TableJob.advance() when an epoch publishes. Read+written ONLY by the apply worker that
+    // holds the table writer (single-threaded per table) -> plain long, no CAS (mirrors lastEpochTs).
+    private long rowsSinceEpoch = 0;
+    // The epoch partition-version txn currently PINNED in the scoreboard, or -1 if none. advance()
+    // pins the new epoch txn in the FREE ping-pong slot, then releases this prior one from the other
+    // slot (INV-5 pin-before-release; the brief double-pin is safe). Like the scoreboard itself these
+    // are in-memory, reset on restart; recovery re-establishes the pin.
+    private volatile long pinnedEpochTxn = -1;
+    // Which ping-pong slot currently holds pinnedEpochTxn: true => EPOCH_ID_A, false => EPOCH_ID_B.
+    // The next epoch pins into the OTHER slot. Initial value is arbitrary (no pin held yet).
+    private volatile boolean pinnedEpochSlotIsA = false;
+    // The highest seqTxn whose WAL commit is device-durable under ADAPTIVE mode (data→events→seq) AND is
+    // part of the CONTIGUOUS durable prefix across ALL concurrent writers of this table (see the pending map
+    // below). Default -1 means "no local-fsync guarantee yet" — only ADAPTIVE tables advance this.
+    // NOSYNC tables leave it at -1 forever. Volatile: written on a WAL commit / group-commit flush thread
+    // (WalWriter), read lock-free by QWP/durable-ack threads.
+    private volatile long localDurableSeqTxn = -1L;
+    // --- Adaptive GROUP-COMMIT (W>0) contiguous durable prefix (CRITICAL 2) ---
+    // Several WalWriters of ONE table share this tracker and flush their deferred group-commit batches
+    // INDEPENDENTLY (WalGroupCommitFlushQueue.sweep / the per-writer commit-driven trigger), with no
+    // cross-writer barrier. A writer must therefore NOT advance the shared durable-ack frontier to its OWN
+    // seqTxn on flush: writer B (seqTxn 11) flushing before writer A (seqTxn 10) would falsely claim A's
+    // still-page-cache-only txn 10 as durable and the QWP durable-ack would lie. Instead each writer records
+    // the OLDEST un-flushed seqTxn of its current batch here; localDurableSeqTxn only advances to the
+    // contiguous prefix = (map empty ? getSeqTxn() : min(oldest-un-flushed) - 1). Parallel lists keyed by
+    // index: pendingWalIds[i] -> pendingLoSeqTxns[i]. Tiny (one entry per concurrently-held WalWriter) and
+    // touched only per BATCH (start / flush), not per row. Guarded by durableFrontierLock (NOT `this`, which
+    // the waiter machinery uses) so the frontier RMW never contends with fireWaiters/updateWriterTxns;
+    // localDurableSeqTxn stays volatile for lock-free reads.
+    private final Object durableFrontierLock = new Object();
+    private final IntList pendingWalIds = new IntList();
+    private final LongList pendingLoSeqTxns = new LongList();
+    // Parallel 0/1 flag list: 1 => this pin belongs to a writer that was TORN DOWN (distressed / crashed /
+    // closed) WITHOUT flushing its batch, so nothing will ever call markWriterDurable(itsWalId) again. See
+    // orphanWriterPending / markWriterDurable for why an orphan is releasable by ANY peer's device flush.
+    private final IntList pendingOrphaned = new IntList();
+    // Parallel list: the value of orphanSeq at the moment each pin was ORPHANED, or Long.MAX_VALUE while the
+    // pin is live (a live pin is never reapable, so it can never satisfy the sweep bound). A flusher may reap
+    // an orphan ONLY if this stamp precedes the snapshot it took before its fdatasync — see
+    // snapshotOrphanSweepMark() for why stamping at ORPHAN time (not registration time) is what makes the
+    // reap sound.
+    private final LongList pendingOrphanSeqs = new LongList();
+    // Monotonic counter, bumped under durableFrontierLock by orphanWriterPending.
+    private long orphanSeq;
     private volatile long dirtyWriterTxn;
     // Volatile because fireWaiters() and registerWaiter() can race. See comments there
     private volatile boolean dropped;
@@ -84,6 +155,83 @@ public class SeqTxnTracker {
 
     public TableWriterPressureControl getMemPressureControl() {
         return pressureControl;
+    }
+
+    /**
+     * The PER-TABLE EFFECTIVE commit mode (already resolved against the global mode), or
+     * {@link io.questdb.cairo.CommitMode#UNSET} if it has not been published yet (callers must then fall
+     * back to the global {@code cairo.commit.mode}).
+     */
+    public int getCommitMode() {
+        return commitMode;
+    }
+
+    public long getDurableEpochSeqTxn() {
+        return durableEpochSeqTxn;
+    }
+
+    /**
+     * Returns the highest seqTxn whose WAL commit was fdatasync'd under ADAPTIVE mode, or -1
+     * if no such commit has occurred (NOSYNC tables always return -1).
+     */
+    public long getLocalDurableSeqTxn() {
+        return localDurableSeqTxn;
+    }
+
+    /**
+     * Returns the in-memory recovery incarnation counter (incremented each time recovery actually roll-forwarded this table).
+     */
+    public long getRecoveryIncarnation() {
+        return recoveryIncarnation;
+    }
+
+    /**
+     * Increments the in-memory recovery incarnation counter (called by RecoveryCoordinator on a successful epoch restore).
+     */
+    public void bumpRecoveryIncarnation() {
+        recoveryIncarnation++;
+    }
+
+    /**
+     * Wall-clock ms of the last durable epoch (adaptive cadence gate); 0 if none yet.
+     */
+    public long getLastEpochTs() {
+        return lastEpochTs;
+    }
+
+    /**
+     * Rows applied since the last durable epoch (adaptive backlog gate). Apply-worker-only.
+     */
+    public long getRowsSinceEpoch() {
+        return rowsSinceEpoch;
+    }
+
+    /**
+     * Adds to the un-epoched applied-row count (adaptive backlog gate). Apply-worker-only.
+     */
+    public void addRowsSinceEpoch(long rows) {
+        rowsSinceEpoch += rows;
+    }
+
+    /**
+     * Resets the un-epoched applied-row count; called when an epoch publishes. Apply-worker-only.
+     */
+    public void resetRowsSinceEpoch() {
+        rowsSinceEpoch = 0;
+    }
+
+    /**
+     * The epoch txn currently pinned in the scoreboard, or -1 if none.
+     */
+    public long getPinnedEpochTxn() {
+        return pinnedEpochTxn;
+    }
+
+    /**
+     * Which ping-pong slot holds the current epoch pin: true => EPOCH_ID_A, false => EPOCH_ID_B.
+     */
+    public boolean isPinnedEpochSlotA() {
+        return pinnedEpochSlotIsA;
     }
 
     public long getSeqTxn() {
@@ -170,6 +318,12 @@ public class SeqTxnTracker {
         }
         metrics.walMetrics().addSeqTxn(-seqTxn);
         metrics.walMetrics().addWriterTxn(-writerTxn);
+        // Also release this table's contribution to the engine-wide durable-ack frontier gauge
+        // (wal_apply_local_durable_seq_txn) so an adaptive table that advanced it does not leak its last
+        // value after the table is dropped. Route through resetDurableFrontier() (added for recovery) so the
+        // gauge decrement is the SAME one it uses — there is exactly one decrement, never a double-count.
+        // notifyOnDrop is idempotent (the dropped guard above), so this runs at most once per table.
+        resetDurableFrontier();
         fireWaiters();
     }
 
@@ -204,6 +358,298 @@ public class SeqTxnTracker {
 
         metrics.tableWriterMetrics().incSuspendedTables();
         fireWaiters();
+    }
+
+    /**
+     * Publishes the table's EFFECTIVE commit mode (must already be resolved against the global mode via
+     * {@link io.questdb.cairo.CommitMode#effectiveCommitMode(int, int)} — never pass a raw UNSET from
+     * {@code _meta} unless the table genuinely defers to the global, in which case pass the resolved
+     * global value). Idempotent; safe to call repeatedly from the writer/apply path.
+     */
+    public synchronized void setCommitMode(int commitMode) {
+        if (commitModeSeqTxn < 0) {
+            this.commitMode = commitMode;
+        }
+    }
+
+    public synchronized void setCommitModeAtSeqTxn(int commitMode, long seqTxn) {
+        if (seqTxn >= commitModeSeqTxn) {
+            this.commitMode = commitMode;
+            this.commitModeSeqTxn = seqTxn;
+        }
+    }
+
+    public synchronized void setCommitModeIfUnset(int commitMode) {
+        if (this.commitMode == io.questdb.cairo.CommitMode.UNSET && commitModeSeqTxn < 0) {
+            this.commitMode = commitMode;
+        }
+    }
+
+    public synchronized void strengthenCommitModeToAdaptive() {
+        this.commitMode = io.questdb.cairo.CommitMode.ADAPTIVE;
+    }
+
+    public void setDurableEpochSeqTxn(long durableEpochSeqTxn) {
+        this.durableEpochSeqTxn = durableEpochSeqTxn;
+    }
+
+    /**
+     * Advances the device-durable frontier to {@code seqTxn} (ADAPTIVE mode). MONOTONE: a value below the
+     * current frontier is silently ignored (durable data never becomes non-durable), which also makes an
+     * out-of-order contiguous-prefix recompute in {@link #markWriterDurable(int, long)} safe.
+     *
+     * <p>Used directly on the ADAPTIVE {@code W=0} path (the commit fdatasync completed BEFORE the seqTxn was
+     * even assigned, so the commit is durable when this is called; concurrent writers are safe because a txn
+     * is durable before it is sequenced), and internally by {@link #markWriterDurable(int, long)} under
+     * {@code durableFrontierLock} for the {@code W>0} contiguous prefix. A table is exclusively W=0 OR W>0
+     * (config-fixed), so these two callers never race for the same tracker.
+     */
+    public void setLocalDurableSeqTxn(long seqTxn) {
+        synchronized (durableFrontierLock) {
+            setLocalDurableSeqTxnLocked(seqTxn);
+        }
+    }
+
+    /**
+     * Adaptive group-commit (W&gt;0): record the OLDEST un-flushed {@code loSeqTxn} of {@code walId}'s current
+     * batch so the shared durable-ack frontier can be held at the contiguous durable prefix across concurrent
+     * writers. putIfAbsent — a writer's later commits in the SAME batch (walId already pinned) must NOT lower
+     * its recorded floor; the pin is dropped only by {@link #markWriterDurable(int, long)} (after that writer's
+     * fdatasync) or {@link #resetDurableFrontier()} (recovery/reboot). A distressed/crash teardown WITHOUT a
+     * flush deliberately LEAVES the pin, so the frontier stays honestly behind the writer's non-durable data.
+     */
+    public void registerWriterPending(int walId, long loSeqTxn) {
+        synchronized (durableFrontierLock) {
+            final int idx = indexOfPendingWalId(walId);
+            if (idx < 0) {
+                pendingWalIds.add(walId);
+                pendingLoSeqTxns.add(loSeqTxn);
+                pendingOrphaned.add(0);
+                pendingOrphanSeqs.add(Long.MAX_VALUE);
+            } else {
+                // Defensive: walIds are allocated monotonically per table by WalIdGenerator and are never
+                // recycled within a process, so re-registering an ORPHANED walId should be unreachable. If a
+                // future change ever recycles them, un-orphan the entry (a live writer owns it again and WILL
+                // call markWriterDurable) while KEEPING the older, lower floor -- putIfAbsent semantics, so a
+                // later commit in the same batch can never raise the pin above its oldest un-flushed txn.
+                pendingOrphaned.setQuick(idx, 0);
+                pendingOrphanSeqs.setQuick(idx, Long.MAX_VALUE);
+            }
+        }
+    }
+
+    /**
+     * Adaptive group-commit (W&gt;0): take the orphan-sweep mark to pass to a later
+     * {@link #markWriterDurable(int, long)}. MUST be called BEFORE the caller's
+     * {@code sequencer.fdatasyncTxnLog()}, and the returned value passed unchanged to the
+     * {@code markWriterDurable} that follows it.
+     *
+     * <p><b>Why the ordering is the whole safety argument.</b> Orphaning is what FINALISES a pin's txn range:
+     * the writer is dead from that instant, so it can append no further records. Hence for any orphan whose
+     * stamp is {@code <=} this mark, EVERY txn it covers was appended before the mark, which precedes the
+     * fdatasync — so that fdatasync covered all of them and reaping cannot over-claim.
+     *
+     * <p><b>Why the stamp must be taken at ORPHAN time, not registration time.</b>
+     * {@code registerWriterPending} is putIfAbsent: a writer's later commits in the SAME batch reuse the
+     * pin and create no new registration. A registration stamp therefore records only when the batch
+     * STARTED, while the pin's range keeps growing. That admitted a real over-claim: flusher snapshots the
+     * mark -> its fdatasync runs -> the peer commits one more txn (the sequencer write lock is free again)
+     * -> the peer is torn down -> the sweep sees the peer's OLD registration stamp below the mark and reaps
+     * it, advancing the frontier over a txn the fdatasync never touched.
+     *
+     * <p>Without any mark at all the sweep was racier still: {@code fdatasyncTxnLog} releases the sequencer
+     * write lock before {@code markWriterDurable} runs, so a peer could sequence a whole batch AND die
+     * inside that window and be reaped wholesale. Orphans stamped after the mark simply stay pinned until
+     * the next flush — the conservative direction.
+     */
+    public long snapshotOrphanSweepMark() {
+        synchronized (durableFrontierLock) {
+            return orphanSeq;
+        }
+    }
+
+    /**
+     * Adaptive group-commit (W&gt;0): mark {@code walId}'s pin as ORPHANED because its writer was torn down
+     * (distressed / crashed / closed) WITHOUT a device flush, so no {@link #markWriterDurable(int, long)} will ever
+     * arrive for it. The pin is deliberately NOT removed here: at this instant the writer's batch really is
+     * non-durable (its shared sequencer records are still only in the page cache), and dropping the pin would
+     * let the durable-ack frontier advance over them -- the CRITICAL-2 over-claim.
+     *
+     * <p><b>Why an orphan is releasable by a PEER's flush.</b> Under ADAPTIVE + W&gt;0 every writer makes its
+     * PRIVATE dependencies device-durable BEFORE sequencing ({@code WalWriter.syncIfRequired0} fdatasyncs each
+     * segment column fd and the events file, then {@code getSequencerTxn()} assigns the seqTxn). The ONLY thing
+     * a W&gt;0 batch defers is the shared sequencer barrier. So the orphan's txns become fully durable the moment
+     * ANY writer of this table completes {@code sequencer.fdatasyncTxnLog()} -- that one fdatasync covers the
+     * whole shared log, including records written by the dead writer. {@link #markWriterDurable(int, long)} runs
+     * immediately after exactly that fdatasync, which is why it is safe (and necessary) to sweep orphans there.
+     *
+     * <p>Without this, a single distressed writer froze the contiguous-prefix frontier at
+     * {@code min(pending) - 1} for the rest of the process lifetime: nothing else clears a dead writer's pin
+     * ({@link #resetDurableFrontier()} only runs on table drop / tracker purge), so every subsequent QWP
+     * durable-ack for the table stalled until the next apply-side durable epoch happened to jump the frontier
+     * via {@link #setLocalDurableSeqTxn(long)} -- up to a full epoch interval later, and never at all for a
+     * table that received no further applies.
+     *
+     * <p>Idempotent; an unknown/already-removed walId is a no-op.
+     */
+    public void orphanWriterPending(int walId) {
+        synchronized (durableFrontierLock) {
+            final int idx = indexOfPendingWalId(walId);
+            if (idx > -1) {
+                pendingOrphaned.setQuick(idx, 1);
+                // Stamp at ORPHAN time, and re-stamp on a repeat call: the writer is dead as of NOW, so its
+                // txn range is final as of NOW. A later stamp is strictly more conservative.
+                pendingOrphanSeqs.setQuick(idx, ++orphanSeq);
+            }
+        }
+    }
+
+    /**
+     * Adaptive group-commit (W&gt;0): called AFTER {@code walId}'s batched device flush (data→events→seq)
+     * completes. Drops the writer's pin, then advances {@link #localDurableSeqTxn} MONOTONICALLY to the
+     * contiguous durable prefix across the remaining pending writers: {@code min(oldest-un-flushed) - 1}, or
+     * {@code getSeqTxn()} (every committed txn is now durable) when nothing is pending. Never advances to the
+     * flushing writer's own seqTxn — that is the CRITICAL-2 over-claim. Idempotent: an unknown/already-removed
+     * walId is a harmless no-op that still recomputes the prefix from the remaining pins.
+     *
+     * <p>Also sweeps every ORPHANED pin (see {@link #orphanWriterPending(int)}). The caller has just completed
+     * {@code sequencer.fdatasyncTxnLog()}, one device flush of the WHOLE shared sequencer log; combined with the
+     * invariant that private WAL dependencies are fdatasync'd BEFORE sequencing, that makes every already-
+     * sequenced txn of a dead writer device-durable too. So the orphans' floors are genuinely satisfied at this
+     * point and holding them any longer would stall the frontier for no durability benefit. Orphans are cleared
+     * ONLY here (and by {@link #resetDurableFrontier()}) — never on the teardown path itself, where the batch is
+     * still volatile.
+     */
+    public void markWriterDurable(int walId, long orphanSweepMark) {
+        synchronized (durableFrontierLock) {
+            final int idx = indexOfPendingWalId(walId);
+            if (idx > -1) {
+                removePendingIndex(idx);
+            }
+            // Sweep orphans back-to-front so removals cannot shift an index we have not visited yet, and
+            // ONLY those registered at or before the caller's pre-fdatasync snapshot (see
+            // snapshotOrphanSweepMark). An orphan registered AFTER the snapshot may hold a sequencer record
+            // the caller's fdatasync did not cover; it stays pinned and the next flush reaps it.
+            for (int i = pendingOrphaned.size() - 1; i >= 0; i--) {
+                if (pendingOrphaned.getQuick(i) == 1 && pendingOrphanSeqs.getQuick(i) <= orphanSweepMark) {
+                    removePendingIndex(i);
+                }
+            }
+            final long target = pendingWalIds.size() == 0 ? seqTxn : minPendingLoSeqTxn() - 1;
+            setLocalDurableSeqTxnLocked(target);
+        }
+    }
+
+    /**
+     * Recovery / reboot reset (paired with the tracker's other reset paths): clear every pending-writer pin
+     * and drop the durable frontier back to the uninitialised -1, keeping the engine-wide durable-frontier
+     * gauge honest so a post-reset re-advance from -1 does not double-count. Clears stale pins that a
+     * distressed/crash-torn writer left behind, so a reused/fresh writer recomputes from an empty map.
+     */
+    public void resetDurableFrontier() {
+        clearPinnedEpoch();
+        synchronized (durableFrontierLock) {
+            pendingWalIds.clear();
+            pendingLoSeqTxns.clear();
+            pendingOrphaned.clear();
+            pendingOrphanSeqs.clear();
+            final long current = localDurableSeqTxn;
+            if (current > 0) {
+                metrics.walMetrics().addLocalDurableSeqTxn(-current);
+            }
+            localDurableSeqTxn = -1L;
+        }
+    }
+
+    private void setLocalDurableSeqTxnLocked(long seqTxn) {
+        if (seqTxn > localDurableSeqTxn) {
+            final long previous = localDurableSeqTxn;
+            metrics.walMetrics().addLocalDurableSeqTxn(seqTxn - Math.max(0, previous));
+            localDurableSeqTxn = seqTxn;
+        }
+    }
+
+    // Removes entry `idx` from all three parallel pending lists. Callers hold durableFrontierLock.
+    private void removePendingIndex(int idx) {
+        pendingWalIds.removeIndex(idx);
+        pendingLoSeqTxns.removeIndex(idx);
+        pendingOrphaned.removeIndex(idx);
+        pendingOrphanSeqs.removeIndex(idx);
+    }
+
+    /**
+     * TEST-ONLY: number of contiguous-prefix pins currently held (live + orphaned). Lets the group-commit
+     * tests assert that a torn-down writer's pin is actually reaped rather than merely masked by a later
+     * epoch jumping {@link #localDurableSeqTxn}.
+     */
+    @TestOnly
+    public int getPendingWriterPinCount() {
+        synchronized (durableFrontierLock) {
+            return pendingWalIds.size();
+        }
+    }
+
+    /**
+     * TEST-ONLY: number of pins currently marked ORPHANED (writer torn down without a device flush).
+     */
+    @TestOnly
+    public int getOrphanedWriterPinCount() {
+        synchronized (durableFrontierLock) {
+            int n = 0;
+            for (int i = 0, k = pendingOrphaned.size(); i < k; i++) {
+                if (pendingOrphaned.getQuick(i) == 1) {
+                    n++;
+                }
+            }
+            return n;
+        }
+    }
+
+    private int indexOfPendingWalId(int walId) {
+        for (int i = 0, n = pendingWalIds.size(); i < n; i++) {
+            if (pendingWalIds.getQuick(i) == walId) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private long minPendingLoSeqTxn() {
+        long min = Long.MAX_VALUE;
+        for (int i = 0, n = pendingLoSeqTxns.size(); i < n; i++) {
+            final long v = pendingLoSeqTxns.getQuick(i);
+            if (v < min) {
+                min = v;
+            }
+        }
+        return min;
+    }
+
+    /**
+     * Record the wall-clock ms of the last durable epoch (adaptive cadence gate).
+     */
+    public void setLastEpochTs(long lastEpochTs) {
+        this.lastEpochTs = lastEpochTs;
+    }
+
+    /**
+     * Record the epoch txn now pinned in the scoreboard (or -1 when none) and which ping-pong slot
+     * holds it (true => EPOCH_ID_A). Set after advance() completes the pin handover.
+     */
+    public synchronized void setPinnedEpoch(long pinnedEpochTxn, boolean slotIsA) {
+        this.pinnedEpochTxn = pinnedEpochTxn;
+        this.pinnedEpochSlotIsA = slotIsA;
+    }
+
+    public synchronized void clearPinnedEpoch() {
+        pinnedEpochTxn = -1;
+        pinnedEpochSlotIsA = false;
+        durableEpochSeqTxn = 0;
+    }
+
+    public boolean isRangeAvailableToEpoch(long fromTxn, long toTxn) {
+        final long epochTxn = pinnedEpochTxn;
+        return epochTxn < fromTxn || epochTxn >= toTxn;
     }
 
     public void setUnsuspended() {

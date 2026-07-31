@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -62,6 +63,7 @@ class WalEventWriter implements Closeable {
     private final CairoConfiguration configuration;
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
+    private final MemoryMARW eventChecksumMem = Vm.getCMARWInstance();
     private final MemoryMARW eventIndexMem = Vm.getCMARWInstance();
     private final MemoryMARW eventMem = Vm.getCMARWInstance();
     private final FilesFacade ff;
@@ -86,8 +88,19 @@ class WalEventWriter implements Closeable {
     }
 
     public void close(boolean truncate, byte truncateMode) {
-        eventMem.close(truncate, truncateMode);
-        eventIndexMem.close(truncate, truncateMode);
+        // Close BOTH memories even if the first throws (e.g. a close-time fd-sync fault, real or crash-
+        // simulated): MemoryCMARWImpl.close unmaps before its fd sync, so a throw from eventMem would otherwise
+        // leave eventIndexMem mapped and leak its MMAP_TABLE_WAL_WRITER memory. The finally closes it too; the
+        // original fault still propagates.
+        try {
+            eventMem.close(truncate, truncateMode);
+        } finally {
+            try {
+                eventChecksumMem.close(truncate, truncateMode);
+            } finally {
+                eventIndexMem.close(truncate, truncateMode);
+            }
+        }
     }
 
     @TestOnly
@@ -227,13 +240,37 @@ class WalEventWriter implements Closeable {
         eventIndexMem.putLong(value);
     }
 
+    // Finalize without changing the legacy _event layout. Integrity metadata lives in the mandatory,
+    // capability-gated sidecar so old readers keep locating end-relative footers correctly.
+    private void finishRecord() {
+        final long bodyEnd = eventMem.getAppendOffset();
+        final int length = (int) (bodyEnd - startOffset);
+        eventMem.putInt(startOffset, length);
+        final long checksum = TableUtils.calculateCvAreaChecksum(eventMem.addressOf(startOffset), length);
+        eventChecksumMem.jumpTo(WALE_CHECKSUM_HEADER_SIZE + (long) txn * WALE_CHECKSUM_ENTRY_SIZE);
+        eventChecksumMem.putLong(startOffset);
+        eventChecksumMem.putInt(length);
+        eventChecksumMem.putInt(0);
+        eventChecksumMem.putLong(checksum);
+        eventMem.putInt(-1);
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+    }
+
     private void init() {
         eventMem.putInt(0);
-        eventMem.putInt(WALE_FORMAT_VERSION);
+        eventMem.putInt(Numbers.encodeLowHighShorts(WALE_FORMAT_VERSION, WALE_CHECKSUM_FEATURE_VERSION));
         eventMem.putInt(-1);
+        eventChecksumMem.putLong(WALE_CHECKSUM_MAGIC);
+        eventChecksumMem.putInt(WALE_CHECKSUM_FILE_VERSION);
+        eventChecksumMem.putInt(WALE_CHECKSUM_ENTRY_SIZE);
 
         appendIndex(WALE_HEADER_SIZE);
         txn = 0;
+    }
+
+    private void setEventFormat(short lowVersion) {
+        eventMem.putInt(WAL_FORMAT_OFFSET_32, Numbers.encodeLowHighShorts(lowVersion, WALE_CHECKSUM_FEATURE_VERSION));
     }
 
     private void writeSymbolMapDiffs() {
@@ -270,11 +307,12 @@ class WalEventWriter implements Closeable {
         eventMem.putLong(txn);
         eventMem.putByte(txnType);
         payload.write(eventMem);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        // Close the record through the SHARED epilogue, exactly like every other appender. Writing the
+        // length, terminator, index entry and max-txn by hand here would skip the mandatory _event.c
+        // checksum entry, and the reader treats a record with no sidecar entry as TORN (see
+        // WalEventCursor.verifyRecordChecksum) — so every custom event would be unreadable the moment it
+        // was written.
+        finishRecord();
         return txn++;
     }
 
@@ -352,13 +390,9 @@ class WalEventWriter implements Closeable {
             eventMem.putLong(replaceRangeHiTs);
             eventMem.putByte(dedupMode);
         }
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        finishRecord();
         if (txnType == WalTxnType.MAT_VIEW_DATA) {
-            eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
+            setEventFormat(WALE_MAT_VIEW_FORMAT_VERSION);
         }
         return txn++;
     }
@@ -391,12 +425,8 @@ class WalEventWriter implements Closeable {
                 eventMem.putInt(-1);
             }
         }
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
-        eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
+        finishRecord();
+        setEventFormat(WALE_MAT_VIEW_FORMAT_VERSION);
         return txn++;
     }
 
@@ -412,11 +442,7 @@ class WalEventWriter implements Closeable {
         final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
         appendBindVariableValuesByIndex(bindVariableService);
         appendBindVariableValuesByName(bindVariableService);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        finishRecord();
         return txn++;
     }
 
@@ -448,11 +474,7 @@ class WalEventWriter implements Closeable {
             }
         }
 
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        finishRecord();
         return txn++;
     }
 
@@ -479,6 +501,15 @@ class WalEventWriter implements Closeable {
                 CairoConfiguration.O_NONE,
                 Files.POSIX_MADV_RANDOM
         );
+        eventChecksumMem.of(
+                ff,
+                path.trimTo(pathLen).concat(EVENT_CHECKSUM_FILE_NAME).$(),
+                Math.max(ff.getPageSize(), appendPageSize / 4),
+                -1,
+                MemoryTag.NATIVE_TABLE_WAL_WRITER,
+                CairoConfiguration.O_NONE,
+                Files.POSIX_MADV_SEQUENTIAL
+        );
         eventIndexMem.of(
                 ff,
                 path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(),
@@ -494,16 +525,55 @@ class WalEventWriter implements Closeable {
     void rollback() {
         eventMem.putInt(startOffset, -1);
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, --txn - 1);
+        eventChecksumMem.jumpTo(WALE_CHECKSUM_HEADER_SIZE + (long) txn * WALE_CHECKSUM_ENTRY_SIZE);
         // Do not truncate files, these files may be read by WAL Apply job at the moment.
         // This is very rare case, WALE will not be written anymore after this call.
         // Not truncating the files saves from reading complexity.
     }
 
     void sync() {
-        int commitMode = configuration.getCommitMode();
+        sync(configuration.getCommitMode());
+    }
+
+    /**
+     * Flush (and, under ADAPTIVE, fdatasync) the WAL events files using the given EFFECTIVE commit mode.
+     * Callers on the WAL commit path pass the per-table effective mode (Deferred 1) so the events file's
+     * durability matches the table's WAL-commit durability, preserving the data→events→seq ordering.
+     */
+    void sync(int commitMode) {
         if (commitMode != CommitMode.NOSYNC) {
-            eventMem.sync(commitMode == CommitMode.ASYNC);
-            eventIndexMem.sync(commitMode == CommitMode.ASYNC);
+            // W>0 pushes the event mappings with MS_ASYNC; WalWriter then fdatasyncs these private files
+            // before sequencing. Only the shared sequencer barrier is deferred/batched. Other modes (and
+            // ADAPTIVE W=0) keep their exact existing sync grade + per-commit fdatasync.
+            final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
+                    && configuration.getAdaptiveCommitGroupWindowUs() > 0;
+            final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
+            eventMem.sync(async);
+            eventChecksumMem.sync(async);
+            eventIndexMem.sync(async);
+            // ADAPTIVE: make the events file durable. msync flushes data to the page cache;
+            // fdatasync ensures both the data and the inode size reach the device before the
+            // sequencer record is written. Events must be durable before the sequencer pointer
+            // is committed (events before seq, matching data→events→seq order).
+            if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
+                fdatasync();
+            }
+        }
+    }
+
+    /**
+     * Device-flush the WAL-e event, checksum, and index files. For adaptive W>0, WalWriter calls this
+     * before sequencing, after private column data, preserving data→events→seq ordering.
+     */
+    void fdatasync() {
+        if (eventMem.isOpen()) {
+            ff.fdatasync(eventMem.getFd());
+        }
+        if (eventChecksumMem.isOpen()) {
+            ff.fdatasync(eventChecksumMem.getFd());
+        }
+        if (eventIndexMem.isOpen()) {
+            ff.fdatasync(eventIndexMem.getFd());
         }
     }
 
@@ -536,8 +606,9 @@ class WalEventWriter implements Closeable {
         eventMem.jumpTo(startOffset);
         eventMem.putInt(-1);
 
-        // Remove the last index entry (one long) so appendData can re-add it.
+        // Remove the last index/checksum entries so appendData can re-add them.
         eventIndexMem.jumpTo(eventIndexMem.getAppendOffset() - Long.BYTES);
+        eventChecksumMem.jumpTo(WALE_CHECKSUM_HEADER_SIZE + (long) (txn - 1) * WALE_CHECKSUM_ENTRY_SIZE);
 
         // Decrement txn because appendData will increment it.
         txn--;
@@ -554,11 +625,7 @@ class WalEventWriter implements Closeable {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.TRUNCATE);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        finishRecord();
         return txn++;
     }
 }

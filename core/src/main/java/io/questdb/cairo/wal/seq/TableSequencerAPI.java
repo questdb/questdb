@@ -258,6 +258,52 @@ public class TableSequencerAPI implements QuietCloseable {
         return getSeqTxnTracker(tableToken);
     }
 
+    /**
+     * The engine's adaptive group-commit (Deferred 2) pending-flush registry. Exposed here so a
+     * {@link io.questdb.cairo.wal.WalWriter} (which holds the sequencer API, not the engine) can register
+     * itself when it defers a device flush under {@code cairo.adaptive.commit.group.window > 0}.
+     */
+    @NotNull
+    public io.questdb.cairo.wal.WalGroupCommitFlushQueue getWalGroupCommitFlushQueue() {
+        return engine.getWalGroupCommitFlushQueue();
+    }
+
+    public void handleDataSyncFailure(Throwable failure) {
+        engine.handleDataSyncFailure(failure);
+    }
+
+    public boolean isDurabilityFailed() {
+        return engine.isDurabilityFailed();
+    }
+
+    /**
+     * Returns the table's EFFECTIVE per-table commit mode (the {@code _meta} override resolved against the
+     * global {@code cairo.commit.mode}), populating the per-table {@link SeqTxnTracker} cache on first use.
+     * This is the single accessor every WAL-side adaptive decision point uses (WAL-commit durability, the
+     * WAL-purge floor, the durable-epoch trigger, recovery). The tracker is normally pre-populated at
+     * CREATE ({@code registerTable}) and on each writer open; this lazy path covers a post-restart WAL
+     * commit that may precede the first apply for the table. The physical {@code _meta} read goes through
+     * the engine's pooled table metadata (cheap, cached) and may briefly observe a pre-ALTER value across
+     * an {@code ALTER ... SET PARAM commit_mode} — acceptable for a durability-policy knob.
+     */
+    public int resolveEffectiveCommitMode(TableToken tableToken) {
+        final SeqTxnTracker tracker = getSeqTxnTracker(tableToken);
+        int mode = tracker.getCommitMode();
+        if (mode != io.questdb.cairo.CommitMode.UNSET) {
+            return mode;
+        }
+        // Read the per-table _meta override via a pooled metadata handle and CLOSE it (the pool would
+        // otherwise report the tenant "left behind on shutdown"). Do not delegate to
+        // TableUtils.getCommitMode(metadata, engine) here — that opens a SECOND handle.
+        final int tableMode;
+        try (io.questdb.cairo.sql.TableMetadata meta = engine.getTableMetadata(tableToken)) {
+            tableMode = meta.getCommitMode();
+        }
+        final int effective = io.questdb.cairo.CommitMode.effectiveCommitMode(tableMode, configuration.getCommitMode());
+        tracker.setCommitMode(effective);
+        return effective;
+    }
+
     public boolean initTxnTracker(TableToken tableToken, long writerTxn, long seqTxn) {
         SeqTxnTracker seqTxnTracker = getSeqTxnTracker(tableToken);
         final boolean isSuspended = isSuspended(tableToken);
@@ -311,6 +357,23 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    /**
+     * Adaptive group-commit (Deferred 2): perform the DEFERRED device flush ({@code fdatasync}) of the
+     * sequencer txn log for {@code tableToken}, the final (seq) step of the batched data→events→seq flush.
+     * Opens the sequencer under the WRITE lock (the same lock {@code nextTxn} takes) so the flush cannot
+     * race a concurrent sequencer append/rotation. A no-op-safe call: callers only invoke it for ADAPTIVE
+     * tables that have deferred at least one sequencer commit under {@code W > 0}.
+     */
+    public void fdatasyncTxnLog(final TableToken tableToken) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+            try {
+                tableSequencer.fdatasyncTxnLog();
+            } finally {
+                tableSequencer.unlockWrite();
+            }
+        }
+    }
+
     public boolean notifyOnCheck(TableToken tableToken, long seqTxn) {
         // Updates seqTxn and returns true if CheckWalTransactionsJob should post notification
         // to run ApplyWal2TableJob for the table
@@ -352,7 +415,41 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void purgeTxnTracker(String dirName) {
-        seqTxnTrackers.remove(dirName);
+        final SeqTxnTracker removed = seqTxnTrackers.remove(dirName);
+        if (removed != null) {
+            // Clear the adaptive group-commit contiguous-prefix pins and zero this tracker's contribution to
+            // the engine-wide durable-frontier gauge before it is discarded (table drop / reboot reset), so a
+            // fresh tracker for the same dir does not inherit stale pins and the gauge does not leak.
+            removed.resetDurableFrontier();
+        }
+    }
+
+    /**
+     * TEST-ONLY reboot model for crash-consistency sweeps: force-close the table's cached sequencer AND drop
+     * its in-memory {@link SeqTxnTracker}, so the next access reloads BOTH from the durable txnlog on disk,
+     * exactly as a freshly booted engine does.
+     * <p>
+     * Needed because a sequenced-but-non-durable txn (adaptive group commit {@code W > 0}: the transaction
+     * was assigned a seqTxn in memory, but its txnlog record's device flush was DEFERRED to the WAL writer's
+     * close and a swept crash rolled it back) otherwise wedges recovery. The still-open sequencer keeps the
+     * stale in-memory {@code lastTxn}; {@link #forAllWalTables} reads it (the slow path) instead of the
+     * durable txnlog high-water and re-seeds the tracker's {@code seqTxn} above the durable {@code writerTxn},
+     * so the apply job spins forever (updateWriterTxns keeps returning {@code writerTxn < seqTxn} for a txn
+     * the rolled-back WAL no longer has). Closing the sequencer discards that stale high-water and forces
+     * {@code forAllWalTables} onto the fast path (reads the durable txnlog), so the fresh tracker re-inits to
+     * the rolled-back frontier and the apply converges.
+     * <p>
+     * Closes only an idle sequencer ({@link TableSequencerImpl#checkClose()} takes the schema write lock);
+     * the crash-sweep driver has already released readers/writers/WAL writers, so it is unreferenced.
+     */
+    @TestOnly
+    public void resetForReboot(TableToken tableToken) {
+        final String dirName = tableToken.getDirName();
+        final TableSequencerImpl sequencer = seqRegistry.get(dirName);
+        if (sequencer != null && sequencer.checkClose()) {
+            seqRegistry.remove(dirName, sequencer);
+        }
+        purgeTxnTracker(dirName);
     }
 
     public void registerTable(int tableId, final TableStructure tableDescriptor, final TableToken tableToken) {
@@ -372,6 +469,12 @@ public class TableSequencerAPI implements QuietCloseable {
         ) {
             SeqTxnTracker seqTxnTracker = getSeqTxnTracker(tableToken);
             seqTxnTracker.initTxns(0, 0, false);
+            // Publish the new table's effective commit mode from its CREATE-time structure so WAL-side
+            // durability (which can run before any TableWriter opens) sees the per-table override
+            // immediately. Resolved against the global mode here (UNSET => global).
+            seqTxnTracker.setCommitMode(
+                    io.questdb.cairo.CommitMode.effectiveCommitMode(tableDescriptor.getCommitMode(), configuration.getCommitMode())
+            );
             tableSequencer.unlockWrite();
         }
     }

@@ -223,6 +223,7 @@ public class TableSequencerImpl implements TableSequencer {
     public void dropTable() {
         checkDropped();
         final long timestamp = microClock.getTicks();
+        pushCommitModeToLog();
         final long txn = tableTransactionLog.addEntry(
                 getStructureVersion(), WalUtils.DROP_TABLE_WAL_ID,
                 0, 0, timestamp, 0, 0, 0
@@ -331,6 +332,16 @@ public class TableSequencerImpl implements TableSequencer {
         return closed;
     }
 
+    /**
+     * Adaptive group-commit (Deferred 2) deferred device flush of the sequencer txn log
+     * (part-before-header). Must be called holding the sequencer WRITE lock (the same lock {@code nextTxn}
+     * takes), so it cannot race a concurrent sequencer append/rotation of the txn-log mmaps.
+     */
+    public void fdatasyncTxnLog() {
+        assert !closed;
+        tableTransactionLog.fdatasyncTxnLog();
+    }
+
     public boolean isDistressed() {
         return distressed;
     }
@@ -379,6 +390,7 @@ public class TableSequencerImpl implements TableSequencer {
                 metadata.sync();
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
+                pushCommitModeToLog();
                 txn = tableTransactionLog.endMetadataChangeEntry();
 
                 if (!seqTxnTracker.isSuspended()) {
@@ -538,7 +550,8 @@ public class TableSequencerImpl implements TableSequencer {
             long txnMaxTimestamp,
             long txnRowCount
     ) {
-        return tableTransactionLog.addEntry(
+        final int effectiveMode = pushCommitModeToLog();
+        final long txn = tableTransactionLog.addEntry(
                 getStructureVersion(),
                 walId,
                 segmentId,
@@ -548,12 +561,53 @@ public class TableSequencerImpl implements TableSequencer {
                 txnMaxTimestamp,
                 txnRowCount
         );
+        // Task 1b (CRITICAL-2 residual): for an ADAPTIVE group-commit (W>0) deferral, register this writer's
+        // durable-ack contiguous-prefix pin ATOMICALLY with the seqTxn assignment — under the sequencer WRITE
+        // lock and BEFORE the caller's notifyTxnCommitted publishes this txn to tracker.seqTxn. This closes the
+        // mid-flight window in which a peer writer's markWriterDurable, seeing the advanced seqTxn while this
+        // txn is sequenced-but-not-yet-pinned, would empty the pin map and over-claim this still-non-durable
+        // txn into the frontier. registerWriterPending is putIfAbsent, so a writer's later commits in the same
+        // un-flushed batch do NOT lower its pin; the pin is dropped only by the writer's own post-fdatasync
+        // markWriterDurable (WalWriter.flushPendingDurable) or reset on reboot (resetDurableFrontier). Gated to
+        // ADAPTIVE+W>0 so W=0 and legacy SYNC/ASYNC/NOSYNC are byte-identical (they never pin/markWriterDurable).
+        if (effectiveMode == io.questdb.cairo.CommitMode.ADAPTIVE
+                && engine.getConfiguration().getAdaptiveCommitGroupWindowUs() > 0) {
+            seqTxnTracker.registerWriterPending(walId, txn);
+        }
+        return txn;
     }
 
     private void notifyTxnCommitted(long txn) {
         if (txn == Long.MAX_VALUE || seqTxnTracker.notifyOnCommit(txn)) {
             engine.notifyWalTxnCommitted(tableToken);
         }
+    }
+
+    /**
+     * Pushes this table's EFFECTIVE commit mode (Deferred 1) onto the transaction log just before a commit,
+     * so the per-commit sequencer-record flush ({@code sync0}) makes ADAPTIVE tables durable even under a
+     * NOSYNC instance default — required for recovery to roll their committed transactions forward. Reads
+     * the live per-table mode from the tracker (republished by ALTER ... SET PARAM commit_mode) resolved
+     * against the global mode. Cheap: a volatile read + a volatile write on the commit path.
+     */
+    private int pushCommitModeToLog() {
+        // Resolve the per-table effective mode, reading _meta as a fallback when the tracker has not been
+        // published yet (e.g. the very first operation after a restart, including an ALTER that takes no
+        // data-sync path). Best-effort: if the _meta read fails (e.g. a table mid-drop), fall back to the
+        // global mode rather than failing the commit — resolveEffectiveCommitMode caches its result on the
+        // tracker so this _meta read happens at most once per table per process.
+        int mode = seqTxnTracker.getCommitMode();
+        if (mode == io.questdb.cairo.CommitMode.UNSET) {
+            try {
+                mode = pool.resolveEffectiveCommitMode(tableToken);
+            } catch (Throwable th) {
+                mode = engine.getConfiguration().getCommitMode();
+            }
+        } else {
+            mode = io.questdb.cairo.CommitMode.effectiveCommitMode(mode, engine.getConfiguration().getCommitMode());
+        }
+        tableTransactionLog.setCommitMode(mode);
+        return mode;
     }
 
     private void openOrRecoverMetadata(long committedStructureVersion) {

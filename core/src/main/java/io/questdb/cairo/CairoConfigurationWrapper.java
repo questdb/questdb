@@ -105,6 +105,31 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getAdaptiveCommitGroupWindowUs() {
+        return getDelegate().getAdaptiveCommitGroupWindowUs();
+    }
+
+    @Override
+    public long getAdaptiveEpochIntervalMs() {
+        return getDelegate().getAdaptiveEpochIntervalMs();
+    }
+
+    @Override
+    public long getAdaptiveEpochMaxRows() {
+        return getDelegate().getAdaptiveEpochMaxRows();
+    }
+
+    @Override
+    public boolean isAdaptiveEpochFlushOnClose() {
+        return getDelegate().isAdaptiveEpochFlushOnClose();
+    }
+
+    @Override
+    public boolean isAdaptiveRecoveryRollForwardEnabled() {
+        return getDelegate().isAdaptiveRecoveryRollForwardEnabled();
+    }
+
+    @Override
     public boolean getAsyncMunmapEnabled() {
         return getDelegate().getAsyncMunmapEnabled();
     }
@@ -1572,6 +1597,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return getDelegate().getWriterTickRowsCountMod();
+    }
+
+    @Override
+    public boolean isAdaptiveEpochColumnSyncBatched() {
+        return getDelegate().isAdaptiveEpochColumnSyncBatched();
     }
 
     @Override

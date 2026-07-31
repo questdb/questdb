@@ -151,7 +151,7 @@ stages:
     jobs:
       - template: templates/self-hosted-jobs.yml
     variables:
-      includeTests: "**/cairo/o3/**,**/cairo/wal/**,**/cairo/mv/**,**/cairo/map/**,**/cairo/pool/**,**/cairo/view/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**"
+      includeTests: "**/cairo/o3/**,**/cairo/wal/**,**/cairo/mv/**,**/cairo/map/**,**/cairo/pool/**,**/cairo/view/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**,**/cairo/crash/**"
 
   - stage: SelfHostedRunOtherA
     displayName: "SelfHosted Other tests (A)"

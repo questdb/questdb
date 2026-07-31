@@ -1,0 +1,243 @@
+# Temporary soak-fuzz pipeline for the nw_adaptive_commit branch (PR #7411).
+#
+# This file backs its own ADO definition, separate from Fuzz Tests
+# (definition 25, ci/test-fuzz.yml), so the soak runs register under a
+# different pipeline name and stay out of the builds channel subscription.
+# One-time setup in ADO: create a new pipeline from this file (suggested
+# name: Adaptive Commit Fuzz) with default branch nw_adaptive_commit, and
+# do not subscribe it to the builds channel.
+#
+# Failures alert through the Slack webhook in the
+# TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK secret variable instead. Set it in the
+# pipeline settings UI; it is deliberately not defined in YAML because
+# YAML-defined variables cannot be overridden from the UI. Until it is set,
+# the NotifyOnFailure job skips cleanly.
+#
+# The hourly schedule runs ordinary fuzz tests only (~12 minutes per run). Exhaustive adaptive crash tests
+# and a full-suite pass run once nightly, sharded into separate JVMs so a long/OOM-prone sweep cannot poison
+# the rest of the suite. Delete this file after the squash-merge; the branch deletion leaves the definition
+# with nothing to schedule.
+#
+# The hourly cron deliberately skips 00:00-01:59 so the 01:00 nightly gets the pool to itself: the pool runs
+# one agent at a time, so a soak queued mid-nightly does not just delay itself, it wedges between two nightly
+# shards and stretches the nightly's ~40 minutes of test work over several hours.
+
+trigger: none
+
+pr: none
+
+schedules:
+  - cron: "0 2-23 * * *"
+    displayName: Run every hour (outside nightly window)
+    branches:
+      include:
+        - nw_adaptive_commit
+    always: true
+  - cron: "0 1 * * *"
+    displayName: Run adaptive crash nightly
+    branches:
+      include:
+        - nw_adaptive_commit
+    always: true
+
+variables:
+  QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
+  ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).zip"
+  excludeTests: ""
+  includeTests: "%regex[.*[^o].class]"
+  MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
+  MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m -XX:+UseParallelGC"
+  # Wagon retries a dropped connect to the single-IP cache (count + nonRetryableClasses,
+  # which re-enables retry on ConnectException) instead of failing the build; the connect
+  # timeout in maven-settings-hetzner.xml bounds each attempt. See test-pipeline.yml for the
+  # full rationale.
+  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
+  MAVEN_VERSION: "version"
+  MAVEN_VERSION_OPTION: "Default"
+  # Full reactor (the fuzz regex spans core and compat), but no fuzz test serves the
+  # web console, so skip its download.
+  TEST_REACTOR_ARGS: ""
+  WEB_CONSOLE_PROFILE: ""
+
+stages:
+  - stage: HostedRunTestsBranches
+    displayName: "Hosted Running tests"
+
+    jobs:
+      - job: RunOn
+        condition: ne(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly')
+        workspace:
+          clean: all
+        displayName: "on"
+        strategy:
+          matrix:
+            hetzner:
+              os: Linux
+              jdk: "1.25"
+              testset: "all"
+              includeTests: "%regex[.*Fuzz.*class]"
+              javadoc_step: ""
+              javadoc_profile: ""
+        pool:
+          # The soak fuzzes on its own pool so the hourly cadence does
+          # not take agents away from PR builds.
+          name: hetzner-adaptive-commit-fuzz
+        timeoutInMinutes: 60
+        variables:
+          SOURCE_CODE_CHANGED: true
+          ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
+        steps:
+          - template: templates/checkout-source.yml
+          - template: templates/use-hetzner-apt-mirrors.yml
+          - bash: |
+              sudo apt-get update && sudo apt-get install -y openjdk-25-jdk maven build-essential zip
+              JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
+              echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+              echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
+              echo "JAVA_HOME will be set to: $JAVA_PATH"
+          - template: templates/steps.yml
+            parameters:
+              isCheckoutEnabled: false
+              isHetznerAptMirrorEnabled: false
+
+      - job: RunAdaptiveCrashNightly
+        displayName: "adaptive crash nightly"
+        condition: eq(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly')
+        workspace:
+          clean: all
+        strategy:
+          matrix:
+            randomized:
+              os: Linux
+              jdk: "1.25"
+              testset: "all"
+              includeTests: "**/cairo/crash/RandomizedAdaptiveCrashFuzzTest.java"
+              excludeTests: ""
+              javadoc_step: ""
+              javadoc_profile: ""
+            crash_sweeps:
+              os: Linux
+              jdk: "1.25"
+              testset: "all"
+              includeTests: "**/cairo/crash/AdaptiveIndexedSymbolLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMatViewLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMultiPartitionLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMultiTableLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveO3CrashSweepTest.java,**/cairo/crash/AdaptiveO3LazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveRebootOrphanReclaimCrashTest.java"
+              excludeTests: ""
+              javadoc_step: ""
+              javadoc_profile: ""
+            soak_self_check:
+              os: Linux
+              jdk: "1.25"
+              testset: "all"
+              includeTests: "**/cairo/crash/AdaptiveCrashSweepSelfCheckTest.java,**/cairo/crash/AdaptiveSoakCrashTest.java"
+              excludeTests: ""
+              javadoc_step: ""
+              javadoc_profile: ""
+            durability_fuzz:
+              os: Linux
+              jdk: "1.25"
+              testset: "all"
+              includeTests: "**/cairo/crash/AdaptiveMultiWriterDurableAckCrashFuzzTest.java,**/cairo/crash/AdaptiveQwpDurableAckNoLossCrashTest.java,**/cairo/crash/VarcharPowerLossFuzzTest.java"
+              excludeTests: ""
+              javadoc_step: ""
+              javadoc_profile: ""
+        pool:
+          name: hetzner-adaptive-commit-fuzz
+        timeoutInMinutes: 180
+        variables:
+          SOURCE_CODE_CHANGED: true
+          MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx6144m -XX:+UseParallelGC"
+          MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dquestdb.fuzz.nightly=true -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
+          ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk)-$(System.JobName).zip"
+          ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk)-$(System.JobName).log"
+        steps:
+          - template: templates/checkout-source.yml
+          - template: templates/use-hetzner-apt-mirrors.yml
+          - bash: |
+              sudo apt-get update && sudo apt-get install -y openjdk-25-jdk maven build-essential zip
+              JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
+              echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+              echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
+              echo "JAVA_HOME will be set to: $JAVA_PATH"
+          - template: templates/steps.yml
+            parameters:
+              isCheckoutEnabled: false
+              isHetznerAptMirrorEnabled: false
+              testTimeoutInMinutes: 165
+              artifactNameSuffix: "-$(System.JobName)"
+
+      - job: RunFullSuiteNightly
+        displayName: "full suite nightly"
+        condition: eq(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly')
+        workspace:
+          clean: all
+        strategy:
+          matrix:
+            full:
+              os: Linux
+              jdk: "1.25"
+              testset: "all"
+              # PR CI splits this across five parallel stages; here it is one JVM on one agent,
+              # so budget hours, not minutes. The crash package is excluded because the sharded
+              # jobs above already own it -- and they own it with the nightly flag set, which
+              # this job deliberately does not set.
+              includeTests: "%regex[.*[^o].class]"
+              excludeTests: "**/cairo/crash/**"
+              javadoc_step: ""
+              javadoc_profile: ""
+        pool:
+          name: hetzner-adaptive-commit-fuzz
+        timeoutInMinutes: 330
+        variables:
+          SOURCE_CODE_CHANGED: true
+          MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx6144m -XX:+UseParallelGC"
+          # A full pass reaches the http/web-console tests that the fuzz-only default skips, so
+          # unlike the other jobs here it has to build the console assets.
+          WEB_CONSOLE_PROFILE: "-P build-web-console"
+          ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk)-$(System.JobName).zip"
+          ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk)-$(System.JobName).log"
+        steps:
+          - template: templates/checkout-source.yml
+          - template: templates/use-hetzner-apt-mirrors.yml
+          - bash: |
+              sudo apt-get update && sudo apt-get install -y openjdk-25-jdk maven build-essential zip
+              JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
+              echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+              echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
+              echo "JAVA_HOME will be set to: $JAVA_PATH"
+          - template: templates/steps.yml
+            parameters:
+              isCheckoutEnabled: false
+              isHetznerAptMirrorEnabled: false
+              testTimeoutInMinutes: 315
+              artifactNameSuffix: "-$(System.JobName)"
+
+      - job: NotifyOnFailure
+        displayName: "Notify Slack on failure"
+        # The notify job stays on the soak pool too; RunOn has released its
+        # agent by the time this job queues.
+        pool: hetzner-adaptive-commit-fuzz
+        dependsOn:
+          - RunOn
+          - RunAdaptiveCrashNightly
+          - RunFullSuiteNightly
+        condition: failed()
+        steps:
+          - checkout: none
+
+          - task: CmdLine@2
+            displayName: Notify Slack on Failure
+            inputs:
+              script: |
+                # While the secret variable is missing from the pipeline
+                # settings, the env mapping below passes the macro through
+                # unexpanded; skip instead of curl-ing a literal "$(...)".
+                case "$TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK" in
+                  '' | '$('*)
+                    echo "TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK is not configured; skipping Slack alert"
+                    exit 0
+                    ;;
+                esac
+                curl -X POST -H 'Content-type: application/json' \
+                  --data '{"text":"🚨 *Adaptive Commit Fuzz Failed (OSS)*\n\nBranch: `$(Build.SourceBranchName)`\nBuild: <$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)|#$(Build.BuildId)>\nCommit: `$(Build.SourceVersion)`"}' \
+                  "$TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK"
+            env:
+              TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK: $(TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK)

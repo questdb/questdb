@@ -172,12 +172,33 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public void fdatasync(long fd) {
+        int res = Files.fdatasync(fd);
+        if (res == 0) {
+            return;
+        }
+        final int errno = errno();
+        throw CairoException.dataSyncFailure(errno, "fdatasync").put("could not fdatasync [fd=").put(fd).put(']');
+    }
+
+    @Override
+    public void syncfs(long fd) {
+        int res = Files.syncfs(fd);
+        if (res == 0) {
+            return;
+        }
+        final int errno = errno();
+        throw CairoException.dataSyncFailure(errno, "syncfs").put("could not syncfs [fd=").put(fd).put(']');
+    }
+
+    @Override
     public void fsync(long fd) {
         int res = Files.fsync(fd);
         if (res == 0) {
             return;
         }
-        throw CairoException.critical(errno()).put("could not fsync [fd=").put(fd).put(']');
+        final int errno = errno();
+        throw CairoException.dataSyncFailure(errno, "fsync").put("could not fsync [fd=").put(fd).put(']');
     }
 
     @Override
@@ -187,8 +208,9 @@ public class FilesFacadeImpl implements FilesFacade {
             close(fd);
             return;
         }
+        final int errno = errno();
         close(fd);
-        throw CairoException.critical(errno()).put("could not fsync [fd=").put(fd).put(']');
+        throw CairoException.dataSyncFailure(errno, "fsyncAndClose").put("could not fsync [fd=").put(fd).put(']');
     }
 
     @Override
@@ -355,7 +377,12 @@ public class FilesFacadeImpl implements FilesFacade {
         if (res == 0) {
             return;
         }
-        throw CairoException.critical(errno()).put("could not msync");
+        final int errno = errno();
+        CairoException exception = CairoException.critical(errno);
+        if (!async) {
+            exception = CairoException.dataSyncFailure(errno, "msync");
+        }
+        throw exception.put("could not msync");
     }
 
     @Override

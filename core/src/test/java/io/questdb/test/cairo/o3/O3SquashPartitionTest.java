@@ -243,9 +243,15 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            try (Path path = new Path()) {
-                path.of(configuration.getDbRoot()).concat(tableToken).concat("2020-02-03");
-                int plen = path.size();
+            try (TableReader reader = engine.getReader(tableToken); Path path = new Path()) {
+                // The .squash_ts is written into the CURRENT partition-version directory. Resolve that
+                // version (name txn) rather than hard-coding the bare "2020-02-03" dir -- after O3 +
+                // squash the 2020-02-03 partition is versioned (e.g. 2020-02-03.2), so the bare path
+                // would miss the file even though it was written correctly.
+                final long partitionTs = MicrosTimestampDriver.floor("2020-02-03");
+                final long nameTxn = reader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionTs);
+                path.of(configuration.getDbRoot()).concat(tableToken);
+                TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, nameTxn);
 
                 path.concat(TableUtils.PARTITION_LAST_SQUASH_TIMESTAMP_FILE).$();
                 long squashFileFd = configuration.getFilesFacade().openRO(path.$());
@@ -254,8 +260,6 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 long squashTimestamp = configuration.getFilesFacade().readNonNegativeLong(squashFileFd, 0);
                 Assert.assertTrue("Expected valid squash timestamp, got: " + squashTimestamp, squashTimestamp > 0);
                 configuration.getFilesFacade().close(squashFileFd);
-
-                path.trimTo(plen);
             }
         });
     }

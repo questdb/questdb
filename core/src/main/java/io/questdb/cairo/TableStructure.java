@@ -66,6 +66,18 @@ public interface TableStructure {
         return TableUtils.TABLE_FORMAT_NATIVE;
     }
 
+    /**
+     * Returns the PER-TABLE commit-mode override stored in {@code _meta}, or
+     * {@link io.questdb.cairo.CommitMode#UNSET} when the table defers to the global
+     * {@code cairo.commit.mode}. Resolve the effective mode with
+     * {@link io.questdb.cairo.CommitMode#effectiveCommitMode(int, int)}. Defaults to UNSET so that
+     * structures created by ingestion adapters and {@code CREATE TABLE} without an explicit
+     * {@code WITH commit_mode='...'} keep using the instance default.
+     */
+    default int getCommitMode() {
+        return CommitMode.UNSET;
+    }
+
     CharSequence getTableName();
 
     int getTimestampIndex();

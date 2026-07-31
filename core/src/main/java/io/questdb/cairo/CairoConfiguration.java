@@ -205,6 +205,99 @@ public interface CairoConfiguration {
 
     int getCommitMode();
 
+    /**
+     * Minimum interval, in milliseconds, between adaptive durable epochs for a single table. Under
+     * {@link CommitMode#ADAPTIVE} the apply worker fires a durable epoch
+     * ({@link TableWriter#advanceDurableEpoch(long)}) at most once per this interval per table, right after an apply
+     * batch commits while it still holds the writer. {@code 0} fires on every apply batch.
+     *
+     * <p>A NEGATIVE value DISABLES adaptive epochs entirely (including the {@link #getAdaptiveEpochMaxRows()}
+     * row cap). This is NOT a routine opt-out: with no epoch the {@code WalPurgeJob} retention floor is gone,
+     * so <b>WAL retention is unbounded</b> (the WAL below the frontier is never purged and grows with ingest)
+     * and <b>recovery falls back to full WAL replay from the base</b> (boot time grows with the retained WAL).
+     * Use only as a deliberate operator opt-out / test isolation.
+     *
+     * <p><b>Intentional default divergence (not a bug):</b> this interface default is {@code 1000} ms — the
+     * value used by embedded {@code CairoConfiguration}s and tests — whereas the SERVER default (the
+     * {@code cairo.adaptive.epoch.interval} property in {@code PropServerConfiguration}) is {@code 60000} ms.
+     * The server can afford the longer interval because {@link #getAdaptiveEpochMaxRows()} does the
+     * safety-bounding under load (an epoch also fires once the un-epoched applied-row backlog hits the cap),
+     * so the interval only has to bound the IDLE case; embedded/test configs keep the shorter 1000 ms backstop.
+     * See {@code docs/adaptive-commit-mode.md} §6 ("Why the interval could move from 1000 ms to 60000 ms").
+     *
+     * @return the minimum per-table durable-epoch interval in milliseconds; negative disables epochs
+     */
+    default long getAdaptiveEpochIntervalMs() {
+        return 1000;
+    }
+
+    /**
+     * The maximum rows applied to a table since its last durable epoch before an epoch is FORCED,
+     * independent of {@link #getAdaptiveEpochIntervalMs()}. Bounds both post-epoch WAL retention (the
+     * {@code WalPurgeJob} floor is the epoch) and post-crash recovery-replay lag, so the interval can be
+     * long without either growing unbounded. {@code <= 0} disables the cap (interval-only cadence).
+     *
+     * @return the per-table un-epoched applied-row cap; {@code <= 0} disables it
+     */
+    default long getAdaptiveEpochMaxRows() {
+        return 5_000_000;
+    }
+
+    /**
+     * The adaptive GROUP-COMMIT window in MICROSECONDS (the RPO knob,
+     * {@code cairo.adaptive.commit.group.window}). Default {@code 50_000} (50ms): under
+     * {@link CommitMode#ADAPTIVE}, {@code commit0} first makes the writer-private segment/events
+     * durable, then returns after the shared sequencer record is page-cache visible but not yet
+     * device-durable. The shared sequencer fdatasync is BATCHED across commits within this window —
+     * bounded to {@code <= W} even when commits stop, by the background flusher in
+     * {@code WalPurgeJob}. A crash loses only commits whose batch fdatasync had not completed (RPO
+     * {@code <= W}); a torn tail is handled by the integrity CRCs + recovery frontier. {@code
+     * localDurableSeqTxn} (the durable-ack frontier) advances ONLY when the sequencer batch fdatasync
+     * completes, so a durable-ack'd txn always survives a crash.
+     *
+     * <p>Set {@code 0} to keep today's fully synchronous fsync-before-return instead: every acked
+     * WAL commit is fdatasync-durable before {@code commit0} returns (zero loss), at
+     * {@code sync}-class per-commit latency.
+     *
+     * <p>Has effect only under ADAPTIVE; other modes ignore it. A negative value is treated as {@code 0}.
+     * Note: mat-view refresh WAL ({@link io.questdb.cairo.wal.ViewWalWriter}) is exempt from this setting
+     * and keeps a per-commit fdatasync (strictly more durable; mat-view refresh has its own flush cadence).
+     *
+     * @return the adaptive group-commit window in microseconds; default {@code 50_000} (50ms,
+     * bounded-RPO batching); {@code 0} = synchronous, zero-loss
+     */
+    default long getAdaptiveCommitGroupWindowUs() {
+        return 50_000;
+    }
+
+    /**
+     * Whether the adaptive durable-epoch RECOVERY ROLL-FORWARD runs at engine startup (Plan 3 Task C).
+     * When {@code true} (default) {@link RecoveryCoordinator} rewinds each adaptive WAL table with a
+     * durable epoch to its {@code _txn.epoch}/{@code _cv.epoch} cut before the boot WAL apply re-derives
+     * the rest. A negative-control test hook; setting it {@code false} makes startup fail closed when
+     * an adaptive table is encountered, rather than exposing materialized state that may be torn ahead
+     * of the last epoch. It has no effect when every table is non-adaptive.
+     *
+     * @return {@code true} to run the adaptive epoch roll-forward on startup
+     */
+    default boolean isAdaptiveRecoveryRollForwardEnabled() {
+        return true;
+    }
+
+    /**
+     * Whether a clean {@link io.questdb.cairo.TableWriter} close flushes a final durable epoch over any
+     * committed-but-un-epoched tail (ADAPTIVE only). When {@code true} (default), a graceful close --
+     * idle-eviction or shutdown -- advances the durable epoch to the committed frontier, so a restart
+     * lands there with nothing to roll forward. When {@code false}, the tail is left for the next boot's
+     * idempotent WAL replay, bounded by the epoch cadence ({@link #getAdaptiveEpochIntervalMs()} /
+     * {@link #getAdaptiveEpochMaxRows()}). No effect under non-ADAPTIVE commit modes.
+     *
+     * @return {@code true} to flush a durable epoch on a clean writer close
+     */
+    default boolean isAdaptiveEpochFlushOnClose() {
+        return true;
+    }
+
     int getCompileViewModelPoolCapacity();
 
     @NotNull
@@ -1007,6 +1100,27 @@ public interface CairoConfiguration {
     int getWriterFileOpenOpts();
 
     int getWriterTickRowsCountMod();
+
+    /**
+     * Governs the adaptive durable-epoch materialized-state column flush strategy (batched
+     * {@code syncfs} vs per-file {@code msync}+{@code syncfs}); fast_commit-aware. When
+     * {@code true} (the default), an adaptive durable-epoch flush batches the per-column device
+     * flushes into ~one (msync-async + sync_file_range + a single {@code _cv} fsync). When
+     * {@code false}, it falls back to the proven per-file {@code msync(MS_SYNC)} baseline —
+     * slower, but durable on every filesystem.
+     *
+     * <p>This is the operator override / safety valve, controlled by
+     * {@code cairo.adaptive.epoch.column.sync.batched} (default {@code true}). The production
+     * configuration ANDs this property with a fast_commit check (see {@link FastCommitCheck}):
+     * the batched path is disabled when the DB-root ext4 filesystem has {@code fast_commit}
+     * enabled, where the batched path's within-page durability is not guaranteed. The property
+     * remains the reliable control when detection is {@link FastCommitCheck#UNKNOWN}.
+     *
+     * @return {@code true} if the batched adaptive durable-epoch column flush should be used
+     */
+    default boolean isAdaptiveEpochColumnSyncBatched() {
+        return true;
+    }
 
     boolean isCairoMetadataCacheSnapshotOrdered();
 

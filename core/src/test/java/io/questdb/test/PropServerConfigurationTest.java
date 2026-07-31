@@ -202,7 +202,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
 
-        Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
+        Assert.assertEquals(CommitMode.ADAPTIVE, configuration.getCairoConfiguration().getCommitMode());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
@@ -531,6 +531,20 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testInvalidCairoCommitModeFailsClosed() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath(), "adaptve");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("a commit-mode typo must not silently downgrade the database to nosync");
+        } catch (ServerConfigurationException expected) {
+            TestUtils.assertContains(expected.getMessage(), "invalid configuration value");
+            TestUtils.assertContains(expected.getMessage(), PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath());
+            TestUtils.assertContains(expected.getMessage(), "adaptve");
+        }
+    }
+
+    @Test
     public void testCommitIntervalDefault() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("line.tcp.commit.interval.default", "0");
@@ -544,6 +558,17 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.tcp.commit.interval.default", "1000");
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
+    }
+
+    @Test
+    public void testBatchedColumnSyncForceDisable() throws Exception {
+        // cairo.adaptive.epoch.column.sync.batched=false must disable the batched SYNC flush deterministically:
+        // the production getter short-circuits on the raw property BEFORE any fast_commit detection, so this
+        // holds regardless of the host filesystem (this config is built with detection ENABLED, like prod).
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED.getPropertyPath(), "false");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getCairoConfiguration().isAdaptiveEpochColumnSyncBatched());
     }
 
     @Test

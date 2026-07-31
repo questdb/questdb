@@ -236,6 +236,7 @@ public class SqlKeywordsTest {
 
     static {
         specialCases.put("isColonColon", "::");
+        specialCases.put("isCommitModeKeyword", "commit_mode"); // matches the 'commit_mode' keyword (underscore), which the name->keyword derivation drops
         specialCases.put("isConcatOperator", "||");
         specialCases.put("isMaxIdentifierLength", "max_identifier_length");
         specialCases.put("isQuote", "'");

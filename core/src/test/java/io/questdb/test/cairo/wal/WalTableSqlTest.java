@@ -1355,6 +1355,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyTruncate() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + " (" +
@@ -1370,8 +1371,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            testEmptyTruncate\tfalse\t1\t0\t1\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\twalRetentionTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            testEmptyTruncate\tfalse\t1\t0\t1\t\t\t0\tnosync\t0\t0\t0\t-1\t
                             """);
         });
     }

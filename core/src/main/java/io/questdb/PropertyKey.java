@@ -46,6 +46,30 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WRITER_COMMAND_QUEUE_CAPACITY("cairo.writer.command.queue.capacity"),
     CAIRO_SQL_JIT_MODE("cairo.sql.jit.mode"),
     CAIRO_COMMIT_MODE("cairo.commit.mode"),
+    CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED("cairo.adaptive.epoch.column.sync.batched"),
+    // Min interval between adaptive durable epochs per table (ms). Under CommitMode.ADAPTIVE the apply
+    // worker fires a durable epoch at most this often, right after an apply batch commits while it
+    // still holds the writer. 0 => every batch; NEGATIVE => epochs disabled. See ApplyWal2TableJob.
+    CAIRO_ADAPTIVE_EPOCH_INTERVAL("cairo.adaptive.epoch.interval"),
+    // Max rows applied to a table since its last durable epoch before an epoch is FORCED, independent of
+    // the interval above. Bounds post-epoch WAL retention (the WalPurgeJob floor IS the epoch) + recovery
+    // replay, so the interval can be long. Default 5_000_000; <= 0 disables the cap. See ApplyWal2TableJob.
+    CAIRO_ADAPTIVE_EPOCH_MAX_ROWS("cairo.adaptive.epoch.max.rows"),
+    // Plan 3 Task C: run the adaptive durable-epoch recovery roll-forward at startup. Default true;
+    // false is a negative-control hook; startup fails closed if an adaptive table is present.
+    CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED("cairo.adaptive.recovery.roll.forward.enabled"),
+    // Whether a clean writer close flushes a final durable epoch over any un-epoched tail so a restart
+    // has nothing to roll forward. Default true; false leaves the tail for the next boot's WAL replay
+    // (bounded by the epoch cadence). See TableWriter.doClose.
+    CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE("cairo.adaptive.epoch.flush.on.close"),
+    // Deferred 2 (the RPO knob): adaptive GROUP-COMMIT window in microseconds. Default 50_000 (50ms):
+    // writer-private WAL is durable before sequencing; the shared sequencer fdatasync is BATCHED across
+    // commits within this window. commit0 returns with that sequencer pointer not yet device-durable, so
+    // RPO <= W. localDurableSeqTxn (the durable-ack frontier) advances
+    // only when the batch fdatasync completes. 0 keeps today's fully synchronous fsync-before-return
+    // (every acked commit is immediately device-durable, zero loss) instead. See WalWriter group-commit +
+    // WalPurgeJob background flusher.
+    CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW("cairo.adaptive.commit.group.window"),
     CAIRO_CREATE_AS_SELECT_RETRY_COUNT("cairo.create.as.select.retry.count"),
     CAIRO_DEFAULT_MAP_TYPE("cairo.default.map.type"),
     CAIRO_DEFAULT_SYMBOL_CACHE_FLAG("cairo.default.symbol.cache.flag"),

@@ -123,6 +123,16 @@ public interface TableTransactionLogFile extends Closeable {
     long endMetadataChangeEntry();
 
     /**
+     * Device-flushes ({@code fdatasync}) the sequencer log files in the durability-ordered
+     * part-before-header sequence (so the header's {@code maxTxn} is never device-visible before the record
+     * it points to). Used by the adaptive GROUP-COMMIT batched flush (Deferred 2): under {@code W > 0} the
+     * per-commit {@code sync0()} does the SYNC-grade {@code msync} (page-cache, ordered) but DEFERS the
+     * device flush; this performs that deferred device flush as the final (seq) step of the batched
+     * data→events→seq fdatasync. A no-op when the log is closed.
+     */
+    void fdatasyncTxnLog();
+
+    /**
      * Syncs/flushes the log files to the disk unconditionally.
      */
     void fullSync();
@@ -153,4 +163,13 @@ public interface TableTransactionLogFile extends Closeable {
      * @return transaction id of the last committed transaction
      */
     long open(Path path);
+
+    /**
+     * Sets the table's EFFECTIVE commit mode (a {@link io.questdb.cairo.CommitMode} constant, or
+     * {@link io.questdb.cairo.CommitMode#UNSET} to defer to the global {@code cairo.commit.mode}) used by
+     * the per-commit sequencer-record durability flush. Deferred 1: lets an ADAPTIVE table fdatasync its
+     * sequencer records even when the instance default is NOSYNC, which is required for crash recovery to
+     * roll its committed transactions forward.
+     */
+    void setCommitMode(int commitMode);
 }

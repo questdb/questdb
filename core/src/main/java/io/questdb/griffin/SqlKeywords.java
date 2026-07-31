@@ -1341,6 +1341,10 @@ public class SqlKeywords {
                 && (tok.charAt(20) | 32) == 'h';
     }
 
+    public static boolean isCommitModeKeyword(CharSequence tok) {
+        return Chars.equalsLowerCaseAscii(tok, "commit_mode");
+    }
+
     public static boolean isMaxUncommittedRowsKeyword(CharSequence tok) {
         return tok.length() == 18
                 && (tok.charAt(0) | 32) == 'm'

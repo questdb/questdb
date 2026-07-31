@@ -199,6 +199,16 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
+    public void fdatasync(long fd) {
+        ff.fdatasync(fd);
+    }
+
+    @Override
+    public void syncfs(long fd) {
+        ff.syncfs(fd);
+    }
+
+    @Override
     public void fsync(long fd) {
         ff.fsync(fd);
     }

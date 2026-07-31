@@ -327,9 +327,39 @@ public class StringTypeDriver implements ColumnTypeDriver {
     @Override
     public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
         if (pos > 0) {
+            // Crash-consistency guard (mirror of VarcharTypeDriver). aux[pos] is the
+            // N+1 offset = the last row's data end, written after that row's data. The
+            // previous offset aux[pos-1] is the last row's data start. Data offsets are
+            // monotonic, so a last data end that fell below the last data start means
+            // the aux tail was torn/partially flushed; fail loudly rather than jump the
+            // data cursor backwards and let the next append overwrite committed rows.
+            // As in VarcharTypeDriver this O(1) check cannot catch a whole unflushed aux
+            // page (consecutive zeroed entries) - a residual window inherent to the
+            // default commit.mode=nosync; use commit.mode=sync for durability.
+            //
+            // Read aux[pos-1] FIRST, while its own page is the one mapped: this aux
+            // memory is paged (MemoryPMARImpl maps ~one segment at a time and unmaps
+            // the rest), so jumping to aux[pos] and reading getAppendAddress()-WIDTH
+            // would dereference the prior, now-unmapped segment whenever pos<<SHL lands
+            // on a page boundary - garbage / SIGSEGV, a false positive on large tables.
+            long prevPos = -1;
+            if (pos > 1) {
+                auxMem.jumpTo((pos - 1) << LEGACY_VAR_SIZE_AUX_SHL);
+                prevPos = Unsafe.getLong(auxMem.getAppendAddress());
+            }
+
             // Jump to the number of records written to read length of var column correctly
             auxMem.jumpTo(pos << LEGACY_VAR_SIZE_AUX_SHL);
             long m1pos = Unsafe.getLong(auxMem.getAppendAddress());
+
+            if (prevPos != -1 && m1pos < prevPos) {
+                throw CairoException.critical(0)
+                        .put("string aux vector is damaged, possible torn write on the last entry [pos=").put(pos)
+                        .put(", dataEnd=").put(m1pos)
+                        .put(", prevDataEnd=").put(prevPos)
+                        .put(']');
+            }
+
             // Jump to the end of file to correctly trim the file
             auxMem.jumpTo((pos + 1) << LEGACY_VAR_SIZE_AUX_SHL);
             long dataSizeBytes = m1pos + ((pos + 1) << LEGACY_VAR_SIZE_AUX_SHL);

@@ -36,6 +36,8 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
+    private int commitMode = CommitMode.UNSET;
+    private boolean commitModeFieldPresent;
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -70,6 +72,15 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public byte getIndexType(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexType();
+    }
+
+    @Override
+    public int getCommitMode() {
+        return commitMode;
+    }
+
+    public boolean isCommitModeFieldPresent() {
+        return commitModeFieldPresent;
     }
 
     @Override
@@ -164,6 +175,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
         this.tableFormat = TableUtils.getTableFormat(metaMem);
+        this.commitModeFieldPresent = TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_COMMIT_MODE);
+        this.commitMode = TableUtils.getCommitMode(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -223,6 +236,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 }
             }
         }
+    }
+
+    public void setCommitMode(int commitMode) {
+        this.commitMode = commitMode;
+        this.commitModeFieldPresent = true;
     }
 
     public void setMaxUncommittedRows(int rows) {

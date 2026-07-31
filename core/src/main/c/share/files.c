@@ -275,6 +275,61 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jin
     return fsync((int) fd);
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl, jint fd) {
+#if defined(__linux__) || defined(__FreeBSD__)
+    return fdatasync((int) fd);
+#else
+    /* macOS: fsync is already the weak primitive (no metadata flush needed) */
+    return fsync((int) fd);
+#endif
+}
+
+#if defined(__linux__)
+/* sync_file_range(2) is exposed by <fcntl.h> only under _GNU_SOURCE (glibc); this file does not
+ * define it globally, so forward-declare the prototype here (mirrors the syncfs declaration below).
+ * Linux-only, present since 2.6.17; glibc presents this uniform signature on every supported arch.
+ * off_t == off64_t on our LP64 targets (x86-64, aarch64) and is available without _GNU_SOURCE.
+ * Without this, newer GCC (aarch64 build container) rejects the implicit declaration as an error. */
+extern int sync_file_range(int fd, off_t offset, off_t nbytes, unsigned int flags);
+#endif
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncFileRange0(JNIEnv *e, jclass cl, jint fd, jlong offset, jlong nbytes, jint flags) {
+#if defined(__linux__)
+    /* Linux-only: initiate writeback of the file's page cache over [offset, offset+nbytes)
+     * to the backing device's cache. Does NOT issue a device flush; the caller must follow
+     * with fdatasync/fsync to make the data durable. Crucially this only acts on pages that
+     * the kernel already knows are dirty in the page cache, so mmap-dirtied pages must first
+     * be msync'd (or written via write()) before sync_file_range can see them. */
+    return sync_file_range((int) fd, offset, nbytes, (unsigned) flags);
+#else
+    /* Non-Linux: no equivalent primitive. Return 0 (no-op); Java callers MUST fall back to a
+     * full fsync/fdatasync for durability rather than relying on this. */
+    (void) fd; (void) offset; (void) nbytes; (void) flags;
+    return 0;
+#endif
+}
+
+#if defined(__linux__)
+/* syncfs(2) is exposed by <unistd.h> only under _GNU_SOURCE (glibc); this file does not define it
+ * globally, so forward-declare the prototype here. syncfs has existed in glibc since 2.14 and the
+ * syscall since Linux 2.6.39 — present on every supported target. */
+extern int syncfs(int fd);
+#endif
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncfs0(JNIEnv *e, jclass cl, jint fd) {
+#if defined(__linux__)
+    /* syncfs(2): write back ALL dirty data of the WHOLE filesystem containing `fd`, journal every
+     * pending metadata change on that fs (crucially, ext4 unwritten->written extent conversions for
+     * every inode — what makes just-committed column extents truly durable), and issue ONE device
+     * cache flush. One call replaces N per-file fdatasync device flushes for the batched SYNC commit. */
+    return syncfs((int) fd);
+#else
+    /* Non-Linux: no whole-filesystem sync primitive bound to an fd. Fall back to fsync(fd) so the
+     * caller still gets at least that file durable (the batched path is Linux-only anyway). */
+    return fsync((int) fd);
+#endif
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_sync(JNIEnv *e, jclass cl) {
     sync();
     return 0;

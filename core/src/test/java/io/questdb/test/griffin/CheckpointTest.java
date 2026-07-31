@@ -42,6 +42,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -1885,6 +1886,84 @@ public class CheckpointTest extends AbstractCairoTest {
                 execute("checkpoint release");
             }
         });
+    }
+
+    @Test
+    public void testCheckpointRecoverClearsStaleAdaptiveEpochAnchor() throws Exception {
+        // A checkpoint/PITR restore-over-existing rewrites _txn/_cv (restoreTableFiles) but the checkpoint
+        // does NOT capture the adaptive durable-epoch trio (_snapshot/_txn.epoch/_cv.epoch). Left in place,
+        // the destination's stale anchor survives into the RecoveryCoordinator pass that runs next in
+        // completeInit -- and RecoveryCoordinator does NOT lineage-check the epoch (only checksum + marker
+        // self-consistency), so it could rewind the freshly-restored _txn/_cv back to the stale cut
+        // (wrong lineage / corruption). checkpoint recover must clear the trio, symmetric to the ENT
+        // backup path (BackupRestoreAgent.removeStaleMetadataFiles).
+        assertMemoryLeak(() -> {
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            drainWalQueue();
+
+            execute("checkpoint create");
+
+            final TableToken token = engine.getTableTokenIfExists("test");
+            Assert.assertNotNull(token);
+
+            // Fabricate a stale adaptive durable-epoch anchor at the table root (a table that had run in
+            // adaptive commit mode). The checkpoint does not carry it, so a restore-over-existing leaves it.
+            fabricateStaleEpochTrio(token);
+            Assert.assertTrue("precondition: fabricated epoch trio must exist", epochTrioExists(token));
+
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            try {
+                engine.checkpointRecover();
+            } finally {
+                execute("checkpoint release");
+            }
+
+            Assert.assertFalse(
+                    "checkpoint recover must remove stale legacy epoch copies before publishing a fresh baseline",
+                    legacyEpochCopiesExist(token));
+            try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                markerPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                marker.of(markerPath.$());
+                Assert.assertTrue(
+                        "runtime checkpoint recovery must publish a valid replacement baseline before cleanup",
+                        marker.tryLoad());
+            }
+        });
+    }
+
+    private void fabricateStaleEpochTrio(TableToken token) {
+        try (Path src = new Path(); Path dst = new Path()) {
+            final String dbRoot = configuration.getDbRoot();
+            final int s = src.of(dbRoot).concat(token).size();
+            final int d = dst.of(dbRoot).concat(token).size();
+            // _txn -> _txn.epoch, _cv -> _cv.epoch (real copies); _snapshot marker (content irrelevant to the clear).
+            Assert.assertTrue(ff.copy(
+                    src.trimTo(s).concat(TableUtils.TXN_FILE_NAME).$(),
+                    dst.trimTo(d).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$()) >= 0);
+            Assert.assertTrue(ff.copy(
+                    src.trimTo(s).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
+                    dst.trimTo(d).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$()) >= 0);
+            Assert.assertTrue(ff.touch(dst.trimTo(d).concat(TableUtils.SNAPSHOT_FILE_NAME).$()));
+        }
+    }
+
+    private boolean epochTrioExists(TableToken token) {
+        try (Path p = new Path()) {
+            final int len = p.of(configuration.getDbRoot()).concat(token).size();
+            return ff.exists(p.trimTo(len).concat(TableUtils.SNAPSHOT_FILE_NAME).$())
+                    || legacyEpochCopiesExist(token);
+        }
+    }
+
+    private boolean legacyEpochCopiesExist(TableToken token) {
+        try (Path p = new Path()) {
+            final int len = p.of(configuration.getDbRoot()).concat(token).size();
+            return ff.exists(p.trimTo(len).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$())
+                    || ff.exists(p.trimTo(len).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$());
+        }
     }
 
     @Test
