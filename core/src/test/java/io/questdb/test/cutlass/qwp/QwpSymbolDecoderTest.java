@@ -330,6 +330,35 @@ public class QwpSymbolDecoderTest {
     }
 
     @Test
+    public void testTruncatedMidDictionaryOverlapRestoresAtTheRightOffset() throws Exception {
+        // Pins the i - deltaStartId scratch offset in the rollback: every other
+        // rollback test runs with deltaStartId == 0, where the offset is a no-op.
+        // Here the failed frame starts at id 1, so restoring scratch[j] into slot
+        // 1 + j is load-bearing -- a mutant dropping the offset restores the wrong
+        // entries and (with assertions off) reads past the scratch content.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b", "sym_c", "sym_d"));
+
+            // Overlap [1, 4): declares 3 entries, carries 2 -- the loop overwrites
+            // ids 1 and 2, then throws on the missing third.
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 1, 3, "sym_x", "sym_y");
+                Assert.fail("Expected a truncated-entry parse error");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+            }
+
+            Assert.assertEquals(4, dict.size());
+            Assert.assertEquals("sym_a", dict.getQuick(0));
+            Assert.assertEquals("sym_b", dict.getQuick(1));
+            Assert.assertEquals("sym_c", dict.getQuick(2));
+            Assert.assertEquals("sym_d", dict.getQuick(3));
+        });
+    }
+
+    @Test
     public void testRolledBackFrameDoesNotLeakStaleRedefinition() throws Exception {
         // extendPos grows pos WITHOUT null-filling, and the rollback's setPos does not
         // clear, so slots above the restored size can still hold a failed frame's
@@ -354,6 +383,48 @@ public class QwpSymbolDecoderTest {
             Assert.assertEquals(3, dict.size());
             Assert.assertEquals("sym_b", dict.getQuick(1));
             Assert.assertEquals("sym_c", dict.getQuick(2));
+        });
+    }
+
+    @Test
+    public void testFailedFirstDeltaLeavesNoResidueOnThePooledConnection() throws Exception {
+        // A FIRST frame that fails mid-entry-loop rolls back to size 0 -- and
+        // ObjList.clear() is a no-op at pos == 0 (it only Arrays.fill's when
+        // pos > 0), so the connection-teardown clear cannot release anything the
+        // failed frame wrote above pos. The rollback itself must null the slots
+        // it grew into, or the parsed Strings stay strongly reachable on the
+        // pooled context until the next successful overlapping parse --
+        // indefinitely, for a client that only ever sends failing frames.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+
+            // First frame on the connection: declares 3, carries 2 -- the loop
+            // writes ids 0 and 1, then throws. sizeBefore == 0, so setPos(0) is
+            // the entire rollback unless the tail is nulled explicitly.
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 0, 3, "sym_a", "sym_b");
+                Assert.fail("Expected a truncated-entry parse error");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+            }
+            Assert.assertEquals(0, dict.size());
+
+            // Model the next frame's pre-sizing: extendPos re-exposes the slots
+            // the failed frame grew into, without writing them. They must hold
+            // null, not the failed frame's Strings.
+            dict.extendPos(3);
+            for (int i = 0; i < 3; i++) {
+                Assert.assertNull("slot " + i + " must not retain the failed frame's symbol",
+                        dict.getQuick(i));
+            }
+
+            // And the connection still accepts a correct first frame afterwards.
+            dict.setPos(0);
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b"));
+            Assert.assertEquals(2, dict.size());
+            Assert.assertEquals("sym_a", dict.getQuick(0));
+            Assert.assertEquals("sym_b", dict.getQuick(1));
         });
     }
 

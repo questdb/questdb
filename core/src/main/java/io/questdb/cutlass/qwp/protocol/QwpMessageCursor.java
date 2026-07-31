@@ -274,17 +274,15 @@ public class QwpMessageCursor implements Mutable {
             );
         }
         int sizeBefore = connectionSymbolDict.size();
-        // Snapshot what this delta will overwrite. The finally restores it alongside the
-        // length, so a frame that throws partway leaves the connection dictionary exactly
-        // as it was -- content included. reject() neither closes the connection nor clears
-        // the dictionary, and the symbolDictRedefined -> symbolCache.clear() consumer runs
-        // only on success, so a half-applied overlap would leave the cache mapping the old
-        // strings while the dictionary holds the new ones. Empty range on a pure append.
-        int overlapEnd = Math.min(sizeBefore, requiredSize);
+        // The entry loop snapshots each pre-existing slot into dictRollbackScratch
+        // just before overwriting it, so the finally can restore content alongside
+        // the length: a frame that throws partway leaves the connection dictionary
+        // exactly as it was. reject() neither closes the connection nor clears the
+        // dictionary, and the symbolDictRedefined -> symbolCache.clear() consumer
+        // runs only on success, so a half-applied overlap would leave the cache
+        // mapping the old strings while the dictionary holds the new ones. The
+        // scratch stays empty on a pure append.
         dictRollbackScratch.clear();
-        for (int i = deltaStartId; i < overlapEnd; i++) {
-            dictRollbackScratch.add(connectionSymbolDict.getQuick(i));
-        }
         boolean committed = false;
         try {
             // extendPos, not an add(null) loop: with the gap rejected above,
@@ -336,6 +334,10 @@ public class QwpMessageCursor implements Mutable {
                 // raise symbolDictRedefined and force a needless symbolCache.clear().
                 if (dictIndex < sizeBefore) {
                     String previous = connectionSymbolDict.getQuick(dictIndex);
+                    // Snapshot before overwrite: the rollback in the finally restores
+                    // [deltaStartId, deltaStartId + scratch.size()) -- exactly the
+                    // pre-existing slots this loop rewrote before throwing.
+                    dictRollbackScratch.add(previous);
                     if (previous != null && !previous.equals(symbol)) {
                         symbolDictRedefined = true;
                     }
@@ -355,8 +357,20 @@ public class QwpMessageCursor implements Mutable {
             if (!committed) {
                 // Content first, then length: setQuick asserts index < pos, so shrinking
                 // before restoring would trip the assertion on the very slots being fixed.
-                for (int i = deltaStartId; i < overlapEnd; i++) {
+                int restoreEnd = deltaStartId + dictRollbackScratch.size();
+                for (int i = deltaStartId; i < restoreEnd; i++) {
                     connectionSymbolDict.setQuick(i, dictRollbackScratch.getQuick(i - deltaStartId));
+                }
+                // Null the tail the failed frame grew into before shrinking pos.
+                // setPos alone leaves those Strings reachable above pos, and on a
+                // first-frame failure (sizeBefore == 0) the connection-teardown
+                // ObjList.clear() is a no-op -- it only Arrays.fill's when
+                // pos > 0 -- so nothing else ever releases them off the pooled
+                // context. Bounded by the live size() so it stays valid when
+                // extendPos itself threw and pos is still sizeBefore.
+                int grownSize = connectionSymbolDict.size();
+                for (int i = sizeBefore; i < grownSize; i++) {
+                    connectionSymbolDict.setQuick(i, null);
                 }
                 connectionSymbolDict.setPos(sizeBefore);
                 dictRollbackScratch.clear();
