@@ -355,24 +355,46 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
         }
     }
 
+    /**
+     * Releases everything the atom charged to the bound tracker, so the query that charged a block
+     * is also the one that frees it. Every leg runs best-effort and the accumulated failure is
+     * rethrown at the end: abandoning the sequence on the first failure would strand a reader on a
+     * later slot, and would leave a chunk allocated under a tracker the query registry is about to
+     * recycle. {@link #clearKeyedState()} runs last for the same reason - a subclass owns tracked
+     * state the base knows nothing about. Final, so the hook contract holds structurally: a
+     * subclass that overrode this and called super first would reintroduce the skip.
+     */
     @Override
-    public void clear() {
-        Misc.free(ownerSlaveTimeFrameCursor);
-        Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
-        Misc.clear(ownerFunctionAllocator);
-        Misc.clearObjList(perWorkerFunctionAllocators);
-        Misc.clear(ownerTemporaryAllocator);
-        Misc.clearObjList(perWorkerTemporaryAllocators);
-        Misc.clearObjList(ownerGroupByFunctions);
+    public final void clear() {
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerSlaveTimeFrameCursor);
+        cleanupFailure = Misc.freeObjListAndKeepObjectsBestEffort(cleanupFailure, perWorkerSlaveTimeFrameCursors);
+        cleanupFailure = Misc.clearBestEffort(cleanupFailure, ownerFunctionAllocator);
+        cleanupFailure = Misc.clearObjListBestEffort(cleanupFailure, perWorkerFunctionAllocators);
+        cleanupFailure = Misc.clearBestEffort(cleanupFailure, ownerTemporaryAllocator);
+        cleanupFailure = Misc.clearObjListBestEffort(cleanupFailure, perWorkerTemporaryAllocators);
+        cleanupFailure = Misc.clearObjListBestEffort(cleanupFailure, ownerGroupByFunctions);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
+                try {
+                    PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
+                } catch (Throwable th) {
+                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+                }
             }
         }
 
-        ownerSelectivityStats.clear();
-        Misc.clearObjList(perWorkerSelectivityStats);
+        cleanupFailure = Misc.clearBestEffort(cleanupFailure, ownerSelectivityStats);
+        cleanupFailure = Misc.clearObjListBestEffort(cleanupFailure, perWorkerSelectivityStats);
+
+        // Let the subclass release its keyed state.
+        try {
+            clearKeyedState();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
         memoryTracker = null;
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public void clearTemporaryData(int slotId) {
@@ -383,8 +405,13 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
         }
     }
 
+    /**
+     * Final for the reason {@link #clear()} is: {@link #closeKeyedState()} is the only place a
+     * subclass gets to release its own resources, so no override can order itself ahead of the
+     * aggregated rethrow.
+     */
     @Override
-    public void close() {
+    public final void close() {
         Throwable cleanupFailure = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerJoinFilter);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerJoinFilters);
@@ -436,13 +463,17 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
                 try {
                     PerWorkerFunctionList.close(functions);
                 } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
+                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
                 }
             }
+        }
+
+        // Let the subclass close its keyed state. This runs inside the chain, not after the
+        // rethrow, so a base-resource failure cannot skip it.
+        try {
+            closeKeyedState();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
@@ -858,6 +889,22 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+    }
+
+    /**
+     * Releases the keyed join state a subclass owns. Called by {@link #clear()} as its last step,
+     * inside the best-effort failure chain, so no base-resource failure can skip it. The base atom
+     * owns no keyed state, hence the empty body.
+     */
+    protected void clearKeyedState() {
+    }
+
+    /**
+     * Closes the keyed join state a subclass owns. Called by {@link #close()} as its last step,
+     * inside the best-effort failure chain, so no base-resource failure can skip it. The base atom
+     * owns no keyed state, hence the empty body.
+     */
+    protected void closeKeyedState() {
     }
 
     static int findFunctionWithSameArg(ObjList<Function> functions, IntList functionTypes, Function target, int targetType) {

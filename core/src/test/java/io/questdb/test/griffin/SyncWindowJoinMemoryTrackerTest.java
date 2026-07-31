@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -607,10 +608,34 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         }
     }
 
+    // Repeats the cursor lifecycle and watches the per-query tracker itself on every cycle, not just
+    // the row count. assertMemoryLeak sees only the GLOBAL counter, so it says nothing about which
+    // tracker a block was charged to; a cycle that charged the tracker and freed the block off the
+    // global counter is globally balanced and passes it.
+    //
+    // Such an asymmetry does already fail today, but only indirectly and only in the middle of the
+    // loop: close() hands the pooled tracker back, and the NEXT acquire trips
+    // PerQueryMemoryTracker.init()'s `assert getUsed() == 0` - one iteration late, blaming the query
+    // that recycled the block rather than the one that leaked it, and only under -ea. The LAST
+    // iteration escapes it entirely, because nothing re-acquires that tracker before the provider
+    // destroys it at engine close, which checks no balance. The assertion after close() below states
+    // the contract directly instead: every byte the cycle charged is debited by the time the cursor
+    // is closed. It fails on the cycle that broke it, names it, covers the last iteration, and holds
+    // with assertions disabled.
+    //
+    // The used > 0 assertion inside the cycle is only there to keep the balance from passing
+    // vacuously - it says the query is charged SOMEWHERE, not which structure charged it. What pins
+    // the keyed maps specifically is the breach case above, through its memoryTag assertion.
     private static void assertReleasesAllocations(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {
         long expectedRows = -1;
         for (int i = 0; i < 10; i++) {
+            // QueryProgress registers the query on getCursor() and unregisters it on close(), so the
+            // context carries a tracker only for the cursor's lifetime.
+            Assert.assertNull("a tracker outlived the cursor before iteration " + i, ctx.getMemoryTracker());
+            final MemoryTracker tracker;
             try (RecordCursor cursor = factory.getCursor(ctx)) {
+                tracker = ctx.getMemoryTracker();
+                Assert.assertNotNull("no per-query tracker at iteration " + i, tracker);
                 long rows = 0;
                 while (cursor.hasNext()) {
                     rows++;
@@ -620,7 +645,16 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals("iteration " + i, expectedRows, rows);
                 Assert.assertTrue("expected rows at iteration " + i, rows > 0);
+                Assert.assertTrue(
+                        "the query charged the per-query tracker nothing at iteration " + i,
+                        tracker.getUsed() > 0
+                );
             }
+            Assert.assertEquals(
+                    "the closed cursor left the per-query tracker charged at iteration " + i,
+                    0,
+                    tracker.getUsed()
+            );
         }
     }
 
