@@ -384,6 +384,17 @@ arithmetic semantics:
   sees only 4-byte columns, so the constant would otherwise emit as a lossy F4.
 - `markFloatCmpConst` sends a constant with no exact float to the filter at double width, since a
   FLOAT column always compares at DOUBLE width in Java.
+- `isNarrowIntCmpWideningConst` does the same for a narrow-int leaf compared against a
+  floating-point constant (`WHERE i < 1.00000003`), which promotes to DOUBLE in Java through
+  `IntFunction#getDouble`. Two independent roundings can diverge here, not one: the constant may
+  have no exact float, **and** the column may be the side that rounds, since `(float)` holds every
+  integer only up to 2^24 — `(float) 16777217` is `16777216`, so even an exactly-representable
+  bound like `16777216.0` collides. The rule widens on `inexact || |c| >= 2^24`, and widens the
+  LEAF too so the pair reaches the backend's ungated `(i64, f64)` arm. `maybeWidenCmpConstOperand`
+  covers the arithmetic-subtree spelling (`i + 0 > 16777216.0`) by widening only the constant, so
+  the subtree keeps wrapping at i32. The cost is that these predicates drop from the eight-lane
+  loop to scalar, including constants that could not actually diverge (`i > 1.1`); an exact-float
+  constant below 2^24 is untouched and stays vectorized.
 - `narrowKeptConstants` pins an integer constant operand of a NARROW arithmetic node to its own
   width, so `i32 * 2` stays `int32_mul` even when a LONG elsewhere in the predicate makes the
   observer type constants at I8.

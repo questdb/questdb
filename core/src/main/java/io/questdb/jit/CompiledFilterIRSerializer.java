@@ -125,6 +125,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int EXEC_HINT_SCALAR = 0;
     private static final int EXEC_HINT_SINGLE_SIZE_TYPE = 1;
     private static final int EXEC_HINT_WIDE_LANE = 3;
+    // 2^24, the magnitude at which a 32-bit float stops holding every integer below it: 2^24 itself
+    // is exact, but 2^24 + 1 rounds down onto it. A comparison bound of smaller magnitude therefore
+    // cannot collide with the rounded image of an int column value, and one of this magnitude or
+    // greater can. See isNarrowIntCmpWideningConst.
+    private static final double FLOAT_EXACT_INT_LIMIT = 16777216.0;
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
     // Maximum number of labels supported by the backend (must match LabelArray::MAX_LABELS in x86.h)
     private static final int MAX_LABELS = 8;
@@ -1420,6 +1425,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * filter compares against a FLOAT leaf, or {@link Double#NaN} when {@code node} is not one.
      * parseLong runs first: it accepts the underscore thousands separator (1_000_000) and
      * parseDouble does not, so a separated integer literal would otherwise read as non-numeric.
+     * parseFloat runs last, for the {@code f}-suffixed spelling (16777216.0f) that parseDouble
+     * rejects: the Java filter reads such a literal as a FLOAT constant and still promotes it to
+     * double, so it needs the same widening analysis as its unsuffixed twin.
      */
     private double floatCmpConstValue(ExpressionNode node) {
         final ExpressionNode constNode;
@@ -1443,8 +1451,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         } catch (NumericException notLong) {
             try {
                 d = Numbers.parseDouble(constNode.token);
-            } catch (NumericException notNumeric) {
-                return Double.NaN;
+            } catch (NumericException notDouble) {
+                try {
+                    d = Numbers.parseFloat(constNode.token);
+                } catch (NumericException notNumeric) {
+                    return Double.NaN;
+                }
             }
         }
         return isNegated ? -d : d;
@@ -1830,6 +1842,42 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return t == I4_TYPE || t == I8_TYPE;
     }
 
+    /**
+     * Reports whether a floating-point constant compared directly against a narrow-int leaf needs
+     * the double-width treatment. The Java filter promotes the int to double -
+     * {@code IntFunction#getDouble} feeds {@code "<(DD)"} - and compares at f64, while the JIT emits
+     * the constant as a 32-bit float and {@code cvt_itof} rounds the column lane to float as well,
+     * so the comparison runs entirely at f32. Either rounding moves rows across the bound:
+     * <ul>
+     *     <li>the CONSTANT has no exact float, so the bound the filter tests is not the one the
+     *     query names - 1.00000003 becomes 1.0f, and "= 1.00000003" then matches a row holding 1;
+     *     </li>
+     *     <li>the constant is exactly representable but the COLUMN is the side that rounds -
+     *     {@code (float) 16777217} is 16777216, so "> 16777216.0" drops the row holding
+     *     16777217.</li>
+     * </ul>
+     * Below {@link #FLOAT_EXACT_INT_LIMIT} with an exact-float constant neither side rounds, so
+     * both filters compare the same two exact values and select the same rows. The tolerance does
+     * not disturb that: for a column value of magnitude 1 or more the nearest distinct float is at
+     * least 6e-8 away, hundreds of times DOUBLE_TOLERANCE, so a constant within the tolerance band
+     * of an integer IS that integer; and against a zero column value the subtraction is exact on
+     * both paths. Those constants keep the vectorized path.
+     * <p>
+     * An integer-spelled literal is excluded: {@link #serializeNumber} emits it as an integer
+     * immediate and both paths compare at integer width. The out-of-INT-range ones are widened by
+     * {@link #markNarrowConstCmpWidenPair}'s I8 arms instead.
+     */
+    private boolean isNarrowIntCmpWideningConst(ExpressionNode node) {
+        if (node == null || isIntegerConst(node)) {
+            return false;
+        }
+        final double d = floatCmpConstValue(node);
+        if (Numbers.isNull(d)) {
+            return false; // not a numeric constant, or non-finite
+        }
+        return (double) (float) d != d || Math.abs(d) >= FLOAT_EXACT_INT_LIMIT;
+    }
+
     // A narrow-int (BYTE / SHORT / INT) column or bind-variable leaf. Sign-extending
     // one to i64 is value-preserving (no arithmetic to wrap).
     private boolean isNarrowIntLeaf(ExpressionNode node) {
@@ -1983,6 +2031,31 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (isWideLaneMode) {
             hasEmittedWideLaneConversion = true;
         }
+    }
+
+    /**
+     * Widens a narrow-int leaf and the floating-point constant a comparison puts against it, so the
+     * pair compares at double width exactly as the Java filter does. See
+     * {@link #isNarrowIntCmpWideningConst} for which constants need this.
+     * <p>
+     * Marking the constant is what makes the bound exact; sign-extending the leaf is what makes the
+     * PAIRING one the backend converts unconditionally. Widening the constant alone would leave an
+     * (i32, f64) pair, whose backend arm reads the low 128 bits and so is gated on four-lane mode.
+     * That pair would still be correct today - a non-empty {@code i64WidenLeaves} forces scalar
+     * (see {@link #visit}), and the scalar {@code convert()} handles (i32, f64) ungated - but it
+     * would rest on a gate two passes away rather than on the shape itself. Sign-extending the leaf
+     * routes it through the ungated (i64, f64) arm instead, so the pairing is correct in every
+     * execution mode on its own terms. The sign extension is value-preserving (a bare leaf, no
+     * arithmetic to wrap) and i64 -> f64 is exact over the INT range, so the widened comparison is
+     * the f64 one the Java filter performs.
+     * <p>
+     * An arithmetic subtree cannot take this route - sign-extending it would stop it wrapping at
+     * i32 - so {@link #maybeWidenCmpConstOperand} widens only the constant for that shape and
+     * leans on exactly that scalar gate.
+     */
+    private void markNarrowIntCmpFloatConst(ExpressionNode narrowLeaf, ExpressionNode constNode) {
+        addI64WidenLeaf(narrowLeaf);
+        markFloatCmpConst(constNode);
     }
 
     private void markWidthSemantics(ExpressionNode node, WidthCtx w) {
@@ -2314,6 +2387,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         } else if (isFloatLeaf(b) && isFloatWideningConst(a)) {
             markFloatCmpConst(a);
             return;
+        } else if (isNarrowIntLeaf(a) && isNarrowIntCmpWideningConst(b)) {
+            markNarrowIntCmpFloatConst(a, b);
+            return;
+        } else if (isNarrowIntLeaf(b) && isNarrowIntCmpWideningConst(a)) {
+            markNarrowIntCmpFloatConst(b, a);
+            return;
         } else {
             return;
         }
@@ -2368,10 +2447,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * {@link #markNarrowConstCmpWidenPair}; this covers the arithmetic-operand
      * (product / sum) gap it misses, so {@code other} is restricted to an OPERATION.
      * An in-range (I4) constant keeps its narrow width.
+     * <p>
+     * A FLOATING-POINT bound needs the same treatment for the same reason, and
+     * {@link #isNarrowIntCmpWideningConst} says which ones: {@code i + 0 > 16777216.0} reads the
+     * bound exactly as {@code i > 16777216.0} does, but only the bare leaf is a
+     * {@link #markNarrowConstCmpWidenPair} shape, so the subtree spelling kept emitting a rounded
+     * F4 while {@code cvt_itof} rounded the i32 result alongside it. Only the CONSTANT widens here
+     * too - sign-extending the subtree would stop it wrapping at i32, which is the one thing an INT
+     * expression must keep doing.
      */
     private void maybeWidenCmpConstOperand(ExpressionNode constNode, ExpressionNode other) {
-        if (constNode == null || constNode.type != ExpressionNode.CONSTANT
-                || !isIntegerConst(constNode) || arithExprType(constNode) != I8_TYPE) {
+        if (constNode == null) {
+            return;
+        }
+        // The integer arm keeps its CONSTANT-only shape. The floating-point one carries its own
+        // guard - floatCmpConstValue accepts a bare or unary-minus-wrapped CONSTANT and nothing
+        // else - so a negated bound (-i < -16777216.0) reaches it without relaxing that shape.
+        final boolean isWideningConst = (constNode.type == ExpressionNode.CONSTANT
+                && isIntegerConst(constNode) && arithExprType(constNode) == I8_TYPE)
+                || isNarrowIntCmpWideningConst(constNode);
+        if (!isWideningConst) {
             return;
         }
         if (other == null || other.type != ExpressionNode.OPERATION) {

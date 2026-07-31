@@ -517,6 +517,54 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testNarrowIntCmpFloatConst() throws Exception {
+        // An INT column promotes to DOUBLE in the Java filter, so a bound the JIT cannot reproduce
+        // at float width has to reach the filter as a full double - and the column has to
+        // sign-extend alongside it, because (i64, f64) is the pairing the backend converts in every
+        // execution mode. (i32, f64) is only converted in the four-lane loop.
+        int options = serialize("anint < 1.00000003", false, false, false);
+        assertIR("(f64 1.00000003D)(i32 anint)(sx_i64)(<)(ret)");
+        assertOptionsHint("anint < 1.00000003", options, OptionsHint.SCALAR);
+        serialize("anint = 1.00000003");
+        assertIR("(f64 1.00000003D)(i32 anint)(sx_i64)(=)(ret)");
+        serialize("anint <> 1.00000003");
+        assertIR("(f64 1.00000003D)(i32 anint)(sx_i64)(<>)(ret)");
+
+        // A constant WITH an exact float still needs the double treatment once its magnitude
+        // reaches 2^24, because from there the COLUMN is the side that rounds:
+        // (float) 16777217 is 16777216, so a float compare puts them equal.
+        options = serialize("anint > 16777216.0", false, false, false);
+        assertIR("(f64 1.6777216E7D)(i32 anint)(sx_i64)(>)(ret)");
+        assertOptionsHint("anint > 16777216.0", options, OptionsHint.SCALAR);
+
+        // BYTE and SHORT take the same arm. These used to throw out of serializeNumber's I1/I2
+        // arms and decline the filter entirely.
+        serialize("abyte < 1.00000003");
+        assertIR("(f64 1.00000003D)(i8 abyte)(sx_i64)(<)(ret)");
+        serialize("ashort < 1.00000003");
+        assertIR("(f64 1.00000003D)(i16 ashort)(sx_i64)(<)(ret)");
+
+        // An INT ARITHMETIC subtree is not a leaf, so only the CONSTANT widens - the subtree keeps
+        // computing at i32 and wrapping, exactly as AddInt#getInt does.
+        options = serialize("anint + 0 > 16777216.0", false, false, false);
+        assertIR("(f64 1.6777216E7D)(i32 0L)(i32 anint)(+)(>)(ret)");
+        assertOptionsHint("anint + 0 > 16777216.0", options, OptionsHint.SCALAR);
+
+        // Controls: an exact-float bound below 2^24 cannot diverge - neither side rounds - so it
+        // keeps its F4 immediate and the eight-lane vectorized path. The fix costs nothing there.
+        options = serialize("anint < 1.5", false, false, false);
+        assertIR("(f32 1.5D)(i32 anint)(<)(ret)");
+        assertOptionsHint("anint < 1.5", options, OptionsHint.SINGLE_SIZE);
+        options = serialize("anint > 16777215.0", false, false, false);
+        assertIR("(f32 1.6777215E7D)(i32 anint)(>)(ret)");
+        assertOptionsHint("anint > 16777215.0", options, OptionsHint.SINGLE_SIZE);
+        // An integer-spelled literal compares at integer width on both paths and is untouched.
+        options = serialize("anint > 16777216", false, false, false);
+        assertIR("(i32 16777216L)(i32 anint)(>)(ret)");
+        assertOptionsHint("anint > 16777216", options, OptionsHint.SINGLE_SIZE);
+    }
+
+    @Test
     public void testFloatSuppressedI64WideningNestedIntUnderLong() throws Exception {
         // A float suppresses the global narrow-i64 widening, but the inner
         // INT*INT product (anint * 100000) feeds a LONG-width multiply, so the

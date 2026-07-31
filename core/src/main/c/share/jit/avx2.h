@@ -511,9 +511,25 @@ namespace questdb::avx2 {
         return {dst, data_type_t::i64, value.dkind()};
     }
 
+    // Declines the filter instead of emitting a widening that would be wrong for the loop it lands
+    // in. Recording the error makes compileFunction() discard the function and report it, and
+    // SqlCodeGenerator then falls back to the Java filter - the same graceful decline any other
+    // unsupported shape takes. The operands come back unchanged so the rest of code generation
+    // stays well-formed; nothing it emits is ever run.
+    inline void decline_filter(Compiler &c, const char *reason) {
+        c.report_error(asmjit::Error::kInvalidState, reason);
+    }
+
     jit_value_t sx_i64(Compiler &c, const jit_value_t &value, bool null_check) {
         if (value.dtype() != data_type_t::i32) {
-            __builtin_unreachable();
+            // Fail closed. The frontend emits SX_I64 only over a narrow-int leaf that
+            // isWideLaneEligible has admitted, so this is unreachable today; a future gap there
+            // costs a JIT decline rather than the undefined behaviour __builtin_unreachable()
+            // would hand it, which has no recovery inside a JVM.
+            decline_filter(c, "sx_i64 expects an i32 operand");
+            Vec zero = c.new_ymm("sx_i64_declined");
+            c.vpxor(zero, zero, zero);
+            return {zero, data_type_t::i64, value.dkind()};
         }
 
         Vec extended = c.new_ymm("sx_i64");
@@ -613,13 +629,24 @@ namespace questdb::avx2 {
     // and the op is then emitted at the left width against a register holding the right one - wrong
     // rows, silently. So every pairing the frontend can produce must have a case.
     //
-    // The i32-with-i64 and i32-with-f64 pairings are reachable only in four-lane (wide) mode, where
-    // a 4-byte column loads as four packed values in the low 128 bits while an 8-byte column spans
-    // the whole register; outside it a mixed-size predicate runs the scalar loop. Their widenings
-    // read only the low 128 bits and so are gated on wide_lane. The frontend is supposed to
-    // harmonise them up front (CompiledFilterIRSerializer#markWidthSemantics, and its
-    // areWideLaneWidthsHarmonised assert), and these arms are the backstop that keeps a gap there
-    // from reaching a user as wrong rows.
+    // sx_i64, cvt_itod and cvt_ftod all read only the LOW 128 bits of their operand, so each is
+    // correct at four lanes and only at four lanes. cvt_itof and cvt_ltod convert a full register
+    // and carry no such restriction.
+    //
+    // The i32-with-i64 and i32-with-f64 arms are gated on wide_lane and fall THROUGH outside it, on
+    // purpose: outside the four-lane loop a mixed-width pairing is not necessarily an error. A
+    // var-size column reads as four packed i64 lanes whatever loop it rides in
+    // (read_mem_varsize / read_mem_varchar_header), and its NULL comparison pairs that i64 against
+    // an i32-tagged constant whose register already holds the right bits; the comparison types
+    // itself from the left operand and is correct untouched. areWideLaneWidthsHarmonised returns
+    // early for any hint other than WIDE_LANE precisely because the frontend promises harmonised
+    // widths only in that loop, so these arms must not treat a fall-through as a fault.
+    //
+    // The cvt_ftod arms are different. Converting four of eight float lanes is wrong in any loop
+    // that has eight of them, and no register aliasing makes it right, so those arms fail CLOSED:
+    // they decline the filter and fall back to the Java one rather than reach the return below,
+    // which would emit the comparison at the left operand's width against a register holding the
+    // right one - wrong rows, silently, with nothing to signal it.
     inline std::pair<jit_value_t, jit_value_t>
     convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check, bool wide_lane) {
         // data_type_t::i32 -> data_type_t::f32
@@ -654,6 +681,10 @@ namespace questdb::avx2 {
                         }
                         break;
                     case data_type_t::f32:
+                        if (!wide_lane) {
+                            decline_filter(c, "i64-with-f32 pairing outside the four-lane loop");
+                            break;
+                        }
                         return std::make_pair(
                                 jit_value_t(cvt_ltod(c, lhs.vec(), null_check), data_type_t::f64, lhs.dkind()),
                                 jit_value_t(cvt_ftod(c, rhs.vec()), data_type_t::f64, rhs.dkind()));
@@ -670,10 +701,18 @@ namespace questdb::avx2 {
                         return std::make_pair(lhs, jit_value_t(cvt_itof(c, rhs.vec(), null_check), data_type_t::f32,
                                                                rhs.dkind()));
                     case data_type_t::i64:
+                        if (!wide_lane) {
+                            decline_filter(c, "f32-with-i64 pairing outside the four-lane loop");
+                            break;
+                        }
                         return std::make_pair(
                                 jit_value_t(cvt_ftod(c, lhs.vec()), data_type_t::f64, lhs.dkind()),
                                 jit_value_t(cvt_ltod(c, rhs.vec(), null_check), data_type_t::f64, rhs.dkind()));
                     case data_type_t::f64:
+                        if (!wide_lane) {
+                            decline_filter(c, "f32-with-f64 pairing outside the four-lane loop");
+                            break;
+                        }
                         return std::make_pair(
                                 jit_value_t(cvt_ftod(c, lhs.vec()), data_type_t::f64, lhs.dkind()), rhs);
                     default:
@@ -693,6 +732,10 @@ namespace questdb::avx2 {
                         return std::make_pair(lhs, jit_value_t(cvt_ltod(c, rhs.vec(), null_check), data_type_t::f64,
                                                                rhs.dkind()));
                     case data_type_t::f32:
+                        if (!wide_lane) {
+                            decline_filter(c, "f64-with-f32 pairing outside the four-lane loop");
+                            break;
+                        }
                         return std::make_pair(lhs, jit_value_t(cvt_ftod(c, rhs.vec()), data_type_t::f64, rhs.dkind()));
                     default:
                         break;

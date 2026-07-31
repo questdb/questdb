@@ -3201,6 +3201,99 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNarrowIntColumnVsFloatingPointConstant() throws Exception {
+        // An INT column compared against a floating-point constant promotes to DOUBLE in the Java
+        // filter - IntFunction#getDouble feeds "<(DD)" - so both operands compare at f64. The JIT
+        // typed the constant down to F4 (the observer sees one 4-byte column, so no mixed size) and
+        // serializeNumber rounded it to the nearest float; cvt_itof then rounded the COLUMN to float
+        // as well, so the comparison ran entirely at f32. Both roundings drop or invent rows:
+        //   RED on HEAD: (a) "< 1.00000003" rounds the bound DOWN to 1.0f and loses the row holding
+        //   1; (b) "= 1.00000003" matches that row instead, returning a value provably not the one
+        //   asked for; (c) above 2^24 one float ulp exceeds 1, so an ordinary bound like
+        //   "< 20000000.5" silently loses every row equal to 20000000; (d) a bound WITH an exact
+        //   float still diverges once the COLUMN is the side that rounds - (float) 16777217 is
+        //   16777216, so "> 16777216.0" drops it.
+        // markNarrowConstCmpWidenPair now routes the constant through the 64-bit arm and
+        // sign-extends the int leaf, so the pair compares at double width exactly as Java does.
+        assertMemoryLeak(() -> {
+            execute("create table z as (select" +
+                    " cast(case when x = 1 then 1 when x = 2 then 20_000_000 when x = 3 then 16_777_217 else 5 end as int) i," +
+                    " cast(case when x = 1 then 1 else 5 end as byte) b," +
+                    " cast(case when x = 1 then 1 else 5 end as short) s," +
+                    " cast(x as int) rn," +
+                    " timestamp_sequence(0, 1_000_000) k" +
+                    " from long_sequence(64)) timestamp(k)");
+
+            // (a) the bound rounds DOWN to 1.0f, so the row holding 1 stops satisfying it.
+            assertJitScalarAndVectorMatchJava("select rn from z where i < 1.00000003 and rn <= 3", "rn\n1\n");
+            // (b) the false positive: no INT equals 1.00000003, so nothing may match.
+            assertJitScalarAndVectorMatchJava("select rn from z where i = 1.00000003", "rn\n");
+            // (c) not a corner case - above 2^24 the float ulp is 2, so a plain fractional bound
+            //     rounds onto an ordinary column value and drops it.
+            assertJitScalarAndVectorMatchJava("select rn from z where i < 20000000.5 and rn <= 3", "rn\n1\n2\n3\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where i <> 20000000.5 and rn <= 3", "rn\n1\n2\n3\n");
+            // (d) the constant has an exact float here; the COLUMN is what rounds.
+            assertJitScalarAndVectorMatchJava("select rn from z where i > 16777216.0 and rn <= 3", "rn\n2\n3\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where i <= 16777216.0 and rn <= 3", "rn\n1\n");
+            // ... and the f-suffixed spelling of it reads the same. parseDouble rejects that token,
+            // so the constant's value has to come from parseFloat for the analysis to see it at
+            // all - without that the shape silently kept the rounded F4 bound and dropped row 3.
+            // Seeing it, the widening asks for a 64-bit immediate that serializeNumber cannot parse
+            // from an f-suffixed token either, so the JIT now DECLINES the filter and the Java
+            // filter answers. Slower than a compiled filter, but the rows are right.
+            assertJitMatchesJava("select rn from z where i > 16777216.0f and rn <= 3", false, "rn\n2\n3\n");
+
+            // A negated constant takes the same route (the literal sits under a unary minus).
+            assertJitScalarAndVectorMatchJava("select rn from z where i > -1.00000003 and rn <= 3", "rn\n1\n2\n3\n");
+
+            // An INT ARITHMETIC subtree reads the bound exactly as a bare column does, but it is not
+            // a leaf, so markNarrowConstCmpWidenPair does not see it - maybeWidenCmpConstOperand
+            // widens the bound for it instead. Only the CONSTANT widens: the subtree keeps computing
+            // at i32 and wrapping, and the backend's convert() promotes its result at the
+            // comparison. These ops are value-preserving, so the answer is the column's.
+            assertJitScalarAndVectorMatchJava("select rn from z where i + 0 > 16777216.0 and rn <= 3", "rn\n2\n3\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where i * 1 > 16777216.0 and rn <= 3", "rn\n2\n3\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where i - 0 > 16777216.0 and rn <= 3", "rn\n2\n3\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where i + 0 < 1.00000003 and rn <= 3", "rn\n1\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where i + 0 = 1.00000003", "rn\n");
+            // ... including under a unary minus on BOTH sides, where the bound is an OPERATION too.
+            assertJitScalarAndVectorMatchJava("select rn from z where -i < -16777216.0 and rn <= 3", "rn\n2\n3\n");
+
+            // BYTE and SHORT leaves take the same arm. These used to DECLINE the filter outright -
+            // serializeNumber's I1/I2 arms parse an integer and throw on a fractional token - so they
+            // were never wrong, just uncompiled; now they compile and must agree.
+            assertJitScalarAndVectorMatchJava("select rn from z where b < 1.00000003 and rn <= 3", "rn\n1\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where s < 1.00000003 and rn <= 3", "rn\n1\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where b = 1.00000003", "rn\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where s > 0.99999998 and rn <= 3", "rn\n1\n2\n3\n");
+
+            // An INT BIND VARIABLE is a leaf like the column, and reads the bound the same way.
+            bindVariableService.setInt("bv", 16777217);
+            assertJitScalarAndVectorMatchJava("select rn from z where :bv > 16777216.0 and rn <= 2", "rn\n1\n2\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where :bv < 1.00000003 and rn <= 2", "rn\n");
+
+            // Controls: a bound WITH an exact float below 2^24 cannot diverge - neither side needs
+            // rounding - and must keep selecting the same rows. 16777215.0 is the largest exact
+            // float under the limit and pins that the threshold is not off by one ulp: no INT
+            // rounds onto it, so it must stay on the untouched, vectorized path.
+            assertJitScalarAndVectorMatchJava("select rn from z where i > 16777215.0 and rn <= 3", "rn\n2\n3\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where i < 1.5 and rn <= 3", "rn\n1\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where i = 5.0 and rn <= 5", "rn\n4\n5\n");
+            // An explicit widening to DOUBLE pins the double-width answer the fix now agrees with.
+            assertJitMatchesJava("select rn from z where i::double < 1.00000003 and rn <= 3", false, "rn\n1\n");
+
+            // The comparison carries a TOLERANCE: QuestDB reads "i < d" as
+            // "!Numbers.equals(i, d) && i < d" with DOUBLE_TOLERANCE = 1e-10, so a row within 1e-10
+            // of the bound is EQUAL to it. One float ulp near 1.0 is 1.2e-7, a thousand times the
+            // tolerance, so a float bound steps clean over the band; only the double one reproduces
+            // it.
+            assertJitScalarAndVectorMatchJava("select rn from z where i < 1.00000000005 and rn <= 3", "rn\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where i >= 1.00000000005 and rn <= 3", "rn\n1\n2\n3\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where i = 1.00000000005 and rn <= 3", "rn\n1\n");
+        });
+    }
+
+    @Test
     public void testFloatWithLongOperandVsConstantWithNoExactFloat() throws Exception {
         // A FLOAT leaf whose arithmetic has a LONG operand: QuestDB resolves "f + l" to
         // AddDoubleFunctionFactory (LONG has no FLOAT overload), so the Java filter computes the sum
