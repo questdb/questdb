@@ -392,9 +392,13 @@ arithmetic semantics:
   bound like `16777216.0` collides. The rule widens on `inexact || |c| >= 2^24`, and widens the
   LEAF too so the pair reaches the backend's ungated `(i64, f64)` arm. `maybeWidenCmpConstOperand`
   covers the arithmetic-subtree spelling (`i + 0 > 16777216.0`) by widening only the constant, so
-  the subtree keeps wrapping at i32. The cost is that these predicates drop from the eight-lane
-  loop to scalar, including constants that could not actually diverge (`i > 1.1`); an exact-float
-  constant below 2^24 is untouched and stays vectorized.
+  the subtree keeps wrapping at i32. Two things keep the cost off the vectorized path: the rule
+  widens an inexact constant only when an integer (or the tolerance band round one) actually falls
+  between the bound and the float the JIT would emit, so `i > 1.1` and `i > 0.1` keep the eight-lane
+  loop; and `isWideLaneIntCmpFloatConstPair` makes the shapes that DO widen wide-lane eligible, so
+  they run the four-lane loop rather than dropping to scalar. BYTE and SHORT leaves stay scalar -
+  `avx2::sx_i64` widens an i32 lane and declines anything else - as does the arithmetic-subtree
+  spelling, which is never sign-extended.
 - `narrowKeptConstants` pins an integer constant operand of a NARROW arithmetic node to its own
   width, so `i32 * 2` stays `int32_mul` even when a LONG elsewhere in the predicate makes the
   observer type constants at I8.

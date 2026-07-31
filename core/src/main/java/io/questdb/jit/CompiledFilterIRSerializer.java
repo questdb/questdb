@@ -394,11 +394,35 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             if (isWideLaneIntegerExpression(node.lhs) && isWideLaneIntegerExpression(node.rhs)) {
                 return true;
             }
+            if (isWideLaneIntCmpFloatConstPair(node.lhs, node.rhs)
+                    || isWideLaneIntCmpFloatConstPair(node.rhs, node.lhs)) {
+                return true;
+            }
             return isWideLaneFloatComparisonOperand(node.lhs)
                     && isWideLaneFloatComparisonOperand(node.rhs)
                     && (containsFloatExpression(node.lhs) || containsFloatExpression(node.rhs));
         }
         return false;
+    }
+
+    /**
+     * An INT leaf against a floating-point bound that {@link #markNarrowIntCmpFloatConst} widens.
+     * Without this the shape matched neither branch above - the leaf is not a float expression and
+     * the bound is not an integer constant - so it fell out of wide-lane mode, and the SX_I64 the
+     * widening emits then forced the whole filter down to the SCALAR loop. Admitted here it runs
+     * the four-lane loop instead: SX_I64 sign-extends the leaf into the low 128 bits and the bound
+     * is already a double, which is the ungated (i64, f64) arm of the backend's {@code convert()}.
+     * <p>
+     * Restricted to INT. {@code avx2::sx_i64} widens an i32 lane and declines anything else, so a
+     * BYTE or SHORT leaf has to keep the scalar fallback, where the backend sign-extends i8 and i16
+     * explicitly. An arithmetic subtree is excluded too: it is not sign-extended at all (it has to
+     * keep wrapping at i32), so only its constant widens and the pairing stays (i32, f64).
+     */
+    private boolean isWideLaneIntCmpFloatConstPair(ExpressionNode leaf, ExpressionNode constNode) {
+        return leaf != null
+                && (leaf.type == ExpressionNode.LITERAL || leaf.type == ExpressionNode.BIND_VARIABLE)
+                && arithExprType(leaf) == I4_TYPE
+                && isNarrowIntCmpWideningConst(constNode);
     }
 
     private boolean isWideLaneFloatComparisonOperand(ExpressionNode node) {
@@ -626,6 +650,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // widening is the real fix; until then the F8 trigger is load-bearing.
         if ((containsFloatExpression(lhs) && isFloatWideningConst(rhs))
                 || (containsFloatExpression(rhs) && isFloatWideningConst(lhs))) {
+            return true;
+        }
+        // An INT leaf against a widening floating-point bound emits SX_I64, and the four-lane loop
+        // is the only vectorized one that implements it. Without this the pair was eligible but not
+        // required, so isWideLaneMode stayed false and the emitted SX_I64 forced the filter all the
+        // way down to SCALAR. See isWideLaneIntCmpFloatConstPair.
+        if (isWideLaneIntCmpFloatConstPair(lhs, rhs) || isWideLaneIntCmpFloatConstPair(rhs, lhs)) {
             return true;
         }
         final int lhsType = arithExprType(lhs);
@@ -1875,7 +1906,25 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (Numbers.isNull(d)) {
             return false; // not a numeric constant, or non-finite
         }
-        return (double) (float) d != d || Math.abs(d) >= FLOAT_EXACT_INT_LIMIT;
+        final double f = (float) d;
+        if (Math.abs(d) >= FLOAT_EXACT_INT_LIMIT) {
+            // The COLUMN can round onto the bound from here, whatever the bound itself does.
+            return true;
+        }
+        if (f == d) {
+            // Neither side rounds: every int below the limit has an exact float.
+            return false;
+        }
+        // The constant rounds, but that only selects different rows if a column value can fall
+        // between the bound the query names and the float the filter would emit - and every column
+        // value here is an integer. Widen the band by the comparison tolerance at both ends, since
+        // a row within DOUBLE_TOLERANCE of the bound compares EQUAL to it rather than below or
+        // above. If no integer lands in that band, every row sits on the same side of both bounds
+        // and further than the tolerance from each, so the f32 comparison keeps its rows - and its
+        // eight-lane loop.
+        final double lo = Math.min(d, f) - Numbers.DOUBLE_TOLERANCE;
+        final double hi = Math.max(d, f) + Numbers.DOUBLE_TOLERANCE;
+        return Math.floor(hi) >= Math.ceil(lo);
     }
 
     // A narrow-int (BYTE / SHORT / INT) column or bind-variable leaf. Sign-extending
@@ -3096,9 +3145,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     try {
                         final long l = Numbers.parseLong(token);
                         putOperand(offset, IMM, I8_TYPE, sign * l);
-                    } catch (NumericException e) {
-                        final double dl = Numbers.parseDouble(token);
-                        putDoubleOperand(offset, F8_TYPE, sign * dl);
+                    } catch (NumericException notLong) {
+                        try {
+                            final double dl = Numbers.parseDouble(token);
+                            putDoubleOperand(offset, F8_TYPE, sign * dl);
+                        } catch (NumericException notDouble) {
+                            // An f-suffixed literal (16777216.0f), which parseDouble rejects. The
+                            // Java filter reads it as a FLOAT constant and widens it through
+                            // FloatConstant#getDouble, so the exact double of the float it names is
+                            // the bound both paths compare against. Without this the widening
+                            // analysis would ask for a 64-bit immediate the arm could not produce,
+                            // and the JIT would decline a filter it can compile correctly.
+                            final float fl = Numbers.parseFloat(token);
+                            putDoubleOperand(offset, F8_TYPE, sign * (double) fl);
+                        }
                     }
                     break;
                 default:

@@ -522,9 +522,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // at float width has to reach the filter as a full double - and the column has to
         // sign-extend alongside it, because (i64, f64) is the pairing the backend converts in every
         // execution mode. (i32, f64) is only converted in the four-lane loop.
-        int options = serialize("anint < 1.00000003", false, false, false);
+        int options = serialize("anint < 1.00000003", false, false, true);
         assertIR("(f64 1.00000003D)(i32 anint)(sx_i64)(<)(ret)");
-        assertOptionsHint("anint < 1.00000003", options, OptionsHint.SCALAR);
+        assertOptionsHint("anint < 1.00000003", options, OptionsHint.WIDE_LANE);
         serialize("anint = 1.00000003");
         assertIR("(f64 1.00000003D)(i32 anint)(sx_i64)(=)(ret)");
         serialize("anint <> 1.00000003");
@@ -533,22 +533,41 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // A constant WITH an exact float still needs the double treatment once its magnitude
         // reaches 2^24, because from there the COLUMN is the side that rounds:
         // (float) 16777217 is 16777216, so a float compare puts them equal.
-        options = serialize("anint > 16777216.0", false, false, false);
+        options = serialize("anint > 16777216.0", false, false, true);
         assertIR("(f64 1.6777216E7D)(i32 anint)(sx_i64)(>)(ret)");
-        assertOptionsHint("anint > 16777216.0", options, OptionsHint.SCALAR);
+        assertOptionsHint("anint > 16777216.0", options, OptionsHint.WIDE_LANE);
 
-        // BYTE and SHORT take the same arm. These used to throw out of serializeNumber's I1/I2
+        // BYTE and SHORT take the same arm but must NOT go wide-lane: avx2::sx_i64 widens an i32
+        // lane and declines anything else, so they keep the scalar fallback, where the backend
+        // sign-extends i8 and i16 explicitly. These used to throw out of serializeNumber's I1/I2
         // arms and decline the filter entirely.
-        serialize("abyte < 1.00000003");
+        options = serialize("abyte < 1.00000003", false, false, false);
         assertIR("(f64 1.00000003D)(i8 abyte)(sx_i64)(<)(ret)");
-        serialize("ashort < 1.00000003");
+        assertOptionsHint("abyte < 1.00000003", options, OptionsHint.SCALAR);
+        options = serialize("ashort < 1.00000003", false, false, false);
         assertIR("(f64 1.00000003D)(i16 ashort)(sx_i64)(<)(ret)");
+        assertOptionsHint("ashort < 1.00000003", options, OptionsHint.SCALAR);
 
         // An INT ARITHMETIC subtree is not a leaf, so only the CONSTANT widens - the subtree keeps
         // computing at i32 and wrapping, exactly as AddInt#getInt does.
         options = serialize("anint + 0 > 16777216.0", false, false, false);
         assertIR("(f64 1.6777216E7D)(i32 0L)(i32 anint)(+)(>)(ret)");
         assertOptionsHint("anint + 0 > 16777216.0", options, OptionsHint.SCALAR);
+
+        // An INEXACT bound below 2^24 still keeps the eight-lane path when its rounding cannot
+        // reach a column value. Every INT row is a whole number, so what matters is whether an
+        // integer falls between the bound and the float the filter would emit: 1.1 rounds to
+        // 1.10000002384, and no integer (nor the tolerance band round one) lies in between, so the
+        // f32 comparison selects exactly the same rows. 1.00000003 rounds across 1 and does not.
+        options = serialize("anint > 1.1", false, false, false);
+        assertIR("(f32 1.100000023841858D)(i32 anint)(>)(ret)");
+        assertOptionsHint("anint > 1.1", options, OptionsHint.SINGLE_SIZE);
+        options = serialize("anint > 0.1", false, false, false);
+        assertIR("(f32 0.10000000149011612D)(i32 anint)(>)(ret)");
+        assertOptionsHint("anint > 0.1", options, OptionsHint.SINGLE_SIZE);
+        options = serialize("anint <> 2.7", false, false, false);
+        assertIR("(f32 2.700000047683716D)(i32 anint)(<>)(ret)");
+        assertOptionsHint("anint <> 2.7", options, OptionsHint.SINGLE_SIZE);
 
         // Controls: an exact-float bound below 2^24 cannot diverge - neither side rounds - so it
         // keeps its F4 immediate and the eight-lane vectorized path. The fix costs nothing there.

@@ -3236,12 +3236,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitScalarAndVectorMatchJava("select rn from z where i > 16777216.0 and rn <= 3", "rn\n2\n3\n");
             assertJitScalarAndVectorMatchJava("select rn from z where i <= 16777216.0 and rn <= 3", "rn\n1\n");
             // ... and the f-suffixed spelling of it reads the same. parseDouble rejects that token,
-            // so the constant's value has to come from parseFloat for the analysis to see it at
-            // all - without that the shape silently kept the rounded F4 bound and dropped row 3.
-            // Seeing it, the widening asks for a 64-bit immediate that serializeNumber cannot parse
-            // from an f-suffixed token either, so the JIT now DECLINES the filter and the Java
-            // filter answers. Slower than a compiled filter, but the rows are right.
-            assertJitMatchesJava("select rn from z where i > 16777216.0f and rn <= 3", false, "rn\n2\n3\n");
+            // so both the widening analysis (floatCmpConstValue) and the 64-bit arm of
+            // serializeNumber need a parseFloat fallback to handle it: without the first the shape
+            // silently kept the rounded F4 bound and dropped row 3, and without the second the JIT
+            // declined a filter it can compile correctly. It stays compiled.
+            assertJitScalarAndVectorMatchJava("select rn from z where i > 16777216.0f and rn <= 3", "rn\n2\n3\n");
+            assertJitScalarAndVectorMatchJava("select rn from z where i <= 16777216.0f and rn <= 3", "rn\n1\n");
 
             // A negated constant takes the same route (the literal sits under a unary minus).
             assertJitScalarAndVectorMatchJava("select rn from z where i > -1.00000003 and rn <= 3", "rn\n1\n2\n3\n");
