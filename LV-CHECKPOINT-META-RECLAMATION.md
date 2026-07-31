@@ -1,7 +1,7 @@
 # Live-view `_checkpoints/meta/` growth - design and implementation plan
 
 - **Context:** PR #6939 `feat(sql): add live views`, branch `puzpuzpuz_live_view`
-- **Verified against:** `e221ed7614`
+- **Verified against:** `7d6f5f4bc3`
 - **Date:** 2026-07-31
 - **Supersedes:** the "Critical 8" section of the review handoff, whose fix options
   (per-segment refcounting *or* metadata compaction) were framed against an
@@ -35,12 +35,13 @@
   widened it to bound retained state too, and that widening is withdrawn - so Class
   A is the deliverable and Phase 3 came back out. Tasks 1 and 2 in section 12
   landed together in that commit and section 5.9 records them; task 3 followed on
-  2026-07-31 and section 5.10 records it, and task 4 the same day - section 5.11 -
+  2026-07-31 and section 5.10 records it, task 4 the same day - section 5.11 -
   where the narrowed key set decision 5 had left open turned out to be a live wrong
-  answer for ROWS views and is now fixed. So **task 5 is the only open item**, and
-  it is task 4's own leftover: the ROWS timeline splice, which the correctness gate
-  takes from every ROWS view rather than from the ones that need it. Neither task 4
-  nor task 5 is reclamation work. Class A itself
+  answer for ROWS views and was fixed by refusing the splice, and task 5 the same
+  day again - section 5.12 - which gave the splice back keyed on the output key
+  domain, so a ROWS repair re-versions the keys its replay describes and leaves
+  every other key's entry as the old root wrote it. **Every task in section 12 is
+  done.** Neither task 4 nor task 5 is reclamation work. Class A itself
   needs no further code. The consequence, stated
   because it is the point: **nothing bounds a default install's retained checkpoint
   state**; what the cadence and the reconciler bound is the garbage beside it. The
@@ -1366,7 +1367,8 @@ runtime by restoring the scratch overlay over it. Nothing restores a published
 root, and that is the whole of the bug. The anchor is the arm that argument groups
 with ROWS and the data does not: the recognized anchor is a calendar-period floor
 of the designated timestamp, so a key that skipped the segment carries a
-strictly older anchor value and its next row resets it.
+strictly older anchor value and its next row resets it - which is also why the
+anchor root needs no key filter once task 5 gives the function roots one.
 
 **Step 3 routed it: the gate lands in #6939, the splice does not come back yet.**
 `LiveViewCheckpointRepairPlan.isReplayStateKeyComplete()` is false for any
@@ -1412,6 +1414,103 @@ precise repair - keep the splice and re-version only the keys of `Q`, leaving ev
 other key's entry as the old root wrote it - needs `Q` itself at publication time,
 and `LiveViewCheckpointRowsBounds` holds it only as a count on the walk path.
 That is task 5.
+
+### 5.12 What task 5 actually shipped (`7d6f5f4bc3`)
+
+Landed on `puzpuzpuz_live_view` across six production classes; ~150 lines of
+production code and about as much javadoc, plus ~250 lines of test. No on-disk
+format change and no `SLOT_FORMAT_VERSION` bump: which keys a root re-versions is
+a property of the publication rather than of the layout, and a root that keeps an
+old entry keeps it by the page reference the copy-on-write already used.
+
+**The rule landed at the freeze rather than at the build, which is not where task 5
+sent it.** The plan said `removeMissingPartitions` removes only keys in `Q` and a
+frozen key outside `Q` keeps the old entry - two filters. One suffices, because a
+key outside `Q` need not be *imaged* at all: `freezeFunction` skips it before it
+encodes a page, so the root's put loop never sees it and only the removal learns the
+domain. That is strictly better than the two-filter shape it replaced - a repair over
+a wide key set now writes pages for the keys of `Q` rather than for every live key,
+where before task 4 it wrote all of them and published a wrong answer for most.
+
+**The encoding is what the plan did not price, and it is most of the work.** The
+discovery keys its scans by the reader's table-local SYMBOL integer - deliberately,
+because the ids are stable for exactly the scope one repair plans in and an integer
+key is what the scans are fast on. A window function's partition map keys the same
+column by its *resolved string*, because a live view's partition-by sinks rewrite
+SYMBOL that way (segment-local ids would collide across refresh cycles). The two
+never had to agree before, and comparing them at publication time would have matched
+nothing at all - every key would have read as outside `Q`, leaving every re-versioned
+root byte-identical to the one it replaced. So:
+
+- `LiveViewCheckpointRowsPlan` carries a **second projector** - the same column
+  filter with `writeSymbolAsString` set, and STRING in place of SYMBOL in its key
+  types. A plan with no SYMBOL key column shares one sink, and an expression-keyed
+  plan always did: a SYMBOL key *function* is already written through its resolved
+  string, because the integers a function hands out index its own map rather than
+  the reader's.
+- `LiveViewCheckpointRowsBounds` fills a **second map** through it, once per distinct
+  key rather than once per row, so the forward and backward scans keep the encoding
+  they were built for and only a key joining `Q` pays for the string.
+- `collectOutputKeys` then writes each key with `LiveViewSnapshotKeyCodec` off that
+  map's record - the identical call `freezeFunction` makes off the window function's
+  own map record, at the same start index and over the same key types. The two sides
+  agree by construction rather than by inspection.
+
+**The gate has two ways to be satisfied now, and the first keeps its meaning.**
+`isReplayStateKeyComplete()` still means the replay reconstructs every live key, and
+a RANGE or anchored view still earns the splice with it alone.
+`LiveViewCheckpointRepairPlan.getOutputKeyDomain()` is the second way: a ROWS
+localization publishes the set instead of the guarantee, and `LiveViewRefreshJob`
+opens a capture on either.
+
+**One refinement to what task 5 asked for.** It said a discovery stopped by *either*
+scan budget knows an incomplete `Q`. Only the forward budgets do. `Q` is collected by
+the forward pass, and both of its stops - the row budget and the key budget - also
+leave `H` at end-of-frame, so a fragment cannot reach a publication under any
+configuration. A backward stop leaves `Q` whole and drops `L` to `S`, which is the
+floor a replay reconstructs *every* key from, so it costs the repair its localization
+below rather than its key domain. `isOutputKeyDomainComplete()` therefore reports the
+forward pass alone, and `collectOutputKeys` refuses rather than returning a fragment.
+
+Costs the change adds, stated because they are real:
+
+- One more generated `RecordSink` per compiled view, for a view whose ROWS plan has a
+  SYMBOL partition-key column. Views with none, and expression-keyed views, share the
+  one sink they already had.
+- One map insert per distinct key of `Q` during the discovery, and one set copy of
+  `Q` per repair capture. Both are bounded by
+  `cairo.live.view.checkpoint.repair.scan.max.keys` (default 100,000) and paid once
+  per repair rather than per row.
+- One membership probe per live key per re-versioned boundary at freeze time. It
+  replaces a state-page encode and write for every key it rejects, so a repair over a
+  key set wider than `Q` writes strictly less than it did before task 4.
+- **`logicalStateBytes` stops moving for a key-filtered splice.** The freeze counts
+  the keys it imaged, which is a share of the boundary rather than the whole of it,
+  and recomputing the whole would need the old root's per-key state sizes in the
+  freeze's own units - a ring entry's logical size is the row stream it holds rather
+  than the pages it stores. So a re-versioned boundary keeps the total it already had.
+  That is a stat rather than a reference count: nothing reads it to decide what a
+  generation reaches.
+
+Measured on the eight-key ROWS fixture task 4 built: the correction that used to
+re-version three boundaries down to one key each now leaves all forty boundaries
+standing and every one of them naming all eight keys, and the resume off one of them
+still lands on the recompute. On the twenty-four-key elision fixture, a repair
+crossing nine boundaries images the four keys of `Q` and shares a page across the
+boundaries none of them was touched at, where before task 4 it imaged all
+twenty-four.
+
+**The #6939 body carries it in the three places task 4 wrote into**, through the
+`gh api --method PATCH` route section 5.10 records. The checkpoint-timeline bullet
+now says what the ROWS arm does with the timeline rather than what it cannot do -
+the publication is handed the keys the replay describes and keeps every other key's
+entry - and names the one case that still rebuilds, a discovery a scan budget left
+short of the whole set. The Tradeoffs bullet task 4 added is gone, and the counter
+this change does move took its place: `checkpoint_timeline_logical_bytes` stops
+tracking what a ROWS repair re-images, stated as an observability figure rather than
+as a reference count, and stated beside the physical counters it does not affect. The
+test plan entry gains the carried-but-truncated case and the encoding cases, because
+the encoding is the part a reader cannot infer from the rule.
 
 ---
 
@@ -1938,11 +2037,52 @@ existing cases reshaped (section 5.11)
   workload over a frame that expires by time: it still splices, its roots still
   come back naming one key, and the resume off one of them still matches the
   recompute. Passes before and after.
-- Not covered: the second half of the defect, a key the replay *carried* whose
-  history the discovery never warmed up (rows in `[L, R)` and none above `R`). It
-  is unreachable in a fixture the gate now refuses outright, and it is what task 5
-  has to keep in view - a fix that only preserved the keys the replay missed would
-  leave it standing.
+- ~~Not covered: the second half of the defect, a key the replay *carried* whose
+  history the discovery never warmed up~~ - **covered by task 5**, which is what
+  made it reachable: see below.
+
+**Task 5** - one new case and one reshaped one in
+`LiveViewCheckpointRepairKeyCoverageTest`, two new ones in
+`LiveViewCheckpointRowsBoundsTest`, one in `LiveViewCheckpointRepairPlanTest`, and
+the five cases task 4 reshaped restored to asserting the splice
+
+- The splice comes back and every boundary still names every key. **Done** -
+  `testARowsRepairLeavesEveryBoundaryNamingEveryKey` now states the whole timeline as
+  forty boundaries at eight keys each, so it is red twice against the two earlier
+  states: the boundaries above `R` were dropped outright by task 4, and before that
+  they came back naming one key.
+- The second half of the defect, which task 4 could not reach. **Done** -
+  `testARowsRepairKeepsTheHistoryOfAKeyItsReplayOnlyPartlyCarried`, whose warm key
+  has two rows below `L` and two inside `[L, R)` and none inside the replacement
+  interval, so the replay carries a fragment of its history rather than none of it.
+  A fix that only stopped the removals would publish that fragment, and the resume
+  off one of the re-versioned boundaries then reads it as the whole of the key's past.
+- The encoding the two sides have to agree on. **Done** -
+  `testOutputKeyDomainLeavesInTheCheckpointKeyEncoding` asserts the collected keys of
+  a SYMBOL-partitioned view are the resolved strings a partition map holds and
+  explicitly not the four-byte symbol ids the scans key by, and that a LONG-keyed view
+  - where one projector serves both - still comes back keyed. This is the case that
+  fails if the second projector is ever dropped, and it fails loudly rather than as a
+  silently inert splice.
+- The fragment refusal. **Done** -
+  `testOutputKeyDomainRefusesTheFragmentABudgetLeaves`, which drives the key budget to
+  one and requires `collectOutputKeys` to refuse rather than answer.
+- The plan's half of the hand-off. **Done** -
+  `testRowsDependencyPublishesTheKeysItsReplayDescribes`, which pairs a ROWS
+  localization carrying a domain against a RANGE one that carries the guarantee
+  instead, and a budget-stopped one that carries neither.
+- The five task 4 reshaped, back to the splice. **Done** - the three in
+  `LiveViewCheckpointTimelineRepairTest` assert their per-entry root identities again
+  and the shared truncate helper is gone, `LiveViewCheckpointSoakTest`'s ROWS arm
+  requires the compaction redirect again, and the repair-capture elision case is back
+  on a ROWS view. That last one needed a new fixture: the sharing it measures is now
+  between two boundaries at which a key *inside* `Q` was untouched, so its trickle
+  round-robins over four keys instead of feeding one, and its history is deep enough
+  that the bounded rebuild prices cheaper than a resume.
+- Not covered: a repair whose `Q` and whose live key set coincide, which is the dense
+  workload the whole task exists for. Every case here deliberately has keys outside
+  `Q`, because that is where the rule is load-bearing; the coinciding case is the one
+  that behaves exactly as it did before task 4.
 
 Not covered, and worth naming: nothing asserts the *purge* half end to end under a
 concurrent reader pin - the generation gates are shared across the publications
@@ -1969,6 +2109,7 @@ worker, under the same serialization the reconciliation sweep always had.
 | tasks 1+2 | **landed**: 14 production classes, ~1,180 lines of code and test removed against ~180 added | never estimated - it is the scope decision rather than a phase. Almost all of the addition is the fixture the two orphan cases needed once their injection point moved to compaction, which accepts only a part-dead segment and so needs ring sharing and overlapping corrections that the suite's other cases do not produce |
 | task 3 | **landed**: no code at all - four edits to the #6939 body | never estimated - it is the deliverable's description rather than the deliverable. Sized here only to record that the reclamation work now has a public statement, and that it needed a Tradeoffs bullet rather than a corrected sentence, because the garbage half and the retained half are two claims and the old line collapsed them into one |
 | task 4 | **landed**: 3 production classes, ~15 lines of code and ~45 of javadoc, plus ~250 lines of new test and five existing cases reshaped | never estimated - it is pre-existing repair behaviour rather than reclamation work. The code is one predicate on the plan and one term on the gate that opens a repair capture; the weight is in the tests, because proving the defect needs two corrections and a control, and because disabling the ROWS splice moved every case that asserted it |
+| task 5 | **landed**: 6 production classes, ~150 lines of code and about as much javadoc, plus ~250 lines of test and task 4's five cases restored | never estimated either. Larger than task 4 and for a reason the task statement did not name: the publication filter itself is one skip in the freeze and one guard in the removal, and the rest is getting `Q` into the encoding a partition map keys by - a second projector on the plan, a second map in the discovery, and the collection that writes one through `LiveViewSnapshotKeyCodec` off the other |
 
 ---
 
@@ -2122,21 +2263,24 @@ something this plan does.
    summing without its history. Only the ROWS shape is affected - a RANGE frame and
    an anchor segment expire by time, so the replay reconstructs every key from
    `[L, K]` - and a ROWS repair now truncates the timeline at `R` instead of
-   re-versioning boundaries it cannot describe. What is left over is the splice
+   re-versioning boundaries it cannot describe. ~~What is left over is the splice
    itself, which the gate takes away from every ROWS view rather than from the ones
-   that need it: **task 5**.
+   that need it: **task 5**.~~ **Also settled** - task 5, section 5.12. The splice is
+   back, keyed on `Q`: a ROWS repair re-versions the entries of the keys its replay
+   describes and leaves every other key's entry as the old root wrote it, so the
+   blanket refusal is gone and the correctness it bought stands.
 
 ---
 
 ## 12. Follow-up tasks
 
-Open work, in the order it should be taken. Tasks 1 and 2 came from the scope
-decision at the head of section 11 and landed together in `524a8e833b`; task 3
-followed it on 2026-07-31 (section 5.10) and task 4 on the same day (section
-5.11), so **task 5 is what is left** - and it is task 4's own leftover rather than
-anything the scope decision named. None of these is reclamation work: task 4 was
-pre-existing repair behaviour that Phase 1 made visible, and task 5 is the
-performance half of the fix task 4 landed for correctness.
+**All five are done.** Tasks 1 and 2 came from the scope decision at the head of
+section 11 and landed together in `524a8e833b`; task 3 followed it on 2026-07-31
+(section 5.10), task 4 on the same day (section 5.11) and task 5 the same day again
+(section 5.12) - and the last two are task 4's own lineage rather than anything the
+scope decision named. Neither is reclamation work: task 4 was pre-existing repair
+behaviour that Phase 1 made visible, and task 5 is the performance half of the fix
+task 4 landed for correctness.
 
 ### Task 1 - remove the retention horizon (Phase 3) - DONE (`524a8e833b`)
 
@@ -2312,7 +2456,14 @@ started. *That reading of the urgency was wrong, and step 2 is what corrected it
 the population is every ROWS view that takes two out-of-order corrections near
 each other, which needs no retention horizon and no restart.*
 
-### Task 5 - give the ROWS splice back, keyed on the output key domain
+### Task 5 - give the ROWS splice back, keyed on the output key domain - DONE (2026-07-31)
+
+Landed as the rule below; section 5.12 records what shipped and the two things
+implementing it turned up that the statement of scope did not anticipate - that the
+two sides encode a SYMBOL partition key differently and had to be made to agree
+before anything could be compared, and that filtering at the freeze rather than at
+the build makes one filter do the work of the two below. The statement of scope is
+kept as what it was checked against.
 
 Task 4's gate is correct and blunt: **no** ROWS view re-versions a boundary now,
 including the ones whose every key sits in `Q`, which is the common shape for a
@@ -2352,4 +2503,7 @@ answers.
 green with the splice back on rather than with it refused - the boundaries the
 repair crosses survive naming all eight keys - plus a case for the carried-but-
 truncated key the current gate makes unreachable, and the five cases task 4
-reshaped go back to asserting the splice.
+reshaped go back to asserting the splice. **All four met**, and two cases were added
+beyond them: the encoding the two sides have to agree on is asserted directly rather
+than only through its consequences, and so is the refusal of a budget-truncated `Q`.
+The `io.questdb.test.cairo.lv` package is green.
