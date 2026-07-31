@@ -55,6 +55,11 @@ public abstract class BaseParquetExporter {
         this.task = task;
         this.circuitBreaker = task.getCircuitBreaker();
         sqlExecutionContext.with(task.getSecurityContext(), task.getBindVariableService(), null, -1, circuitBreaker);
+        sqlExecutionContext.setMemoryTracker(task.getMemoryTracker());
+    }
+
+    public void clearMemoryTracker() {
+        sqlExecutionContext.setMemoryTracker(null);
     }
 
     protected void drainHybridFrames(
