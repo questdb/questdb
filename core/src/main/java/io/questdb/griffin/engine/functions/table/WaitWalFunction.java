@@ -90,8 +90,8 @@ class WaitWalFunction extends BooleanFunction implements Function {
         }
 
         final Fiber fiber = SqlExecutionSuspension.currentFiber();
-        if (fiber != null) {
-            return waitInFiber(fiber);
+        if (fiber != null && waitInFiber(fiber)) {
+            return true;
         }
 
         // Legacy polling fallback.
@@ -203,13 +203,12 @@ class WaitWalFunction extends BooleanFunction implements Function {
                 }
                 final FiberWalWaitRegistration walRegistration = coordinator.acquireWal(token, seqTxn);
                 if (seqTxnTracker.registerWaiter(walRegistration) != SourceRegistrationResult.ACCEPTED
-                        || !coordinator.tryAcceptSource(token)
                         || !coordinator.armTimer(token, timerShards, clock, wakeIntervalMillis)) {
                     throw abortedException();
                 }
-                int reason = fiber.suspendWait(token);
-                if (reason == FiberWaitCoordinator.REASON_ABORTED) {
-                    throw new IllegalStateException("fiber refused wait_wal_table suspension");
+                int reason = fiber.suspendWait(token, FiberWaitCoordinator.REASON_NONE);
+                if (reason == FiberWaitCoordinator.REASON_NONE) {
+                    return false;
                 }
                 if (reason == FiberWaitCoordinator.REASON_SHUTDOWN) {
                     throw abortedException();

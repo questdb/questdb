@@ -6393,27 +6393,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
                             collectColumnIndexes(sqlNodeStack, master.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
-                            master = new AsyncFilteredRecordCursorFactory(
-                                    executionContext.getCairoEngine(),
-                                    configuration,
-                                    executionContext.getMessageBus(),
-                                    master,
-                                    filter,
-                                    filterUsedColumnIndexes,
-                                    reduceTaskFactory,
-                                    compileWorkerFiltersConditionally(
-                                            executionContext,
-                                            filter,
-                                            executionContext.getSharedQueryWorkerCount(),
-                                            filterExpr,
-                                            master.getMetadata()
-                                    ),
-                                    deepClone(expressionNodePool, filterExpr),
-                                    null,
-                                    0,
-                                    executionContext.getSharedQueryWorkerCount(),
-                                    SqlHints.hasEnablePreTouchHint(model, masterAlias)
-                            );
+                            ObjList<Function> workerFilters = null;
+                            try {
+                                workerFilters = compileWorkerFiltersConditionally(
+                                        executionContext,
+                                        filter,
+                                        executionContext.getSharedQueryWorkerCount(),
+                                        filterExpr,
+                                        master.getMetadata()
+                                );
+                                master = new AsyncFilteredRecordCursorFactory(
+                                        executionContext.getCairoEngine(),
+                                        configuration,
+                                        executionContext.getMessageBus(),
+                                        master,
+                                        filter,
+                                        filterUsedColumnIndexes,
+                                        reduceTaskFactory,
+                                        workerFilters,
+                                        deepClone(expressionNodePool, filterExpr),
+                                        null,
+                                        0,
+                                        executionContext.getSharedQueryWorkerCount(),
+                                        SqlHints.hasEnablePreTouchHint(model, masterAlias)
+                                );
+                                workerFilters = null;
+                            } finally {
+                                Misc.freeObjList(workerFilters);
+                            }
                         } else {
                             master = new FilteredRecordCursorFactory(master, filter);
                         }
@@ -6443,59 +6450,70 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode constFilterExpr = model.getConstWhereClause();
             if (constFilterExpr != null) {
                 Function filter = functionParser.parseFunction(constFilterExpr, null, executionContext);
-                if (!isBoolean(filter.getType())) {
-                    Misc.free(filter);
-                    throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
-                }
-                filter.init(null, executionContext);
-                if (filter.isConstant()) {
-                    boolean filterValue = filter.getBool(null);
-                    Misc.free(filter);
-                    if (!filterValue) {
-                        // do not copy metadata here
-                        // this would have been JoinRecordMetadata, which is new instance anyway
-                        // we have to make sure that this metadata is safely transitioned
-                        // to empty cursor factory
-                        RecordMetadata metadata = master.getMetadata();
-                        if (metadata instanceof JoinRecordMetadata that) {
-                            that.incrementRefCount();
-                        }
-                        RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
-                        Misc.free(master);
-                        return factory;
+                try {
+                    if (!isBoolean(filter.getType())) {
+                        throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
                     }
-                } else {
-                    // make it a post-join filter (same as for post join where clause above)
-                    if (executionContext.isParallelFilterEnabled()
-                            && master.supportsPageFrameCursor()
-                            && filter.supportsParallelism()) {
-                        IntHashSet filterUsedColumnIndexes = new IntHashSet();
-                        collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
+                    filter.init(null, executionContext);
+                    if (filter.isConstant()) {
+                        boolean filterValue = filter.getBool(null);
+                        filter = Misc.free(filter);
+                        if (!filterValue) {
+                            // do not copy metadata here
+                            // this would have been JoinRecordMetadata, which is new instance anyway
+                            // we have to make sure that this metadata is safely transitioned
+                            // to empty cursor factory
+                            RecordMetadata metadata = master.getMetadata();
+                            if (metadata instanceof JoinRecordMetadata that) {
+                                that.incrementRefCount();
+                            }
+                            RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
+                            Misc.free(master);
+                            return factory;
+                        }
+                    } else {
+                        // make it a post-join filter (same as for post join where clause above)
+                        if (executionContext.isParallelFilterEnabled()
+                                && master.supportsPageFrameCursor()
+                                && filter.supportsParallelism()) {
+                            IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                            collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
 
-                        master = new AsyncFilteredRecordCursorFactory(
-                                executionContext.getCairoEngine(),
-                                configuration,
-                                executionContext.getMessageBus(),
-                                master,
-                                filter,
-                                filterUsedColumnIndexes,
-                                reduceTaskFactory,
-                                compileWorkerFiltersConditionally(
+                            ObjList<Function> workerFilters = null;
+                            try {
+                                workerFilters = compileWorkerFiltersConditionally(
                                         executionContext,
                                         filter,
                                         executionContext.getSharedQueryWorkerCount(),
                                         constFilterExpr,
                                         master.getMetadata()
-                                ),
-                                deepClone(expressionNodePool, constFilterExpr),
-                                null,
-                                0,
-                                executionContext.getSharedQueryWorkerCount(),
-                                SqlHints.hasEnablePreTouchHint(model, masterAlias)
-                        );
-                    } else {
-                        master = new FilteredRecordCursorFactory(master, filter);
+                                );
+                                master = new AsyncFilteredRecordCursorFactory(
+                                        executionContext.getCairoEngine(),
+                                        configuration,
+                                        executionContext.getMessageBus(),
+                                        master,
+                                        filter,
+                                        filterUsedColumnIndexes,
+                                        reduceTaskFactory,
+                                        workerFilters,
+                                        deepClone(expressionNodePool, constFilterExpr),
+                                        null,
+                                        0,
+                                        executionContext.getSharedQueryWorkerCount(),
+                                        SqlHints.hasEnablePreTouchHint(model, masterAlias)
+                                );
+                                workerFilters = null;
+                            } finally {
+                                Misc.freeObjList(workerFilters);
+                            }
+                        } else {
+                            master = new FilteredRecordCursorFactory(master, filter);
+                        }
+                        filter = null;
                     }
+                } finally {
+                    Misc.free(filter);
                 }
             }
             return master;

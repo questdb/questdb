@@ -236,9 +236,9 @@ public class SleepFunctionFactory implements FunctionFactory {
                         if (!coordinator.armTimer(token, shards, clock, chunk)) {
                             throw CairoException.nonCritical().put("sleep aborted, connection closing");
                         }
-                        int reason = fiber.suspendWait(token);
-                        if (reason == FiberWaitCoordinator.REASON_ABORTED) {
-                            throw new IllegalStateException("fiber refused sleep suspension");
+                        int reason = fiber.suspendWait(token, FiberWaitCoordinator.REASON_NONE);
+                        if (reason == FiberWaitCoordinator.REASON_NONE) {
+                            break;
                         }
                         if (reason == FiberWaitCoordinator.REASON_SHUTDOWN) {
                             throw CairoException.nonCritical().put("sleep aborted, connection closing");

@@ -787,16 +787,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     .$(", frameIndex=").$(localTask.getFrameIndex())
                     .$(", frameCount=").$(frameCount)
                     .I$();
-            int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
-            if (th instanceof CairoException e) {
-                interruptReason = e.getInterruptionReason();
-            }
             // Route the error through the local task so the collector sees it via
             // task.hasError() and can re-throw the original class via task.buildError().
             // Re-throwing here would let the outer catch in the collector wrap the
             // typed exception into a generic CairoException, losing the original class.
             localTask.setErrorMsg(th);
-            cancel(interruptReason);
+            cancelOnReducerError(th);
         } finally {
             SuspensionScope.restoreMode(suspensionScope, previousMode);
             reduceFinishedCounter.incrementAndGet();

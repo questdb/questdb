@@ -24,7 +24,6 @@
 
 package io.questdb.mp.continuation;
 
-import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -33,6 +32,8 @@ import jdk.internal.vm.Continuation;
 import jdk.internal.vm.ContinuationScope;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
+
+import java.util.concurrent.locks.Lock;
 
 public final class Fiber implements FiberWaitCoordinator.Target {
     public static final long TOKEN_REFUSED = 0;
@@ -83,8 +84,11 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private FiberTask outcomeTask;
     private int outcomeType;
     private int registryIndex = -1;
+    private volatile long reservationEpoch;
     @SuppressWarnings("unused")
     private volatile int retirementState;
+    private Lock roleSwitchReadLock;
+    private int roleSwitchReadLockDepth;
     @SuppressWarnings("unused")
     private volatile int waitAdmission;
     private int yieldReason = YIELD_WAIT;
@@ -160,6 +164,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                         current,
                         withExecutionState(current, EXECUTION_RUNNABLE)
                 )) {
+                    pool.onUnparked();
                     requestRun();
                     return true;
                 }
@@ -191,6 +196,14 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return fiberRandom;
     }
 
+    public long getReservationEpoch() {
+        final long state = executionState;
+        if (executionState(state) != EXECUTION_RESERVED) {
+            throw new IllegalStateException("fiber reservation is not active");
+        }
+        return executionToken(state);
+    }
+
     public FiberWaitCoordinator getWaitCoordinator() {
         return waitCoordinator;
     }
@@ -211,13 +224,13 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     public int suspendWait(long token) {
+        return suspendWait(token, FiberWaitCoordinator.REASON_NONE);
+    }
+
+    public int suspendWait(long token, int abortedReason) {
         if (!waitCoordinator.seal(token)) {
             releaseWaitAdmission();
-            final int reason = waitCoordinator.consume(token);
-            if (reason != FiberWaitCoordinator.REASON_NONE) {
-                return reason;
-            }
-            throw new IllegalStateException("fiber wait cannot be sealed");
+            return waitCoordinator.consumeWait(token, abortedReason);
         }
         releaseWaitAdmission();
         final long current = executionState;
@@ -225,16 +238,16 @@ public final class Fiber implements FiberWaitCoordinator.Target {
             throw new IllegalStateException("fiber wait token changed");
         }
         if (executionState(current) == EXECUTION_RESUME_PENDING) {
-            return waitCoordinator.consume(token);
+            return waitCoordinator.consumeWait(token, abortedReason);
         }
         if (executionState(current) != EXECUTION_PARKING) {
             throw new IllegalStateException("fiber wait is not parking");
         }
         if (suspend()) {
-            return waitCoordinator.consume(token);
+            return waitCoordinator.consumeWait(token, abortedReason);
         }
         waitCoordinator.abort(token);
-        return waitCoordinator.consume(token);
+        return waitCoordinator.consumeWait(token, abortedReason);
     }
 
     /**
@@ -243,6 +256,9 @@ public final class Fiber implements FiberWaitCoordinator.Target {
      * must use this over {@link #beginWaitBuild(int)}.
      */
     public long tryBeginWaitBuild(int sourceCount) {
+        if (isShutdown) {
+            return TOKEN_REFUSED;
+        }
         if (!pool.beginWaitArm()) {
             return TOKEN_REFUSED;
         }
@@ -325,20 +341,48 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         assignedTask = null;
     }
 
+    private Throwable releaseRoleSwitchReadLock(boolean isTaskLeak) {
+        if (roleSwitchReadLockDepth == 0) {
+            return null;
+        }
+        final int leakedDepth = roleSwitchReadLockDepth;
+        Throwable failure = isTaskLeak
+                ? new IllegalStateException("fiber task leaked role-switch read lock [depth=" + leakedDepth + ']')
+                : null;
+        final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        final Fiber previousFiber = scope.fiber;
+        scope.fiber = this;
+        try {
+            final Lock lock = roleSwitchReadLock;
+            while (roleSwitchReadLockDepth > 0) {
+                lock.unlock();
+            }
+        } catch (Throwable th) {
+            if (failure == null) {
+                failure = th;
+            } else if (failure != th) {
+                failure.addSuppressed(th);
+            }
+        } finally {
+            scope.fiber = previousFiber;
+        }
+        return failure;
+    }
+
     private void releaseWaitAdmission() {
         if (Unsafe.cas(this, WAIT_ADMISSION_OFFSET, 1, 0)) {
             pool.endWaitArm();
         }
     }
 
-    private void rollbackUnpublished(FiberTask task) {
+    private void rollbackUnpublished(FiberTask task, long reservationEpoch) {
         if (assignedTask != task
                 || executionState != packExecutionState(0, EXECUTION_RUNNABLE)
                 || notificationState != NOTIFICATION_IDLE) {
             throw new IllegalStateException("fiber cannot roll back unpublished task");
         }
         clearAssignedTask();
-        executionState = packExecutionState(0, EXECUTION_RESERVED);
+        executionState = packExecutionState(reservationEpoch, EXECUTION_RESERVED);
     }
 
     private void runAssignedTask() {
@@ -353,6 +397,14 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         } catch (Throwable th) {
             error = th;
         }
+        final Throwable lockLeak = releaseRoleSwitchReadLock(true);
+        if (lockLeak != null) {
+            if (error == null) {
+                error = lockLeak;
+            } else {
+                error.addSuppressed(lockLeak);
+            }
+        }
         if (error == null && !isDone) {
             final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
             task.updateCancellationBinding(scope.cancellationSignal, scope.cancellationSignalGeneration);
@@ -365,19 +417,18 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     private void taskRunnerLoop() {
         while (!isShutdown) {
-            if (assignedTask == null) {
-                yieldReason = YIELD_FREE;
-                if (!suspend()) {
-                    Os.pause();
+            if (assignedTask != null) {
+                yieldReason = YIELD_WAIT;
+                runAssignedTask();
+                if (isShutdown) {
+                    break;
                 }
+            }
+            yieldReason = YIELD_FREE;
+            if (suspend()) {
                 continue;
             }
-            yieldReason = YIELD_WAIT;
-            runAssignedTask();
-            yieldReason = YIELD_FREE;
-            if (!suspend()) {
-                Os.pause();
-            }
+            break;
         }
         abandonAssignedTask();
     }
@@ -407,17 +458,12 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     @Nullable
-    FiberTask detachTaskAfterDriverFailure(Outcome mountedOutcome) {
-        final FiberTask task = assignedTask != null
+    FiberTask getTaskAfterDriverFailure(Outcome mountedOutcome) {
+        return assignedTask != null
                 ? assignedTask
                 : outcomeTask != null
                   ? outcomeTask
                   : mountedOutcome.task;
-        clearAssignedTask();
-        outcomeError = null;
-        outcomeTask = null;
-        outcomeType = OUTCOME_NONE;
-        return task;
     }
 
     void finishProcessing() {
@@ -469,6 +515,15 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return registryIndex;
     }
 
+    @Nullable
+    Lock getRoleSwitchReadLock() {
+        return roleSwitchReadLock;
+    }
+
+    int getRoleSwitchReadLockDepth() {
+        return roleSwitchReadLockDepth;
+    }
+
     int getYieldReason() {
         return yieldReason;
     }
@@ -482,16 +537,33 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     boolean isReserved() {
-        if (executionState != packExecutionState(0, EXECUTION_RESERVED)) {
+        if (executionState(executionState) != EXECUTION_RESERVED) {
             return false;
         }
         final int state = notificationState;
         return state == NOTIFICATION_IDLE || state == NOTIFICATION_PROCESSING;
     }
 
+    boolean isReserved(long reservationEpoch) {
+        final long state = executionState;
+        if (state != packExecutionState(reservationEpoch, EXECUTION_RESERVED)) {
+            return false;
+        }
+        final int notification = notificationState;
+        return notification == NOTIFICATION_IDLE || notification == NOTIFICATION_PROCESSING;
+    }
+
     void markRetired() {
         clearAssignedTask();
-        executionState = packExecutionState(0, EXECUTION_DONE);
+        while (true) {
+            final long current = executionState;
+            if (Unsafe.cas(this, EXECUTION_STATE_OFFSET, current, packExecutionState(0, EXECUTION_DONE))) {
+                if (executionState(current) == EXECUTION_WAITING) {
+                    pool.onUnparked();
+                }
+                break;
+            }
+        }
         outcomeError = null;
         outcomeTask = null;
         outcomeType = OUTCOME_NONE;
@@ -511,12 +583,47 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         }
     }
 
-    void prepareDriverFailure() {
+    void prepareDriverFailure(Throwable driverFailure) throws Throwable {
         isShutdown = true;
+        Throwable failure = null;
         try {
             waitCoordinator.quarantine();
-        } finally {
+        } catch (Throwable th) {
+            failure = th;
+        }
+        try {
             releaseWaitAdmission();
+        } catch (Throwable th) {
+            if (failure == null) {
+                failure = th;
+            } else if (failure != th) {
+                failure.addSuppressed(th);
+            }
+        }
+        if (!continuation.isDone()) {
+            try {
+                runMounted();
+            } catch (Throwable th) {
+                if (failure == null) {
+                    failure = th;
+                } else if (failure != th) {
+                    failure.addSuppressed(th);
+                }
+            }
+        }
+        if (outcomeError != null) {
+            if (outcomeError != driverFailure) {
+                driverFailure.addSuppressed(outcomeError);
+            }
+        }
+        final Throwable lockFailure = releaseRoleSwitchReadLock(false);
+        if (failure == null) {
+            failure = lockFailure;
+        } else if (lockFailure != null && failure != lockFailure) {
+            failure.addSuppressed(lockFailure);
+        }
+        if (failure != null) {
+            throw failure;
         }
     }
 
@@ -533,9 +640,11 @@ public final class Fiber implements FiberWaitCoordinator.Target {
             final long current = executionState;
             final int state = executionState(current);
             if (state == EXECUTION_PARKING) {
+                pool.onParked();
                 if (Unsafe.cas(this, EXECUTION_STATE_OFFSET, current, withExecutionState(current, EXECUTION_WAITING))) {
                     return;
                 }
+                pool.onUnparked();
             } else if (state == EXECUTION_RESUME_PENDING) {
                 if (Unsafe.cas(this, EXECUTION_STATE_OFFSET, current, withExecutionState(current, EXECUTION_RUNNABLE))) {
                     requestRun();
@@ -544,17 +653,6 @@ public final class Fiber implements FiberWaitCoordinator.Target {
             } else {
                 throw invalidWaitState(state);
             }
-        }
-    }
-
-    void releaseReservation() {
-        if (!Unsafe.cas(
-                this,
-                EXECUTION_STATE_OFFSET,
-                packExecutionState(0, EXECUTION_RESERVED),
-                packExecutionState(0, EXECUTION_FREE)
-        )) {
-            throw new IllegalStateException("fiber is not reserved");
         }
     }
 
@@ -585,23 +683,29 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         }
     }
 
-    void reserve() {
+    long reserve() {
+        if (reservationEpoch == EXECUTION_TOKEN_MASK) {
+            throw new IllegalStateException("fiber reservation epoch exhausted");
+        }
+        final long nextEpoch = reservationEpoch + 1;
         if (!Unsafe.cas(
                 this,
                 EXECUTION_STATE_OFFSET,
                 packExecutionState(0, EXECUTION_FREE),
-                packExecutionState(0, EXECUTION_RESERVED)
+                packExecutionState(nextEpoch, EXECUTION_RESERVED)
         )) {
             throw new IllegalStateException("fiber is not free");
         }
+        reservationEpoch = nextEpoch;
+        return nextEpoch;
     }
 
     void restageAndRequestRun(FiberTask task) {
-        reserve();
+        final long reservationEpoch = reserve();
         try {
-            stageAndRequestRun(task);
+            stageAndRequestRun(task, reservationEpoch);
         } catch (RuntimeException | Error th) {
-            releaseReservation();
+            tryReleaseReservation(reservationEpoch);
             throw th;
         }
     }
@@ -619,18 +723,21 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         try {
             continuation.run();
         } finally {
-            if (assignedTask != null) {
-                assignedCancellationSignal = scope.cancellationSignal;
-                assignedCancellationSignalGeneration = scope.cancellationSignalGeneration;
-                assignedTask.updateCancellationBinding(
-                        assignedCancellationSignal,
-                        assignedCancellationSignalGeneration
-                );
+            try {
+                if (assignedTask != null) {
+                    assignedCancellationSignal = scope.cancellationSignal;
+                    assignedCancellationSignalGeneration = scope.cancellationSignalGeneration;
+                    assignedTask.updateCancellationBinding(
+                            assignedCancellationSignal,
+                            assignedCancellationSignalGeneration
+                    );
+                }
+            } finally {
+                scope.cancellationSignal = previousCancellationSignal;
+                scope.cancellationSignalGeneration = previousCancellationSignalGeneration;
+                scope.fiber = previousFiber;
+                scope.mode = previousMode;
             }
-            scope.cancellationSignal = previousCancellationSignal;
-            scope.cancellationSignalGeneration = previousCancellationSignalGeneration;
-            scope.fiber = previousFiber;
-            scope.mode = previousMode;
         }
     }
 
@@ -638,8 +745,14 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         this.registryIndex = registryIndex;
     }
 
-    void stage(FiberTask task) {
-        if (assignedTask != null || executionState != packExecutionState(0, EXECUTION_RESERVED)) {
+    void setRoleSwitchReadLock(@Nullable Lock lock, int depth) {
+        roleSwitchReadLock = lock;
+        roleSwitchReadLockDepth = depth;
+    }
+
+    void stage(FiberTask task, long reservationEpoch) {
+        if (assignedTask != null
+                || executionState != packExecutionState(reservationEpoch, EXECUTION_RESERVED)) {
             throw new IllegalStateException("fiber is not reserved");
         }
         task.captureCancellationBinding();
@@ -649,7 +762,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         if (!Unsafe.cas(
                 this,
                 EXECUTION_STATE_OFFSET,
-                packExecutionState(0, EXECUTION_RESERVED),
+                packExecutionState(reservationEpoch, EXECUTION_RESERVED),
                 packExecutionState(0, EXECUTION_RUNNABLE)
         )) {
             clearAssignedTask();
@@ -657,17 +770,17 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         }
     }
 
-    void stageAndRequestRun(FiberTask task) {
-        stage(task);
+    void stageAndRequestRun(FiberTask task, long reservationEpoch) {
+        stage(task, reservationEpoch);
         try {
             requestRun();
         } catch (RuntimeException | Error th) {
-            rollbackUnpublished(task);
+            rollbackUnpublished(task, reservationEpoch);
             throw th;
         }
     }
 
-    boolean stageForDirectMountOrRequestRun(FiberTask task) {
+    boolean stageForDirectMountOrRequestRun(FiberTask task, long reservationEpoch) {
         while (true) {
             final int state = notificationState;
             if (state == NOTIFICATION_IDLE) {
@@ -675,7 +788,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                     continue;
                 }
                 try {
-                    stage(task);
+                    stage(task, reservationEpoch);
                     return true;
                 } catch (Throwable th) {
                     notificationState = NOTIFICATION_IDLE;
@@ -683,7 +796,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 }
             }
             if (state == NOTIFICATION_PROCESSING) {
-                stageAndRequestRun(task);
+                stageAndRequestRun(task, reservationEpoch);
                 return false;
             }
             throw new IllegalStateException("fiber notification is not idle or processing");
@@ -722,6 +835,18 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 return true;
             }
         }
+    }
+
+    boolean tryReleaseReservation(long reservationEpoch) {
+        if (reservationEpoch < 1 || reservationEpoch > EXECUTION_TOKEN_MASK) {
+            return false;
+        }
+        return Unsafe.cas(
+                this,
+                EXECUTION_STATE_OFFSET,
+                packExecutionState(reservationEpoch, EXECUTION_RESERVED),
+                packExecutionState(0, EXECUTION_FREE)
+        );
     }
 
     static final class Outcome {

@@ -76,11 +76,12 @@ public final class FiberSlotWaitRegistration extends FiberWaitRegistrationNode<F
     }
 
     public SourceRegistrationResult register(FiberSlotWaitQueue queue) {
+        final long registrationToken = token;
         final SourceRegistrationResult result = queue.register(this);
         if (result == SourceRegistrationResult.NOT_ACCEPTED) {
             releaseNew();
         }
-        return result;
+        return coordinator.completeSourceRegistration(registrationToken, this, result);
     }
 
     public int takeSlot() {
@@ -116,6 +117,11 @@ public final class FiberSlotWaitRegistration extends FiberWaitRegistrationNode<F
         } else if (Unsafe.cas(this, STATE_OFFSET, STATE_FIRING_CANCELLED, STATE_FREE)) {
             releaseGrantedSlot();
         }
+    }
+
+    @Override
+    boolean isForToken(long token) {
+        return this.token == token;
     }
 
     boolean markGranted(int slot) {
@@ -159,11 +165,37 @@ public final class FiberSlotWaitRegistration extends FiberWaitRegistrationNode<F
         final int slot = grantedSlot;
         final FiberSlotWaitQueue grantedQueue = queue;
         clear();
-        coordinator.release(this);
-        if (grantedQueue == null) {
-            throw new IllegalStateException("granted slot registration has no queue");
+        Throwable failure = null;
+        try {
+            coordinator.release(this);
+        } catch (RuntimeException | Error th) {
+            failure = th;
         }
-        grantedQueue.releaseGrantedSlot(slot);
+        if (grantedQueue == null) {
+            final IllegalStateException th =
+                    new IllegalStateException("granted slot registration has no queue");
+            if (failure == null) {
+                failure = th;
+            } else {
+                failure.addSuppressed(th);
+            }
+        } else {
+            try {
+                grantedQueue.releaseGrantedSlot(slot);
+            } catch (RuntimeException | Error th) {
+                if (failure == null) {
+                    failure = th;
+                } else if (failure != th) {
+                    failure.addSuppressed(th);
+                }
+            }
+        }
+        if (failure instanceof RuntimeException runtimeException) {
+            throw runtimeException;
+        }
+        if (failure != null) {
+            throw (Error) failure;
+        }
     }
 
     private boolean releaseNew() {

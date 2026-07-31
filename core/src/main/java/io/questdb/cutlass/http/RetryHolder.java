@@ -30,6 +30,7 @@ class RetryHolder implements Mutable {
     public long nextRunTimestamp;
     public Retry retry;
     public long taskIncarnation;
+    RetryHolder nextFree;
 
     @Override
     public void clear() {

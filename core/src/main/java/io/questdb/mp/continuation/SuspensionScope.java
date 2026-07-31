@@ -27,6 +27,8 @@ package io.questdb.mp.continuation;
 import io.questdb.std.CarrierLocal;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.locks.Lock;
+
 public final class SuspensionScope {
     private static final CarrierLocal<CarrierScope> SCOPE = CarrierLocal.withInitial(CarrierScope::new);
 
@@ -34,6 +36,14 @@ public final class SuspensionScope {
         final CarrierScope scope = SCOPE.get();
         final Mode previous = scope.mode;
         scope.mode = mode;
+        return previous;
+    }
+
+    // The shared scope handle halves the carrier-identity lookups of an enter/restore pair; only
+    // valid when no suspension can occur in between, which BLOCKING guarantees.
+    public static @Nullable Mode enterBlocking(CarrierScope scope) {
+        final Mode previous = scope.mode;
+        scope.mode = Mode.BLOCKING;
         return previous;
     }
 
@@ -47,6 +57,26 @@ public final class SuspensionScope {
                 ? cancellationSignal.getGeneration()
                 : CancellationBinding.NO_GENERATION;
         return previous;
+    }
+
+    public static void enterRoleSwitchReadLock(CarrierScope scope, Lock lock) {
+        final Fiber fiber = scope.fiber;
+        final Lock currentLock = fiber != null ? fiber.getRoleSwitchReadLock() : scope.roleSwitchReadLock;
+        final int currentDepth = fiber != null
+                ? fiber.getRoleSwitchReadLockDepth()
+                : scope.roleSwitchReadLockDepth;
+        if (currentLock != null && currentLock != lock) {
+            throw new IllegalStateException("another role-switch read lock is already held");
+        }
+        if (currentDepth == Integer.MAX_VALUE) {
+            throw new IllegalStateException("role-switch read lock depth overflow");
+        }
+        if (fiber != null) {
+            fiber.setRoleSwitchReadLock(lock, currentDepth + 1);
+        } else {
+            scope.roleSwitchReadLock = lock;
+            scope.roleSwitchReadLockDepth = currentDepth + 1;
+        }
     }
 
     public static CancellationBinding getCancellationBindingScratch() {
@@ -65,30 +95,50 @@ public final class SuspensionScope {
         return SCOPE.get().mode;
     }
 
-    // Distinct from Fiber.isMounted(): a mounted fiber inside a BLOCKING scope must make blocking
-    // progress instead of parking.
-    public static boolean isFiberMode() {
-        return SCOPE.get().mode == Mode.FIBER;
+    public static int getRoleSwitchReadLockDepth(CarrierScope scope, Lock lock) {
+        final Fiber fiber = scope.fiber;
+        final Lock currentLock = fiber != null ? fiber.getRoleSwitchReadLock() : scope.roleSwitchReadLock;
+        if (currentLock != lock) {
+            return 0;
+        }
+        return fiber != null ? fiber.getRoleSwitchReadLockDepth() : scope.roleSwitchReadLockDepth;
     }
 
-    // The shared scope handle halves the carrier-identity lookups of an enter/restore pair; only
-    // valid when no suspension can occur in between, which BLOCKING guarantees.
-    public static @Nullable Mode enterBlocking(CarrierScope scope) {
-        final Mode previous = scope.mode;
-        scope.mode = Mode.BLOCKING;
-        return previous;
+    public static boolean hasRoleSwitchReadLock(CarrierScope scope) {
+        final Fiber fiber = scope.fiber;
+        return fiber != null ? fiber.getRoleSwitchReadLock() != null : scope.roleSwitchReadLock != null;
+    }
+
+    public static boolean hasRoleSwitchReadLock(CarrierScope scope, Lock lock) {
+        final Fiber fiber = scope.fiber;
+        return (fiber != null ? fiber.getRoleSwitchReadLock() : scope.roleSwitchReadLock) == lock;
     }
 
     public static void initializeCarrier() {
         SCOPE.get();
     }
 
-    public static void restoreMode(CarrierScope scope, @Nullable Mode mode) {
-        scope.mode = mode;
+    // Distinct from Fiber.isMounted(): a mounted fiber inside a BLOCKING scope must make blocking
+    // progress instead of parking.
+    public static boolean isFiberMode() {
+        return SCOPE.get().mode == Mode.FIBER;
     }
 
-    public static CarrierScope scope() {
-        return SCOPE.get();
+    public static void leaveRoleSwitchReadLock(CarrierScope scope, Lock lock) {
+        final Fiber fiber = scope.fiber;
+        final Lock currentLock = fiber != null ? fiber.getRoleSwitchReadLock() : scope.roleSwitchReadLock;
+        final int currentDepth = fiber != null
+                ? fiber.getRoleSwitchReadLockDepth()
+                : scope.roleSwitchReadLockDepth;
+        if (currentLock != lock || currentDepth < 1) {
+            throw new IllegalMonitorStateException("role-switch read lock is not held by this execution");
+        }
+        if (fiber != null) {
+            fiber.setRoleSwitchReadLock(currentDepth == 1 ? null : lock, currentDepth - 1);
+        } else {
+            scope.roleSwitchReadLock = currentDepth == 1 ? null : lock;
+            scope.roleSwitchReadLockDepth = currentDepth - 1;
+        }
     }
 
     public static void restore(@Nullable Mode mode) {
@@ -113,6 +163,14 @@ public final class SuspensionScope {
         scope.cancellationSignalGeneration = cancellationSignalGeneration;
     }
 
+    public static void restoreMode(CarrierScope scope, @Nullable Mode mode) {
+        scope.mode = mode;
+    }
+
+    public static CarrierScope scope() {
+        return SCOPE.get();
+    }
+
     private SuspensionScope() {
     }
 
@@ -129,5 +187,7 @@ public final class SuspensionScope {
         long cancellationSignalGeneration = CancellationBinding.NO_GENERATION;
         Fiber fiber;
         Mode mode;
+        Lock roleSwitchReadLock;
+        int roleSwitchReadLockDepth;
     }
 }

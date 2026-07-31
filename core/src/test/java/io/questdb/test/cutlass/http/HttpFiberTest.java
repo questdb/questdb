@@ -153,6 +153,10 @@ public class HttpFiberTest extends AbstractTest {
                         final ActiveConnectionTracker connectionTracker = builder
                                 .getHttpServer()
                                 .getActiveConnectionTracker();
+                        TestUtils.assertEventually(() -> Assert.assertEquals(
+                                0,
+                                connectionTracker.get(ActiveConnectionTracker.PROCESSOR_JSON)
+                        ));
                         final long activeConnectionsBeforeRequest = connectionTracker.get(
                                 ActiveConnectionTracker.PROCESSOR_JSON
                         );
@@ -166,6 +170,10 @@ public class HttpFiberTest extends AbstractTest {
                             // the INSERT parks in the retry queue while the writer is busy
                             TestUtils.assertEventually(() -> Assert.assertTrue(
                                     waitProcessor.getRescheduleCount() > parkedBaseline
+                            ));
+                            TestUtils.assertEventually(() -> Assert.assertEquals(
+                                    activeConnectionsBeforeRequest + 1,
+                                    connectionTracker.get(ActiveConnectionTracker.PROCESSOR_JSON)
                             ));
                             // the client vanishes while its retry is parked; nothing
                             // observes the dead socket until the rerun touches it
@@ -410,6 +418,61 @@ public class HttpFiberTest extends AbstractTest {
     }
 
     @Test
+    public void testRequestJobReservesFiberForEachIoEvent() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(2);
+            DisconnectingHttpConnectionContext firstContext = null;
+            DisconnectingHttpConnectionContext secondContext = null;
+            HttpConnectionFiberTask firstTask = null;
+            HttpConnectionFiberTask secondTask = null;
+            WaitProcessor waitProcessor = null;
+            try {
+                final DefaultHttpServerConfiguration configuration =
+                        new DefaultHttpServerConfiguration(new DefaultTestCairoConfiguration(root));
+                firstContext = new DisconnectingHttpConnectionContext(configuration);
+                secondContext = new DisconnectingHttpConnectionContext(configuration);
+                final BatchingTestHttpDispatcher dispatcher =
+                        new BatchingTestHttpDispatcher(firstContext, secondContext);
+                waitProcessor = new WaitProcessor(
+                        configuration.getWaitProcessorConfiguration(),
+                        dispatcher
+                );
+                firstTask = HttpConnectionFiberTask.createForTesting(firstContext, dispatcher);
+                secondTask = HttpConnectionFiberTask.createForTesting(secondContext, dispatcher);
+
+                Assert.assertTrue(HttpServer.runFiberRequestJobForTesting(
+                        dispatcher,
+                        waitProcessor,
+                        runtime
+                ));
+                Assert.assertEquals(2, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(2, runtime.drain(8));
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                Assert.assertTrue(firstTask.isDone());
+                Assert.assertTrue(secondTask.isDone());
+                Assert.assertEquals(2, dispatcher.getDisconnectCount());
+            } finally {
+                closeFiberRuntime(runtime);
+                if (waitProcessor != null) {
+                    waitProcessor.close();
+                }
+                if (firstTask != null) {
+                    firstTask.closeForTesting();
+                }
+                if (secondTask != null) {
+                    secondTask.closeForTesting();
+                }
+                if (firstContext != null) {
+                    firstContext.close();
+                }
+                if (secondContext != null) {
+                    secondContext.close();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testResolvedWorkerPoolModeControlsFiberExecution() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             assertQueryExecutionMode(false, WorkerPoolMode.LEGACY, false);
@@ -630,6 +693,32 @@ public class HttpFiberTest extends AbstractTest {
         runtime.closeAfterDrained();
     }
 
+    private static class BatchingTestHttpDispatcher extends TestHttpDispatcher {
+        private final HttpConnectionContext firstContext;
+        private boolean hasPendingEvents = true;
+        private final HttpConnectionContext secondContext;
+
+        private BatchingTestHttpDispatcher(
+                HttpConnectionContext firstContext,
+                HttpConnectionContext secondContext
+        ) {
+            this.firstContext = firstContext;
+            this.secondContext = secondContext;
+        }
+
+        @Override
+        public boolean hasPendingIOEvents() {
+            return hasPendingEvents;
+        }
+
+        @Override
+        public boolean processIOQueue(IORequestProcessor<HttpConnectionContext> processor) {
+            hasPendingEvents = false;
+            return processor.onRequest(IOOperation.READ, firstContext, this)
+                    | processor.onRequest(IOOperation.READ, secondContext, this);
+        }
+    }
+
     private static class DisconnectingHttpConnectionContext extends HttpConnectionContext {
 
         private DisconnectingHttpConnectionContext(DefaultHttpServerConfiguration configuration) {
@@ -663,6 +752,10 @@ public class HttpFiberTest extends AbstractTest {
         @Override
         public int getConnectionCount() {
             return 0;
+        }
+
+        public int getDisconnectCount() {
+            return disconnectCount;
         }
 
         @Override

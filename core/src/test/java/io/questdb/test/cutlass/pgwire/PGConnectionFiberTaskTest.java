@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGConnectionContext;
 import io.questdb.cutlass.pgwire.PGConnectionFiberTask;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.pgwire.TypesAndSelect;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.Job;
@@ -157,6 +158,44 @@ public class PGConnectionFiberTaskTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRequestJobReservesFiberForEachIoEvent() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(2);
+            try (
+                    final TestContext firstContext = newTestContext();
+                    final TestContext secondContext = newTestContext()
+            ) {
+                try {
+                    final TestDispatcher dispatcher = new TestDispatcher();
+                    dispatcher.firstRequestContext = firstContext;
+                    dispatcher.secondRequestContext = secondContext;
+
+                    Assert.assertTrue(PGServer.runFiberRequestJobForTesting(
+                            dispatcher,
+                            Metrics.DISABLED,
+                            runtime
+                    ));
+                    Assert.assertEquals(2, runtime.getOutstandingTaskCount());
+                    Assert.assertEquals(2, runtime.drain(8));
+                    Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                    Assert.assertEquals(1, firstContext.callCount);
+                    Assert.assertEquals(1, secondContext.callCount);
+                    Assert.assertEquals(
+                            FiberTask.STATE_IDLE,
+                            firstContext.getFiberTask(dispatcher, Metrics.DISABLED).getScheduleState()
+                    );
+                    Assert.assertEquals(
+                            FiberTask.STATE_IDLE,
+                            secondContext.getFiberTask(dispatcher, Metrics.DISABLED).getScheduleState()
+                    );
+                } finally {
+                    close(runtime);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testReservedOwnedLaunchReleasesReservation() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(2);
@@ -168,7 +207,10 @@ public class PGConnectionFiberTaskTest extends AbstractCairoTest {
                 final Fiber fiber = runtime.tryReserveFiber();
                 Assert.assertNotNull(fiber);
                 Assert.assertEquals(2, runtime.getOutstandingTaskCount());
-                Assert.assertEquals(LaunchResult.ALREADY_OWNED, task.launchReserved(runtime, fiber, IOOperation.WRITE));
+                Assert.assertEquals(
+                        LaunchResult.ALREADY_OWNED,
+                        task.launchReserved(runtime, fiber, fiber.getReservationEpoch(), IOOperation.WRITE)
+                );
                 Assert.assertEquals(1, runtime.getOutstandingTaskCount());
 
                 Assert.assertEquals(1, runtime.drain(8));
@@ -295,8 +337,10 @@ public class PGConnectionFiberTaskTest extends AbstractCairoTest {
 
     private static class TestDispatcher implements IODispatcher<PGConnectionContext> {
         private int disconnectReason;
+        private TestContext firstRequestContext;
         private boolean isQuiesceBeforeWake;
         private FiberRuntime runtime;
+        private TestContext secondRequestContext;
         private PGConnectionFiberTask task;
         private int wakeOperation;
         private LaunchResult wakeResult;
@@ -327,7 +371,15 @@ public class PGConnectionFiberTaskTest extends AbstractCairoTest {
 
         @Override
         public boolean processIOQueue(IORequestProcessor<PGConnectionContext> processor) {
-            return false;
+            if (firstRequestContext == null) {
+                return false;
+            }
+            final TestContext firstContext = firstRequestContext;
+            final TestContext secondContext = secondRequestContext;
+            firstRequestContext = null;
+            secondRequestContext = null;
+            return processor.onRequest(IOOperation.READ, firstContext, this)
+                    | processor.onRequest(IOOperation.READ, secondContext, this);
         }
 
         @Override

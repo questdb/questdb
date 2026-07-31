@@ -207,6 +207,20 @@ public class PGServer implements Closeable {
         }
     }
 
+    @TestOnly
+    public static boolean runFiberRequestJobForTesting(
+            IODispatcher<PGConnectionContext> dispatcher,
+            Metrics metrics,
+            FiberRuntime runtime
+    ) {
+        return new PGRequestJob(
+                new AtomicBoolean(true),
+                dispatcher,
+                metrics,
+                runtime
+        ).run();
+    }
+
     public void clearSelectCache() {
         typesAndSelectCache.clear();
     }
@@ -283,6 +297,7 @@ public class PGServer implements Closeable {
         private final FiberRuntime fiberRuntime;
         private final IORequestProcessor<PGConnectionContext> processor;
         private @Nullable Fiber reservedFiber;
+        private long reservedFiberEpoch;
 
         private PGRequestJob(
                 AtomicBoolean acceptOpen,
@@ -298,13 +313,29 @@ public class PGServer implements Closeable {
                     disp.registerChannel(context, IOOperation.HEARTBEAT);
                     return false;
                 }
-                final Fiber fiber = reservedFiber;
+                Fiber fiber = reservedFiber;
+                long reservationEpoch = reservedFiberEpoch;
                 if (fiber == null) {
-                    throw new IllegalStateException("PG I/O event has no reserved fiber");
+                    fiber = fiberRuntime.tryReserveFiber();
+                    if (fiber == null) {
+                        // saturated: hand the connection back to the interest list and let the worker
+                        // back off, rather than leaving the event - and every heartbeat behind it - stuck
+                        disp.registerChannel(context, operation);
+                        return false;
+                    }
+                    reservationEpoch = fiber.getReservationEpoch();
                 }
+                reservedFiber = fiber;
+                reservedFiberEpoch = reservationEpoch;
                 final PGConnectionFiberTask task = context.getFiberTask(disp, metrics);
                 reservedFiber = null;
-                final LaunchResult result = task.launchReserved(fiberRuntime, fiber, operation);
+                reservedFiberEpoch = 0;
+                final LaunchResult result = task.launchReserved(
+                        fiberRuntime,
+                        fiber,
+                        reservationEpoch,
+                        operation
+                );
                 if (result == LaunchResult.LAUNCHED
                         || result == LaunchResult.ALREADY_OWNED
                         || result == LaunchResult.STALE_INCARNATION
@@ -329,18 +360,17 @@ public class PGServer implements Closeable {
             if (!dispatcher.hasPendingIOEvents()) {
                 return false;
             }
-            final Fiber fiber = fiberRuntime.tryReserveFiber();
-            if (fiber == null) {
-                return false;
-            }
-            reservedFiber = fiber;
+            reservedFiber = fiberRuntime.tryReserveFiber();
+            reservedFiberEpoch = reservedFiber != null ? reservedFiber.getReservationEpoch() : 0;
             try {
                 return dispatcher.processIOQueue(processor);
             } finally {
                 final Fiber unusedFiber = reservedFiber;
+                final long unusedFiberEpoch = reservedFiberEpoch;
                 reservedFiber = null;
+                reservedFiberEpoch = 0;
                 if (unusedFiber != null) {
-                    fiberRuntime.releaseReservedFiber(unusedFiber);
+                    fiberRuntime.releaseReservedFiber(unusedFiber, unusedFiberEpoch);
                 }
             }
         }

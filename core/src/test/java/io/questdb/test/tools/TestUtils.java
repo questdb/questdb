@@ -86,6 +86,7 @@ import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -105,7 +106,6 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -147,6 +147,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
@@ -163,8 +164,10 @@ import static org.junit.Assert.assertNotNull;
 public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
+    public static final String WORKER_POOL_MODE_PROPERTY = "questdb.test.worker.pool.mode";
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
-    private static final WorkerPoolMode WORKER_POOL_MODE = getWorkerPoolMode(generateRandom(LOG));
+    private static final @Nullable WorkerPoolMode WORKER_POOL_MODE_OVERRIDE = readWorkerPoolModeOverride();
+    private static final AtomicInteger WORKER_POOL_MODE_SEQUENCE = createWorkerPoolModeSequence();
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
 
     private TestUtils() {
@@ -1834,16 +1837,25 @@ public final class TestUtils {
     }
 
     /**
-     * The mode every unpinned {@link io.questdb.test.mp.TestWorkerPool} runs in, drawn once per JVM
-     * so a fiber-host-only failure is reproducible from the single seed logged at class load, and so
-     * pools that interact within one test agree on a mode. Tests whose expected values depend on the
-     * mode must pin it explicitly rather than rely on this.
+     * Returns the mode for the next unpinned {@link io.questdb.test.mp.TestWorkerPool}. Modes alternate
+     * from a randomized starting point, so a full JVM run exercises both without random streaks.
+     * {@value #WORKER_POOL_MODE_PROPERTY} pins every pool when reproducing a failure.
      */
     public static WorkerPoolMode getWorkerPoolMode() {
-        return WORKER_POOL_MODE;
+        final WorkerPoolMode override = WORKER_POOL_MODE_OVERRIDE;
+        if (override != null) {
+            return override;
+        }
+        return (WORKER_POOL_MODE_SEQUENCE.getAndIncrement() & 1) == 0
+                ? WorkerPoolMode.FIBER_HOST
+                : WorkerPoolMode.LEGACY;
     }
 
     public static WorkerPoolMode getWorkerPoolMode(Rnd rnd) {
+        final WorkerPoolMode override = WORKER_POOL_MODE_OVERRIDE;
+        if (override != null) {
+            return override;
+        }
         return rnd.nextBoolean() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY;
     }
 
@@ -2610,6 +2622,12 @@ public final class TestUtils {
         return res;
     }
 
+    private static AtomicInteger createWorkerPoolModeSequence() {
+        final WorkerPoolMode mode = getWorkerPoolMode(generateRandom(LOG));
+        LOG.info().$("test worker pool mode sequence starts with [mode=").$(mode.name()).I$();
+        return new AtomicInteger(mode == WorkerPoolMode.FIBER_HOST ? 0 : 1);
+    }
+
     // Independent oracle for the SHOW PARTITIONS / table_partitions() seqTxn column: reads
     // each live partition's seqTxn straight from _txn (native) or the _pm footer (parquet),
     // never via the factory under test. Keyed by the rendered partition name. Absent names
@@ -2744,6 +2762,16 @@ public final class TestUtils {
             default ->
                     throw new UnsupportedOperationException("Unexpected column type: " + ColumnType.nameOf(columnType));
         };
+    }
+
+    private static @Nullable WorkerPoolMode readWorkerPoolModeOverride() {
+        final String override = System.getProperty(WORKER_POOL_MODE_PROPERTY);
+        if (override != null && !override.isEmpty()) {
+            final WorkerPoolMode mode = WorkerPoolMode.valueOf(override.trim().toUpperCase(Locale.ROOT));
+            LOG.info().$("worker pool mode pinned [").$(WORKER_POOL_MODE_PROPERTY).$('=').$(mode.name()).I$();
+            return mode;
+        }
+        return null;
     }
 
     private static String recordToString(Record record, RecordMetadata metadata, boolean genericStringMatch) {

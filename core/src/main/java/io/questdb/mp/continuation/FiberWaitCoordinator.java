@@ -29,7 +29,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public final class FiberWaitCoordinator {
-    public static final int REASON_ABORTED = -1;
     public static final int REASON_CAPACITY = 6;
     public static final int REASON_CANCEL = 4;
     public static final int REASON_NONE = 0;
@@ -38,6 +37,7 @@ public final class FiberWaitCoordinator {
     public static final int REASON_SLOT = 5;
     public static final int REASON_TIMER = 1;
     public static final int REASON_WAL = 2;
+    private static final int RESULT_NOT_CONSUMED = Integer.MIN_VALUE;
     private static final int STATE_ABORTED = 5;
     private static final int STATE_ARMED = 2;
     private static final int STATE_BUILDING = 1;
@@ -145,6 +145,12 @@ public final class FiberWaitCoordinator {
 
     public synchronized FiberSlotWaitRegistration acquireSlot(long token) {
         checkBuilding(token);
+        // The lock graph is acyclic only while a wait build holds at most one slot registration:
+        // cancelInFlightRegistrations() runs under this monitor and a granted slot's release can take
+        // a peer coordinator's monitor, so a second slot source would close a lock cycle.
+        if (activeSlotRegistrations != null) {
+            throw new IllegalStateException("wait coordinator already has a slot registration");
+        }
         FiberSlotWaitRegistration registration = freeSlotRegistrations;
         if (registration == null) {
             registration = new FiberSlotWaitRegistration(this);
@@ -219,17 +225,17 @@ public final class FiberWaitCoordinator {
                 cancellationSignal,
                 expectedGeneration
         );
-        return registration.register() == SourceRegistrationResult.ACCEPTED && tryAcceptSource(token);
+        return registration.register() == SourceRegistrationResult.ACCEPTED;
     }
 
     public boolean armEvent(long token, FiberEventWaitQueue queue) {
         final FiberEventWaitRegistration registration = acquireEvent(token);
-        return registration.register(queue) == SourceRegistrationResult.ACCEPTED && tryAcceptSource(token);
+        return registration.register(queue) == SourceRegistrationResult.ACCEPTED;
     }
 
     public boolean armTimer(long token, TimerShards timerShards, MillisecondClock clock, long delayMillis) {
         final FiberTimerWaitRegistration registration = acquireTimer(token, timerShards, clock, delayMillis);
-        return registration.register() == SourceRegistrationResult.ACCEPTED && tryAcceptSource(token);
+        return registration.register() == SourceRegistrationResult.ACCEPTED;
     }
 
     public synchronized long beginBuild(int expectedSourceCount) {
@@ -253,25 +259,8 @@ public final class FiberWaitCoordinator {
     }
 
     public int consume(long token) {
-        helpFire(token);
-        final int reason;
-        final boolean isFired;
-        synchronized (this) {
-            if (this.token != token || (state != STATE_ABORTED && state != STATE_FIRED)) {
-                return REASON_NONE;
-            }
-            isFired = state == STATE_FIRED;
-            reason = isFired ? wakeReason : REASON_ABORTED;
-            acceptedSourceCount = 0;
-            expectedSourceCount = 0;
-            pendingReason = REASON_NONE;
-            state = STATE_UNARMED;
-            wakeReason = REASON_NONE;
-        }
-        if (isFired) {
-            target.abortWait(token);
-        }
-        return reason;
+        final int reason = consume0(token, REASON_NONE);
+        return reason == RESULT_NOT_CONSUMED ? REASON_NONE : reason;
     }
 
     public synchronized long currentToken() {
@@ -377,12 +366,35 @@ public final class FiberWaitCoordinator {
         consume(token);
     }
 
-    public synchronized boolean tryAcceptSource(long token) {
-        if (this.token != token || state != STATE_BUILDING || acceptedSourceCount >= expectedSourceCount) {
-            return false;
+    SourceRegistrationResult completeSourceRegistration(
+            long token,
+            FiberWaitRegistrationNode<?> registration,
+            SourceRegistrationResult result
+    ) {
+        if (result != SourceRegistrationResult.ACCEPTED) {
+            return result;
         }
-        acceptedSourceCount++;
-        return true;
+        synchronized (this) {
+            final boolean isAccepted = this.token == token
+                    && state == STATE_BUILDING
+                    && acceptedSourceCount < expectedSourceCount;
+            if (isAccepted) {
+                acceptedSourceCount++;
+                return SourceRegistrationResult.ACCEPTED;
+            }
+            if (registration.isForToken(token)) {
+                registration.cancel();
+            }
+        }
+        return SourceRegistrationResult.NOT_ACCEPTED;
+    }
+
+    int consumeWait(long token, int abortedReason) {
+        final int reason = consume0(token, abortedReason);
+        if (reason == RESULT_NOT_CONSUMED) {
+            throw new IllegalStateException("fiber wait cannot be consumed");
+        }
+        return reason;
     }
 
     synchronized void discard(FiberTimerWaitRegistration registration) {
@@ -485,6 +497,28 @@ public final class FiberWaitCoordinator {
     private void completeRelease() {
         inFlightRegistrationCount--;
         target.onWaitRegistrationReleased();
+    }
+
+    private int consume0(long token, int abortedReason) {
+        helpFire(token);
+        final int reason;
+        final boolean isFired;
+        synchronized (this) {
+            if (this.token != token || (state != STATE_ABORTED && state != STATE_FIRED)) {
+                return RESULT_NOT_CONSUMED;
+            }
+            isFired = state == STATE_FIRED;
+            reason = isFired ? wakeReason : abortedReason;
+            acceptedSourceCount = 0;
+            expectedSourceCount = 0;
+            pendingReason = REASON_NONE;
+            state = STATE_UNARMED;
+            wakeReason = REASON_NONE;
+        }
+        if (isFired) {
+            target.abortWait(token);
+        }
+        return reason;
     }
 
     private void ensureInFlight() {

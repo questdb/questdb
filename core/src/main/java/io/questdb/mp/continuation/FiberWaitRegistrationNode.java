@@ -30,4 +30,6 @@ abstract class FiberWaitRegistrationNode<T extends FiberWaitRegistrationNode<T>>
     T prevActive;
 
     public abstract boolean cancel();
+
+    abstract boolean isForToken(long token);
 }

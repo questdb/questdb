@@ -105,6 +105,7 @@ public final class FiberTimerWaitRegistration extends FiberWaitRegistrationNode<
         if (!Unsafe.cas(this, STATE_OFFSET, STATE_NEW, STATE_QUEUED)) {
             return SourceRegistrationResult.NOT_ACCEPTED;
         }
+        final long registrationToken = token;
         final SourceRegistrationResult result;
         try {
             final TimerShards timerShards = this.timerShards;
@@ -141,7 +142,7 @@ public final class FiberTimerWaitRegistration extends FiberWaitRegistrationNode<
                 releaseNew();
             }
         }
-        return result;
+        return coordinator.completeSourceRegistration(registrationToken, this, result);
     }
 
     @TestOnly
@@ -162,6 +163,11 @@ public final class FiberTimerWaitRegistration extends FiberWaitRegistrationNode<
     @Override
     public void shutdown() {
         fire(FiberWaitCoordinator.REASON_SHUTDOWN);
+    }
+
+    @Override
+    boolean isForToken(long token) {
+        return this.token == token;
     }
 
     FiberTimerWaitRegistration of(

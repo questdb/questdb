@@ -161,10 +161,11 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             final FiberRuntime runtime = new FiberRuntime(1);
             final ViewCompilerJob compilerJob = new ViewCompilerJob(engine, 1, runtime);
             Fiber reservation = runtime.tryReserveFiber();
+            assertNotNull(reservation);
+            final long reservationEpoch = reservation.getReservationEpoch();
             try {
-                assertNotNull(reservation);
                 assertFalse(compilerJob.run());
-                runtime.releaseReservedFiber(reservation);
+                runtime.releaseReservedFiber(reservation, reservationEpoch);
                 reservation = null;
 
                 assertTrue(compilerJob.run());
@@ -182,7 +183,7 @@ public class ViewCompilerJobTest extends AbstractViewTest {
                 }
             } finally {
                 if (reservation != null) {
-                    runtime.releaseReservedFiber(reservation);
+                    runtime.releaseReservedFiber(reservation, reservationEpoch);
                 }
                 runtime.beginQuiesce();
                 final long deadline = System.nanoTime() + 5_000_000_000L;

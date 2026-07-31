@@ -361,7 +361,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             return false;
         }
 
-        boolean hasReservation = true;
+        final long reservationEpoch = fiber.getReservationEpoch();
         TableToken dequeuedToken = null;
         try {
             if (!stateStore.tryDequeueCompilerTask(compilerTask)) {
@@ -371,8 +371,12 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             if (!task.prepare(compilerTask)) {
                 return false;
             }
-            final LaunchResult result = runtime.launchReserved(fiber, task, task.getIncarnation());
-            hasReservation = false;
+            final LaunchResult result = runtime.launchReserved(
+                    fiber,
+                    reservationEpoch,
+                    task,
+                    task.getIncarnation()
+            );
             if (result == LaunchResult.LAUNCHED) {
                 dequeuedToken = null;
                 return true;
@@ -380,9 +384,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             task.releaseAfterLaunchFailure();
             return false;
         } finally {
-            if (hasReservation) {
-                runtime.releaseReservedFiber(fiber);
-            }
+            runtime.releaseReservedFiber(fiber, reservationEpoch);
             if (dequeuedToken != null) {
                 stateStore.enqueueCompile(dequeuedToken);
             }

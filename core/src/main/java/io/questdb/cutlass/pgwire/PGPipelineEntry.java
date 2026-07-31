@@ -1014,7 +1014,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // Calling a compiler while being called from a compiler is a bad idea.
         sqlExecutionContext.setCacheHit(cacheHit);
         sqlExecutionContext.getCircuitBreaker().resetTimer();
-        cursor = factory.getCursor(sqlExecutionContext);
+        openCursor(sqlExecutionContext);
         copyPgResultSetColumnTypesAndNames();
         setStateExec(true);
     }
@@ -1685,9 +1685,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     // The goal would be to just recompile from text.
                     if (factory != null) {
                         try {
-                            cursor = factory.getCursor(sqlExecutionContext);
-                            sqlExecutionContext.getCircuitBreaker().copyCancelledFlagTo(queryCancellation);
-                            queryMemoryTracker = sqlExecutionContext.getMemoryTracker();
+                            openCursor(sqlExecutionContext);
                             // when factory is not null, and we can obtain cursor without issues
                             // we would exit early
                             break;
@@ -1831,6 +1829,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         for (int i = 0, n = msgParseParameterTypeOIDs.size(); i < n; i++) {
             defineBindVariableType(bindVariableService, i);
         }
+    }
+
+    // outCursor() re-installs queryCancellation and queryMemoryTracker on the context before every
+    // row batch, so every site that opens a cursor must capture them here.
+    private void openCursor(SqlExecutionContext sqlExecutionContext) throws SqlException {
+        cursor = factory.getCursor(sqlExecutionContext);
+        sqlExecutionContext.getCircuitBreaker().copyCancelledFlagTo(queryCancellation);
+        queryMemoryTracker = sqlExecutionContext.getMemoryTracker();
     }
 
     private void outColBinArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {

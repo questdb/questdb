@@ -142,6 +142,7 @@ public class LineTcpMeasurementSchedulerTest extends AbstractCairoTest {
                 runtime.initializeCarrier();
                 final Fiber reservation = runtime.tryReserveFiber();
                 Assert.assertNotNull(reservation);
+                final long reservationEpoch = reservation.getReservationEpoch();
 
                 final ObjList<NetworkIOJob> networkIOJobs = new ObjList<>();
                 networkIOJobs.add(new NoOpNetworkIOJob());
@@ -170,7 +171,7 @@ public class LineTcpMeasurementSchedulerTest extends AbstractCairoTest {
                 Assert.assertFalse(writerJob.run(Job.RUNNING_STATUS));
                 Assert.assertNotNull(tableUpdateDetails.getWriter());
 
-                runtime.releaseReservedFiber(reservation);
+                runtime.releaseReservedFiber(reservation, reservationEpoch);
                 Assert.assertTrue(writerJob.run(Job.RUNNING_STATUS));
                 Assert.assertEquals(1, runtime.drain(1));
                 Assert.assertNull(tableUpdateDetails.getWriter());

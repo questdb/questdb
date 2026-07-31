@@ -38,6 +38,7 @@ import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressHttpProcessor;
+import io.questdb.mp.ConcurrentPool;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.continuation.Fiber;
@@ -61,6 +62,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.NoOpAssociativeCache;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.str.DirectUtf8String;
@@ -72,6 +74,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class HttpServer implements Closeable {
     static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_CACHE = new NoOpAssociativeCache<>();
@@ -353,6 +356,26 @@ public class HttpServer implements Closeable {
         return url;
     }
 
+    @TestOnly
+    public static boolean runFiberRequestJobForTesting(
+            IODispatcher<HttpConnectionContext> dispatcher,
+            WaitProcessor rescheduleContext,
+            FiberRuntime runtime
+    ) {
+        try (HttpRequestProcessorSelectorFactory selectorFactory =
+                     new HttpRequestProcessorSelectorFactory(1, 1)) {
+            return new HttpRequestJob(
+                    null,
+                    dispatcher,
+                    rescheduleContext,
+                    selectorFactory,
+                    null,
+                    new AtomicBoolean(true),
+                    runtime
+            ).run();
+        }
+    }
+
     public void bind(HttpRequestHandlerFactory factory) {
         bind(factory, false);
     }
@@ -453,8 +476,9 @@ public class HttpServer implements Closeable {
         private final @Nullable FiberRuntime fiberRuntime;
         private final HttpServer owner;
         private final IORequestProcessor<HttpConnectionContext> processor;
-        private final WaitProcessor rescheduleContext;
         private @Nullable Fiber reservedFiber;
+        private long reservedFiberEpoch;
+        private final WaitProcessor rescheduleContext;
         private final @Nullable WaitProcessor.RetryLauncher retryLauncher;
         private final HttpRequestProcessorSelectorImpl selector;
         private final HttpRequestProcessorSelectorFactory selectorFactory;
@@ -482,25 +506,38 @@ public class HttpServer implements Closeable {
                         disp.registerChannel(context, IOOperation.HEARTBEAT);
                         return false;
                     }
-                    final Fiber fiber = reservedFiber;
+                    Fiber fiber = reservedFiber;
+                    long reservationEpoch = reservedFiberEpoch;
                     if (fiber == null) {
-                        throw new IllegalStateException("HTTP I/O event has no reserved fiber");
+                        fiber = runtime.tryReserveFiber();
+                        if (fiber == null) {
+                            // saturated: hand the connection back to the interest list and let the worker
+                            // back off, rather than leaving the event - and every heartbeat behind it - stuck
+                            disp.registerChannel(context, operation);
+                            return false;
+                        }
+                        reservationEpoch = fiber.getReservationEpoch();
                     }
+                    reservedFiber = fiber;
+                    reservedFiberEpoch = reservationEpoch;
                     final HttpConnectionFiberTask task = context.getFiberTask(disp, selectorFactory, rescheduleContext);
                     reservedFiber = null;
-                    return handleLaunchResult(context, task.launchReserved(runtime, fiber, operation));
+                    reservedFiberEpoch = 0;
+                    return handleLaunchResult(
+                            context,
+                            task.launchReserved(runtime, fiber, reservationEpoch, operation)
+                    );
                 };
-                this.retryLauncher = (fiber, retry, taskIncarnation) -> {
-                    boolean isReservationConsumed = false;
+                this.retryLauncher = (fiber, reservationEpoch, retry, taskIncarnation) -> {
                     try {
                         final HttpConnectionContext context = (HttpConnectionContext) retry;
                         final HttpConnectionFiberTask task = context.getFiberTask(dispatcher, selectorFactory, rescheduleContext);
-                        isReservationConsumed = true;
-                        handleLaunchResult(context, task.launchRerunReserved(runtime, fiber, taskIncarnation));
+                        handleLaunchResult(
+                                context,
+                                task.launchRerunReserved(runtime, fiber, reservationEpoch, taskIncarnation)
+                        );
                     } finally {
-                        if (!isReservationConsumed) {
-                            runtime.releaseReservedFiber(fiber);
-                        }
+                        runtime.releaseReservedFiber(fiber, reservationEpoch);
                     }
                 };
             } else {
@@ -519,17 +556,17 @@ public class HttpServer implements Closeable {
             if (runtime != null) {
                 boolean useful = false;
                 if (dispatcher.hasPendingIOEvents()) {
-                    final Fiber fiber = runtime.tryReserveFiber();
-                    if (fiber != null) {
-                        reservedFiber = fiber;
-                        try {
-                            useful = dispatcher.processIOQueue(processor);
-                        } finally {
-                            final Fiber unusedFiber = reservedFiber;
-                            reservedFiber = null;
-                            if (unusedFiber != null) {
-                                runtime.releaseReservedFiber(unusedFiber);
-                            }
+                    reservedFiber = runtime.tryReserveFiber();
+                    reservedFiberEpoch = reservedFiber != null ? reservedFiber.getReservationEpoch() : 0;
+                    try {
+                        useful = dispatcher.processIOQueue(processor);
+                    } finally {
+                        final Fiber unusedFiber = reservedFiber;
+                        final long unusedFiberEpoch = reservedFiberEpoch;
+                        reservedFiber = null;
+                        reservedFiberEpoch = 0;
+                        if (unusedFiber != null) {
+                            runtime.releaseReservedFiber(unusedFiber, unusedFiberEpoch);
                         }
                     }
                 }
@@ -585,7 +622,10 @@ public class HttpServer implements Closeable {
         private final ObjList<FactoryHolder> factoryHolders = new ObjList<>();
         private final int maxRecycledSelectors;
         private int nextHandlerId = 0;
-        private final ObjList<HttpRequestProcessorSelectorImpl> recycledSelectors = new ObjList<>();
+        private final AtomicInteger recycledSelectorCount = new AtomicInteger();
+        // Lock-free: acquire/release run twice per HTTP I/O event on every worker, so a server-wide
+        // monitor here would serialize the whole request path.
+        private final ConcurrentPool<HttpRequestProcessorSelectorImpl> recycledSelectors = new ConcurrentPool<>();
         // Per-worker selectors used by the Jobs registered to the pool in legacy mode. These
         // selectors are NOT pooled -- they live for the server's lifetime so the per-worker fast
         // path doesn't have to re-acquire across iterations.
@@ -602,8 +642,10 @@ public class HttpServer implements Closeable {
         @Override
         public void close() {
             Misc.freeObjListAndClear(selectors);
-            synchronized (recycledSelectors) {
-                Misc.freeObjListAndClear(recycledSelectors);
+            HttpRequestProcessorSelectorImpl recycled;
+            while ((recycled = recycledSelectors.pop()) != null) {
+                recycledSelectorCount.decrementAndGet();
+                Misc.free(recycled);
             }
         }
 
@@ -617,13 +659,17 @@ public class HttpServer implements Closeable {
         }
 
         HttpRequestProcessorSelectorImpl acquire() {
-            synchronized (recycledSelectors) {
-                final int size = recycledSelectors.size();
-                if (size > 0) {
-                    return recycledSelectors.popLast();
+            while (true) {
+                final HttpRequestProcessorSelectorImpl selector = recycledSelectors.pop();
+                if (selector != null) {
+                    recycledSelectorCount.decrementAndGet();
+                    return selector;
                 }
+                if (recycledSelectorCount.get() == 0) {
+                    return create();
+                }
+                Os.pause();
             }
-            return create();
         }
 
         void bind(HttpRequestHandlerFactory factory, boolean useAsDefault) {
@@ -647,9 +693,7 @@ public class HttpServer implements Closeable {
             // out-of-date, but pooled selectors are only valid for already-
             // bound URLs. bind() runs at server setup before any client
             // traffic reaches the recycle path, so the pool is empty here.
-            synchronized (recycledSelectors) {
-                assert recycledSelectors.size() == 0 : "bind() called after selector reuse began";
-            }
+            assert recycledSelectorCount.get() == 0 : "bind() called after selector reuse began";
         }
 
         HttpRequestProcessorSelectorImpl create() {
@@ -666,14 +710,17 @@ public class HttpServer implements Closeable {
         }
 
         void release(HttpRequestProcessorSelectorImpl selector) {
-            synchronized (recycledSelectors) {
-                if (recycledSelectors.size() < maxRecycledSelectors) {
-                    recycledSelectors.add(selector);
+            if (recycledSelectorCount.incrementAndGet() <= maxRecycledSelectors) {
+                try {
+                    recycledSelectors.push(selector);
                     return;
+                } catch (Throwable th) {
+                    recycledSelectorCount.decrementAndGet();
+                    Misc.free(selector, th);
+                    throw th;
                 }
             }
-            // Every selector carries a full processor set, including a SqlCompiler, so retaining one
-            // per concurrently suspended fiber would outgrow the legacy per-worker footprint.
+            recycledSelectorCount.decrementAndGet();
             Misc.free(selector);
         }
 

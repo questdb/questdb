@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 abstract class AbstractPageFrameSequence {
+    private static final int CANCEL_REASON_REDUCER_ERROR = -2;
     private static final int CANCEL_REASON_UNSET = -1;
     private final AtomicInteger cancelReason = new AtomicInteger(CANCEL_REASON_UNSET);
     private final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
@@ -52,14 +53,25 @@ abstract class AbstractPageFrameSequence {
     }
 
     public void cancel(int reason) {
-        if (cancelReason.compareAndSet(CANCEL_REASON_UNSET, reason)) {
-            cancellationSignal.cancel();
+        while (true) {
+            final int current = cancelReason.get();
+            if (!isCancelReasonTransitionAllowed(current, reason)) {
+                return;
+            }
+            if (cancelReason.compareAndSet(current, reason)) {
+                if (reason != SqlExecutionCircuitBreaker.STATE_OK) {
+                    cancellationSignal.cancel();
+                }
+                return;
+            }
         }
     }
 
     public int getCancelReason() {
         final int reason = cancelReason.get();
-        return reason == CANCEL_REASON_UNSET ? SqlExecutionCircuitBreaker.STATE_OK : reason;
+        return reason == CANCEL_REASON_UNSET || reason == CANCEL_REASON_REDUCER_ERROR
+                ? SqlExecutionCircuitBreaker.STATE_OK
+                : reason;
     }
 
     public FiberCancellationSignal getCancellationSignal() {
@@ -76,13 +88,30 @@ abstract class AbstractPageFrameSequence {
 
     private boolean hasNonInterruptionWon(int interruptionReason) {
         cancel(interruptionReason);
-        return cancelReason.get() == SqlExecutionCircuitBreaker.STATE_OK;
+        final int reason = cancelReason.get();
+        return reason == SqlExecutionCircuitBreaker.STATE_OK || reason == CANCEL_REASON_REDUCER_ERROR;
+    }
+
+    private static boolean isCancelReasonTransitionAllowed(int current, int next) {
+        return current == CANCEL_REASON_UNSET
+                || current == SqlExecutionCircuitBreaker.STATE_OK
+                && next != SqlExecutionCircuitBreaker.STATE_OK
+                && next != CANCEL_REASON_REDUCER_ERROR;
     }
 
     // Hoist out of collect/dispatch loops: invariant while the loop runs, and each evaluation
     // costs a carrier-identity lookup.
     protected static boolean isFiberSuspendable() {
         return SuspensionScope.isFiberMode() && Fiber.isMounted();
+    }
+
+    final void cancelOnReducerError(Throwable th) {
+        final int interruptionReason = th instanceof CairoException e
+                ? e.getInterruptionReason()
+                : SqlExecutionCircuitBreaker.STATE_OK;
+        cancel(interruptionReason == SqlExecutionCircuitBreaker.STATE_OK
+                ? CANCEL_REASON_REDUCER_ERROR
+                : interruptionReason);
     }
 
     protected final void awaitProgress(
@@ -107,13 +136,14 @@ abstract class AbstractPageFrameSequence {
                 cancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
             }
         }
-        final boolean hasProgress;
+        final boolean isProgressWaitTerminated;
         try {
-            hasProgress = dispatcher.awaitProgress(
+            isProgressWaitTerminated = dispatcher.isProgressWaitTerminated(
                     observedProgress,
                     cancellationSignal,
                     cancellationSignalGeneration,
-                    circuitBreaker
+                    circuitBreaker,
+                    isDraining
             );
         } catch (CairoException e) {
             if (isInterruptionSuperseded(e)) {
@@ -122,7 +152,14 @@ abstract class AbstractPageFrameSequence {
             }
             throw e;
         }
-        if (!hasProgress) {
+        if (isProgressWaitTerminated) {
+            if (!isDraining && dispatcher.isQuiescing()) {
+                if (!hasNonInterruptionWon(SqlExecutionCircuitBreaker.STATE_CANCELLED)) {
+                    throw buildInterruptionException();
+                }
+                Os.pause();
+                return;
+            }
             if (!isDraining && !hasNonInterruptionWon(SqlExecutionCircuitBreaker.STATE_CANCELLED)) {
                 throw buildInterruptionException();
             }

@@ -37,7 +37,7 @@ public final class FiberCancellationSignal extends AtomicBoolean {
     private final transient @Nullable Runnable beforeRegisterForTesting;
     private int firingRegistrationCount;
     private FiberCancellationWaitRegistration registrations;
-    private volatile long state = pack(INITIAL_GENERATION, false);
+    private volatile long state = pack(INITIAL_GENERATION);
 
     public FiberCancellationSignal() {
         this(null);
@@ -86,7 +86,7 @@ public final class FiberCancellationSignal extends AtomicBoolean {
             }
             nextGeneration = generation + 1;
             fireHead = detachRegistrations();
-            state = pack(nextGeneration, false);
+            state = pack(nextGeneration);
             set(false);
         }
         fireRegistrations(fireHead);
@@ -104,9 +104,17 @@ public final class FiberCancellationSignal extends AtomicBoolean {
         if (registrations != null || firingRegistrationCount != 0) {
             throw new IllegalStateException("cannot reset cancellation signal with an active wait");
         }
-        state = pack(expectedGeneration, false);
+        state = pack(expectedGeneration);
         set(false);
         return true;
+    }
+
+    private static long generation(long state) {
+        return state >>> 1;
+    }
+
+    private static long pack(long generation) {
+        return generation << 1;
     }
 
     private FiberCancellationWaitRegistration detachRegistrations() {
@@ -156,12 +164,26 @@ public final class FiberCancellationSignal extends AtomicBoolean {
         }
     }
 
-    private static long generation(long state) {
-        return state >>> 1;
+    private synchronized void onRegistrationFired() {
+        if (firingRegistrationCount < 1) {
+            throw new IllegalStateException("cancellation firing registration underflow");
+        }
+        firingRegistrationCount--;
     }
 
-    private static long pack(long generation, boolean isCancelled) {
-        return (generation << 1) | (isCancelled ? CANCELLED_MASK : 0);
+    private void unlink(FiberCancellationWaitRegistration registration) {
+        final FiberCancellationWaitRegistration next = registration.nextSignal;
+        final FiberCancellationWaitRegistration prev = registration.prevSignal;
+        if (prev == null) {
+            registrations = next;
+        } else {
+            prev.nextSignal = next;
+        }
+        if (next != null) {
+            next.prevSignal = prev;
+        }
+        registration.nextSignal = null;
+        registration.prevSignal = null;
     }
 
     SourceRegistrationResult register(FiberCancellationWaitRegistration registration) {
@@ -205,27 +227,5 @@ public final class FiberCancellationSignal extends AtomicBoolean {
         }
         unlink(registration);
         return true;
-    }
-
-    private synchronized void onRegistrationFired() {
-        if (firingRegistrationCount < 1) {
-            throw new IllegalStateException("cancellation firing registration underflow");
-        }
-        firingRegistrationCount--;
-    }
-
-    private void unlink(FiberCancellationWaitRegistration registration) {
-        final FiberCancellationWaitRegistration next = registration.nextSignal;
-        final FiberCancellationWaitRegistration prev = registration.prevSignal;
-        if (prev == null) {
-            registrations = next;
-        } else {
-            prev.nextSignal = next;
-        }
-        if (next != null) {
-            next.prevSignal = prev;
-        }
-        registration.nextSignal = null;
-        registration.prevSignal = null;
     }
 }

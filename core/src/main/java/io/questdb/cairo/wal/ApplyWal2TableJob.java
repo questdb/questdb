@@ -90,6 +90,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
+    boolean isPooled;
+    ApplyWal2TableJob nextFree;
     private final BlockFileWriter blockFileWriter;
     private final CairoConfiguration config;
     private final CairoEngine engine;

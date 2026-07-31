@@ -26,7 +26,6 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
@@ -224,12 +223,8 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                             .$(", frameIndex=").$(task.getFrameIndex())
                             .$(", frameCount=").$(frameSequence.getFrameCount())
                             .I$();
-                    int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
-                    if (th instanceof CairoException e) {
-                        interruptReason = e.getInterruptionReason();
-                    }
                     task.setErrorMsg(th);
-                    frameSequence.cancel(interruptReason);
+                    frameSequence.cancelOnReducerError(th);
                 } finally {
                     SuspensionScope.restoreMode(suspensionScope, previousMode);
                     subSeq.done(cursor);

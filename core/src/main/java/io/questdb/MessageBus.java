@@ -53,6 +53,7 @@ import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.tasks.WalTxnNotificationTask;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -142,6 +143,7 @@ public interface MessageBus extends Closeable {
 
     FanOut getPageFrameCollectFanOut(int shard);
 
+    @Nullable
     PageFrameReduceDispatcher getPageFrameReduceDispatcher();
 
     MPSequence getPageFrameReducePubSeq(int shard);
@@ -188,5 +190,5 @@ public interface MessageBus extends Closeable {
 
     MCSequence getWalTxnNotificationSubSequence();
 
-    void setPageFrameReduceDispatcher(PageFrameReduceDispatcher dispatcher);
+    void setPageFrameReduceDispatcher(@Nullable PageFrameReduceDispatcher dispatcher);
 }

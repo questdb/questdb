@@ -94,17 +94,21 @@ public final class PGConnectionFiberTask extends FiberTask {
             case IOOperation.WRITE -> EVENT_WRITE;
             default -> throw unsupportedOperation(operation);
         };
-        return launchEvent(runtime, null, getIncarnation(), eventAction);
+        return launchEvent(runtime, null, 0, getIncarnation(), eventAction);
     }
 
-    public LaunchResult launchReserved(FiberRuntime runtime, Fiber fiber, int operation) {
-        tryReopen();
-        final int eventAction = switch (operation) {
-            case IOOperation.READ -> EVENT_READ;
-            case IOOperation.WRITE -> EVENT_WRITE;
-            default -> throw unsupportedOperation(operation);
-        };
-        return launchEvent(runtime, fiber, getIncarnation(), eventAction);
+    public LaunchResult launchReserved(FiberRuntime runtime, Fiber fiber, long reservationEpoch, int operation) {
+        try {
+            tryReopen();
+            final int eventAction = switch (operation) {
+                case IOOperation.READ -> EVENT_READ;
+                case IOOperation.WRITE -> EVENT_WRITE;
+                default -> throw unsupportedOperation(operation);
+            };
+            return launchEvent(runtime, fiber, reservationEpoch, getIncarnation(), eventAction);
+        } finally {
+            runtime.releaseReservedFiber(fiber, reservationEpoch);
+        }
     }
 
     @TestOnly
@@ -118,10 +122,10 @@ public final class PGConnectionFiberTask extends FiberTask {
     private LaunchResult launchEvent(
             FiberRuntime runtime,
             @Nullable Fiber fiber,
+            long reservationEpoch,
             long taskIncarnation,
             int eventAction
     ) {
-        boolean isReservationConsumed = fiber == null;
         try {
             if (taskIncarnation < 1 || taskIncarnation > MAX_EVENT_INCARNATION) {
                 throw incarnationOutOfRangeState(taskIncarnation);
@@ -178,8 +182,7 @@ public final class PGConnectionFiberTask extends FiberTask {
             }
             final LaunchResult result;
             if (fiber != null) {
-                isReservationConsumed = true;
-                result = runtime.launchReserved(fiber, this, taskIncarnation);
+                result = runtime.launchReserved(fiber, reservationEpoch, this, taskIncarnation);
             } else {
                 result = runtime.launch(this, taskIncarnation);
             }
@@ -188,8 +191,8 @@ public final class PGConnectionFiberTask extends FiberTask {
             }
             return result;
         } finally {
-            if (fiber != null && !isReservationConsumed) {
-                runtime.releaseReservedFiber(fiber);
+            if (fiber != null) {
+                runtime.releaseReservedFiber(fiber, reservationEpoch);
             }
         }
     }
@@ -205,7 +208,7 @@ public final class PGConnectionFiberTask extends FiberTask {
                 return LaunchResult.ALREADY_OWNED;
             }
             if (state == STATE_ARMING || state == STATE_ARMING_SIGNALLED) {
-                if (result == LaunchResult.RESOURCE_FAILURE
+                if ((result == LaunchResult.RESOURCE_FAILURE || result == LaunchResult.SATURATED)
                         && signalAxisA(taskIncarnation, SIGNAL_READY)) {
                     return LaunchResult.ALREADY_OWNED;
                 }

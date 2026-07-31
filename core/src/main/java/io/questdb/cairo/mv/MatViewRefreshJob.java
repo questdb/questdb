@@ -1593,28 +1593,30 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private boolean launchRefreshOnFiber(
             FiberRefreshTask task,
             MatViewRefreshTask notification,
-            Fiber fiber
+            Fiber fiber,
+            long reservationEpoch
     ) {
         final FiberRuntime runtime = fiberRuntime;
         if (runtime == null) {
             throw new IllegalStateException("materialized view refresh fiber runtime is not configured");
         }
-        boolean isReservationConsumed = false;
         try {
             if (!task.prepare(notification)) {
                 return false;
             }
-            isReservationConsumed = true;
-            final LaunchResult result = runtime.launchReserved(fiber, task, task.getIncarnation());
+            final LaunchResult result = runtime.launchReserved(
+                    fiber,
+                    reservationEpoch,
+                    task,
+                    task.getIncarnation()
+            );
             if (result == LaunchResult.LAUNCHED) {
                 return true;
             }
             task.releaseAfterLaunchFailure();
             return false;
         } finally {
-            if (!isReservationConsumed) {
-                runtime.releaseReservedFiber(fiber);
-            }
+            runtime.releaseReservedFiber(fiber, reservationEpoch);
         }
     }
 
@@ -1631,10 +1633,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
         while (fiberTask == null || fiberTask.isAvailable()) {
             Fiber reservedFiber = null;
+            long reservedFiberEpoch = 0;
             if (fiberTask != null) {
                 if (runtime == null || (reservedFiber = runtime.tryReserveFiber()) == null) {
                     return refreshed;
                 }
+                reservedFiberEpoch = reservedFiber.getReservationEpoch();
             }
             try {
                 if (!stateStore.tryDequeueRefreshTask(refreshTask)) {
@@ -1665,8 +1669,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             if (launchFiber == null) {
                                 throw new IllegalStateException("materialized view refresh has no reserved fiber");
                             }
-                            reservedFiber = null;
-                            if (!launchRefreshOnFiber(fiberTask, refreshTask, launchFiber)) {
+                            if (!launchRefreshOnFiber(
+                                    fiberTask,
+                                    refreshTask,
+                                    launchFiber,
+                                    reservedFiberEpoch
+                            )) {
                                 stateStore.reenqueueRefreshTask(refreshTask);
                                 return refreshed;
                             }
@@ -1680,24 +1688,34 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         }
                         break;
                     case MatViewRefreshTask.INVALIDATE:
+                        releaseReservedFiber(runtime, reservedFiber, reservedFiberEpoch);
                         invalidate(refreshTask);
                         break;
                     case MatViewRefreshTask.UPDATE_REFRESH_INTERVALS:
+                        releaseReservedFiber(runtime, reservedFiber, reservedFiberEpoch);
                         updateRefreshIntervals(refreshTask);
                         break;
                     default:
                         throw new RuntimeException("unexpected operation: " + operation);
                 }
             } finally {
-                if (reservedFiber != null) {
-                    if (runtime == null) {
-                        throw new IllegalStateException("materialized view refresh fiber runtime is not configured");
-                    }
-                    runtime.releaseReservedFiber(reservedFiber);
-                }
+                releaseReservedFiber(runtime, reservedFiber, reservedFiberEpoch);
             }
         }
         return refreshed;
+    }
+
+    private static void releaseReservedFiber(
+            @Nullable FiberRuntime runtime,
+            @Nullable Fiber fiber,
+            long reservationEpoch
+    ) {
+        if (fiber != null) {
+            if (runtime == null) {
+                throw new IllegalStateException("materialized view refresh fiber runtime is not configured");
+            }
+            runtime.releaseReservedFiber(fiber, reservationEpoch);
+        }
     }
 
     private boolean rangeRefresh(MatViewRefreshTask refreshTask) {
@@ -2542,8 +2560,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
             isAvailable = false;
-            source.copyTo(notification);
-            return true;
+            boolean isPrepared = false;
+            try {
+                source.copyTo(notification);
+                isPrepared = true;
+                return true;
+            } finally {
+                if (!isPrepared) {
+                    isAvailable = true;
+                }
+            }
         }
 
         private void releaseAfterLaunchFailure() {

@@ -24,6 +24,7 @@
 
 package io.questdb.test.mp;
 
+import io.questdb.mp.continuation.FiberEventWaitQueue;
 import io.questdb.mp.continuation.FiberWaitCoordinator;
 import org.junit.Assert;
 import org.junit.Test;
@@ -36,11 +37,11 @@ public class FiberWaitCoordinatorTest {
         FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
         long token = coordinator.beginBuild(2);
 
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
+        armSources(coordinator, token, 1);
         Assert.assertTrue(coordinator.abort(token));
         Assert.assertEquals(1, target.abortCount);
         Assert.assertFalse(coordinator.fire(token, FiberWaitCoordinator.REASON_WAL));
-        Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(token));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
         Assert.assertEquals(1, target.abortCount);
     }
 
@@ -52,8 +53,7 @@ public class FiberWaitCoordinatorTest {
 
         Assert.assertTrue(coordinator.fire(token, FiberWaitCoordinator.REASON_TIMER));
         Assert.assertEquals(0, target.fireCount);
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
+        armSources(coordinator, token, 2);
         Assert.assertTrue(coordinator.seal(token));
 
         Assert.assertEquals(1, target.fireCount);
@@ -69,7 +69,7 @@ public class FiberWaitCoordinatorTest {
         target.refusedFireCount = 1;
         FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
         long token = coordinator.beginBuild(1);
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
+        armSources(coordinator, token, 1);
         Assert.assertTrue(coordinator.seal(token));
 
         Assert.assertTrue(coordinator.fire(token, FiberWaitCoordinator.REASON_WAL));
@@ -83,7 +83,7 @@ public class FiberWaitCoordinatorTest {
     public void testIncompleteRegistrationCannotSeal() {
         FiberWaitCoordinator coordinator = new FiberWaitCoordinator(new TestTarget());
         long token = coordinator.beginBuild(2);
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
+        armSources(coordinator, token, 1);
         try {
             coordinator.seal(token);
             Assert.fail();
@@ -96,7 +96,7 @@ public class FiberWaitCoordinatorTest {
         TestTarget target = new TestTarget();
         FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
         long token = coordinator.beginBuild(1);
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
+        armSources(coordinator, token, 1);
         Assert.assertTrue(coordinator.seal(token));
         Assert.assertTrue(coordinator.isArmed(token));
 
@@ -117,7 +117,7 @@ public class FiberWaitCoordinatorTest {
         coordinator.shutdown();
 
         Assert.assertEquals(0, target.fireCount);
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
+        armSources(coordinator, token, 1);
         Assert.assertTrue(coordinator.seal(token));
         Assert.assertEquals(1, target.fireCount);
         Assert.assertEquals(FiberWaitCoordinator.REASON_SHUTDOWN, coordinator.consume(token));
@@ -131,14 +131,14 @@ public class FiberWaitCoordinatorTest {
         TestTarget target = new TestTarget();
         FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
         long oldToken = coordinator.beginBuild(1);
-        Assert.assertTrue(coordinator.tryAcceptSource(oldToken));
+        armSources(coordinator, oldToken, 1);
         Assert.assertTrue(coordinator.seal(oldToken));
         Assert.assertTrue(coordinator.fire(oldToken, FiberWaitCoordinator.REASON_TIMER));
         Assert.assertEquals(FiberWaitCoordinator.REASON_TIMER, coordinator.consume(oldToken));
 
         long token = coordinator.beginBuild(1);
         Assert.assertNotEquals(oldToken, token);
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
+        armSources(coordinator, token, 1);
         Assert.assertTrue(coordinator.seal(token));
         Assert.assertFalse(coordinator.fire(oldToken, FiberWaitCoordinator.REASON_SHUTDOWN));
         Assert.assertTrue(coordinator.isArmed(token));
@@ -157,6 +157,17 @@ public class FiberWaitCoordinatorTest {
             Assert.assertEquals("wait coordinator token exhausted", e.getMessage());
         }
         Assert.assertEquals(0, coordinator.currentToken());
+    }
+
+    private static void armSources(FiberWaitCoordinator coordinator, long token, int count) {
+        for (int i = 0; i < count; i++) {
+            Assert.assertTrue(
+                    coordinator.armEvent(
+                            token,
+                            new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS)
+                    )
+            );
+        }
     }
 
     private static final class TestTarget implements FiberWaitCoordinator.Target {

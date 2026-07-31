@@ -27,49 +27,58 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 final class WalApplyExecutorPool implements Closeable {
+    private int createdCount;
     private final CairoEngine engine;
-    private final ObjList<ApplyWal2TableJob> freeList;
+    private int freeCount;
+    private ApplyWal2TableJob freeList;
+    private boolean isClosed;
     private final int maxLiveCount;
     private final int sharedQueryWorkerCount;
-    private int createdCount;
-    private boolean isClosed;
 
     WalApplyExecutorPool(CairoEngine engine, int sharedQueryWorkerCount, int maxLiveCount) {
         if (maxLiveCount < 1) {
             throw new IllegalArgumentException("WAL apply executor limit must be positive");
         }
         this.engine = engine;
-        this.freeList = new ObjList<>();
         this.maxLiveCount = maxLiveCount;
         this.sharedQueryWorkerCount = sharedQueryWorkerCount;
     }
 
     @Override
     public void close() {
-        final Throwable failure;
+        final Throwable initialFailure;
+        ApplyWal2TableJob executor;
         synchronized (this) {
             if (isClosed) {
                 return;
             }
             isClosed = true;
-            Throwable cleanupFailure = freeList.size() == createdCount
+            initialFailure = freeCount == createdCount
                     ? null
                     : new IllegalStateException(
                     "WAL apply executor pool closed with leased executors [created="
                     + createdCount
-                    + ", free=" + freeList.size()
+                    + ", free=" + freeCount
                     + ']'
             );
-            cleanupFailure = Misc.freeObjListIfCloseableBestEffort(cleanupFailure, freeList);
-            freeList.clear();
-            failure = cleanupFailure;
+            executor = freeList;
+            freeList = null;
+            createdCount -= freeCount;
+            freeCount = 0;
+        }
+        Throwable failure = initialFailure;
+        while (executor != null) {
+            final ApplyWal2TableJob next = executor.nextFree;
+            executor.isPooled = false;
+            executor.nextFree = null;
+            failure = Misc.freeBestEffort(failure, executor);
+            executor = next;
         }
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -81,15 +90,23 @@ final class WalApplyExecutorPool implements Closeable {
 
     @TestOnly
     public synchronized int getFreeCount() {
-        return freeList.size();
+        return freeCount;
     }
 
     public void release(ApplyWal2TableJob executor) {
-        boolean isFree;
+        boolean isFree = false;
         synchronized (this) {
-            isFree = isClosed;
-            if (!isFree) {
-                freeList.add(executor);
+            if (executor.isPooled || createdCount <= freeCount) {
+                throw new IllegalStateException("WAL apply executor pool overflow");
+            }
+            if (isClosed) {
+                createdCount--;
+                isFree = true;
+            } else {
+                executor.isPooled = true;
+                executor.nextFree = freeList;
+                freeList = executor;
+                freeCount++;
             }
         }
         if (isFree) {
@@ -101,8 +118,13 @@ final class WalApplyExecutorPool implements Closeable {
         if (isClosed) {
             return null;
         }
-        if (freeList.size() > 0) {
-            return freeList.popLast();
+        if (freeList != null) {
+            final ApplyWal2TableJob executor = freeList;
+            freeList = executor.nextFree;
+            executor.isPooled = false;
+            executor.nextFree = null;
+            freeCount--;
+            return executor;
         }
         if (createdCount >= maxLiveCount) {
             return null;

@@ -53,6 +53,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Delayed;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class FiberWaitRegistrationTest {
@@ -68,7 +69,6 @@ public class FiberWaitRegistrationTest {
         final long token = coordinator.beginBuild(1);
         final FiberCancellationWaitRegistration registration = coordinator.acquireCancellation(token, cancellationSignal);
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register());
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
         Assert.assertTrue(coordinator.seal(token));
         Assert.assertFalse(coordinator.hasInFlightRegistrations());
         Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, coordinator.consume(token));
@@ -78,12 +78,48 @@ public class FiberWaitRegistrationTest {
         final FiberCancellationWaitRegistration next = coordinator.acquireCancellation(nextToken, cancellationSignal);
         Assert.assertSame(registration, next);
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, next.register());
-        Assert.assertTrue(coordinator.tryAcceptSource(nextToken));
         Assert.assertTrue(coordinator.seal(nextToken));
         cancellationSignal.cancel();
         Assert.assertFalse(coordinator.hasInFlightRegistrations());
         Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, coordinator.consume(nextToken));
         Assert.assertEquals(2, target.fireCount);
+    }
+
+    @Test
+    public void testCancellationEarlyFireDoesNotCancelReusedRegistration() {
+        final FiberCancellationSignal oldSignal = new FiberCancellationSignal();
+        final FiberCancellationSignal newSignal = new FiberCancellationSignal();
+        final TestTarget target = new TestTarget();
+        final FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
+        oldSignal.cancel();
+        final long oldToken = coordinator.beginBuild(1);
+        final FiberCancellationWaitRegistration oldRegistration = coordinator.acquireCancellation(
+                oldToken,
+                oldSignal
+        );
+        final AtomicReference<FiberCancellationWaitRegistration> newRegistration = new AtomicReference<>();
+        final AtomicLong newToken = new AtomicLong();
+        target.releaseAction = () -> {
+            Assert.assertTrue(coordinator.abort(oldToken));
+            Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(oldToken));
+            final long token = coordinator.beginBuild(1);
+            newToken.set(token);
+            final FiberCancellationWaitRegistration registration = coordinator.acquireCancellation(token, newSignal);
+            newRegistration.set(registration);
+            Assert.assertSame(oldRegistration, registration);
+            Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register());
+            Assert.assertTrue(coordinator.seal(token));
+        };
+
+        Assert.assertSame(SourceRegistrationResult.NOT_ACCEPTED, oldRegistration.register());
+        Assert.assertSame(oldRegistration, newRegistration.get());
+        Assert.assertTrue(coordinator.isArmed(newToken.get()));
+        Assert.assertTrue(coordinator.hasInFlightRegistrations());
+
+        newSignal.cancel();
+
+        Assert.assertFalse(coordinator.hasInFlightRegistrations());
+        Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, coordinator.consume(newToken.get()));
     }
 
     @Test
@@ -102,7 +138,7 @@ public class FiberWaitRegistrationTest {
         Assert.assertFalse(coordinator.hasInFlightRegistrations());
         Assert.assertEquals(0, target.acquiredRegistrationCount);
         Assert.assertTrue(coordinator.abort(token));
-        Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(token));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
     }
 
     @Test
@@ -126,14 +162,14 @@ public class FiberWaitRegistrationTest {
         Assert.assertEquals(1, target.acquiredRegistrationCount);
         Assert.assertEquals(1, target.releasedRegistrationCount);
         Assert.assertTrue(coordinator.abort(token));
-        Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(token));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
 
         final long nextToken = coordinator.beginBuild(1);
         final FiberCancellationWaitRegistration next = coordinator.acquireCancellation(nextToken, cancellationSignal);
         Assert.assertSame(registration, next);
         Assert.assertTrue(next.cancel());
         Assert.assertTrue(coordinator.abort(nextToken));
-        Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(nextToken));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(nextToken));
     }
 
     @Test
@@ -167,7 +203,6 @@ public class FiberWaitRegistrationTest {
                 cancellationSignal
         );
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register());
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
         Assert.assertTrue(coordinator.seal(token));
 
         final Thread cancelThread = new Thread(() -> {
@@ -203,14 +238,13 @@ public class FiberWaitRegistrationTest {
         final long token = coordinator.beginBuild(1);
         final FiberCancellationWaitRegistration registration = coordinator.acquireCancellation(token, cancellationSignal);
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register());
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
         Assert.assertTrue(coordinator.seal(token));
         Assert.assertTrue(registration.cancel());
         Assert.assertFalse(coordinator.hasInFlightRegistrations());
         cancellationSignal.cancel();
         Assert.assertEquals(0, target.fireCount);
         Assert.assertTrue(coordinator.abort(token));
-        Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(token));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
     }
 
     @Test
@@ -228,7 +262,6 @@ public class FiberWaitRegistrationTest {
                 staleGeneration
         );
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, staleRegistration.register());
-        Assert.assertTrue(staleCoordinator.tryAcceptSource(staleToken));
         Assert.assertTrue(staleCoordinator.seal(staleToken));
         Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, staleCoordinator.consume(staleToken));
         Assert.assertEquals(1, staleTarget.fireCount);
@@ -242,7 +275,6 @@ public class FiberWaitRegistrationTest {
                 currentGeneration
         );
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, currentRegistration.register());
-        Assert.assertTrue(currentCoordinator.tryAcceptSource(currentToken));
         Assert.assertTrue(currentCoordinator.seal(currentToken));
 
         Assert.assertFalse(cancellationSignal.cancel(staleGeneration));
@@ -296,7 +328,6 @@ public class FiberWaitRegistrationTest {
 
         Assert.assertFalse(registrationThread.isAlive());
         Assert.assertNull(failure.get());
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
         Assert.assertTrue(coordinator.seal(token));
         Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, coordinator.consume(token));
         Assert.assertEquals(1, target.fireCount);
@@ -318,7 +349,6 @@ public class FiberWaitRegistrationTest {
                     cancellationSignal
             );
             Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register());
-            Assert.assertTrue(coordinator.tryAcceptSource(token));
             Assert.assertTrue(coordinator.seal(token));
             coordinators.add(coordinator);
             targets.add(target);
@@ -366,9 +396,6 @@ public class FiberWaitRegistrationTest {
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, firstRegistration.register());
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, secondRegistration.register());
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, thirdRegistration.register());
-        Assert.assertTrue(first.tryAcceptSource(firstToken));
-        Assert.assertTrue(second.tryAcceptSource(secondToken));
-        Assert.assertTrue(third.tryAcceptSource(thirdToken));
         Assert.assertTrue(first.seal(firstToken));
         Assert.assertTrue(second.seal(secondToken));
         Assert.assertTrue(third.seal(thirdToken));
@@ -402,7 +429,6 @@ public class FiberWaitRegistrationTest {
             final long token = coordinator.beginBuild(1);
             final FiberEventWaitRegistration registration = coordinator.acquireEvent(token);
             Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register(queue));
-            Assert.assertTrue(coordinator.tryAcceptSource(token));
             Assert.assertTrue(coordinator.seal(token));
             coordinators.add(coordinator);
             targets.add(target);
@@ -423,11 +449,45 @@ public class FiberWaitRegistrationTest {
         final long nextToken = nextCoordinator.beginBuild(1);
         final FiberEventWaitRegistration nextRegistration = nextCoordinator.acquireEvent(nextToken);
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, nextRegistration.register(queue));
-        Assert.assertTrue(nextCoordinator.tryAcceptSource(nextToken));
         Assert.assertTrue(nextCoordinator.seal(nextToken));
         queue.fire();
         Assert.assertEquals(FiberWaitCoordinator.REASON_CAPACITY, nextCoordinator.consume(nextToken));
         Assert.assertEquals(1, nextTarget.fireCount);
+    }
+
+    @Test
+    public void testEventRegistrationRollsBackWhenWaitAborts() throws Exception {
+        final FiberEventWaitQueue queue = new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
+        final TestTarget target = new TestTarget();
+        final FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
+        final long token = coordinator.beginBuild(1);
+        final FiberEventWaitRegistration registration = coordinator.acquireEvent(token);
+        final CountDownLatch registrationStarted = new CountDownLatch(1);
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final AtomicReference<SourceRegistrationResult> result = new AtomicReference<>();
+        final Thread registrationThread = new Thread(() -> {
+            registrationStarted.countDown();
+            try {
+                result.set(registration.register(queue));
+            } catch (Throwable th) {
+                failure.set(th);
+            }
+        });
+
+        synchronized (queue) {
+            registrationThread.start();
+            Assert.assertTrue(registrationStarted.await(10, TimeUnit.SECONDS));
+            Assert.assertTrue(coordinator.abort(token));
+        }
+        registrationThread.join(10_000);
+
+        Assert.assertFalse(registrationThread.isAlive());
+        Assert.assertNull(failure.get());
+        Assert.assertSame(SourceRegistrationResult.NOT_ACCEPTED, result.get());
+        Assert.assertFalse(coordinator.hasInFlightRegistrations());
+        Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
+        Assert.assertEquals(1, target.acquiredRegistrationCount);
+        Assert.assertEquals(1, target.releasedRegistrationCount);
     }
 
     @Test
@@ -452,9 +512,6 @@ public class FiberWaitRegistrationTest {
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, firstRegistration.register(queue));
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, secondRegistration.register(queue));
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, thirdRegistration.register(queue));
-        Assert.assertTrue(first.tryAcceptSource(firstToken));
-        Assert.assertTrue(second.tryAcceptSource(secondToken));
-        Assert.assertTrue(third.tryAcceptSource(thirdToken));
         Assert.assertTrue(first.seal(firstToken));
         Assert.assertTrue(second.seal(secondToken));
         Assert.assertTrue(third.seal(thirdToken));
@@ -485,9 +542,7 @@ public class FiberWaitRegistrationTest {
         final FiberWalWaitRegistration first = coordinator.acquireWal(token, 1);
         final FiberWalWaitRegistration second = coordinator.acquireWal(token, 1);
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, first.register(firstQueue));
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, second.register(secondQueue));
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
         Assert.assertTrue(coordinator.seal(token));
 
         coordinator.shutdown();
@@ -500,6 +555,36 @@ public class FiberWaitRegistrationTest {
     }
 
     @Test
+    public void testSlotCallbackAndCoordinatorReleaseFailureReturnsGrantedSlot() {
+        final AtomicInteger releasedSlot = new AtomicInteger(-1);
+        final FiberSlotWaitQueue queue = new FiberSlotWaitQueue(releasedSlot::set);
+        final TestTarget target = new TestTarget();
+        final FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
+        final long token = coordinator.beginBuild(1);
+        final FiberSlotWaitRegistration registration = coordinator.acquireSlot(token);
+        Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register(queue));
+        Assert.assertTrue(coordinator.seal(token));
+        final TestRegistrationException fireFailure =
+                new TestRegistrationException("test slot callback failure");
+        final TestRegistrationException releaseFailure =
+                new TestRegistrationException("test slot release callback failure");
+        target.fireException = fireFailure;
+        target.releaseException = releaseFailure;
+
+        try {
+            queue.transfer(7);
+            Assert.fail("expected slot callback failure");
+        } catch (TestRegistrationException expected) {
+            Assert.assertSame(fireFailure, expected);
+            Assert.assertArrayEquals(new Throwable[]{releaseFailure}, expected.getSuppressed());
+        }
+
+        Assert.assertEquals(7, releasedSlot.get());
+        Assert.assertFalse(coordinator.hasInFlightRegistrations());
+        Assert.assertEquals(FiberWaitCoordinator.REASON_SLOT, coordinator.consume(token));
+    }
+
+    @Test
     public void testSlotCallbackFailureReturnsGrantedSlot() {
         final AtomicInteger releasedSlot = new AtomicInteger(-1);
         final FiberSlotWaitQueue queue = new FiberSlotWaitQueue(releasedSlot::set);
@@ -508,7 +593,6 @@ public class FiberWaitRegistrationTest {
         final long token = coordinator.beginBuild(1);
         final FiberSlotWaitRegistration registration = coordinator.acquireSlot(token);
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register(queue));
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
         Assert.assertTrue(coordinator.seal(token));
         target.fireException = new TestRegistrationException("test slot callback failure");
 
@@ -522,6 +606,24 @@ public class FiberWaitRegistrationTest {
         Assert.assertEquals(7, releasedSlot.get());
         Assert.assertFalse(coordinator.hasInFlightRegistrations());
         Assert.assertEquals(FiberWaitCoordinator.REASON_SLOT, coordinator.consume(token));
+    }
+
+    @Test
+    public void testSlotWaitBuildRejectsSecondRegistration() {
+        final TestTarget target = new TestTarget();
+        final FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
+        final long token = coordinator.beginBuild(2);
+        final FiberSlotWaitRegistration registration = coordinator.acquireSlot(token);
+        try {
+            coordinator.acquireSlot(token);
+            Assert.fail("expected duplicate slot registration rejection");
+        } catch (IllegalStateException e) {
+            Assert.assertEquals("wait coordinator already has a slot registration", e.getMessage());
+        }
+        Assert.assertTrue(registration.cancel());
+        Assert.assertTrue(coordinator.abort(token));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
+        Assert.assertFalse(coordinator.hasInFlightRegistrations());
     }
 
     @Test
@@ -580,13 +682,12 @@ public class FiberWaitRegistrationTest {
             Assert.assertEquals(1, target.acquiredRegistrationCount);
             Assert.assertEquals(0, target.releasedRegistrationCount);
             Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register());
-            Assert.assertTrue(coordinator.tryAcceptSource(token));
             Assert.assertTrue(coordinator.seal(token));
             Assert.assertTrue(registration.cancel());
             Assert.assertFalse(coordinator.hasInFlightRegistrations());
             Assert.assertEquals(1, target.releasedRegistrationCount);
             Assert.assertTrue(coordinator.abort(token));
-            Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(token));
+            Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
 
             long nextToken = coordinator.beginBuild(1);
             FiberTimerWaitRegistration next = coordinator.acquireTimer(
@@ -601,7 +702,7 @@ public class FiberWaitRegistrationTest {
             Assert.assertTrue(next.cancel());
             Assert.assertEquals(2, target.releasedRegistrationCount);
             Assert.assertTrue(coordinator.abort(nextToken));
-            Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(nextToken));
+            Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(nextToken));
         } finally {
             timerShards.shutdown();
         }
@@ -630,7 +731,7 @@ public class FiberWaitRegistrationTest {
         Assert.assertFalse(coordinator.hasInFlightRegistrations());
         Assert.assertEquals(0, target.acquiredRegistrationCount);
         Assert.assertTrue(coordinator.abort(token));
-        Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(token));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
     }
 
     @Test
@@ -666,7 +767,7 @@ public class FiberWaitRegistrationTest {
             Assert.assertEquals(1, target.acquiredRegistrationCount);
             Assert.assertEquals(1, target.releasedRegistrationCount);
             Assert.assertTrue(coordinator.abort(token));
-            Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(token));
+            Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
 
             registration.setClockForTesting(MillisecondClockImpl.INSTANCE);
             Assert.assertSame(SourceRegistrationResult.ACCEPTED, timerShards.register(registration));
@@ -683,7 +784,7 @@ public class FiberWaitRegistrationTest {
             Assert.assertNotSame(registration, next);
             Assert.assertTrue(next.cancel());
             Assert.assertTrue(coordinator.abort(nextToken));
-            Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(nextToken));
+            Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(nextToken));
         } finally {
             timerShards.shutdown();
         }
@@ -717,7 +818,7 @@ public class FiberWaitRegistrationTest {
             Assert.assertEquals(1, target.releasedRegistrationCount);
             Assert.assertEquals(3, timerShards.size());
             Assert.assertTrue(coordinator.abort(token));
-            Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(token));
+            Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
 
             final long nextToken = coordinator.beginBuild(1);
             final FiberTimerWaitRegistration next = coordinator.acquireTimer(
@@ -729,7 +830,7 @@ public class FiberWaitRegistrationTest {
             Assert.assertSame(registration, next);
             Assert.assertTrue(next.cancel());
             Assert.assertTrue(coordinator.abort(nextToken));
-            Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(nextToken));
+            Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(nextToken));
         } finally {
             timerShards.shutdown();
         }
@@ -749,7 +850,6 @@ public class FiberWaitRegistrationTest {
                 60_000
         );
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register());
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
         Assert.assertTrue(coordinator.seal(token));
 
         timerShards.shutdown();
@@ -771,7 +871,6 @@ public class FiberWaitRegistrationTest {
         Assert.assertEquals(1, target.acquiredRegistrationCount);
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register(queue));
         Assert.assertEquals(1, queue.size());
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
         Assert.assertTrue(coordinator.seal(token));
 
         Assert.assertTrue(registration.cancel());
@@ -779,7 +878,7 @@ public class FiberWaitRegistrationTest {
         Assert.assertEquals(1, target.releasedRegistrationCount);
         Assert.assertEquals(0, queue.size());
         Assert.assertTrue(coordinator.abort(token));
-        Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(token));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
 
         long nextToken = coordinator.beginBuild(1);
         FiberWalWaitRegistration next = coordinator.acquireWal(nextToken, 20);
@@ -788,7 +887,7 @@ public class FiberWaitRegistrationTest {
         Assert.assertTrue(next.cancel());
         Assert.assertEquals(2, target.releasedRegistrationCount);
         Assert.assertTrue(coordinator.abort(nextToken));
-        Assert.assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(nextToken));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(nextToken));
     }
 
     @Test
@@ -813,9 +912,6 @@ public class FiberWaitRegistrationTest {
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, firstRegistration.register(queue));
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, secondRegistration.register(queue));
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, thirdRegistration.register(queue));
-        Assert.assertTrue(first.tryAcceptSource(firstToken));
-        Assert.assertTrue(second.tryAcceptSource(secondToken));
-        Assert.assertTrue(third.tryAcceptSource(thirdToken));
         Assert.assertTrue(first.seal(firstToken));
         Assert.assertTrue(second.seal(secondToken));
         Assert.assertTrue(third.seal(thirdToken));
@@ -853,8 +949,6 @@ public class FiberWaitRegistrationTest {
         FiberWalWaitRegistration secondRegistration = second.acquireWal(secondToken, 10);
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, firstRegistration.register(queue));
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, secondRegistration.register(queue));
-        Assert.assertTrue(first.tryAcceptSource(firstToken));
-        Assert.assertTrue(second.tryAcceptSource(secondToken));
         Assert.assertTrue(first.seal(firstToken));
         Assert.assertTrue(second.seal(secondToken));
 
@@ -878,11 +972,9 @@ public class FiberWaitRegistrationTest {
         FiberWalWaitQueue queue = new FiberWalWaitQueue();
         TestTarget target = new TestTarget();
         FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
-        long oldToken = coordinator.beginBuild(2);
+        long oldToken = coordinator.beginBuild(1);
         FiberWalWaitRegistration oldRegistration = coordinator.acquireWal(oldToken, 10);
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, oldRegistration.register(queue));
-        Assert.assertTrue(coordinator.tryAcceptSource(oldToken));
-        Assert.assertTrue(coordinator.tryAcceptSource(oldToken));
         Assert.assertTrue(coordinator.seal(oldToken));
         Assert.assertTrue(coordinator.fire(oldToken, FiberWaitCoordinator.REASON_TIMER));
         Assert.assertEquals(FiberWaitCoordinator.REASON_TIMER, coordinator.consume(oldToken));
@@ -891,7 +983,6 @@ public class FiberWaitRegistrationTest {
         FiberWalWaitRegistration registration = coordinator.acquireWal(token, 10);
         Assert.assertNotSame(oldRegistration, registration);
         Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register(queue));
-        Assert.assertTrue(coordinator.tryAcceptSource(token));
         Assert.assertTrue(coordinator.seal(token));
 
         queue.fire(10, false);
@@ -931,17 +1022,14 @@ public class FiberWaitRegistrationTest {
         );
         final FiberWalWaitRegistration wal = coordinator.acquireWal(token, 1);
         if (cancellation.register() != SourceRegistrationResult.ACCEPTED
-                || !coordinator.tryAcceptSource(token)
                 || timer.register() != SourceRegistrationResult.ACCEPTED
-                || !coordinator.tryAcceptSource(token)
                 || wal.register(walWaitQueue) != SourceRegistrationResult.ACCEPTED
-                || !coordinator.tryAcceptSource(token)
                 || !coordinator.seal(token)
                 || !cancellation.cancel()
                 || !timer.cancel()
                 || !wal.cancel()
                 || !coordinator.abort(token)
-                || coordinator.consume(token) != FiberWaitCoordinator.REASON_ABORTED) {
+                || coordinator.consume(token) != FiberWaitCoordinator.REASON_NONE) {
             throw new AssertionError("wait registration cycle did not complete");
         }
     }
@@ -1015,7 +1103,9 @@ public class FiberWaitRegistrationTest {
         private int fireCount;
         private RuntimeException fireException;
         private int reason;
+        private Runnable releaseAction;
         private int releasedRegistrationCount;
+        private RuntimeException releaseException;
 
         @Override
         public void abortWait(long token) {
@@ -1041,6 +1131,16 @@ public class FiberWaitRegistrationTest {
         @Override
         public void onWaitRegistrationReleased() {
             releasedRegistrationCount++;
+            final Runnable releaseAction = this.releaseAction;
+            this.releaseAction = null;
+            if (releaseAction != null) {
+                releaseAction.run();
+            }
+            final RuntimeException releaseException = this.releaseException;
+            this.releaseException = null;
+            if (releaseException != null) {
+                throw releaseException;
+            }
         }
     }
 }

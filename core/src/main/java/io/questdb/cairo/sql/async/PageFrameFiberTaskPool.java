@@ -26,17 +26,18 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.mp.continuation.FiberTask;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.TestOnly;
 
 final class PageFrameFiberTaskPool implements QuietCloseable {
-    private final ObjList<PageFrameFiberTask> allTasks = new ObjList<>();
     private final int capacity;
+    private int createdCount;
     private final PageFrameReduceDispatcher dispatcher;
     private final CairoEngine engine;
-    private final ObjList<PageFrameFiberTask> freeTasks = new ObjList<>();
-    private int createdCount;
+    private int freeCount;
+    private PageFrameFiberTask freeTasks;
     private boolean isClosed;
 
     PageFrameFiberTaskPool(
@@ -60,17 +61,25 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
                 return;
             }
             isClosed = true;
-            Throwable cleanupFailure = freeTasks.size() == createdCount
+            Throwable cleanupFailure = freeCount == createdCount
                     ? null
                     : new IllegalStateException(
                     "page frame fiber task pool closed with leased tasks [created="
                     + createdCount
-                    + ", free=" + freeTasks.size()
+                    + ", free=" + freeCount
                     + ']'
             );
-            cleanupFailure = Misc.freeObjListIfCloseableBestEffort(cleanupFailure, allTasks);
-            allTasks.clear();
-            freeTasks.clear();
+            PageFrameFiberTask task = freeTasks;
+            freeTasks = null;
+            createdCount -= freeCount;
+            freeCount = 0;
+            while (task != null) {
+                final PageFrameFiberTask next = task.nextFree;
+                task.isPooled = false;
+                task.nextFree = null;
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, task);
+                task = next;
+            }
             failure = cleanupFailure;
         }
         CairoException.rethrowCleanupFailure(failure);
@@ -80,22 +89,44 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         return createdCount;
     }
 
+    synchronized boolean hasLeasedTasks() {
+        return createdCount != freeCount;
+    }
+
     synchronized void release(PageFrameFiberTask task) {
-        if (isClosed) {
-            throw new IllegalStateException("page frame fiber task pool is closed");
-        }
-        if (freeTasks.size() >= createdCount) {
+        if (task.isPooled || createdCount <= freeCount) {
             throw new IllegalStateException("page frame fiber task pool overflow");
         }
-        freeTasks.add(task);
+        if (isClosed || task.getScheduleState() != FiberTask.STATE_IDLE) {
+            createdCount--;
+            Misc.free(task);
+            return;
+        }
+        task.isPooled = true;
+        task.nextFree = freeTasks;
+        freeTasks = task;
+        freeCount++;
+    }
+
+    @TestOnly
+    synchronized void setFreeTaskScheduleStateForTesting(int expectedState, int targetState) {
+        if (freeTasks == null) {
+            throw new IllegalStateException("page frame fiber task pool has no free task");
+        }
+        freeTasks.setScheduleStateForTesting(expectedState, targetState);
     }
 
     synchronized PageFrameFiberTask tryAcquire() {
         if (isClosed) {
             return null;
         }
-        if (freeTasks.size() > 0) {
-            return freeTasks.popLast();
+        if (freeTasks != null) {
+            final PageFrameFiberTask task = freeTasks;
+            freeTasks = task.nextFree;
+            task.isPooled = false;
+            task.nextFree = null;
+            freeCount--;
+            return task;
         }
         if (createdCount >= capacity) {
             return null;
@@ -103,7 +134,6 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         PageFrameFiberTask task = null;
         try {
             task = new PageFrameFiberTask(engine, this, dispatcher);
-            allTasks.add(task);
             createdCount++;
             return task;
         } catch (Throwable th) {

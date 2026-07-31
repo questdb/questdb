@@ -124,18 +124,20 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
             final MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, runtime);
             final MatViewRefreshTask queuedTask = new MatViewRefreshTask();
             Fiber heldFiber = null;
+            long heldFiberEpoch = 0;
             pool.assign(job);
             engine.getMatViewStateStore().enqueueFullRefresh(engine.verifyTableName("price_1h"));
             try {
                 heldFiber = runtime.tryReserveFiber();
                 Assert.assertNotNull(heldFiber);
+                heldFiberEpoch = heldFiber.getReservationEpoch();
                 Assert.assertFalse(job.run());
 
                 Assert.assertTrue(engine.getMatViewStateStore().tryDequeueRefreshTask(queuedTask));
                 Assert.assertEquals(MatViewRefreshTask.FULL_REFRESH, queuedTask.operation);
                 engine.getMatViewStateStore().reenqueueRefreshTask(queuedTask);
 
-                runtime.releaseReservedFiber(heldFiber);
+                runtime.releaseReservedFiber(heldFiber, heldFiberEpoch);
                 heldFiber = null;
                 Assert.assertTrue(job.run());
                 TestUtils.assertEventually(() -> {
@@ -145,7 +147,7 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
                 Assert.assertEquals(1, runtime.getMountCount());
             } finally {
                 if (heldFiber != null) {
-                    runtime.releaseReservedFiber(heldFiber);
+                    runtime.releaseReservedFiber(heldFiber, heldFiberEpoch);
                 }
                 closeRuntime(runtime);
                 Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(10)));

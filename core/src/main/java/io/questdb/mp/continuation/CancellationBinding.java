@@ -24,6 +24,8 @@
 
 package io.questdb.mp.continuation;
 
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -47,10 +49,12 @@ public final class CancellationBinding {
         while (true) {
             final long version = this.version;
             if ((version & 1) != 0) {
+                Os.pause();
                 continue;
             }
             flag = this.flag;
             generation = this.generation;
+            Unsafe.loadFence();
             if (version == this.version) {
                 break;
             }
@@ -90,10 +94,12 @@ public final class CancellationBinding {
         while (true) {
             final long version = this.version;
             if ((version & 1) != 0) {
+                Os.pause();
                 continue;
             }
             flag = this.flag;
             generation = this.generation;
+            Unsafe.loadFence();
             if (version == this.version) {
                 break;
             }
@@ -106,9 +112,11 @@ public final class CancellationBinding {
         while (true) {
             final long version = this.version;
             if ((version & 1) != 0) {
+                Os.pause();
                 continue;
             }
             flag = this.flag;
+            Unsafe.loadFence();
             if (version == this.version) {
                 break;
             }
@@ -122,10 +130,12 @@ public final class CancellationBinding {
         while (true) {
             final long version = this.version;
             if ((version & 1) != 0) {
+                Os.pause();
                 continue;
             }
             flag = this.flag;
             generation = this.generation;
+            Unsafe.loadFence();
             if (version == this.version) {
                 break;
             }
@@ -139,10 +149,12 @@ public final class CancellationBinding {
         while (true) {
             final long version = this.version;
             if ((version & 1) != 0) {
+                Os.pause();
                 continue;
             }
             flag = this.flag;
             generation = this.generation;
+            Unsafe.loadFence();
             if (version == this.version) {
                 break;
             }
@@ -158,10 +170,12 @@ public final class CancellationBinding {
         while (true) {
             final long version = this.version;
             if ((version & 1) != 0) {
+                Os.pause();
                 continue;
             }
             flag = this.flag;
             generation = this.generation;
+            Unsafe.loadFence();
             if (version == this.version) {
                 break;
             }
@@ -177,10 +191,12 @@ public final class CancellationBinding {
         while (true) {
             final long version = this.version;
             if ((version & 1) != 0) {
+                Os.pause();
                 continue;
             }
             flag = this.flag;
             generation = this.generation;
+            Unsafe.loadFence();
             if (version == this.version) {
                 break;
             }
@@ -212,9 +228,13 @@ public final class CancellationBinding {
     }
 
     private void publish(@Nullable AtomicBoolean flag, long generation) {
+        // A volatile store is release-only: without the fences the plain stores below may become
+        // visible before the odd sequence, and a reader would accept a torn (flag, generation) pair.
         version++;
+        Unsafe.storeFence();
         this.flag = flag;
         this.generation = generation;
+        Unsafe.storeFence();
         version++;
     }
 }

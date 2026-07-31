@@ -349,8 +349,7 @@ public class FiberWorkerPoolTest {
             final long token = fiber.beginWaitBuild(1);
             final FiberWalWaitRegistration registration = coordinator.acquireWal(token, 1);
             try {
-                if (registration.register(waitQueue) != SourceRegistrationResult.ACCEPTED
-                        || !coordinator.tryAcceptSource(token)) {
+                if (registration.register(waitQueue) != SourceRegistrationResult.ACCEPTED) {
                     throw new IllegalStateException("wait registration failed");
                 }
                 final int reason = fiber.suspendWait(token);

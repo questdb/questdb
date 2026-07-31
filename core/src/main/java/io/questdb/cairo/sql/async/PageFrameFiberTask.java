@@ -43,15 +43,17 @@ import org.jetbrains.annotations.Nullable;
 
 final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(PageFrameFiberTask.class);
+    boolean isPooled;
+    PageFrameFiberTask nextFree;
     private final SqlExecutionCircuitBreakerWrapper circuitBreaker;
     private final PageFrameReduceDispatcher dispatcher;
-    private final PageFrameFiberTaskPool pool;
-    private final PageFrameMemoryRecord record;
     private long orderedCursor = -1;
     private PageFrameSequence<?> orderedFrameSequence;
     private RingQueue<PageFrameReduceTask> orderedQueue;
     private PageFrameReduceTask orderedReduceTask;
     private MCSequence orderedSubSeq;
+    private final PageFrameFiberTaskPool pool;
+    private final PageFrameMemoryRecord record;
     private int unorderedFrameIndex = -1;
     private UnorderedPageFrameSequence<?> unorderedFrameSequence;
     private RingQueue<UnorderedPageFrameReduceTask> unorderedQueue;
@@ -73,9 +75,23 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     }
 
     void abortBeforeLaunch() {
-        cancelFrameSequence(SqlExecutionCircuitBreaker.STATE_CANCELLED);
-        completeOwnership();
-        recycle(false);
+        Throwable failure = null;
+        try {
+            cancelFrameSequence(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+        } catch (Throwable th) {
+            failure = th;
+        }
+        try {
+            completeOwnership();
+        } catch (Throwable th) {
+            failure = addCleanupFailure(failure, th);
+        }
+        try {
+            recycle();
+        } catch (Throwable th) {
+            failure = addCleanupFailure(failure, th);
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -136,15 +152,12 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         try {
             completeOwnership();
         } finally {
-            recycle(true);
+            recycle();
         }
     }
 
     @Override
     protected void onError(Throwable th) {
-        final int interruptReason = th instanceof CairoException e
-                ? e.getInterruptionReason()
-                : SqlExecutionCircuitBreaker.STATE_OK;
         if (orderedFrameSequence != null) {
             LOG.error()
                     .$("reduce error [error=").$(th)
@@ -154,6 +167,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                     .$(", frameCount=").$(orderedFrameSequence.getFrameCount())
                     .I$();
             orderedReduceTask.setErrorMsg(th);
+            orderedFrameSequence.cancelOnReducerError(th);
         } else if (unorderedFrameSequence != null) {
             LOG.error()
                     .$("reduce error [error=").$(th)
@@ -163,7 +177,6 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                     .I$();
             unorderedFrameSequence.setError(th);
         }
-        cancelFrameSequence(interruptReason);
     }
 
     @Override
@@ -175,8 +188,8 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             long batchRows = orderedReduceTask.getFrameRowCount();
             reduceOrderedFrame(subSeq, orderedCursor, orderedReduceTask, orderedFrameSequence);
             final int batchLimit = dispatcher.getBatchLimit();
-            // one configured-max-frame's worth of rows: large-frame batches degenerate to
-            // single-frame cadence, so a batch cannot hold the carrier away from other jobs
+            // Stop claiming once the accumulated work reaches one configured-max-frame's row
+            // count. The last claimed frame may take the total above that threshold.
             final long batchRowBudget = dispatcher.getBatchRowBudget();
             for (int i = 1; i < batchLimit && batchRows < batchRowBudget; i++) {
                 final long cursor;
@@ -236,11 +249,25 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         return true;
     }
 
+    private static Throwable addCleanupFailure(@Nullable Throwable primary, Throwable failure) {
+        if (primary == null) {
+            return failure;
+        }
+        if (primary != failure) {
+            primary.addSuppressed(failure);
+        }
+        return primary;
+    }
+
     private void cancelFrameSequence(int reason) {
         if (orderedFrameSequence != null) {
-            orderedFrameSequence.cancel(reason);
+            if (orderedFrameSequence.isActive()) {
+                orderedFrameSequence.cancel(reason);
+            }
         } else if (unorderedFrameSequence != null) {
-            unorderedFrameSequence.cancel(reason);
+            if (unorderedFrameSequence.isActive()) {
+                unorderedFrameSequence.cancel(reason);
+            }
         }
     }
 
@@ -258,18 +285,19 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     }
 
     private void completeOwnership() {
-        try {
-            if (orderedFrameSequence != null) {
-                try {
-                    orderedSubSeq.done(orderedCursor);
-                } finally {
-                    orderedFrameSequence.getReduceFinishedCounter().incrementAndGet();
-                }
-            } else if (unorderedFrameSequence != null) {
-                unorderedFrameSequence.getDoneLatch().countDown();
+        if (orderedFrameSequence != null) {
+            try {
+                orderedSubSeq.done(orderedCursor);
+            } finally {
+                orderedFrameSequence.getReduceFinishedCounter().incrementAndGet();
+                dispatcher.signalProgress();
             }
-        } finally {
-            dispatcher.signalProgress();
+        } else if (unorderedFrameSequence != null) {
+            try {
+                unorderedFrameSequence.getDoneLatch().countDown();
+            } finally {
+                dispatcher.signalProgress();
+            }
         }
     }
 
@@ -300,11 +328,8 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                     .$(", frameIndex=").$(reduceTask.getFrameIndex())
                     .$(", frameCount=").$(frameSequence.getFrameCount())
                     .I$();
-            final int interruptReason = th instanceof CairoException e
-                    ? e.getInterruptionReason()
-                    : SqlExecutionCircuitBreaker.STATE_OK;
             reduceTask.setErrorMsg(th);
-            frameSequence.cancel(interruptReason);
+            frameSequence.cancelOnReducerError(th);
         } finally {
             this.orderedCursor = -1;
             this.orderedReduceTask = null;
@@ -334,11 +359,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                     .$(", frameIndex=").$(frameIndex)
                     .$(", frameCount=").$(frameSequence.getFrameCount())
                     .I$();
-            final int interruptReason = th instanceof CairoException e
-                    ? e.getInterruptionReason()
-                    : SqlExecutionCircuitBreaker.STATE_OK;
             frameSequence.setError(th);
-            frameSequence.cancel(interruptReason);
         } finally {
             this.unorderedFrameIndex = -1;
             this.unorderedFrameSequence = null;
@@ -350,11 +371,12 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         }
     }
 
-    private void recycle(boolean isTerminal) {
+    private void recycle() {
         clearBinding();
-        if (isTerminal) {
-            reopen();
+        try {
+            tryReopen();
+        } finally {
+            pool.release(this);
         }
-        pool.release(this);
     }
 }

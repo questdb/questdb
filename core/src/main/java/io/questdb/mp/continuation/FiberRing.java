@@ -72,10 +72,10 @@ final class FiberRing {
         if (fiber == null) {
             throw new IllegalArgumentException("fiber must not be null");
         }
+        if (isFullForTesting) {
+            throw new IllegalStateException("fiber ring is full");
+        }
         while (true) {
-            if (isFullForTesting) {
-                throw new IllegalStateException("fiber ring is full");
-            }
             final long cursor = pubSeq.next();
             if (cursor > -1) {
                 buffer.get(cursor).fiber = fiber;

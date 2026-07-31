@@ -39,6 +39,7 @@ public final class FiberPool {
     private final ObjList<Fiber> liveFibers = new ObjList<>();
     private final int maxLive;
     private final int maxRetained;
+    private final AtomicInteger parkedCount = new AtomicInteger();
     private final AtomicInteger retainedCount = new AtomicInteger();
     private final AtomicInteger retiredCount = new AtomicInteger();
     private final FiberRuntime runtime;
@@ -73,14 +74,8 @@ public final class FiberPool {
         return liveFibers.size();
     }
 
-    public synchronized int getParkedCount() {
-        int count = 0;
-        for (int i = 0, n = liveFibers.size(); i < n; i++) {
-            if (liveFibers.getQuick(i).getExecutionState() == Fiber.EXECUTION_WAITING) {
-                count++;
-            }
-        }
-        return count;
+    public int getParkedCount() {
+        return parkedCount.get();
     }
 
     public int getRetainedCount() {
@@ -98,7 +93,19 @@ public final class FiberPool {
         }
         if (!isClosed) {
             if (retainedCount.incrementAndGet() <= maxRetained) {
-                freeList.put(fiber);
+                try {
+                    freeList.put(fiber);
+                } catch (RuntimeException | Error th) {
+                    retainedCount.decrementAndGet();
+                    try {
+                        retire(fiber);
+                    } catch (Throwable retirementError) {
+                        if (retirementError != th) {
+                            th.addSuppressed(retirementError);
+                        }
+                    }
+                    throw th;
+                }
                 runtime.signalCapacity();
                 if (isClosed) {
                     drainFreeList();
@@ -111,20 +118,29 @@ public final class FiberPool {
     }
 
     public Fiber tryAcquire() {
-        if (isClosed) {
-            throw new IllegalStateException("fiber pool is closed");
-        }
-        final Fiber fiber = freeList.tryDequeue();
-        if (fiber != null) {
-            retainedCount.decrementAndGet();
-            if (!isClosed) {
-                fiber.reserve();
-                return fiber;
+        while (true) {
+            if (isClosed) {
+                throw new IllegalStateException("fiber pool is closed");
             }
-            retire(fiber);
-            throw new IllegalStateException("fiber pool is closed");
+            final Fiber fiber = freeList.tryDequeue();
+            if (fiber != null) {
+                retainedCount.decrementAndGet();
+                if (!isClosed) {
+                    fiber.reserve();
+                    return fiber;
+                }
+                retire(fiber);
+                throw new IllegalStateException("fiber pool is closed");
+            }
+            final Fiber created = tryAcquireSlow();
+            if (created != null || retainedCount.get() == 0) {
+                return created;
+            }
+            // release() bumps retainedCount before the lock-free put, so a positive count with an empty
+            // dequeue is a publication in flight. Back off outside the monitor: spinning while holding
+            // it would block hasAvailableFiber(), fiber retirement and quiesce.
+            Os.pause();
         }
-        return tryAcquireSlow();
     }
 
     synchronized void beginQuiesce() {
@@ -192,6 +208,14 @@ public final class FiberPool {
         runtime.signalCapacity();
     }
 
+    void onParked() {
+        parkedCount.incrementAndGet();
+    }
+
+    void onUnparked() {
+        parkedCount.decrementAndGet();
+    }
+
     void onWaitRegistrationAcquired() {
         inFlightWaitRegistrationCount.incrementAndGet();
     }
@@ -208,22 +232,33 @@ public final class FiberPool {
         }
     }
 
-    void retireAfterDriverFailure(Fiber fiber) throws Throwable {
+    void retireAfterDriverFailure(Fiber fiber, Throwable driverFailure) throws Throwable {
         fiber.beginRetirement();
         Throwable failure = null;
         try {
-            fiber.prepareDriverFailure();
+            fiber.prepareDriverFailure(driverFailure);
         } catch (Throwable th) {
             failure = th;
         }
+        final boolean isUnwound = fiber.isDone();
         fiber.markRetired();
-        try {
-            onRetired(fiber);
-        } catch (Throwable th) {
+        if (isUnwound) {
+            try {
+                onRetired(fiber);
+            } catch (Throwable th) {
+                if (failure == null) {
+                    failure = th;
+                } else if (failure != th) {
+                    failure.addSuppressed(th);
+                }
+            }
+        } else {
+            final IllegalStateException unwindFailure =
+                    new IllegalStateException("fiber continuation did not unwind after driver failure");
             if (failure == null) {
-                failure = th;
-            } else if (failure != th) {
-                failure.addSuppressed(th);
+                failure = unwindFailure;
+            } else {
+                failure.addSuppressed(unwindFailure);
             }
         }
         if (failure != null) {
@@ -245,31 +280,24 @@ public final class FiberPool {
     }
 
     private synchronized Fiber tryAcquireSlow() {
-        while (true) {
-            if (isClosed) {
-                throw new IllegalStateException("fiber pool is closed");
-            }
-            final Fiber retainedFiber = freeList.tryDequeue();
-            if (retainedFiber != null) {
-                retainedCount.decrementAndGet();
-                retainedFiber.reserve();
-                return retainedFiber;
-            }
-            if (liveFibers.size() < maxLive) {
-                final Fiber fiber = new Fiber(this, beforeWaitFireForTesting);
-                fiber.setRegistryIndex(liveFibers.size());
-                liveFibers.add(fiber);
-                createdCount.incrementAndGet();
-                fiber.reserve();
-                return fiber;
-            }
-            // release() bumps retainedCount before the lock-free put, so a positive count with an
-            // empty dequeue is a publication in flight, not saturation
-            if (retainedCount.get() == 0) {
-                return null;
-            }
-            Os.pause();
+        if (isClosed) {
+            throw new IllegalStateException("fiber pool is closed");
         }
+        final Fiber retainedFiber = freeList.tryDequeue();
+        if (retainedFiber != null) {
+            retainedCount.decrementAndGet();
+            retainedFiber.reserve();
+            return retainedFiber;
+        }
+        if (liveFibers.size() < maxLive) {
+            final Fiber fiber = new Fiber(this, beforeWaitFireForTesting);
+            fiber.setRegistryIndex(liveFibers.size());
+            liveFibers.add(fiber);
+            createdCount.incrementAndGet();
+            fiber.reserve();
+            return fiber;
+        }
+        return null;
     }
 
     private synchronized void unregisterFiber(Fiber fiber) {

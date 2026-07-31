@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
@@ -54,6 +56,8 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
     // Reserve extra int array elements to avoid false sharing. A cache line is assumed to take 64 bytes.
     private static final int INTS_PER_SLOT = 64 / Integer.BYTES;
+    private static final Log LOG = LogFactory.getLog(PerWorkerLocks.class);
+    private static final int SLOT_WAIT_ABORTED = -2;
     private final AtomicIntegerArray locks;
     // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
     private final Rnd rnd;
@@ -110,8 +114,10 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                 countDownTestAcquireLatch();
                 return fiberSlot;
             }
-            sqlCircuitBreaker.statefulThrowExceptionIfTripped();
-            throw CairoException.nonCritical().put("query aborted").setInterruption(true);
+            if (fiberSlot != SLOT_WAIT_ABORTED) {
+                sqlCircuitBreaker.statefulThrowExceptionIfTripped();
+                throw CairoException.nonCritical().put("query aborted").setInterruption(true);
+            }
         }
         if (mode == SuspensionScope.Mode.FORBIDDEN) {
             throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
@@ -149,17 +155,18 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
             if (fiberSlot > -1) {
                 releaseSlot(fiberSlot);
             }
-        } else {
-            if (mode == SuspensionScope.Mode.FORBIDDEN) {
-                throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
+            if (fiberSlot != SLOT_WAIT_ABORTED) {
+                throw CairoException.nonCritical().put("query aborted").setInterruption(true);
             }
-            while (!circuitBreaker.checkIfTripped()) {
-                Os.pause();
-                slot = tryAcquireSlot(carrierId);
-                if (slot > -1) {
-                    countDownTestAcquireLatch();
-                    return slot;
-                }
+        } else if (mode == SuspensionScope.Mode.FORBIDDEN) {
+            throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
+        }
+        while (!circuitBreaker.checkIfTripped()) {
+            Os.pause();
+            slot = tryAcquireSlot(carrierId);
+            if (slot > -1) {
+                countDownTestAcquireLatch();
+                return slot;
             }
         }
         throw CairoException.nonCritical().put("query aborted").setInterruption(true);
@@ -195,7 +202,18 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
     public void releaseSlot(int slot) {
         if (slot > -1) {
             final int lockIndex = INTS_PER_SLOT * slot;
-            while (!slotWaitQueue.transfer(slot)) {
+            while (true) {
+                try {
+                    if (slotWaitQueue.transfer(slot)) {
+                        return;
+                    }
+                } catch (Throwable th) {
+                    // transfer() can only throw from fire(), which runs after markGranted() handed the
+                    // slot over; that path releases the slot itself, so re-releasing here would double
+                    // release. Callers invoke this from a finally, so nothing may propagate.
+                    LOG.critical().$("reducer slot transfer failed [slot=").$(slot).$(", error=").$(th).I$();
+                    return;
+                }
                 final Runnable beforeSlotRelease = testBeforeSlotRelease;
                 if (beforeSlotRelease != null) {
                     beforeSlotRelease.run();
@@ -246,8 +264,7 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
         }
         try {
             final FiberSlotWaitRegistration slotRegistration = coordinator.acquireSlot(token);
-            if (slotRegistration.register(slotWaitQueue) != SourceRegistrationResult.ACCEPTED
-                    || !coordinator.tryAcceptSource(token)) {
+            if (slotRegistration.register(slotWaitQueue) != SourceRegistrationResult.ACCEPTED) {
                 throw new IllegalStateException("reducer slot wait registration failed");
             }
             if (cancellationSignal != null
@@ -260,12 +277,12 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                 return slot;
             }
 
-            final int reason = fiber.suspendWait(token);
+            final int reason = fiber.suspendWait(token, SLOT_WAIT_ABORTED);
             if (reason == FiberWaitCoordinator.REASON_SLOT) {
                 return slotRegistration.takeSlot();
             }
-            if (reason == FiberWaitCoordinator.REASON_ABORTED) {
-                throw new IllegalStateException("fiber refused reducer slot suspension");
+            if (reason == SLOT_WAIT_ABORTED) {
+                return SLOT_WAIT_ABORTED;
             }
             return -1;
         } finally {

@@ -166,9 +166,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             final Thread hook;
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                Assert.assertFalse(serverMain.isCloseComplete());
                 serverMain.start(true);
                 hook = serverMain.testGetShutdownHookThread();
                 Assert.assertNotNull("start(true) must register a shutdown hook", hook);
+                serverMain.close();
+                Assert.assertTrue(serverMain.isCloseComplete());
             }
             // close() must deregister the hook: the JVM-static hook map would otherwise pin
             // the full engine graph per boot in a long-lived JVM (e.g. a reused test fork).

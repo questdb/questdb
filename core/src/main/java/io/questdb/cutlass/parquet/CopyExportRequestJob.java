@@ -119,12 +119,10 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                 cleanupFailure = th;
             }
         }
-        final FiberExportTask fiberTask = this.fiberTask;
-        if (fiberRuntime != null
-                && fiberRuntime.state() != FiberRuntimeState.OPEN
-                && fiberTask != null) {
+        while (true) {
             try {
-                while (rejectQueuedRequest(fiberTask)) {
+                if (!rejectQueuedRequest(LaunchResult.QUIESCING)) {
+                    break;
                 }
             } catch (Throwable th) {
                 cleanupFailure = addCleanupFailure(cleanupFailure, th);
@@ -174,12 +172,13 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
         if (!hasPendingRequests()) {
             return false;
         }
-        Fiber fiber = runtime.tryReserveFiber();
+        final Fiber fiber = runtime.tryReserveFiber();
         if (fiber == null) {
             return runtime.state() == FiberRuntimeState.OPEN
                     ? false
-                    : rejectQueuedRequest(task);
+                    : rejectQueuedRequest(LaunchResult.QUIESCING);
         }
+        final long fiberReservationEpoch = fiber.getReservationEpoch();
         try {
             while (true) {
                 final long cursor = subSeq.next();
@@ -192,9 +191,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     } finally {
                         subSeq.done(cursor);
                     }
-                    final Fiber launchFiber = fiber;
-                    fiber = null;
-                    final LaunchResult result = task.launch(launchFiber);
+                    final LaunchResult result = task.launch(fiber, fiberReservationEpoch);
                     if (result != LaunchResult.LAUNCHED) {
                         task.releaseAfterLaunchFailure(result);
                     }
@@ -203,9 +200,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                 Os.pause();
             }
         } finally {
-            if (fiber != null) {
-                runtime.releaseReservedFiber(fiber);
-            }
+            runtime.releaseReservedFiber(fiber, fiberReservationEpoch);
         }
     }
 
@@ -379,7 +374,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
         }
     }
 
-    private boolean rejectQueuedRequest(FiberExportTask task) {
+    private boolean rejectQueuedRequest(LaunchResult result) {
         while (true) {
             final long cursor = subSeq.next();
             if (cursor == -1) {
@@ -387,11 +382,11 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             }
             if (cursor > -1) {
                 try {
-                    task.prepare(queue.get(cursor));
+                    transferRequest(queue.get(cursor));
                 } finally {
                     subSeq.done(cursor);
                 }
-                task.releaseAfterLaunchFailure(LaunchResult.QUIESCING);
+                rejectLoadedRequest(result);
                 return true;
             }
             Os.pause();
@@ -556,8 +551,8 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             return isAvailable;
         }
 
-        private LaunchResult launch(Fiber fiber) {
-            return runtime.launchReserved(fiber, this, getIncarnation());
+        private LaunchResult launch(Fiber fiber, long reservationEpoch) {
+            return runtime.launchReserved(fiber, reservationEpoch, this, getIncarnation());
         }
 
         private void prepare(CopyExportRequestTask task) {

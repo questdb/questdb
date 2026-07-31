@@ -77,10 +77,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.questdb.PropertyKey.*;
 
 public class ServerMain implements Closeable {
+    private static final int SHUTDOWN_CLOSE_ATTEMPTS = 3;
     private final CairoEngine engine;
     private final Bootstrap bootstrap;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final FreeOnExit freeOnExit = new FreeOnExit();
+    private final AtomicBoolean isCloseComplete = new AtomicBoolean();
     private final AtomicBoolean running = new AtomicBoolean();
     private WorkerPoolManager workerPoolManager;
     private volatile Thread compileViewsThread;
@@ -193,85 +195,16 @@ public class ServerMain implements Closeable {
 
     @Override
     public void close() {
-        if (closed.compareAndSet(false, true)) {
-            joinThread(hydrateMetadataThread, true);
-            joinThread(compileViewsThread, true);
-            System.err.println("QuestDB is shutting down...");
-            System.out.println("QuestDB is shutting down...");
-            if (bootstrap != null && bootstrap.getLog() != null) {
-                // Still useful in case of custom logger
-                bootstrap.getLog().info().$("QuestDB is shutting down...").$();
-            }
-            final long haltDeadline = System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS;
-            // Signal long-running task to exit ASAP
-            final boolean isTimerShardsHaltComplete = engine.signalClose(haltDeadline);
-            boolean isLifecycleStopComplete = true;
-            if (orchestrator != null && isTimerShardsHaltComplete) {
-                orchestrator.close();
-                isLifecycleStopComplete = orchestrator.isStopComplete();
-            }
-            if (!isTimerShardsHaltComplete || !isLifecycleStopComplete) {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+        isCloseComplete.set(false);
+        try {
+            closeInternal();
+        } finally {
+            if (!isCloseComplete.get()) {
                 closed.set(false);
-                return;
             }
-            boolean isMinHttpHaltComplete = true;
-            if (orchestrator != null) {
-                Component component = orchestrator.getComponent("min-http");
-                if (component instanceof MinHttpEnvelope minHttp) {
-                    try {
-                        isMinHttpHaltComplete = minHttp.haltAndFree(Math.max(1, haltDeadline - System.nanoTime()));
-                    } catch (Throwable th) {
-                        bootstrap.getLog().error().$("could not stop min-http worker pool [error=").$(th).I$();
-                        isMinHttpHaltComplete = false;
-                    }
-                }
-            }
-            // Halt the worker pool before freeing the engine so no worker thread can fire
-            // a telemetry or WAL-listener callback while the engine's resources are being
-            // released by freeOnExit.close() below. Without this halt, TelemetryJob.close()
-            // (registered last in freeOnExit, so freed first in LIFO order) runs while the
-            // shared write pool is still live -- a concurrent worker runSerially() call
-            // writes to the same WAL file descriptors and causes a double-close fd race.
-            // The halt is idempotent: WorkerPool.halt() is CAS-guarded, so the orchestrator's
-            // later WorkerPoolManagerEnvelope.stop() halt becomes a no-op second call with
-            // no behavioural effect.
-            // Guard for the case where close() is called before the worker pool manager is
-            // constructed (e.g. an exception during engine load). WorkerPoolManagerEnvelope.stop()
-            // already applies this guard; the check here keeps the two call sites consistent.
-            // Bound the halt so a wedged worker (GC-starvation, a stuck native job) cannot make
-            // close() block forever. WorkerPool.halt()'s waits on started/halted were unbounded, so
-            // a hung worker turned this close path into an unkillable shutdown under SIGTERM. The
-            // bounded variant retains the live object graph when the deadline expires.
-            boolean isWorkerPoolHaltComplete = true;
-            if (workerPoolManager != null) {
-                isWorkerPoolHaltComplete = workerPoolManager.halt(haltDeadline);
-            }
-            if (!isMinHttpHaltComplete || !isWorkerPoolHaltComplete) {
-                closed.set(false);
-                return;
-            }
-            Throwable cleanupFailure = null;
-            try {
-                freeOnExit.close();
-            } catch (Throwable th) {
-                cleanupFailure = th;
-            }
-            // Deregister the shutdown hook: the JVM-static ApplicationShutdownHooks map holds
-            // the hook Thread until JVM exit, and the hook's closure references this ServerMain
-            // and therefore the whole engine graph. A long-lived JVM that boots many servers
-            // (e.g. a reused test fork) would otherwise pin one engine graph per boot.
-            // Skip when the hook itself runs close(): removeShutdownHook would throw
-            // IllegalStateException during shutdown, and the map clears itself at exit anyway.
-            final Thread hook = shutdownHookThread;
-            if (hook != null && hook != Thread.currentThread()) {
-                shutdownHookThread = null;
-                try {
-                    Runtime.getRuntime().removeShutdownHook(hook);
-                } catch (IllegalStateException ignore) {
-                    // JVM shutdown already in progress; the hook is running or about to run.
-                }
-            }
-            CairoException.rethrowCleanupFailure(cleanupFailure);
         }
     }
 
@@ -368,6 +301,14 @@ public class ServerMain implements Closeable {
 
     public boolean hasStarted() {
         return running.get();
+    }
+
+    /**
+     * Returns true when {@link #close()} released everything. A close that missed a halt deadline
+     * retains the live object graph and reports false so the caller can retry.
+     */
+    public boolean isCloseComplete() {
+        return isCloseComplete.get();
     }
 
     @TestOnly
@@ -533,8 +474,29 @@ public class ServerMain implements Closeable {
                 // We log it merely to make sure that LOAD instructions generated by
                 // AsyncFilterAtom#preTouchColumns() aren't optimized away by JVM's JIT compiler.
                 bootstrap.getLog().debug().$("Pre-touch magic number: ").$(AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.sum()).$();
-                close();
-                LogFactory.closeInstance();
+                // close() is retryable: it returns with the graph retained when a pool misses its halt
+                // deadline. Closing the log factory before the workers are down would leave them logging
+                // into freed infrastructure, so only do it once the teardown actually completed.
+                Throwable closeFailure = null;
+                boolean isServerClosed = false;
+                for (int i = 0; i < SHUTDOWN_CLOSE_ATTEMPTS && !isServerClosed; i++) {
+                    try {
+                        close();
+                    } catch (Throwable th) {
+                        if (closeFailure == null) {
+                            closeFailure = th;
+                        } else if (closeFailure != th) {
+                            closeFailure.addSuppressed(th);
+                        }
+                    }
+                    isServerClosed = isCloseComplete();
+                }
+                if (closeFailure != null) {
+                    bootstrap.getLog().error().$("could not close QuestDB cleanly [error=").$(closeFailure).I$();
+                }
+                if (isServerClosed) {
+                    LogFactory.closeInstance();
+                }
             } catch (Error ignore) {
                 // ignore
             } finally {
@@ -544,6 +506,86 @@ public class ServerMain implements Closeable {
         });
         shutdownHookThread = hook;
         Runtime.getRuntime().addShutdownHook(hook);
+    }
+
+    private void closeInternal() {
+        joinThread(hydrateMetadataThread, true);
+        joinThread(compileViewsThread, true);
+        System.err.println("QuestDB is shutting down...");
+        System.out.println("QuestDB is shutting down...");
+        if (bootstrap != null && bootstrap.getLog() != null) {
+            // Still useful in case of custom logger
+            bootstrap.getLog().info().$("QuestDB is shutting down...").$();
+        }
+        final long haltDeadline = System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS;
+        // Signal long-running task to exit ASAP
+        final boolean isTimerShardsHaltComplete = engine.signalClose(haltDeadline);
+        boolean isLifecycleStopComplete = true;
+        if (orchestrator != null && isTimerShardsHaltComplete) {
+            orchestrator.close();
+            isLifecycleStopComplete = orchestrator.isStopComplete();
+        }
+        if (!isTimerShardsHaltComplete || !isLifecycleStopComplete) {
+            return;
+        }
+        boolean isMinHttpHaltComplete = true;
+        if (orchestrator != null) {
+            Component component = orchestrator.getComponent("min-http");
+            if (component instanceof MinHttpEnvelope minHttp) {
+                try {
+                    isMinHttpHaltComplete = minHttp.haltAndFree(Math.max(1, haltDeadline - System.nanoTime()));
+                } catch (Throwable th) {
+                    bootstrap.getLog().error().$("could not stop min-http worker pool [error=").$(th).I$();
+                    isMinHttpHaltComplete = false;
+                }
+            }
+        }
+        // Halt the worker pool before freeing the engine so no worker thread can fire
+        // a telemetry or WAL-listener callback while the engine's resources are being
+        // released by freeOnExit.close() below. Without this halt, TelemetryJob.close()
+        // (registered last in freeOnExit, so freed first in LIFO order) runs while the
+        // shared write pool is still live -- a concurrent worker runSerially() call
+        // writes to the same WAL file descriptors and causes a double-close fd race.
+        // The halt is idempotent: WorkerPool.halt() is CAS-guarded, so the orchestrator's
+        // later WorkerPoolManagerEnvelope.stop() halt becomes a no-op second call with
+        // no behavioural effect.
+        // Guard for the case where close() is called before the worker pool manager is
+        // constructed (e.g. an exception during engine load). WorkerPoolManagerEnvelope.stop()
+        // already applies this guard; the check here keeps the two call sites consistent.
+        // Bound the halt so a wedged worker (GC-starvation, a stuck native job) cannot make
+        // close() block forever. WorkerPool.halt()'s waits on started/halted were unbounded, so
+        // a hung worker turned this close path into an unkillable shutdown under SIGTERM. The
+        // bounded variant retains the live object graph when the deadline expires.
+        boolean isWorkerPoolHaltComplete = true;
+        if (workerPoolManager != null) {
+            isWorkerPoolHaltComplete = workerPoolManager.halt(haltDeadline);
+        }
+        if (!isMinHttpHaltComplete || !isWorkerPoolHaltComplete) {
+            return;
+        }
+        Throwable cleanupFailure = null;
+        try {
+            freeOnExit.close();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        // Deregister the shutdown hook: the JVM-static ApplicationShutdownHooks map holds
+        // the hook Thread until JVM exit, and the hook's closure references this ServerMain
+        // and therefore the whole engine graph. A long-lived JVM that boots many servers
+        // (e.g. a reused test fork) would otherwise pin one engine graph per boot.
+        // Skip when the hook itself runs close(): removeShutdownHook would throw
+        // IllegalStateException during shutdown, and the map clears itself at exit anyway.
+        final Thread hook = shutdownHookThread;
+        if (hook != null && hook != Thread.currentThread()) {
+            shutdownHookThread = null;
+            try {
+                Runtime.getRuntime().removeShutdownHook(hook);
+            } catch (IllegalStateException ignore) {
+                // JVM shutdown already in progress; the hook is running or about to run.
+            }
+        }
+        isCloseComplete.set(true);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     /**

@@ -63,11 +63,12 @@ public final class FiberWalWaitRegistration extends FiberWaitRegistrationNode<Fi
     }
 
     public SourceRegistrationResult register(FiberWalWaitQueue queue) {
+        final long registrationToken = token;
         SourceRegistrationResult result = queue.register(this);
         if (result == SourceRegistrationResult.NOT_ACCEPTED) {
             releaseNew();
         }
-        return result;
+        return coordinator.completeSourceRegistration(registrationToken, this, result);
     }
 
     void fire() {
@@ -80,6 +81,11 @@ public final class FiberWalWaitRegistration extends FiberWaitRegistrationNode<Fi
                 coordinator.release(this);
             }
         }
+    }
+
+    @Override
+    boolean isForToken(long token) {
+        return this.token == token;
     }
 
     boolean markFiring() {

@@ -185,11 +185,10 @@ retire the fiber, unregister it, and balance all runtime counters.
 
 1. `beginBuild(sourceCount)`;
 2. acquire and initialize each source registration;
-3. register it with the source;
-4. call `tryAcceptSource(token)` for each accepted source;
-5. `seal(token)`;
-6. suspend if no source fired early;
-7. cancel losing registrations and `consume(token)`.
+3. register it with the source, which also completes coordinator acceptance;
+4. `seal(token)`;
+5. suspend if no source fired early;
+6. cancel losing registrations and `consume(token)`.
 
 ```mermaid
 stateDiagram-v2
@@ -212,7 +211,7 @@ stateDiagram-v2
     Armed --> Aborted: abort()
     Firing --> Fired: target.fireWait() succeeds
     Fired --> Unarmed: consume() / return wakeReason
-    Aborted --> Unarmed: consume() / REASON_ABORTED
+    Aborted --> Unarmed: consume() / caller fallback
 
     note left of Building
         Timer, WAL, capacity, progress, slot,

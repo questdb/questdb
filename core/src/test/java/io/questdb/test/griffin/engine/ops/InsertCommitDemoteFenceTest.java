@@ -42,6 +42,15 @@ import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeState;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.FiberWaitCoordinator;
+import io.questdb.mp.continuation.FiberWalWaitQueue;
+import io.questdb.mp.continuation.FiberWalWaitRegistration;
+import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -50,9 +59,14 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Proxy;
+import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.LockSupport;
 
 /**
  * Verifies that the HTTP /exec write executors -- InsertOperationImpl (plain INSERT) and
@@ -345,27 +359,286 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRoleSwitchReadLockCanBeReleasedAfterCarrierMigration() throws Exception {
+    public void testRoleSwitchReadLockCleanupAfterDriverFailure() throws Exception {
         assertMemoryLeak(() -> {
             try (CairoEngine primaryEngine = buildPrimaryEngine()) {
-                final AtomicReference<Throwable> error = new AtomicReference<>();
-                final Lock lock = primaryEngine.getRoleSwitchReadLock();
-                lock.lock();
-                final Thread resumedCarrier = new Thread(() -> {
+                final AtomicReference<Fiber> fiberRef = new AtomicReference<>();
+                final AtomicReference<Throwable> taskError = new AtomicReference<>();
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final FiberTask task = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        taskError.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        readLock.lock();
+                        try {
+                            fiberRef.set(Objects.requireNonNull(Fiber.current()));
+                            park(waitQueue);
+                        } finally {
+                            readLock.unlock();
+                        }
+                        return true;
+                    }
+                };
+                try {
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertFalse(task.isDone());
+                    Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+
+                    waitQueue.fire(1, false);
+                    Objects.requireNonNull(fiberRef.get()).setExecutionStateForTesting(Long.MAX_VALUE);
+                    Assert.assertEquals(1, runtime.drain(1));
+
+                    Assert.assertTrue(task.isDone());
+                    Assert.assertNotNull(taskError.get());
+                    Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+                    Assert.assertTrue(writeLock.tryLock());
+                    writeLock.unlock();
+                } finally {
+                    waitQueue.fire(1, false);
+                    close(runtime);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchReadLockCleanupAfterTaskLeak() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicReference<Throwable> taskError = new AtomicReference<>();
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final FiberTask leakingTask = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        taskError.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        readLock.lock();
+                        return true;
+                    }
+                };
+                final FiberTask replacementTask = new FiberTask() {
+                    @Override
+                    protected boolean runStep() {
+                        readLock.lock();
+                        try {
+                            Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                            return true;
+                        } finally {
+                            readLock.unlock();
+                        }
+                    }
+                };
+                try {
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(leakingTask));
+                    Assert.assertEquals(1, runtime.drain(1));
+
+                    Assert.assertTrue(leakingTask.isDone());
+                    Assert.assertNotNull(taskError.get());
+                    TestUtils.assertContains(taskError.get().getMessage(), "leaked role-switch read lock");
+                    Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+                    Assert.assertTrue(writeLock.tryLock());
+                    writeLock.unlock();
+
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(replacementTask));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertTrue(replacementTask.isDone());
+                    Assert.assertEquals(1, runtime.getCreatedFiberCount());
+                } finally {
+                    close(runtime);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchReadLockIsReentrantInLegacyExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final AtomicBoolean isWriterAcquired = new AtomicBoolean();
+                final AtomicReference<Throwable> writerFailure = new AtomicReference<>();
+                final AtomicReference<Throwable> wrongOwnerFailure = new AtomicReference<>();
+                final CountDownLatch writerStarted = new CountDownLatch(1);
+                final Thread writer = new Thread(() -> {
+                    writerStarted.countDown();
                     try {
-                        lock.lock();
-                        lock.unlock();
-                        lock.unlock();
+                        if (!writeLock.tryLock(10, TimeUnit.SECONDS)) {
+                            throw new AssertionError("timed out acquiring role-switch write lock");
+                        }
+                        try {
+                            isWriterAcquired.set(true);
+                        } finally {
+                            writeLock.unlock();
+                        }
                     } catch (Throwable th) {
-                        error.set(th);
+                        writerFailure.set(th);
                     }
                 });
-                resumedCarrier.start();
-                resumedCarrier.join();
-                if (error.get() != null) {
-                    throw new AssertionError("role-switch read lock is bound to its acquiring carrier", error.get());
+                writer.setDaemon(true);
+                readLock.lock();
+                try {
+                    Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                    writer.start();
+                    Assert.assertTrue(writerStarted.await(10, TimeUnit.SECONDS));
+                    awaitThreadWaiting(writer);
+                    Assert.assertFalse(isWriterAcquired.get());
+
+                    Assert.assertTrue(readLock.tryLock(1, TimeUnit.SECONDS));
+                    try {
+                        Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                    } finally {
+                        readLock.unlock();
+                    }
+
+                    final Thread wrongOwner = new Thread(() -> {
+                        try {
+                            readLock.unlock();
+                            Assert.fail("wrong owner unlocked role-switch read lock");
+                        } catch (Throwable th) {
+                            wrongOwnerFailure.set(th);
+                        }
+                    });
+                    wrongOwner.setDaemon(true);
+                    wrongOwner.start();
+                    wrongOwner.join(TimeUnit.SECONDS.toMillis(10));
+                    Assert.assertFalse(wrongOwner.isAlive());
+                    Assert.assertTrue(wrongOwnerFailure.get() instanceof IllegalMonitorStateException);
+                    Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                } finally {
+                    readLock.unlock();
                 }
+
+                writer.join(TimeUnit.SECONDS.toMillis(10));
+                Assert.assertFalse(writer.isAlive());
+                if (writerFailure.get() != null) {
+                    throw new AssertionError(writerFailure.get());
+                }
+                Assert.assertTrue(isWriterAcquired.get());
                 Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+                Assert.assertTrue(writeLock.tryLock());
+                writeLock.unlock();
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchReadLockRemainsReentrantAfterCarrierMigration() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicReference<Throwable> driverError = new AtomicReference<>();
+                final AtomicReference<Throwable> taskError = new AtomicReference<>();
+                final AtomicReference<Throwable> writerError = new AtomicReference<>();
+                final AtomicBoolean isWriterAcquired = new AtomicBoolean();
+                final CountDownLatch writerStarted = new CountDownLatch(1);
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final AtomicReference<Thread> firstCarrier = new AtomicReference<>();
+                final AtomicReference<Thread> secondCarrier = new AtomicReference<>();
+                final FiberTask task = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        taskError.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        readLock.lock();
+                        try {
+                            firstCarrier.set(Thread.currentThread());
+                            park(waitQueue);
+                            secondCarrier.set(Thread.currentThread());
+                            Assert.assertNotSame(firstCarrier.get(), secondCarrier.get());
+                            Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                            readLock.lock();
+                            try {
+                                Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                            } finally {
+                                readLock.unlock();
+                            }
+                            Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                        } finally {
+                            readLock.unlock();
+                        }
+                        return true;
+                    }
+                };
+                final Thread writer = new Thread(() -> {
+                    writerStarted.countDown();
+                    try {
+                        if (!writeLock.tryLock(10, TimeUnit.SECONDS)) {
+                            throw new AssertionError("timed out acquiring role-switch write lock");
+                        }
+                        try {
+                            isWriterAcquired.set(true);
+                        } finally {
+                            writeLock.unlock();
+                        }
+                    } catch (Throwable th) {
+                        writerError.set(th);
+                    }
+                });
+                final Thread resumedCarrier = new Thread(() -> {
+                    try {
+                        Assert.assertEquals(1, runtime.drain(1));
+                    } catch (Throwable th) {
+                        driverError.set(th);
+                    }
+                });
+                writer.setDaemon(true);
+                resumedCarrier.setDaemon(true);
+                try {
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertFalse(task.isDone());
+                    Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+
+                    writer.start();
+                    Assert.assertTrue(writerStarted.await(10, TimeUnit.SECONDS));
+                    awaitThreadWaiting(writer);
+                    Assert.assertFalse(isWriterAcquired.get());
+
+                    waitQueue.fire(1, false);
+                    resumedCarrier.start();
+                    resumedCarrier.join(TimeUnit.SECONDS.toMillis(10));
+                    Assert.assertFalse(resumedCarrier.isAlive());
+                    if (driverError.get() != null) {
+                        throw new AssertionError(driverError.get());
+                    }
+                    if (taskError.get() != null) {
+                        throw new AssertionError(taskError.get());
+                    }
+                    Assert.assertTrue(task.isDone());
+                } finally {
+                    waitQueue.fire(1, false);
+                    runtime.drain(8);
+                    close(runtime);
+                    resumedCarrier.join(TimeUnit.SECONDS.toMillis(10));
+                    writer.join(TimeUnit.SECONDS.toMillis(10));
+                }
+                Assert.assertFalse(writer.isAlive());
+                if (writerError.get() != null) {
+                    throw new AssertionError(writerError.get());
+                }
+                Assert.assertTrue(isWriterAcquired.get());
+                Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+                Assert.assertNotNull(firstCarrier.get());
+                Assert.assertNotNull(secondCarrier.get());
             }
         });
     }
@@ -378,6 +651,33 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                 "message must be 'replica access is read-only'",
                 e.getMessage().contains("replica access is read-only")
         );
+    }
+
+    private static void awaitThreadWaiting(Thread thread) {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            final Thread.State state = thread.getState();
+            if (state == Thread.State.BLOCKED
+                    || state == Thread.State.TIMED_WAITING
+                    || state == Thread.State.WAITING) {
+                return;
+            }
+            if (state == Thread.State.TERMINATED) {
+                Assert.fail("thread terminated before waiting [name=" + thread.getName() + ']');
+            }
+            LockSupport.parkNanos(100_000);
+        }
+        Assert.fail("thread did not wait [name=" + thread.getName() + ", state=" + thread.getState() + ']');
+    }
+
+    private static void close(FiberRuntime runtime) {
+        runtime.beginQuiesce();
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
+            runtime.drain(8);
+        }
+        Assert.assertTrue(runtime.awaitClosed(deadline));
+        runtime.closeAfterDrained();
     }
 
     /**
@@ -470,6 +770,26 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                     default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
                 }
         );
+    }
+
+    private static void park(FiberWalWaitQueue waitQueue) {
+        final Fiber fiber = Objects.requireNonNull(Fiber.current());
+        final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
+        final long token = fiber.beginWaitBuild(1);
+        final FiberWalWaitRegistration registration = coordinator.acquireWal(token, 1);
+        try {
+            if (registration.register(waitQueue) != SourceRegistrationResult.ACCEPTED) {
+                throw new IllegalStateException("role-switch wait registration failed");
+            }
+            final int reason = fiber.suspendWait(token);
+            if (reason != FiberWaitCoordinator.REASON_WAL) {
+                throw new IllegalStateException("unexpected role-switch wait reason [reason=" + reason + ']');
+            }
+        } finally {
+            registration.cancel();
+            coordinator.abort(token);
+            coordinator.consume(token);
+        }
     }
 
     /**

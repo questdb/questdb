@@ -196,8 +196,7 @@ public class FiberRuntimeBenchmark {
             final long token = fiber.beginWaitBuild(1);
             final FiberWalWaitRegistration registration = coordinator.acquireWal(token, 1);
             try {
-                if (registration.register(waitQueue) != SourceRegistrationResult.ACCEPTED
-                        || !coordinator.tryAcceptSource(token)) {
+                if (registration.register(waitQueue) != SourceRegistrationResult.ACCEPTED) {
                     throw new IllegalStateException("wait registration failed");
                 }
                 if (fiber.suspendWait(token) != FiberWaitCoordinator.REASON_WAL) {

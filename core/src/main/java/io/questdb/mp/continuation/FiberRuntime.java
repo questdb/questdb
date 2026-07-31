@@ -151,7 +151,7 @@ public final class FiberRuntime {
                     && fiberPool.hasAvailableFiber()) {
                 return FiberWaitCoordinator.REASON_CAPACITY;
             }
-            return fiber.suspendWait(token);
+            return fiber.suspendWait(token, FiberWaitCoordinator.REASON_NONE);
         } finally {
             coordinator.teardownWait(token);
         }
@@ -319,15 +319,29 @@ public final class FiberRuntime {
         if (fiber == null) {
             return record(state == FiberRuntimeState.OPEN ? LaunchResult.SATURATED : LaunchResult.QUIESCING);
         }
-        return launchReserved(fiber, task, taskIncarnation);
+        return launchReserved(fiber, fiber.getReservationEpoch(), task, taskIncarnation);
     }
 
-    public LaunchResult launchReserved(Fiber fiber, FiberTask task, long taskIncarnation) {
-        return launchReserved(fiber, task, taskIncarnation, false);
+    /**
+     * Consumes the matching fiber reservation before it starts the launch. The caller may always
+     * attempt to release the same epoch afterward; a consumed or stale epoch is a no-op.
+     */
+    public LaunchResult launchReserved(
+            Fiber fiber,
+            long reservationEpoch,
+            FiberTask task,
+            long taskIncarnation
+    ) {
+        return launchReserved(fiber, reservationEpoch, task, taskIncarnation, false);
     }
 
-    public LaunchResult launchReservedDirect(Fiber fiber, FiberTask task, long taskIncarnation) {
-        return launchReserved(fiber, task, taskIncarnation, true);
+    public LaunchResult launchReservedDirect(
+            Fiber fiber,
+            long reservationEpoch,
+            FiberTask task,
+            long taskIncarnation
+    ) {
+        return launchReserved(fiber, reservationEpoch, task, taskIncarnation, true);
     }
 
     public synchronized void registerQuiesceListener(FiberRuntimeQuiesceListener listener) {
@@ -340,19 +354,11 @@ public final class FiberRuntime {
         quiesceListeners.add(listener);
     }
 
-    public void releaseReservedFiber(Fiber fiber) {
+    public void releaseReservedFiber(Fiber fiber, long reservationEpoch) {
         if (fiber.isForeignTo(this)) {
             throw new IllegalArgumentException("fiber reservation does not belong to this runtime");
         }
-        if (!fiber.isReserved()) {
-            throw new IllegalArgumentException("fiber is not reserved");
-        }
-        try {
-            fiber.releaseReservation();
-            fiberPool.release(fiber);
-        } finally {
-            releaseTaskSlot();
-        }
+        releaseReservation(fiber, reservationEpoch, true);
     }
 
     @TestOnly
@@ -495,7 +501,7 @@ public final class FiberRuntime {
         finalizerCount.incrementAndGet();
         try {
             switch (outcome.type) {
-                case Fiber.OUTCOME_ABANDONED -> completeAbandoned(task, true);
+                case Fiber.OUTCOME_ABANDONED, Fiber.OUTCOME_PARKED -> completeAbandoned(task, true);
                 case Fiber.OUTCOME_DONE -> completeDone(task);
                 case Fiber.OUTCOME_ERROR -> completeError(task, outcome.error);
                 default -> throw new IllegalStateException("missing fiber task outcome");
@@ -512,7 +518,7 @@ public final class FiberRuntime {
         boolean hasFiberOwnership = true;
         try {
             if (!acquireAdmission()) {
-                fiberPool.release(fiber);
+                releaseFiber(fiber);
                 completeAbandoned(task, true);
                 return false;
             }
@@ -524,20 +530,20 @@ public final class FiberRuntime {
                 task.publishPark();
                 final int result = task.resolveArming();
                 if (result == FiberTask.PARK_IDLE) {
-                    fiberPool.release(fiber);
+                    releaseFiber(fiber);
                     hasFiberOwnership = false;
                     releaseTaskSlot();
                 } else if (result == FiberTask.PARK_RELAUNCH) {
                     fiber.restageAndRequestRun(task);
                 } else {
-                    fiberPool.release(fiber);
+                    releaseFiber(fiber);
                     hasFiberOwnership = false;
                     completeAbandoned(task, false);
                 }
             } catch (Throwable th) {
                 task.abortArming();
                 if (hasFiberOwnership) {
-                    fiberPool.release(fiber);
+                    releaseFiber(fiber);
                     hasFiberOwnership = false;
                 }
                 terminalError(task, th);
@@ -547,6 +553,14 @@ public final class FiberRuntime {
             return hasFiberOwnership;
         } finally {
             finalizerCount.decrementAndGet();
+        }
+    }
+
+    private void finishFiberRetirement(Fiber fiber) {
+        try {
+            fiberPool.onRetired(fiber);
+        } catch (Throwable th) {
+            LOG.critical().$("fiber retirement finalization failed [error=").$(th).I$();
         }
     }
 
@@ -582,11 +596,14 @@ public final class FiberRuntime {
         // tryClose() checks
         finalizerCount.incrementAndGet();
         try {
-            final FiberTask task = fiber.detachTaskAfterDriverFailure(outcome);
+            final FiberTask task = fiber.getTaskAfterDriverFailure(outcome);
             try {
-                fiberPool.retireAfterDriverFailure(fiber);
+                fiberPool.retireAfterDriverFailure(fiber, th);
             } catch (Throwable retirementError) {
                 LOG.critical().$("fiber quarantine failed [error=").$(retirementError).I$();
+                if (retirementError != th) {
+                    th.addSuppressed(retirementError);
+                }
             }
             if (task != null && task.abortArming()) {
                 terminalError(task, th);
@@ -623,6 +640,7 @@ public final class FiberRuntime {
 
     private LaunchResult launchReserved(
             Fiber fiber,
+            long reservationEpoch,
             FiberTask task,
             long taskIncarnation,
             boolean isDirectMountAllowed
@@ -630,52 +648,66 @@ public final class FiberRuntime {
         if (fiber.isForeignTo(this)) {
             throw new IllegalArgumentException("fiber reservation does not belong to this runtime");
         }
-        if (!fiber.isReserved()) {
-            throw new IllegalArgumentException("fiber is not reserved");
-        }
-        if (!acquireAdmission()) {
-            releaseReservedFiber(fiber);
-            return record(LaunchResult.QUIESCING);
+        if (!fiber.isReserved(reservationEpoch)) {
+            throw new IllegalArgumentException("fiber reservation is stale or already consumed");
         }
         Fiber directFiber = null;
-        Fiber reservedFiber = fiber;
-        boolean isReserved = true;
-        LaunchResult result;
+        boolean hasAdmission = false;
+        boolean hasFiberReservation = true;
+        boolean hasTaskSlot = true;
+        boolean isTaskClaimed = false;
+        LaunchResult result = LaunchResult.RESOURCE_FAILURE;
         try {
-            // claim() folds the incarnation, ownership and terminal checks into its CAS loop
-            final int claim = task.claim(taskIncarnation);
-            switch (claim) {
-                case FiberTask.CLAIM_LAUNCHED -> {
-                    if (isDirectMountAllowed) {
-                        if (reservedFiber.stageForDirectMountOrRequestRun(task)) {
-                            directFiber = reservedFiber;
+            if (!acquireAdmission()) {
+                result = LaunchResult.QUIESCING;
+            } else {
+                hasAdmission = true;
+                // claim() folds the incarnation, ownership and terminal checks into its CAS loop
+                final int claim = task.claim(taskIncarnation);
+                switch (claim) {
+                    case FiberTask.CLAIM_LAUNCHED -> {
+                        isTaskClaimed = true;
+                        if (isDirectMountAllowed) {
+                            if (fiber.stageForDirectMountOrRequestRun(task, reservationEpoch)) {
+                                directFiber = fiber;
+                            }
+                        } else {
+                            fiber.stageAndRequestRun(task, reservationEpoch);
                         }
-                    } else {
-                        reservedFiber.stageAndRequestRun(task);
+                        hasFiberReservation = false;
+                        hasTaskSlot = false;
+                        result = LaunchResult.LAUNCHED;
                     }
-                    reservedFiber = null;
-                    isReserved = false;
-                    result = LaunchResult.LAUNCHED;
+                    case FiberTask.CLAIM_ALREADY_OWNED, FiberTask.CLAIM_SIGNALLED ->
+                            result = LaunchResult.ALREADY_OWNED;
+                    case FiberTask.CLAIM_STALE -> result = LaunchResult.STALE_INCARNATION;
+                    default -> result = LaunchResult.TERMINAL;
                 }
-                case FiberTask.CLAIM_ALREADY_OWNED, FiberTask.CLAIM_SIGNALLED -> result = LaunchResult.ALREADY_OWNED;
-                case FiberTask.CLAIM_STALE -> result = LaunchResult.STALE_INCARNATION;
-                default -> result = LaunchResult.TERMINAL;
             }
         } catch (Throwable e) {
-            if (isReserved) {
-                terminalError(task, e);
-                isReserved = false;
+            if (isTaskClaimed) {
+                hasTaskSlot = false;
+                try {
+                    terminalError(task, e);
+                } catch (Throwable terminalFailure) {
+                    LOG.critical().$("fiber launch terminalization failed [error=").$(terminalFailure).I$();
+                }
+                result = LaunchResult.TERMINAL;
+            } else {
+                LOG.critical().$("fiber launch failed before task claim [error=").$(e).I$();
+                result = LaunchResult.RESOURCE_FAILURE;
             }
-            result = LaunchResult.TERMINAL;
         } finally {
-            if (reservedFiber != null) {
-                reservedFiber.releaseReservation();
-                fiberPool.release(reservedFiber);
+            if (hasFiberReservation) {
+                releaseReservation(fiber, reservationEpoch, hasTaskSlot);
             }
-            if (isReserved) {
-                releaseTaskSlot();
+            if (hasAdmission) {
+                try {
+                    releaseAdmission();
+                } catch (Throwable th) {
+                    LOG.critical().$("fiber launch admission release failed [error=").$(th).I$();
+                }
             }
-            releaseAdmission();
         }
         if (directFiber != null) {
             if (process(directFiber, directFiber.getOutcomeScratch(), true)) {
@@ -728,7 +760,7 @@ public final class FiberRuntime {
             if (fiber.isDone()) {
                 fiber.takeOutcome(outcome);
                 fiber.markRetired();
-                fiberPool.onRetired(fiber);
+                finishFiberRetirement(fiber);
                 hasFiberOwnership = false;
                 finalizeOutcome(outcome);
             } else if (fiber.getYieldReason() == Fiber.YIELD_WAIT) {
@@ -741,10 +773,14 @@ public final class FiberRuntime {
                 if (outcome.type == Fiber.OUTCOME_PARKED) {
                     hasFiberOwnership = finalizePark(fiber, outcome.task);
                 } else {
-                    fiberPool.release(fiber);
+                    releaseFiber(fiber);
                     hasFiberOwnership = false;
                     finalizeOutcome(outcome);
                 }
+            }
+            final Runnable hook = afterProcessForTesting;
+            if (hook != null) {
+                hook.run();
             }
         } catch (Throwable th) {
             LOG.critical().$("fiber driver failed [error=").$(th).I$();
@@ -759,16 +795,38 @@ public final class FiberRuntime {
                 }
             }
         }
-        final Runnable hook = afterProcessForTesting;
-        if (hook != null) {
-            hook.run();
-        }
         return !isTerminated;
     }
 
     private LaunchResult record(LaunchResult result) {
-        launchCounts.getQuick(result.ordinal()).increment();
+        try {
+            launchCounts.getQuick(result.ordinal()).increment();
+        } catch (Throwable th) {
+            LOG.error().$("fiber launch metric update failed [error=").$(th).I$();
+        }
         return result;
+    }
+
+    private void releaseFiber(Fiber fiber) {
+        try {
+            fiberPool.release(fiber);
+        } catch (Throwable th) {
+            LOG.critical().$("fiber pool release failed [error=").$(th).I$();
+        }
+    }
+
+    private void releaseReservation(Fiber fiber, long reservationEpoch, boolean hasTaskSlot) {
+        if (!fiber.tryReleaseReservation(reservationEpoch)) {
+            return;
+        }
+        releaseFiber(fiber);
+        if (hasTaskSlot) {
+            try {
+                releaseTaskSlot();
+            } catch (Throwable th) {
+                LOG.critical().$("fiber reservation task slot release failed [error=").$(th).I$();
+            }
+        }
     }
 
     private void releaseTaskSlot() {
@@ -777,7 +835,11 @@ public final class FiberRuntime {
             outstandingTaskCount.incrementAndGet();
             throw new IllegalStateException("fiber runtime task slot underflow");
         }
-        signalCapacity();
+        try {
+            signalCapacity();
+        } catch (Throwable th) {
+            LOG.critical().$("fiber capacity signal failed [error=").$(th).I$();
+        }
     }
 
     private void terminalError(FiberTask task, Throwable th) {

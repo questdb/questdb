@@ -47,7 +47,7 @@ public class FiberMetricsTest {
             final Fiber fiber = runtime.tryReserveFiber();
             Assert.assertNotNull(fiber);
             Assert.assertNull(runtime.tryReserveFiber());
-            runtime.releaseReservedFiber(fiber);
+            runtime.releaseReservedFiber(fiber, fiber.getReservationEpoch());
             final OneShotTask task = new OneShotTask();
             Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
             Assert.assertEquals(LaunchResult.SATURATED, runtime.launch(new OneShotTask()));
@@ -56,33 +56,33 @@ public class FiberMetricsTest {
             try (DirectUtf8Sink sink = new DirectUtf8Sink(2048)) {
                 metrics.scrapeIntoPrometheus(sink);
                 final String value = sink.toString();
-                TestUtils.assertContains(value, "questdb_worker_pool_fiber_live{worker_pool=\"test\\\"pool\"} 1");
-                TestUtils.assertContains(value, "questdb_worker_pool_fiber_max_live{worker_pool=\"test\\\"pool\"} 1");
-                TestUtils.assertContains(value, "questdb_worker_pool_fiber_outstanding{worker_pool=\"test\\\"pool\"} 0");
-                TestUtils.assertContains(value, "questdb_worker_pool_fiber_queued{worker_pool=\"test\\\"pool\"} 0");
-                TestUtils.assertContains(value, "questdb_worker_pool_fiber_mounted{worker_pool=\"test\\\"pool\"} 0");
-                TestUtils.assertContains(value, "questdb_worker_pool_fiber_finalizing{worker_pool=\"test\\\"pool\"} 0");
-                TestUtils.assertContains(value, "questdb_worker_pool_fiber_parked{worker_pool=\"test\\\"pool\"} 0");
-                TestUtils.assertContains(value, "questdb_worker_pool_fiber_retained{worker_pool=\"test\\\"pool\"} 1");
-                TestUtils.assertContains(value, "questdb_worker_pool_fiber_created_total{worker_pool=\"test\\\"pool\"} 1");
-                TestUtils.assertContains(value, "questdb_worker_pool_fiber_retired_total{worker_pool=\"test\\\"pool\"} 0");
-                TestUtils.assertContains(value, "questdb_worker_pool_fiber_mount_total{worker_pool=\"test\\\"pool\"} 1");
-                TestUtils.assertContains(value, "questdb_worker_pool_fiber_saturation_total{worker_pool=\"test\\\"pool\"} 2");
+                TestUtils.assertContains(value, "questdb_worker_pool_fiber_live{worker_pool=\"test\\\"pool\"} 1\n");
+                TestUtils.assertContains(value, "questdb_worker_pool_fiber_max_live{worker_pool=\"test\\\"pool\"} 1\n");
+                TestUtils.assertContains(value, "questdb_worker_pool_fiber_outstanding{worker_pool=\"test\\\"pool\"} 0\n");
+                TestUtils.assertContains(value, "questdb_worker_pool_fiber_queued{worker_pool=\"test\\\"pool\"} 0\n");
+                TestUtils.assertContains(value, "questdb_worker_pool_fiber_mounted{worker_pool=\"test\\\"pool\"} 0\n");
+                TestUtils.assertContains(value, "questdb_worker_pool_fiber_finalizing{worker_pool=\"test\\\"pool\"} 0\n");
+                TestUtils.assertContains(value, "questdb_worker_pool_fiber_parked{worker_pool=\"test\\\"pool\"} 0\n");
+                TestUtils.assertContains(value, "questdb_worker_pool_fiber_retained{worker_pool=\"test\\\"pool\"} 1\n");
+                TestUtils.assertContains(value, "questdb_worker_pool_fiber_created_total{worker_pool=\"test\\\"pool\"} 1\n");
+                TestUtils.assertContains(value, "questdb_worker_pool_fiber_retired_total{worker_pool=\"test\\\"pool\"} 0\n");
+                TestUtils.assertContains(value, "questdb_worker_pool_fiber_mount_total{worker_pool=\"test\\\"pool\"} 1\n");
+                TestUtils.assertContains(value, "questdb_worker_pool_fiber_saturation_total{worker_pool=\"test\\\"pool\"} 2\n");
                 TestUtils.assertContains(
                         value,
-                        "questdb_worker_pool_fiber_mount_budget_exhaustion_total{worker_pool=\"test\\\"pool\"} 0"
+                        "questdb_worker_pool_fiber_mount_budget_exhaustion_total{worker_pool=\"test\\\"pool\"} 0\n"
                 );
                 TestUtils.assertContains(
                         value,
-                        "questdb_worker_pool_fiber_inline_suspend_violation_total{worker_pool=\"test\\\"pool\"} 0"
+                        "questdb_worker_pool_fiber_inline_suspend_violation_total{worker_pool=\"test\\\"pool\"} 0\n"
                 );
                 TestUtils.assertContains(
                         value,
-                        "questdb_worker_pool_fiber_launch_total{worker_pool=\"test\\\"pool\",result=\"launched\"} 1"
+                        "questdb_worker_pool_fiber_launch_total{worker_pool=\"test\\\"pool\",result=\"launched\"} 1\n"
                 );
                 TestUtils.assertContains(
                         value,
-                        "questdb_worker_pool_fiber_launch_total{worker_pool=\"test\\\"pool\",result=\"saturated\"} 1"
+                        "questdb_worker_pool_fiber_launch_total{worker_pool=\"test\\\"pool\",result=\"saturated\"} 1\n"
                 );
 
                 metrics.clear();
@@ -90,11 +90,11 @@ public class FiberMetricsTest {
                 metrics.scrapeIntoPrometheus(sink);
                 TestUtils.assertContains(
                         sink.toString(),
-                        "questdb_worker_pool_fiber_saturation_total{worker_pool=\"test\\\"pool\"} 0"
+                        "questdb_worker_pool_fiber_saturation_total{worker_pool=\"test\\\"pool\"} 0\n"
                 );
                 TestUtils.assertContains(
                         sink.toString(),
-                        "questdb_worker_pool_fiber_launch_total{worker_pool=\"test\\\"pool\",result=\"launched\"} 0"
+                        "questdb_worker_pool_fiber_launch_total{worker_pool=\"test\\\"pool\",result=\"launched\"} 0\n"
                 );
 
                 metrics.unregister(runtime);

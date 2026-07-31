@@ -136,7 +136,8 @@ sequenceDiagram
     F->>CO: acquireWal(token, targetSeqTxn)
     F->>ST: registerWaiter(walRegistration)
     ST->>WQ: register(walRegistration)
-    F->>CO: tryAcceptSource(token)
+    WQ-->>ST: registration accepted
+    ST-->>F: registration accepted
     F->>CO: armTimer(token, wakeInterval)
     F->>F: suspendWait(token)
     par WAL progress or terminal table state
@@ -252,7 +253,7 @@ sequenceDiagram
     RF->>RF: token = tryBeginWaitBuild(1 or 2 sources)
     RF->>CO: acquireSlot(token)
     RF->>SQ: register(slotRegistration)
-    RF->>CO: tryAcceptSource(token)
+    SQ-->>RF: registration accepted
     opt a FiberCancellationSignal is available
         RF->>CO: armCancellation(token, signal, generation)
     end

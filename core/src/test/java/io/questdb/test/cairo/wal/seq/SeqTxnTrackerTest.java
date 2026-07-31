@@ -274,7 +274,6 @@ public class SeqTxnTrackerTest {
             FiberWalWaitRegistration registration = coordinator.acquireWal(token, 5);
 
             assertSame(SourceRegistrationResult.ACCEPTED, tracker.registerWaiter(registration));
-            assertTrue(coordinator.tryAcceptSource(token));
             assertTrue(coordinator.seal(token));
 
             assertTrue(coordinator.isFired(token));
@@ -295,7 +294,7 @@ public class SeqTxnTrackerTest {
             assertTrue(registration.cancel());
             assertTrue(coordinator.abort(token));
             tracker.updateWriterTxns(10, 10);
-            assertEquals(FiberWaitCoordinator.REASON_ABORTED, coordinator.consume(token));
+            assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
         });
     }
 
@@ -309,7 +308,6 @@ public class SeqTxnTrackerTest {
             long token = coordinator.beginBuild(1);
             FiberWalWaitRegistration registration = coordinator.acquireWal(token, 100);
             assertSame(SourceRegistrationResult.ACCEPTED, tracker.registerWaiter(registration));
-            assertTrue(coordinator.tryAcceptSource(token));
             assertTrue(coordinator.seal(token));
             assertFalse(coordinator.isFired(token));
 
@@ -330,7 +328,6 @@ public class SeqTxnTrackerTest {
             long token = coordinator.beginBuild(1);
             FiberWalWaitRegistration registration = coordinator.acquireWal(token, 100);
             assertSame(SourceRegistrationResult.ACCEPTED, tracker.registerWaiter(registration));
-            assertTrue(coordinator.tryAcceptSource(token));
             assertTrue(coordinator.seal(token));
             assertFalse(coordinator.isFired(token));
 
@@ -351,7 +348,6 @@ public class SeqTxnTrackerTest {
             long token1 = coordinator1.beginBuild(1);
             FiberWalWaitRegistration registration1 = coordinator1.acquireWal(token1, 3);
             assertSame(SourceRegistrationResult.ACCEPTED, tracker.registerWaiter(registration1));
-            assertTrue(coordinator1.tryAcceptSource(token1));
             assertTrue(coordinator1.seal(token1));
 
             FiberTarget target2 = new FiberTarget();
@@ -359,7 +355,6 @@ public class SeqTxnTrackerTest {
             long token2 = coordinator2.beginBuild(1);
             FiberWalWaitRegistration registration2 = coordinator2.acquireWal(token2, 7);
             assertSame(SourceRegistrationResult.ACCEPTED, tracker.registerWaiter(registration2));
-            assertTrue(coordinator2.tryAcceptSource(token2));
             assertTrue(coordinator2.seal(token2));
 
             assertFalse(coordinator1.isFired(token1));

@@ -200,29 +200,55 @@ public class CopyExportRequestJobTest extends AbstractCairoTest {
             final FiberRuntime runtime = new FiberRuntime(1);
             final CopyExportRequestJob job = new CopyExportRequestJob(engine, runtime);
             Fiber heldFiber = null;
+            long heldFiberEpoch = 0;
             try {
                 publishCopy("COPY (SELECT 1 AS x) TO 'saturated' WITH FORMAT parquet");
                 heldFiber = runtime.tryReserveFiber();
                 Assert.assertNotNull(heldFiber);
+                heldFiberEpoch = heldFiber.getReservationEpoch();
 
                 Assert.assertFalse(job.run());
                 Assert.assertEquals(1, runtime.getOutstandingTaskCount());
                 assertExportDoesNotExist("saturated.parquet");
 
-                runtime.releaseReservedFiber(heldFiber);
+                runtime.releaseReservedFiber(heldFiber, heldFiberEpoch);
                 heldFiber = null;
                 Assert.assertTrue(job.run());
                 drainUntilIdle(runtime);
                 assertExportRowCount("saturated.parquet", 1);
             } finally {
                 if (heldFiber != null) {
-                    runtime.releaseReservedFiber(heldFiber);
+                    runtime.releaseReservedFiber(heldFiber, heldFiberEpoch);
                 }
                 try {
                     closeRuntime(runtime);
                 } finally {
                     job.close();
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testLegacyCloseCancelsQueuedExport() throws Exception {
+        assertMemoryLeak(() -> {
+            final CopyExportRequestJob job = new CopyExportRequestJob(engine);
+            try {
+                publishCopy("COPY (SELECT 1 AS x) TO 'legacy_queued' WITH FORMAT parquet");
+                job.close();
+
+                assertQuery("""
+                        SELECT status
+                        FROM "sys.copy_export_log"
+                        WHERE status = 'cancelled'
+                        """)
+                        .returns("""
+                                status
+                                cancelled
+                                """);
+                assertExportDoesNotExist("legacy_queued.parquet");
+            } finally {
+                job.close();
             }
         });
     }

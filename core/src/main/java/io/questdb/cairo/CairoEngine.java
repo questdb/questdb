@@ -160,7 +160,6 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.StampedLock;
 
 import static io.questdb.griffin.CompiledQuery.*;
 
@@ -204,8 +203,8 @@ public class CairoEngine implements Closeable, WriterSource {
     // throughput across tables and protocols; the read/write exclusion is the invariant that
     // keeps a commit from slipping through the gate-read and landing on a demoting node. The
     // write side is never held across drainWriterPool. A plain OSS deployment that never flips
-    // role only ever pays an uncontended read acquire (a single CAS in the common case), so no
-    // separate "no flip path" gate is needed.
+    // role only pays one carrier-local lookup and an uncontended read acquire, so no separate
+    // "no flip path" gate is needed.
     // Test seam: when non-null, fireRoleSwitchMintObserver() runs this hook at an externalization that
     // mints replicated state, so a witness can pause the externalization there and interleave a
     // concurrent PRIMARY-to-REPLICA demote deterministically (without host load). It fires from two
@@ -223,11 +222,11 @@ public class CairoEngine implements Closeable, WriterSource {
     // a single static volatile read with no side effect when no test installed a hook.
     @TestOnly
     private static volatile Runnable roleSwitchMintObserver;
-    // StampedLock views let a suspended fiber release its read hold after resuming on another
-    // carrier. Read fences may nest, but each lexical acquisition releases one shared hold.
-    private final StampedLock roleSwitchLock = new StampedLock();
-    private final Lock roleSwitchReadLock = roleSwitchLock.asReadLock();
-    private final Lock roleSwitchWriteLock = roleSwitchLock.asWriteLock();
+    // The role-switch lock tracks read nesting by logical execution, so a fiber can re-enter after
+    // migration without queueing behind a writer that is waiting for its outer read hold.
+    private final RoleSwitchReadWriteLock roleSwitchLock = new RoleSwitchReadWriteLock();
+    private final Lock roleSwitchReadLock = roleSwitchLock.readLock();
+    private final Lock roleSwitchWriteLock = roleSwitchLock.writeLock();
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;

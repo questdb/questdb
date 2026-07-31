@@ -25,6 +25,7 @@
 package io.questdb.test.mp;
 
 import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberEventWaitQueue;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
@@ -379,6 +380,8 @@ public class FiberTest {
     private static class ReusedWaitTask extends FiberTask {
         private final CountDownLatch allowSecondSuspend = new CountDownLatch(1);
         private final CountDownLatch secondWaitBuilding = new CountDownLatch(1);
+        private final FiberEventWaitQueue waitQueue =
+                new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
         private volatile FiberWaitCoordinator coordinator;
         private volatile int firstReason;
         private volatile long firstToken;
@@ -392,7 +395,7 @@ public class FiberTest {
 
             firstToken = fiber.beginWaitBuild(1);
             try {
-                if (!coordinator.tryAcceptSource(firstToken)) {
+                if (!coordinator.armEvent(firstToken, waitQueue)) {
                     throw new IllegalStateException("first wait registration failed");
                 }
                 firstReason = fiber.suspendWait(firstToken);
@@ -403,7 +406,7 @@ public class FiberTest {
 
             secondToken = fiber.beginWaitBuild(1);
             try {
-                if (!coordinator.tryAcceptSource(secondToken)) {
+                if (!coordinator.armEvent(secondToken, waitQueue)) {
                     throw new IllegalStateException("second wait registration failed");
                 }
                 secondWaitBuilding.countDown();
@@ -448,8 +451,7 @@ public class FiberTest {
             final long token = fiber.beginWaitBuild(1);
             final FiberWalWaitRegistration registration = coordinator.acquireWal(token, 1);
             try {
-                if (registration.register(waitQueue) != SourceRegistrationResult.ACCEPTED
-                        || !coordinator.tryAcceptSource(token)) {
+                if (registration.register(waitQueue) != SourceRegistrationResult.ACCEPTED) {
                     throw new IllegalStateException("wait registration failed");
                 }
                 final int reason = fiber.suspendWait(token);

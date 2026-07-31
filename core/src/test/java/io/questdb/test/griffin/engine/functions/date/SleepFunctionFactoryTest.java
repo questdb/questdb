@@ -26,6 +26,12 @@ package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeState;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -91,6 +97,24 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
                 }
             } finally {
                 SuspensionScope.restore(previousMode);
+            }
+        });
+    }
+
+    @Test
+    public void testPinnedFiberFallsBackToBlockingSleep() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            try (RecordCursorFactory factory = select("sleep(0.02)")) {
+                final PinnedSleepTask task = new PinnedSleepTask(factory, sqlExecutionContext);
+                Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertNull(task.error);
+                Assert.assertTrue(task.hasRow);
+                Assert.assertTrue(task.isDone());
+                Assert.assertTrue(runtime.getInlineSuspendViolationCount() > 0);
+            } finally {
+                close(runtime);
             }
         });
     }
@@ -180,5 +204,64 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertTrue("zero sleep should be near-instant, elapsed=" + elapsedMs + "ms",
                     elapsedMs < 200);
         });
+    }
+
+    private static void close(FiberRuntime runtime) {
+        runtime.beginQuiesce();
+        final long deadline = System.nanoTime() + 5_000_000_000L;
+        while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
+            runtime.drain(8);
+        }
+        Assert.assertTrue(runtime.awaitClosed(deadline));
+        runtime.closeAfterDrained();
+    }
+
+    private static class PinnedSleepTask extends FiberTask {
+        private static final ThreadLocal<PinnedSleepTask> CURRENT_TASK = new ThreadLocal<>();
+        private Throwable error;
+        private final RecordCursorFactory factory;
+        private boolean hasRow;
+        private final Object monitor = new Object();
+        private final SqlExecutionContext sqlExecutionContext;
+
+        private PinnedSleepTask(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) {
+            this.factory = factory;
+            this.sqlExecutionContext = sqlExecutionContext;
+        }
+
+        @Override
+        protected void onError(Throwable th) {
+            error = th;
+        }
+
+        @Override
+        protected boolean runStep() {
+            CURRENT_TASK.set(this);
+            try {
+                PinnedSleepTaskInitializer.initialize();
+            } finally {
+                CURRENT_TASK.remove();
+            }
+            return true;
+        }
+
+        private void runPinned() {
+            synchronized (monitor) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    hasRow = cursor.hasNext();
+                } catch (SqlException e) {
+                    throw new AssertionError(e);
+                }
+            }
+        }
+    }
+
+    private static class PinnedSleepTaskInitializer {
+        static {
+            PinnedSleepTask.CURRENT_TASK.get().runPinned();
+        }
+
+        private static void initialize() {
+        }
     }
 }

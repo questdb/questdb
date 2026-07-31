@@ -526,21 +526,19 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             errno = e.getErrno();
             interruptionReason = e.getInterruptionReason();
             isOutOfMemory = e.isOutOfMemory();
-            cancel(e.getInterruptionReason());
         } else if (th instanceof FlyweightMessageContainer fmc) {
             // ImplicitCastException / NumericException: a legitimate user-facing error.
             // Preserve the message and position verbatim so the collector can re-throw
             // the same class via buildError().
             errorMsg.put(fmc.getFlyweightMessage());
             errorMessagePosition = fmc.getPosition();
-            cancel(SqlExecutionCircuitBreaker.STATE_OK);
         } else {
             errorMsg.put("unexpected reduce error");
             if (th.getMessage() != null) {
                 errorMsg.put(": ").put(th.getMessage());
             }
-            cancel(SqlExecutionCircuitBreaker.STATE_OK);
         }
+        cancelOnReducerError(th);
     }
 
     private void buildAddressCache() {
@@ -599,15 +597,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                     .$(", frameIndex=").$(frameIndex)
                     .$(", frameCount=").$(frameCount)
                     .I$();
-            int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
-            if (th instanceof CairoException e) {
-                interruptReason = e.getInterruptionReason();
-            }
             // Record the error on the sequence and let dispatchAndAwait surface it
             // via buildError(). Re-throwing here would propagate through the owner
             // thread and bypass the kind-aware rebuild, losing the original class.
             setError(th);
-            cancel(interruptReason);
         } finally {
             SuspensionScope.restoreMode(suspensionScope, previousMode);
         }

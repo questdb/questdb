@@ -48,9 +48,11 @@ import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
@@ -638,6 +640,37 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonParallelPostJoinFilterDisablesAsyncFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (s STRING, x DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (s STRING, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (RecordCursorFactory factory = select(
+                    """
+                            SELECT t1.s, t1.ts, sum(t2.y)
+                            FROM t1
+                            WINDOW JOIN t2 ON (0 = 1)
+                            RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                            WHERE now() = now()
+                            """
+            )) {
+                Assert.assertTrue(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+            }
+            try (RecordCursorFactory factory = select(
+                    """
+                            SELECT t1.s, t1.ts, sum(t2.y)
+                            FROM t1
+                            WINDOW JOIN t2 ON (0 = 1)
+                            RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                            WHERE length((rnd_str('a', 'b'))::symbol) > 0
+                            """
+            )) {
+                Assert.assertFalse(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+                Assert.assertFalse(containsFactory(factory, AsyncJitFilteredRecordCursorFactory.class));
+            }
+        });
+    }
+
+    @Test
     public void testPageFrameSequenceJit() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
@@ -725,6 +758,38 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }, wrapper
             );
         }
+    }
+
+    @Test
+    public void testPostJoinFilterCompileFailureClosesOwnerFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            TestThrowingFilterFunctionFactory.reset(3);
+            try {
+                try (
+                        SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine, 4);
+                        RecordCursorFactory ignored = engine.select(
+                                """
+                                        SELECT t1.x, t1.ts, sum(t2.y)
+                                        FROM t1
+                                        WINDOW JOIN t2 ON (0 = 1)
+                                        RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                                        WHERE test_throwing_filter()
+                                        """,
+                                context
+                        )
+                ) {
+                    Assert.fail("expected SqlException from test_throwing_filter");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "configured to throw on call 3");
+                }
+                Assert.assertEquals(3, TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get());
+                Assert.assertEquals(2, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
+            } finally {
+                TestThrowingFilterFunctionFactory.reset(-1);
+            }
+        });
     }
 
     @Test

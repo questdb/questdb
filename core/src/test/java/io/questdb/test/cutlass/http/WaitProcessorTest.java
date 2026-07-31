@@ -193,7 +193,7 @@ public class WaitProcessorTest {
         Assert.assertTrue(attempt0 > 0);
 
         for (int i = 1; i < jobAttempts.length; i++) {
-            Assert.assertEquals(attempt0, jobAttempts[0]);
+            Assert.assertEquals(attempt0, jobAttempts[i]);
         }
     }
 
@@ -220,10 +220,15 @@ public class WaitProcessorTest {
                 Assert.assertTrue(processor.runSerially());
 
                 final LaunchResult[] launchResult = {null};
-                Assert.assertTrue(processor.launchReruns(runtime, (fiber, retry, taskIncarnation) -> {
+                Assert.assertTrue(processor.launchReruns(runtime, (fiber, reservationEpoch, retry, taskIncarnation) -> {
                     Assert.assertSame(task, retry);
                     Assert.assertEquals(publishedIncarnation, taskIncarnation);
-                    launchResult[0] = runtime.launchReserved(fiber, task, taskIncarnation);
+                    launchResult[0] = runtime.launchReserved(
+                            fiber,
+                            reservationEpoch,
+                            task,
+                            taskIncarnation
+                    );
                 }));
                 Assert.assertEquals(LaunchResult.STALE_INCARNATION, launchResult[0]);
                 Assert.assertEquals(FiberTask.STATE_IDLE, task.getScheduleState());
@@ -241,6 +246,7 @@ public class WaitProcessorTest {
             final WaitProcessor processor = createProcessor();
             final FiberRuntime runtime = new FiberRuntime(1);
             Fiber heldFiber = null;
+            long heldFiberEpoch = 0;
             try {
                 final Retry retry = createRetry();
                 processor.reschedule(retry, 1);
@@ -250,23 +256,29 @@ public class WaitProcessorTest {
 
                 heldFiber = runtime.tryReserveFiber();
                 Assert.assertNotNull(heldFiber);
-                Assert.assertFalse(processor.launchReruns(runtime, (fiber, queuedRetry, taskIncarnation) -> {
-                    throw new AssertionError("saturated retry must remain queued");
-                }));
+                heldFiberEpoch = heldFiber.getReservationEpoch();
+                Assert.assertFalse(
+                        processor.launchReruns(
+                                runtime,
+                                (fiber, reservationEpoch, queuedRetry, taskIncarnation) -> {
+                                    throw new AssertionError("saturated retry must remain queued");
+                                }
+                        )
+                );
 
-                runtime.releaseReservedFiber(heldFiber);
+                runtime.releaseReservedFiber(heldFiber, heldFiberEpoch);
                 heldFiber = null;
                 final int[] launchCount = {0};
-                Assert.assertTrue(processor.launchReruns(runtime, (fiber, queuedRetry, taskIncarnation) -> {
+                Assert.assertTrue(processor.launchReruns(runtime, (fiber, reservationEpoch, queuedRetry, taskIncarnation) -> {
                     Assert.assertSame(retry, queuedRetry);
                     Assert.assertEquals(1, taskIncarnation);
                     launchCount[0]++;
-                    runtime.releaseReservedFiber(fiber);
+                    runtime.releaseReservedFiber(fiber, reservationEpoch);
                 }));
                 Assert.assertEquals(1, launchCount[0]);
             } finally {
                 if (heldFiber != null) {
-                    runtime.releaseReservedFiber(heldFiber);
+                    runtime.releaseReservedFiber(heldFiber, heldFiberEpoch);
                 }
                 processor.close();
                 close(runtime);

@@ -107,13 +107,14 @@ public final class WalApplyFiberJob implements Closeable, Job {
             return false;
         }
 
-        Fiber fiber = runtime.tryReserveFiber();
+        final Fiber fiber = runtime.tryReserveFiber();
         if (fiber == null) {
             return false;
         }
+        final long fiberReservationEpoch = fiber.getReservationEpoch();
         ApplyWal2TableJob executor = executorPool.tryAcquire();
         if (executor == null) {
-            runtime.releaseReservedFiber(fiber);
+            runtime.releaseReservedFiber(fiber, fiberReservationEpoch);
             return false;
         }
 
@@ -141,10 +142,10 @@ public final class WalApplyFiberJob implements Closeable, Job {
 
             final LaunchResult result = runtime.launchReserved(
                     fiber,
+                    fiberReservationEpoch,
                     fiberTask,
                     fiberTask.getIncarnation()
             );
-            fiber = null;
             if (result == LaunchResult.LAUNCHED) {
                 isTaskBound = false;
                 return true;
@@ -189,9 +190,7 @@ public final class WalApplyFiberJob implements Closeable, Job {
                         executorPool.release(executor);
                     }
                 } finally {
-                    if (fiber != null) {
-                        runtime.releaseReservedFiber(fiber);
-                    }
+                    runtime.releaseReservedFiber(fiber, fiberReservationEpoch);
                 }
             }
         }
@@ -200,6 +199,15 @@ public final class WalApplyFiberJob implements Closeable, Job {
     @TestOnly
     public void setBeforeEvictForTesting(@Nullable Runnable beforeEvictForTesting) {
         this.beforeEvictForTesting = beforeEvictForTesting;
+    }
+
+    @TestOnly
+    public void setTaskScheduleStateForTesting(TableToken tableToken, int expectedState, int targetState) {
+        final WalApplyFiberTask task = tasks.get(tableToken.getDirName());
+        if (task == null) {
+            throw new IllegalStateException("WAL apply fiber task does not exist");
+        }
+        task.setScheduleStateForTesting(expectedState, targetState);
     }
 
     void evict(WalApplyFiberTask task) {

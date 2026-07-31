@@ -32,6 +32,7 @@ import io.questdb.mp.Job;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
+import io.questdb.mp.continuation.FiberTask;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -231,6 +232,38 @@ public class WalApplyFiberJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScheduleTransitionFailureEvictsTaskAndRequeuesNotification() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wal_fiber_poisoned (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            execute("INSERT INTO wal_fiber_poisoned VALUES (42, '2026-01-01T00:00:00.000000Z')");
+
+            final TableToken tableToken = engine.verifyTableName("wal_fiber_poisoned");
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final WalApplyFiberJob job = new WalApplyFiberJob(engine, 0, runtime);
+            try {
+                Assert.assertTrue(job.run(Job.RUNNING_STATUS));
+                job.setTaskScheduleStateForTesting(
+                        tableToken,
+                        FiberTask.STATE_OWNED,
+                        FiberTask.STATE_ARMING
+                );
+
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertEquals(0, job.getTaskCount());
+                Assert.assertEquals(job.getExecutorCount(), job.getFreeExecutorCount());
+
+                drain(job, runtime);
+                Assert.assertEquals(1, job.getTaskCount());
+                assertQuery("SELECT x FROM wal_fiber_poisoned").expectSize().returns("x\n42\n");
+                close(runtime);
+            } finally {
+                close(runtime, job);
+            }
+        });
+    }
+
+    @Test
     public void testSaturationLeavesNotificationQueued() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE wal_fiber_saturation (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -242,11 +275,12 @@ public class WalApplyFiberJobTest extends AbstractCairoTest {
             try {
                 final Fiber reservedFiber = runtime.tryReserveFiber();
                 Assert.assertNotNull(reservedFiber);
+                final long reservationEpoch = reservedFiber.getReservationEpoch();
                 Assert.assertFalse(job.run(Job.RUNNING_STATUS));
                 Assert.assertEquals(0, job.getExecutorCount());
                 Assert.assertEquals(0, job.getTaskCount());
 
-                runtime.releaseReservedFiber(reservedFiber);
+                runtime.releaseReservedFiber(reservedFiber, reservationEpoch);
                 drain(job, runtime);
 
                 Assert.assertEquals(1, job.getExecutorCount());
@@ -254,6 +288,8 @@ public class WalApplyFiberJobTest extends AbstractCairoTest {
                 Assert.assertEquals(1, job.getTaskCount());
                 assertQuery("SELECT x FROM wal_fiber_saturation").expectSize().returns("x\n42\n");
                 close(runtime);
+                job.close();
+                Assert.assertEquals(0, job.getExecutorCount());
             } finally {
                 close(runtime, job);
             }

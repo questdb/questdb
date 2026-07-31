@@ -211,6 +211,10 @@ public class WorkerPool implements Closeable {
         }
     }
 
+    public int getFiberMaxLiveCount() {
+        return fiberMaxLiveCount;
+    }
+
     public int getFiberRetainedCount() {
         return fiberRetainedCount;
     }

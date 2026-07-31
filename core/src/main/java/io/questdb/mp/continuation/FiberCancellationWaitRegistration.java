@@ -63,6 +63,7 @@ public final class FiberCancellationWaitRegistration extends FiberWaitRegistrati
         if (!Unsafe.cas(this, STATE_OFFSET, STATE_NEW, STATE_QUEUED)) {
             return SourceRegistrationResult.NOT_ACCEPTED;
         }
+        final long registrationToken = token;
         final SourceRegistrationResult result;
         try {
             final FiberCancellationSignal cancellationSignal = this.cancellationSignal;
@@ -78,11 +79,16 @@ public final class FiberCancellationWaitRegistration extends FiberWaitRegistrati
                 && Unsafe.cas(this, STATE_OFFSET, STATE_QUEUED, STATE_NEW)) {
             releaseNew();
         }
-        return result;
+        return coordinator.completeSourceRegistration(registrationToken, this, result);
     }
 
     long getExpectedGeneration() {
         return expectedGeneration;
+    }
+
+    @Override
+    boolean isForToken(long token) {
+        return this.token == token;
     }
 
     private void clear() {

@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -33,6 +34,7 @@ import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
     private static final int LEASE_BOUND = 1;
@@ -82,14 +84,14 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
         return runtime.state() != FiberRuntimeState.OPEN;
     }
 
+    String getTableDirName() {
+        return tableToken.getDirName();
+    }
+
     void releaseAfterLaunchFailure(boolean isRepublish) {
         if (executor != null) {
             releaseLease(false, isRepublish);
         }
-    }
-
-    String getTableDirName() {
-        return tableToken.getDirName();
     }
 
     void signal() {
@@ -113,6 +115,7 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
 
     @Override
     protected void onAbandoned() {
+        isForceRepublish = true;
         isReusable = false;
     }
 
@@ -137,6 +140,16 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
         return true;
     }
 
+    private static Throwable addCleanupFailure(@Nullable Throwable primary, Throwable failure) {
+        if (primary == null) {
+            return failure;
+        }
+        if (primary != failure) {
+            primary.addSuppressed(failure);
+        }
+        return primary;
+    }
+
     private static IllegalStateException nonIdleTask(int state) {
         return new IllegalStateException("idle WAL apply lease has non-idle task [state=" + state + ']');
     }
@@ -147,39 +160,91 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
         if (executor == null) {
             throw new IllegalStateException("WAL apply fiber lease has no executor");
         }
-        final boolean isDropped = engine.isWalTableDropped(tableToken.getDirName());
+        boolean isDropped = false;
         this.executor = null;
         this.isForceRepublish = false;
         this.isReusable = false;
         runVersion = 0;
-        executorPool.release(executor);
+        Throwable cleanupFailure = null;
         try {
-            if (isReusable && !isDropped) {
-                reopen();
+            isDropped = engine.isWalTableDropped(tableToken.getDirName());
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        try {
+            executorPool.release(executor);
+        } catch (Throwable th) {
+            cleanupFailure = addCleanupFailure(cleanupFailure, th);
+        }
+
+        boolean isScheduleReusable = getScheduleState() == STATE_IDLE;
+        if (!isDropped && !isScheduleReusable) {
+            try {
+                isScheduleReusable = tryReopen();
+            } catch (Throwable th) {
+                cleanupFailure = addCleanupFailure(cleanupFailure, th);
             }
-        } finally {
-            if (!Unsafe.cas(
-                    this,
-                    LEASE_STATE_OFFSET,
-                    LEASE_BOUND,
-                    isDropped ? LEASE_EVICTED : LEASE_IDLE
+        }
+        boolean isEvicted = isDropped || !isScheduleReusable;
+        if (!Unsafe.cas(
+                this,
+                LEASE_STATE_OFFSET,
+                LEASE_BOUND,
+                isEvicted ? LEASE_EVICTED : LEASE_IDLE
+        )) {
+            cleanupFailure = addCleanupFailure(
+                    cleanupFailure,
+                    new IllegalStateException("WAL apply fiber lease is not bound")
+            );
+            isEvicted = true;
+        }
+
+        if (isEvicted) {
+            try {
+                job.evict(this);
+            } catch (Throwable th) {
+                cleanupFailure = addCleanupFailure(cleanupFailure, th);
+            }
+            if (!isDropped && runtime.state() == FiberRuntimeState.OPEN) {
+                try {
+                    engine.notifyWalTxnCommitted(tableToken);
+                } catch (Throwable th) {
+                    cleanupFailure = addCleanupFailure(cleanupFailure, th);
+                }
+            }
+            CairoException.rethrowCleanupFailure(cleanupFailure);
+            return;
+        }
+
+        boolean isDroppedAfterRelease = false;
+        try {
+            if (engine.isWalTableDropped(tableToken.getDirName())
+                    && Unsafe.cas(
+                            this,
+                            LEASE_STATE_OFFSET,
+                            LEASE_IDLE,
+                            LEASE_EVICTED
             )) {
-                throw new IllegalStateException("WAL apply fiber lease is not bound");
+                job.evict(this);
+                isDroppedAfterRelease = true;
             }
+        } catch (Throwable th) {
+            cleanupFailure = addCleanupFailure(cleanupFailure, th);
         }
-        if (isDropped) {
-            job.evict(this);
+        if (isDroppedAfterRelease) {
+            CairoException.rethrowCleanupFailure(cleanupFailure);
             return;
         }
-        if (engine.isWalTableDropped(tableToken.getDirName())
-                && Unsafe.cas(this, LEASE_STATE_OFFSET, LEASE_IDLE, LEASE_EVICTED)) {
-            job.evict(this);
-            return;
-        }
+
         if (runtime.state() == FiberRuntimeState.OPEN
                 && (isForceRepublish
                 || (isReusable && requestVersion != completedVersion))) {
-            engine.notifyWalTxnCommitted(tableToken);
+            try {
+                engine.notifyWalTxnCommitted(tableToken);
+            } catch (Throwable th) {
+                cleanupFailure = addCleanupFailure(cleanupFailure, th);
+            }
         }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 }
