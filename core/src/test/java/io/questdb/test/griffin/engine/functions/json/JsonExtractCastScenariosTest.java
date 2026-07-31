@@ -169,6 +169,126 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBooleanWidthConsistencyAcrossWidenedReads() throws Exception {
+        // A BOOLEAN json_extract expression must carry ONE value, as BooleanFunction does: every
+        // other width renders the declared boolean, numerically as 1/0 and textually as true/false.
+        // The base class derived each width from its own native parse, so ::boolean printed false for
+        // {"a":1} while ::boolean::long re-parsed the JSON and answered 1 - one expression, two
+        // values. The textual widths were worse than wrong: BOOLEAN allocates no destUtf8Sink, so
+        // ::boolean::varchar tripped an assert inside the extraction path, and ::boolean::byte hit
+        // the base's UnsupportedOperationException.
+        // Each json column is paired with a BOOLEAN column holding the same value - the control is
+        // what the declared type is required to mean.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE j (id INT, b BOOLEAN, text VARCHAR)");
+            execute("""
+                    INSERT INTO j VALUES
+                      (1, true, '{"a":true}'),
+                      (2, false, '{"a":false}'),
+                      (3, false, '{"a":1}'),
+                      (4, false, '{"a":"true"}'),
+                      (5, false, '{"a":null}'),
+                      (6, false, '{"a":"abc"}'),
+                      (7, false, null)""");
+
+            // Rows 3-7 are the discriminators: queryPointerBoolean answers false for a JSON number,
+            // for a quoted "true", for JSON null and for a non-boolean string, and getBool falls back
+            // to false for a NULL document, so the declared value is false and every widened read of
+            // it has to be 0 / false, whatever the payload holds. BOOLEAN has no null sentinel, which
+            // is why row 7 reads 0 rather than NULL - the same answer the control column gives.
+            assertQuery("""
+                    SELECT id,
+                      json_extract(text,'$.a')::boolean v,
+                      b v_control,
+                      json_extract(text,'$.a')::boolean::long l,
+                      b::long l_control,
+                      json_extract(text,'$.a')::boolean::int i,
+                      b::int i_control,
+                      json_extract(text,'$.a')::boolean::short s,
+                      b::short s_control,
+                      json_extract(text,'$.a')::boolean::byte y,
+                      b::byte y_control
+                    FROM j ORDER BY id""")
+                    .expectSize()
+                    .returns("""
+                            id\tv\tv_control\tl\tl_control\ti\ti_control\ts\ts_control\ty\ty_control
+                            1\ttrue\ttrue\t1\t1\t1\t1\t1\t1\t1\t1
+                            2\tfalse\tfalse\t0\t0\t0\t0\t0\t0\t0\t0
+                            3\tfalse\tfalse\t0\t0\t0\t0\t0\t0\t0\t0
+                            4\tfalse\tfalse\t0\t0\t0\t0\t0\t0\t0\t0
+                            5\tfalse\tfalse\t0\t0\t0\t0\t0\t0\t0\t0
+                            6\tfalse\tfalse\t0\t0\t0\t0\t0\t0\t0\t0
+                            7\tfalse\tfalse\t0\t0\t0\t0\t0\t0\t0\t0
+                            """);
+
+            // The floating-point and temporal widths render the same 1/0. ::real reaches getFloat and
+            // ::double getDouble; DATE reads the value as milliseconds and TIMESTAMP as microseconds,
+            // exactly as the BOOLEAN control column does.
+            assertQuery("""
+                    SELECT id,
+                      json_extract(text,'$.a')::boolean::double dd,
+                      b::double dd_control,
+                      json_extract(text,'$.a')::boolean::real rr,
+                      b::real rr_control,
+                      json_extract(text,'$.a')::boolean::date dt,
+                      b::date dt_control,
+                      json_extract(text,'$.a')::boolean::timestamp ts,
+                      b::timestamp ts_control
+                    FROM j ORDER BY id""")
+                    .expectSize()
+                    .returns("""
+                            id\tdd\tdd_control\trr\trr_control\tdt\tdt_control\tts\tts_control
+                            1\t1.0\t1.0\t1.0\t1.0\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z
+                            2\t0.0\t0.0\t0.0\t0.0\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z
+                            3\t0.0\t0.0\t0.0\t0.0\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z
+                            4\t0.0\t0.0\t0.0\t0.0\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z
+                            5\t0.0\t0.0\t0.0\t0.0\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z
+                            6\t0.0\t0.0\t0.0\t0.0\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z
+                            7\t0.0\t0.0\t0.0\t0.0\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z
+                            """);
+
+            // The textual widths render the declared boolean, not the JSON token underneath it. Row 3
+            // is the discriminator - the base returned the raw token 1 where the declared value is
+            // false - and row 6 pins that a non-boolean string renders as false rather than as itself.
+            // SYMBOL is absent on purpose. json_extract(..)::<type>::symbol reads correctly on the
+            // first cursor pass and NULL on a re-read, for every target type including the ones this
+            // PR left alone - json_extract(..)::double::symbol reproduces it, and its whole call chain
+            // (JsonExtractFunction, Cast*ToSymbolFunctionFactory, SymbolFunctionMemoizer and the
+            // memoization wiring in SqlCodeGenerator) is identical to master. That defect is separate
+            // from the one-value rule and is tracked on its own; asserting it here would only make
+            // this test red for someone else's reason.
+            assertQuery("""
+                    SELECT id,
+                      json_extract(text,'$.a')::boolean::varchar vc,
+                      b::varchar vc_control,
+                      json_extract(text,'$.a')::boolean::string st,
+                      b::string st_control,
+                      json_extract(text,'$.a')::boolean::char ch,
+                      b::char ch_control
+                    FROM j ORDER BY id""")
+                    .expectSize()
+                    .returns("""
+                            id\tvc\tvc_control\tst\tst_control\tch\tch_control
+                            1\ttrue\ttrue\ttrue\ttrue\tT\tT
+                            2\tfalse\tfalse\tfalse\tfalse\tF\tF
+                            3\tfalse\tfalse\tfalse\tfalse\tF\tF
+                            4\tfalse\tfalse\tfalse\tfalse\tF\tF
+                            5\tfalse\tfalse\tfalse\tfalse\tF\tF
+                            6\tfalse\tfalse\tfalse\tfalse\tF\tF
+                            7\tfalse\tfalse\tfalse\tfalse\tF\tF
+                            """);
+
+            // The predicate path reads the widened getter too, so a filter on the 64-bit read must
+            // select exactly the rows the projection shows as true. Pre-fix row 3 also matched,
+            // because its independent parse of {"a":1} answered 1 at long width.
+            assertQuery("SELECT count() c FROM j WHERE json_extract(text,'$.a')::boolean::long > 0")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n1\n");
+        });
+    }
+
+    @Test
     public void testDate() throws Exception {
         testScenarios(ColumnType.DATE);
     }
