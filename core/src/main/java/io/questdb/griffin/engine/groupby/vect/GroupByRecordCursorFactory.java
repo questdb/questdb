@@ -613,12 +613,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
                     final long frameRowCount = frameAddressCache.getFrameSize(frameIndex);
                     if (frameRowCount == 0) {
-                        // Dispatching an empty frame is not merely wasteful: count(x) bumps aggCount
-                        // on any non-zero value address without consulting the row count, and a
-                        // non-zero aggCount is what makes its wrapUp() materialize the null group -
-                        // a group no row belongs to, and one that renders 0 where it should render
-                        // null once an earlier aggregate's sweep has already run. Only read_parquet
-                        // can emit an empty frame; every table-reader cursor filters them out.
+                        // Only read_parquet reaches this: every table-reader cursor filters empty
+                        // frames, ReadParquetPageFrameCursor does not, so a zero-row row group in a
+                        // foreign file arrives here. Skipping saves one queue entry per aggregate.
+                        // It also keeps a latent hazard closed: count(x) bumps aggCount on any
+                        // non-zero value address without consulting the row count, and aggCount > 0
+                        // is what makes its wrapUp() materialize the null group. That does not fire
+                        // today only because the decoder presents address 0 for both columns of an
+                        // empty row group, which testGroupByInt32KeyEmptyParquetRowGroupCreatesNoGroup
+                        // pins; a decoder that returned an empty buffer instead would conjure a
+                        // group no row belongs to.
                         continue;
                     }
                     for (int vafIndex = 0; vafIndex < vafCount; vafIndex++) {

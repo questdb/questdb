@@ -1983,6 +1983,64 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByInt32KeyEmptyParquetRowGroupCreatesNoGroup() throws Exception {
+        // A zero-row row group reaches the vectorized build as a frame with no rows:
+        // ReadParquetPageFrameCursor returns whatever getRowGroupSize() reports and never skips an
+        // empty one, where every table-reader cursor filters them out. Measured on this fixture,
+        // the frame does reach buildRosti()'s dispatch loop, and the decoder presents keyAddress 0
+        // and valueAddress 0 for it -- so the aggregates see no buffer and the result is the same
+        // whether or not buildRosti() skips the frame. This test therefore pins the observable
+        // contract (an empty row group contributes nothing and conjures no group), not the skip
+        // itself: deleting the skip leaves it green. What would turn the skip load-bearing is a
+        // decoder that returned an empty buffer rather than a null one, since count(x) bumps
+        // aggCount on any non-zero address without consulting the row count.
+        //
+        // Committed fixture: two row groups, the first with zero rows, the second holding
+        // k = 1, 1, 2. QuestDB's own writer cannot produce one -- ChunkedWriter::write_chunk steps
+        // over the partition length, so an empty partition yields no row group rather than an empty
+        // one -- so the file comes from pyarrow. Regenerate with:
+        //   import pyarrow as pa, pyarrow.parquet as pq
+        //   s = pa.schema([("k", pa.int32()), ("v", pa.int64())])
+        //   with pq.ParquetWriter("empty_row_group.parquet", s) as w:
+        //       w.write_table(pa.table({"k": pa.array([], pa.int32()),
+        //                               "v": pa.array([], pa.int64())}))
+        //       w.write_table(pa.table({"k": pa.array([1, 1, 2], pa.int32()),
+        //                               "v": pa.array([10, 20, 30], pa.int64())}))
+        assertMemoryLeak(() -> {
+            // read_parquet() only opens files under sql.copy.input.root.
+            inputRoot = root;
+            final String fixture = "empty_row_group.parquet";
+            final byte[] bytes;
+            try (java.io.InputStream is = GroupByTest.class.getResourceAsStream("/parquet/" + fixture)) {
+                Assert.assertNotNull("missing test fixture on classpath", is);
+                bytes = is.readAllBytes();
+            }
+            java.nio.file.Files.write(java.nio.file.Paths.get(root, fixture), bytes);
+
+            assertQuery("SELECT k, count(v) FROM read_parquet('" + fixture + "') ORDER BY k")
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            k\tcount
+                            1\t2
+                            2\t1
+                            """);
+
+            // A file whose only row group is empty: the map is empty at wrapUp, so any group the
+            // empty frame conjures is the whole result and cannot hide behind real ones.
+            final String emptyOnly = "only_empty_row_group.parquet";
+            try (java.io.InputStream is = GroupByTest.class.getResourceAsStream("/parquet/" + emptyOnly)) {
+                Assert.assertNotNull("missing test fixture on classpath", is);
+                java.nio.file.Files.write(java.nio.file.Paths.get(root, emptyOnly), is.readAllBytes());
+            }
+            assertQuery("SELECT k, count(v) FROM read_parquet('" + emptyOnly + "') ORDER BY k")
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("k\tcount\n");
+        });
+    }
+
+    @Test
     public void testGroupByInt32KeyKSumKeepsCompensationAcrossNullRows() throws Exception {
         // A NULL row adds nothing, but running it through the Kahan step assigned a correction for
         // an addition of zero, wiping the one the slot had pending. 2^53 + 1 rounds back down to
