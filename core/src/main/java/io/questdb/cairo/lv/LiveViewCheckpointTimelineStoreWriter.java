@@ -31,14 +31,14 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -113,13 +113,21 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * than failing, which still costs less than re-imaging every key.
      */
     private static final int PREVIOUS_DATA_READER_CACHE_SIZE = 8;
+    /**
+     * Capacity ceiling of the reusable freeze scratch buffers: 2^19 pages of
+     * 4 KiB, exactly 2 GiB. A state image's page length is int-typed, so no
+     * valid image needs more; an encode that tries to grow past this fails at
+     * the allocation instead of after producing an image no page can store.
+     */
+    private static final int SCRATCH_MAX_PAGES = 524_288;
+    private static final long SCRATCH_PAGE_SIZE = 4096;
 
     private final HashSet<String> lifecycleReconciledDirs = new HashSet<>();
     private final CairoConfiguration configuration;
     // Read-only argument of a cadence seal's reference transaction, which only
     // ever adds; kept per instance so the seal path allocates nothing for it.
     private final LongList emptySegmentIds = new LongList();
-    private final MemoryCARW keyBuffer;
+    private final MemoryCARWImpl keyBuffer;
     // Catalogue entries a reconciliation's sweep left naming an unlinked file,
     // per checkpoint directory, waiting for the next seal of that view to carry
     // them out of the tree. A view whose seal is skipped keeps its proposal.
@@ -127,16 +135,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     private final LiveViewCheckpointRingSeal ringSeal;
     // One whole-state image at a time, encoded here before the freeze decides
     // whether it has to become a page at all.
-    private final MemoryCARW stateBuffer;
+    private final MemoryCARWImpl stateBuffer;
     private final LiveViewStatePageWriter statePageWriter = new LiveViewStatePageWriter();
     @TestOnly
     private int testFailureStage;
 
     public LiveViewCheckpointTimelineStoreWriter(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
-        this.keyBuffer = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+        this.keyBuffer = new MemoryCARWImpl(SCRATCH_PAGE_SIZE, SCRATCH_MAX_PAGES, MemoryTag.NATIVE_DEFAULT);
         this.ringSeal = new LiveViewCheckpointRingSeal(configuration, null);
-        this.stateBuffer = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+        this.stateBuffer = new MemoryCARWImpl(SCRATCH_PAGE_SIZE, SCRATCH_MAX_PAGES, MemoryTag.NATIVE_DEFAULT);
     }
 
     /**
@@ -157,6 +165,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      *                         publishes; {@link Numbers#LONG_NULL} for a steady
      *                         cadence seal, which is what tells a restart the
      *                         newest root is not a resume point
+     * @param memoryTracker    the sealed view's refresh workload tracker, which
+     *                         the freeze scratch buffers charge while this
+     *                         append runs, or null to account against process
+     *                         totals only. The append frees the scratch and
+     *                         detaches the tracker before returning on every
+     *                         path, so no capacity and no charge outlive it -
+     *                         the writer is shared across every view its worker
+     *                         seals
      */
     public Result append(
             @Transient @NotNull Path checkpointsDir,
@@ -171,86 +187,92 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             long maxTimestamp,
             long effectiveLvRowPosition,
             long batchMinTs,
-            long seedCursorOffset
+            long seedCursorOffset,
+            @Nullable MemoryTracker memoryTracker
     ) {
         if (!primaryOwner) {
             throw CairoException.critical(0).put("replica must not publish a live view checkpoint timeline");
         }
         final String lifecycleKey = checkpointsDir.toString();
         boolean epochRetry = false;
-        while (true) {
-            long orphanUpperBound = 0;
-            // A view created in this process reconciles here rather than at
-            // startup, so this is its only chance to learn what its catalogue
-            // holds. LONG_NULL when the reconciliation was skipped or adopted no
-            // generation, which leaves whatever an earlier sweep reported.
-            long liveSegmentCount = Numbers.LONG_NULL;
-            long obsoleteSegmentBytes = Numbers.LONG_NULL;
-            if (!lifecycleReconciledDirs.contains(lifecycleKey)) {
-                final LiveViewCheckpointLifecycle.ReconcileResult reconciliation =
-                        LiveViewCheckpointLifecycle.reconcile(
-                                configuration,
-                                checkpointsDir,
-                                definitionTxn,
-                                historyEpoch,
-                                true
-                        );
-                orphanUpperBound = reconciliation.getFinalOrphanUpperBound();
-                if (reconciliation.getStats() != null) {
-                    liveSegmentCount = reconciliation.getLiveSegmentCount();
-                    obsoleteSegmentBytes = reconciliation.getObsoleteSegmentBytes();
+        bindScratchBuffers(memoryTracker);
+        try {
+            while (true) {
+                long orphanUpperBound = 0;
+                // A view created in this process reconciles here rather than at
+                // startup, so this is its only chance to learn what its catalogue
+                // holds. LONG_NULL when the reconciliation was skipped or adopted no
+                // generation, which leaves whatever an earlier sweep reported.
+                long liveSegmentCount = Numbers.LONG_NULL;
+                long obsoleteSegmentBytes = Numbers.LONG_NULL;
+                if (!lifecycleReconciledDirs.contains(lifecycleKey)) {
+                    final LiveViewCheckpointLifecycle.ReconcileResult reconciliation =
+                            LiveViewCheckpointLifecycle.reconcile(
+                                    configuration,
+                                    checkpointsDir,
+                                    definitionTxn,
+                                    historyEpoch,
+                                    true
+                            );
+                    orphanUpperBound = reconciliation.getFinalOrphanUpperBound();
+                    if (reconciliation.getStats() != null) {
+                        liveSegmentCount = reconciliation.getLiveSegmentCount();
+                        obsoleteSegmentBytes = reconciliation.getObsoleteSegmentBytes();
+                    }
+                    // The sweep unlinked these files but could not rewrite the
+                    // catalogue, because only a publication may. This seal is that
+                    // publication.
+                    final LongList retirable = reconciliation.getRetirableSegmentIds();
+                    if (retirable.size() > 0) {
+                        pendingEntryRetirements.put(lifecycleKey, new LongList(retirable));
+                    }
+                    if (reconciliation.getFailedOrphanCount() == 0
+                            && reconciliation.getFailedPurgeCount() == 0
+                            && reconciliation.getFailedRepairCount() == 0) {
+                        lifecycleReconciledDirs.add(lifecycleKey);
+                    }
                 }
-                // The sweep unlinked these files but could not rewrite the
-                // catalogue, because only a publication may. This seal is that
-                // publication.
-                final LongList retirable = reconciliation.getRetirableSegmentIds();
-                if (retirable.size() > 0) {
-                    pendingEntryRetirements.put(lifecycleKey, new LongList(retirable));
-                }
-                if (reconciliation.getFailedOrphanCount() == 0
-                        && reconciliation.getFailedPurgeCount() == 0
-                        && reconciliation.getFailedRepairCount() == 0) {
-                    lifecycleReconciledDirs.add(lifecycleKey);
+                try {
+                    final Result result = append0(
+                            checkpointsDir,
+                            functions,
+                            anchorWindow,
+                            definitionTxn,
+                            createdLvSeqTxn,
+                            normalizedBaseSeqTxn,
+                            coveredLvSeqTxn,
+                            historyEpoch,
+                            maxTimestamp,
+                            effectiveLvRowPosition,
+                            batchMinTs,
+                            seedCursorOffset,
+                            orphanUpperBound,
+                            liveSegmentCount,
+                            obsoleteSegmentBytes,
+                            pendingEntryRetirements.get(lifecycleKey)
+                    );
+                    pendingEntryRetirements.remove(lifecycleKey);
+                    return result;
+                } catch (HistoryEpochChangedException e) {
+                    lifecycleReconciledDirs.remove(lifecycleKey);
+                    pendingEntryRetirements.remove(lifecycleKey);
+                    if (epochRetry) {
+                        throw CairoException.critical(0).put("could not replace live view checkpoint history epoch");
+                    }
+                    epochRetry = true;
+                } catch (BoundaryNotAboveHeadException e) {
+                    // The append refused before touching a file, and the reconciliation
+                    // above still holds, so the key stays: this seal is skipped, not
+                    // failed, and the entries it would have retired wait for the next one.
+                    throw e;
+                } catch (RuntimeException | Error e) {
+                    lifecycleReconciledDirs.remove(lifecycleKey);
+                    pendingEntryRetirements.remove(lifecycleKey);
+                    throw e;
                 }
             }
-            try {
-                final Result result = append0(
-                        checkpointsDir,
-                        functions,
-                        anchorWindow,
-                        definitionTxn,
-                        createdLvSeqTxn,
-                        normalizedBaseSeqTxn,
-                        coveredLvSeqTxn,
-                        historyEpoch,
-                        maxTimestamp,
-                        effectiveLvRowPosition,
-                        batchMinTs,
-                        seedCursorOffset,
-                        orphanUpperBound,
-                        liveSegmentCount,
-                        obsoleteSegmentBytes,
-                        pendingEntryRetirements.get(lifecycleKey)
-                );
-                pendingEntryRetirements.remove(lifecycleKey);
-                return result;
-            } catch (HistoryEpochChangedException e) {
-                lifecycleReconciledDirs.remove(lifecycleKey);
-                pendingEntryRetirements.remove(lifecycleKey);
-                if (epochRetry) {
-                    throw CairoException.critical(0).put("could not replace live view checkpoint history epoch");
-                }
-                epochRetry = true;
-            } catch (BoundaryNotAboveHeadException e) {
-                // The append refused before touching a file, and the reconciliation
-                // above still holds, so the key stays: this seal is skipped, not
-                // failed, and the entries it would have retired wait for the next one.
-                throw e;
-            } catch (RuntimeException | Error e) {
-                lifecycleReconciledDirs.remove(lifecycleKey);
-                pendingEntryRetirements.remove(lifecycleKey);
-                throw e;
-            }
+        } finally {
+            releaseScratchBuffers();
         }
     }
 
@@ -266,14 +288,21 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * reference the capture holds, so {@link #publishRepair} refuses rather than
      * splicing stale references into a newer tree.
      *
-     * @param outputKeys {@code Q}, the keys this repair's replay describes, or null
-     *                   when it describes every live key. The capture takes its own
-     *                   copy: the plan it comes from is refilled by the next repair
-     *                   this worker runs, while a capture may be parked across turns
+     * @param outputKeys    {@code Q}, the keys this repair's replay describes, or null
+     *                      when it describes every live key. The capture takes its own
+     *                      copy: the plan it comes from is refilled by the next repair
+     *                      this worker runs, while a capture may be parked across turns
+     * @param memoryTracker the repaired view's refresh workload tracker, which
+     *                      the freeze scratch buffers charge from here until the
+     *                      capture closes, or null to account against process
+     *                      totals only. {@link RepairCapture#close()} frees the
+     *                      scratch and detaches the tracker on the publish and
+     *                      the discard path alike
      */
     public RepairCapture beginRepair(
             @Transient @NotNull Path checkpointsDir,
-            @Transient @Nullable LiveViewCheckpointOutputKeyDomain outputKeys
+            @Transient @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
+            @Nullable MemoryTracker memoryTracker
     ) {
         ensureDirectories(checkpointsDir);
         try (LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)) {
@@ -283,6 +312,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         .put("cannot repair a live view checkpoint timeline with no valid generation");
             }
             final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
+            bindScratchBuffers(memoryTracker);
             return new RepairCapture(
                     checkpointsDir,
                     skipPublishedSegmentIds(checkpointsDir, superblock.nextSegmentId),
@@ -1531,6 +1561,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         return rawStatePageRef(entry.getStatePageRef(0));
     }
 
+    private void bindScratchBuffers(@Nullable MemoryTracker memoryTracker) {
+        // The post-splice frontier seal begins while the repair capture that
+        // produced the splice is still open, so the scratch may still hold
+        // that capture's last image. The frozen boundaries carry their own
+        // copies, which makes the held image dead weight - hand it back
+        // against the tracker that grew it before binding the caller's, so
+        // no charge ever migrates between trackers.
+        releaseScratchBuffers();
+        keyBuffer.setMemoryTracker(memoryTracker);
+        stateBuffer.setMemoryTracker(memoryTracker);
+    }
+
     private void ensureDirectories(Path checkpointsDir) {
         try (Path path = new Path()) {
             LiveViewCheckpointLayout.metaDirPath(path, checkpointsDir).slash();
@@ -1754,6 +1796,23 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         final LiveViewCheckpointStatePageRef ref = new LiveViewCheckpointStatePageRef();
         dataWriter.endPage(ref, bytes, FUNCTION_STATE_PAGE_KIND, RAW_CODEC, 1, 0);
         return ref;
+    }
+
+    /**
+     * Frees both freeze scratch buffers and detaches the tracker they were
+     * charged to. The writer is shared across every view its worker seals and
+     * outlives any one view's operation, so neither the capacity nor the
+     * tracker charge may outlive the operation that grew it: retained capacity
+     * would pin one outlier image's footprint for the worker's lifetime, and a
+     * surviving charge would recycle the view's pooled tracker dirty. Freeing
+     * runs against the still-bound tracker, so the charge returns to zero
+     * before the tracker detaches.
+     */
+    private void releaseScratchBuffers() {
+        keyBuffer.clear();
+        keyBuffer.setMemoryTracker(null);
+        stateBuffer.clear();
+        stateBuffer.setMemoryTracker(null);
     }
 
     private long skipPublishedSegmentIds(Path checkpointsDir, long candidate) {
@@ -2575,6 +2634,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
             boundaries.clear();
             Misc.free(checkpointsDir);
+            // Every freeze this capture ran went through the writer's scratch
+            // buffers, bound since beginRepair.
+            releaseScratchBuffers();
         }
 
         /**

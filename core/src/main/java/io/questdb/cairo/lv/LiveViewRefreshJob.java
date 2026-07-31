@@ -607,7 +607,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     batchMaxTs,
                     instance.getLvRowsTotal(),
                     instance.getMinSeenTsSinceCheckpoint(),
-                    seedCursorOffset
+                    seedCursorOffset,
+                    instance.getMemoryTracker()
             );
         } finally {
             roleLock.unlock();
@@ -815,7 +816,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // refused a repair carrying neither.
             capture = checkpointTimelineStoreWriter.beginRepair(
                     checkpointsDir,
-                    plan.isReplayStateKeyComplete() ? null : plan.getOutputKeyDomain()
+                    plan.isReplayStateKeyComplete() ? null : plan.getOutputKeyDomain(),
+                    instance.getMemoryTracker()
             );
             // C, not R: a root in [R, C) keeps its state - nothing it holds
             // changed - and its output is re-emitted identically, so the splice
@@ -6161,7 +6163,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             // The heal replays every base row above the predecessor it restored, so its
             // state describes every live key and no key domain narrows it.
-            capture = checkpointTimelineStoreWriter.beginRepair(checkpointsDir, null);
+            capture = checkpointTimelineStoreWriter.beginRepair(checkpointsDir, null, instance.getMemoryTracker());
             // (predecessorMaxTs, corruptCeilingMaxTs] in key space: the predecessor's
             // own boundary is kept, and every corrupt root above it up to and including
             // the ceiling is re-versioned. A non-corrupt boundary caught in the range

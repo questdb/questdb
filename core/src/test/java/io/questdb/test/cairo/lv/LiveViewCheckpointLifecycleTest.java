@@ -350,7 +350,7 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
                 try {
                     writer.append(
                             dir, new ObjList<>(), null, 7, 0, 0, 0, 0, false, 1, 0,
-                            Numbers.LONG_NULL, Numbers.LONG_NULL
+                            Numbers.LONG_NULL, Numbers.LONG_NULL, null
                     );
                     Assert.fail("expected replica publication rejection");
                 } catch (CairoException e) {
