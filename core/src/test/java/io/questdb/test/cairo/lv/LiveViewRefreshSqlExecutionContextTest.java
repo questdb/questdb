@@ -24,6 +24,10 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshSqlExecutionContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -31,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -44,9 +49,44 @@ import org.junit.Test;
  * {@link LiveViewRefreshSqlExecutionContext} therefore forces
  * {@link LiveViewRefreshSqlExecutionContext#allowNonDeterministicFunctions()} off so that
  * recompile rejects a non-deterministic function too, mirroring
- * {@code MatViewRefreshSqlExecutionContext}. These tests pin that defense-in-depth guard.
+ * {@code MatViewRefreshSqlExecutionContext}. These tests pin that defense-in-depth guard,
+ * and the write-authorization guard beside it: the context's security context permits
+ * insertion only into the live view whose refresh cycle is currently bound.
  */
 public class LiveViewRefreshSqlExecutionContextTest extends AbstractCairoTest {
+
+    @Test
+    public void testRefreshContextAuthorizesInsertOnlyIntoRefreshingView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull("live view must be registered at CREATE", instance);
+            final TableToken viewToken = instance.getLiveViewToken();
+            final TableToken baseToken = engine.verifyTableName("base");
+
+            final LiveViewRefreshSqlExecutionContext ctx = new LiveViewRefreshSqlExecutionContext(engine, 0);
+            final SecurityContext securityContext = ctx.getSecurityContext();
+
+            // With no refresh cycle bound the context authorizes no write at all -
+            // not even into the view's own table.
+            assertInsertDenied(securityContext, viewToken);
+
+            ctx.ofRefreshingInstance(instance);
+            try {
+                // The view being refreshed is the one table the context may write into.
+                securityContext.authorizeInsert(viewToken);
+                // Every other table stays read-only, the base table included.
+                assertInsertDenied(securityContext, baseToken);
+            } finally {
+                ctx.ofRefreshingInstance(null);
+            }
+
+            // Clearing the binding closes the write window again.
+            assertInsertDenied(securityContext, viewToken);
+        });
+    }
 
     @Test
     public void testRefreshContextDoesNotOverRejectDeterministicSelect() throws Exception {
@@ -99,5 +139,15 @@ public class LiveViewRefreshSqlExecutionContextTest extends AbstractCairoTest {
                 ctx.setLiveViewCompile(false);
             }
         });
+    }
+
+    private static void assertInsertDenied(SecurityContext securityContext, TableToken tableToken) {
+        try {
+            securityContext.authorizeInsert(tableToken);
+            Assert.fail("insert into " + tableToken.getTableName() + " must be denied");
+        } catch (CairoException e) {
+            Assert.assertTrue("expected an authorization error", e.isAuthorizationError());
+            TestUtils.assertContains(e.getFlyweightMessage(), "Write permission denied");
+        }
     }
 }

@@ -318,6 +318,94 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
         });
     }
 
+    @Test
+    public void testUnreadablePredecessorReimagesItsKeysAndSparesTheRest() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Seal 1 images every key into one data segment; seal 2 re-images
+                // the first half into a second one. The head then names both, and
+                // the halves interleave across the partition map's scan order, so
+                // one damaged segment's failed opens land between healthy reuses
+                // inside a single seal - which is exactly what a poisoned reader
+                // cache slot would turn into collateral fresh pages.
+                commitEveryKey(job, 10);
+                commitKeys(job, 20, 0, KEYS / 2);
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+
+                final LiveViewInstance instance = viewInstance();
+                List<Boundary> boundaries = boundaryPages(instance);
+                Assert.assertEquals(2, boundaries.size());
+                final Map<String, Page> head = boundaries.get(1).pages;
+                long healthySegment = Long.MAX_VALUE;
+                long damagedSegment = Long.MIN_VALUE;
+                for (Page page : head.values()) {
+                    healthySegment = Math.min(healthySegment, page.segmentId);
+                    damagedSegment = Math.max(damagedSegment, page.segmentId);
+                }
+                Assert.assertTrue("the head must span two data segments", healthySegment < damagedSegment);
+
+                try (Path dir = checkpointsDir(instance); Path seg = new Path()) {
+                    LiveViewCheckpointLayout.dataSegmentPath(seg, dir, damagedSegment);
+                    Assert.assertTrue(configuration.getFilesFacade().removeQuiet(seg.$()));
+                }
+
+                // One row into the last key, whose page sits in the healthy
+                // segment. The seal must publish fresh state for every key the
+                // damaged segment held, a fresh page for the touched key, and a
+                // reuse for everything else.
+                commitKeys(job, 30, KEYS - 1, KEYS);
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+
+                boundaries = boundaryPages(instance);
+                Assert.assertEquals(3, boundaries.size());
+                final Map<String, Page> sealed = boundaries.get(2).pages;
+                int freshForDamagedKeys = 0;
+                int freshForHealthyKeys = 0;
+                for (Map.Entry<String, Page> entry : head.entrySet()) {
+                    final Page before = entry.getValue();
+                    final Page after = sealed.get(entry.getKey());
+                    Assert.assertNotNull("every key stays live", after);
+                    if (before.segmentId == damagedSegment) {
+                        // An unreadable predecessor costs a fresh image, never the
+                        // publication.
+                        Assert.assertNotEquals("the damaged page must not be reused", before, after);
+                        Assert.assertNotEquals(damagedSegment, after.segmentId);
+                        freshForDamagedKeys++;
+                    } else if (!after.equals(before)) {
+                        Assert.assertNotEquals(damagedSegment, after.segmentId);
+                        freshForHealthyKeys++;
+                    }
+                }
+                Assert.assertEquals(KEYS / 2, freshForDamagedKeys);
+                // The failed opens must not have taken healthy comparisons down
+                // with them: of the keys whose predecessor is readable, only the
+                // one the commit touched re-images.
+                Assert.assertEquals(
+                        "only the touched key may re-image out of the healthy segment",
+                        1,
+                        freshForHealthyKeys
+                );
+            }
+
+            // The head now names only live segments, so a restart restores from
+            // the state the damaged seal published.
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(
+                        "the view must restore its accumulators from the checkpoint timeline",
+                        viewInstance().isCheckpointRestoreSucceeded()
+                );
+                commitEveryKey(job, 40);
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
     // Every state page the timeline names, whatever boundary or key names it.
     private static Set<Page> allPages(List<Boundary> boundaries) {
         final Set<Page> out = new HashSet<>();
@@ -474,6 +562,25 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
     private void commitHotKey(LiveViewRefreshJob job, int second, long x) throws Exception {
         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
         execute("INSERT INTO base (ts, sym, x) VALUES ('" + timestamp(second) + "', '" + HOT_KEY + "', " + x + ")");
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+    }
+
+    // One row for every key in [lo, hi), at one designated timestamp, plus a
+    // refresh turn. Committing half the key set is what spreads one boundary's
+    // pages across two data segments.
+    private void commitKeys(LiveViewRefreshJob job, int second, int lo, int hi) throws Exception {
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        final StringBuilder sql = new StringBuilder("INSERT INTO base (ts, sym, x) VALUES ");
+        final String rowTs = timestamp(second);
+        for (int k = lo; k < hi; k++) {
+            if (k > lo) {
+                sql.append(", ");
+            }
+            sql.append("('").append(rowTs).append("', '").append(key(k)).append("', ").append(second + k).append(')');
+        }
+        execute(sql.toString());
         drainWalQueue();
         drainJob(job);
         drainWalQueue();

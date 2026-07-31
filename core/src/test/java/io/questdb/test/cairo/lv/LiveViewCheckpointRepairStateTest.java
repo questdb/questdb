@@ -38,12 +38,15 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Standalone coverage for {@code _checkpoints/repair/r.<repairId>}, the durable
@@ -185,6 +188,144 @@ public class LiveViewCheckpointRepairStateTest extends AbstractCairoTest {
                     Path dir = new Path()
             ) {
                 Assert.assertFalse(state.load(checkpointsDir(dir), REPAIR_ID));
+            }
+        });
+    }
+
+    @Test
+    public void testPersistFailureAfterUnlinkKeepsTheStagedRecordForTheSweep() throws Exception {
+        // A republication that fails after the collision retry's unlink leaves no
+        // record at all rather than a stale one - the documented Windows window.
+        // The staged .tmp survives, so the sweep can still remove it, and the
+        // caller reports the second rename's error, not the collision that
+        // triggered the retry.
+        final AtomicBoolean failRetryRename = new AtomicBoolean();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            private int injectedErrno;
+
+            @Override
+            public int errno() {
+                return injectedErrno != 0 ? injectedErrno : super.errno();
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (exists(to)) {
+                    injectedErrno = CairoException.ERRNO_ALREADY_EXISTS_WIN;
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                if (failRetryRename.get()) {
+                    injectedErrno = CairoException.ERRNO_EACCES_LINUX;
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                injectedErrno = 0;
+                return super.rename(from, to);
+            }
+        }, () -> {
+            try (
+                    LiveViewCheckpointRepairState state = new LiveViewCheckpointRepairState(configuration);
+                    Path dir = new Path()
+            ) {
+                checkpointsDir(dir);
+                state.begin(dir, REPAIR_ID, 7, 0, 3, REPAIR_ID, 41, 100, 50, 80, 200, HighBoundTag.FINITE);
+                Assert.assertTrue(descriptorExists(REPAIR_ID));
+
+                failRetryRename.set(true);
+                try {
+                    state.addOwnedSegmentId(5);
+                    Assert.fail("expected the descriptor republication to fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not rename a live view checkpoint repair descriptor");
+                    Assert.assertEquals(CairoException.ERRNO_EACCES_LINUX, e.getErrno());
+                }
+                failRetryRename.set(false);
+            }
+
+            // The published name is gone for the length of the fault and the staged
+            // record remains for the sweep.
+            Assert.assertFalse(descriptorExists(REPAIR_ID));
+            try (Path dir = new Path(); Path path = new Path()) {
+                LiveViewCheckpointLayout.repairDescriptorTmpPath(path, checkpointsDir(dir), REPAIR_ID);
+                Assert.assertTrue(configuration.getFilesFacade().exists(path.$()));
+            }
+
+            final LiveViewCheckpointRepairState.SweepResult result = sweep();
+            Assert.assertEquals(0, result.getDiscardedRepairCount());
+            Assert.assertEquals(0, result.getFailedCount());
+            try (Path dir = new Path(); Path path = new Path()) {
+                LiveViewCheckpointLayout.repairDescriptorTmpPath(path, checkpointsDir(dir), REPAIR_ID);
+                Assert.assertFalse(
+                        "the sweep must remove the staged record the failed republication left",
+                        configuration.getFilesFacade().exists(path.$())
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testPersistFailureWhenDestinationCannotBeClearedKeepsThePublishedRecord() throws Exception {
+        // A collision retry whose unlink fails collides again on the second
+        // rename, and that is the error the caller reports. The record already
+        // published under the final name stays fully readable, and the staged
+        // .tmp remains beside it for the sweep.
+        final AtomicBoolean rejectDescriptorRemoval = new AtomicBoolean();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            private boolean renameRejected;
+
+            @Override
+            public int errno() {
+                return renameRejected ? CairoException.ERRNO_ALREADY_EXISTS_WIN : super.errno();
+            }
+
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (rejectDescriptorRemoval.get() && !Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TMP_SUFFIX)) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (exists(to)) {
+                    renameRejected = true;
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                renameRejected = false;
+                return super.rename(from, to);
+            }
+        }, () -> {
+            try (
+                    LiveViewCheckpointRepairState state = new LiveViewCheckpointRepairState(configuration);
+                    Path dir = new Path()
+            ) {
+                checkpointsDir(dir);
+                state.begin(dir, REPAIR_ID, 7, 0, 3, REPAIR_ID, 41, 100, 50, 80, 200, HighBoundTag.FINITE);
+
+                rejectDescriptorRemoval.set(true);
+                try {
+                    state.addOwnedSegmentId(5);
+                    Assert.fail("expected the descriptor republication to fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not rename a live view checkpoint repair descriptor");
+                    Assert.assertEquals(CairoException.ERRNO_ALREADY_EXISTS_WIN, e.getErrno());
+                }
+                rejectDescriptorRemoval.set(false);
+            }
+
+            // The record published by begin() is untouched by the failed rewrite.
+            try (
+                    LiveViewCheckpointRepairState state = new LiveViewCheckpointRepairState(configuration);
+                    Path dir = new Path()
+            ) {
+                Assert.assertTrue(state.load(checkpointsDir(dir), REPAIR_ID));
+                Assert.assertEquals(RepairPublicationStage.PLAN, state.getStage());
+                Assert.assertEquals(0, state.getOwnedSegmentIdCount());
+            }
+            // The staged record remains beside it, the sweep's to remove.
+            try (Path dir = new Path(); Path path = new Path()) {
+                LiveViewCheckpointLayout.repairDescriptorTmpPath(path, checkpointsDir(dir), REPAIR_ID);
+                Assert.assertTrue(configuration.getFilesFacade().exists(path.$()));
             }
         });
     }

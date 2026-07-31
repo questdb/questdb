@@ -34,6 +34,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -123,6 +124,123 @@ public class LiveViewCheckpointRepairMarkerTest extends AbstractCairoTest {
                 checkpointsDir(dir);
                 Assert.assertFalse(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
                 Assert.assertEquals(Numbers.LONG_NULL, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+            }
+        });
+    }
+
+    @Test
+    public void testRewriteFailureAfterUnlinkLeavesNoMarker() throws Exception {
+        // The Windows rewrite unlinks the previous record before retrying the
+        // rename, so a retry that then fails leaves neither the record nor the
+        // staged sibling: write() removes the .tmp and throws. That empty state is
+        // safe because the throw aborts the repair before any truncate, so there
+        // is nothing for a restart to guard. The caller reports the second
+        // rename's error, not the collision that triggered the retry.
+        final AtomicBoolean failRetryRename = new AtomicBoolean();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            private int injectedErrno;
+
+            @Override
+            public int errno() {
+                return injectedErrno != 0 ? injectedErrno : super.errno();
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (exists(to)) {
+                    injectedErrno = CairoException.ERRNO_ALREADY_EXISTS_WIN;
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                if (failRetryRename.get()) {
+                    injectedErrno = CairoException.ERRNO_EACCES_LINUX;
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                injectedErrno = 0;
+                return super.rename(from, to);
+            }
+        }, () -> {
+            try (Path dir = new Path()) {
+                checkpointsDir(dir);
+                LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 8, 1_700_000_000L);
+                Assert.assertEquals(8, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+
+                failRetryRename.set(true);
+                try {
+                    LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 20, 1_700_000_000L);
+                    Assert.fail("expected the marker publication to fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not publish live view checkpoint repair marker");
+                    Assert.assertEquals(CairoException.ERRNO_EACCES_LINUX, e.getErrno());
+                }
+                failRetryRename.set(false);
+
+                Assert.assertFalse(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+                Assert.assertEquals(Numbers.LONG_NULL, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+
+                // With the fault gone the next repair publishes normally.
+                LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 20, 1_700_000_000L);
+                Assert.assertEquals(20, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+            }
+        });
+    }
+
+    @Test
+    public void testRewriteKeepsPreviousRecordWhenDestinationCannotBeCleared() throws Exception {
+        // A collision retry that cannot unlink the previous record fails its
+        // second rename for the same reason as the first, and that is the error
+        // the caller reports. The record already published under the final name
+        // stays fully readable, and write() removes the staged sibling.
+        final AtomicBoolean rejectMarkerRemoval = new AtomicBoolean();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            private boolean renameRejected;
+
+            @Override
+            public int errno() {
+                return renameRejected ? CairoException.ERRNO_ALREADY_EXISTS_WIN : super.errno();
+            }
+
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (rejectMarkerRemoval.get() && !Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TMP_SUFFIX)) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (exists(to)) {
+                    renameRejected = true;
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                renameRejected = false;
+                return super.rename(from, to);
+            }
+        }, () -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path dir = new Path(); Path path = new Path()) {
+                checkpointsDir(dir);
+                LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 8, 1_700_000_000L);
+                Assert.assertEquals(8, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+
+                rejectMarkerRemoval.set(true);
+                try {
+                    LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 20, 1_700_000_000L);
+                    Assert.fail("expected the marker publication to fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not publish live view checkpoint repair marker");
+                    Assert.assertEquals(CairoException.ERRNO_ALREADY_EXISTS_WIN, e.getErrno());
+                }
+                rejectMarkerRemoval.set(false);
+
+                // The previous record survives in full and the staged sibling is gone.
+                Assert.assertEquals(8, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+                LiveViewCheckpointLayout.repairingMarkerPath(path, dir).put(LiveViewCheckpointLayout.TMP_SUFFIX);
+                Assert.assertFalse(ff.exists(path.$()));
+
+                // With the fault gone the rewrite replaces the record normally.
+                LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 20, 1_700_000_000L);
+                Assert.assertEquals(20, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
             }
         });
     }

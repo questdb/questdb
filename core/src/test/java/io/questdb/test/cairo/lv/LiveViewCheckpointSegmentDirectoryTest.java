@@ -416,6 +416,153 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMetadataPageReleaseRejectsInvalidBatchesAtomically() throws Exception {
+        assertMemoryLeak(() -> {
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            final LongList ids = new LongList();
+            try (LiveViewCheckpointSegmentDirectoryWriter writer = openWriter()) {
+                writer.begin(root);
+                writer.addSegment(1, 100, 3, LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META);
+                writer.addSegment(2, 200, 2, LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META);
+                writer.addSegment(3, 300, 1);
+                writer.addSegment(4, 400, 1, LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META);
+                writer.publish(1_000, 1, root);
+
+                writer.begin(root);
+                ids.add(1);
+                try {
+                    writer.releaseMetadataPages(ids, -1);
+                    Assert.fail("expected a negative retire generation rejection");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "retire generation must be non-negative");
+                }
+                Assert.assertEquals(3, writer.getReferenceCount(1));
+
+                // A root-counted segment in the batch rejects the whole batch: the
+                // valid release listed ahead of it must not have been applied.
+                ids.clear();
+                ids.add(1);
+                ids.add(3);
+                try {
+                    writer.releaseMetadataPages(ids, 2);
+                    Assert.fail("expected a root-counted segment rejection");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "root-counted");
+                }
+                Assert.assertEquals(3, writer.getReferenceCount(1));
+                Assert.assertEquals(1, writer.getReferenceCount(3));
+
+                // An underflow anywhere in the multiset rejects the whole batch,
+                // including the valid single release of segment 1.
+                ids.clear();
+                ids.add(1);
+                ids.add(2);
+                ids.add(2);
+                ids.add(2);
+                try {
+                    writer.releaseMetadataPages(ids, 2);
+                    Assert.fail("expected a page count underflow rejection");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "page count underflow");
+                }
+                Assert.assertEquals(3, writer.getReferenceCount(1));
+                Assert.assertEquals(2, writer.getReferenceCount(2));
+
+                // A segment this publication retires takes no further releases, and
+                // the valid release beside it must not have been applied either.
+                ids.clear();
+                ids.add(4);
+                writer.releaseMetadataPages(ids, 2);
+                Assert.assertEquals(0, writer.getReferenceCount(4));
+                Assert.assertEquals(2, writer.getRetireGeneration(4));
+                writer.removeSegment(4);
+                ids.clear();
+                ids.add(2);
+                ids.add(4);
+                try {
+                    writer.releaseMetadataPages(ids, 2);
+                    Assert.fail("expected a retiring segment rejection");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "this publication retires");
+                }
+                Assert.assertEquals(2, writer.getReferenceCount(2));
+                Assert.assertEquals(0, writer.getReferenceCount(4));
+
+                writer.publish(1_001, 2, root);
+            }
+
+            // Every rejected batch left the published image exactly as registered:
+            // only the one valid release (segment 4 to zero, then retired) landed.
+            try (LiveViewCheckpointSegmentDirectoryReader reader = openReader(root)) {
+                final LiveViewCheckpointSegmentDirectoryEntry entry = new LiveViewCheckpointSegmentDirectoryEntry();
+                Assert.assertEquals(3, reader.size());
+                Assert.assertEquals(3, reader.getReferenceCount(1));
+                Assert.assertEquals(2, reader.getReferenceCount(2));
+                Assert.assertEquals(1, reader.getReferenceCount(3));
+                Assert.assertEquals(
+                        LiveViewCheckpointSegmentDirectory.RETIRE_GENERATION_NONE,
+                        reader.getRetireGeneration(1)
+                );
+                Assert.assertEquals(
+                        LiveViewCheckpointSegmentDirectory.RETIRE_GENERATION_NONE,
+                        reader.getRetireGeneration(2)
+                );
+                Assert.assertFalse(reader.find(4, entry));
+            }
+        });
+    }
+
+    @Test
+    public void testMetadataPageReleaseRetiresAtZeroAndSkipsUncatalogued() throws Exception {
+        assertMemoryLeak(() -> {
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            final LongList ids = new LongList();
+            try (LiveViewCheckpointSegmentDirectoryWriter writer = openWriter()) {
+                writer.begin(root);
+                writer.addSegment(1, 100, 3, LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META);
+                writer.addSegment(2, 200, 2, LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META);
+                writer.publish(1_000, 1, root);
+
+                // A multiset with repeats, and an uncatalogued id the release skips:
+                // the catalogue holds nothing for it to move.
+                writer.begin(root);
+                ids.add(1);
+                ids.add(999);
+                ids.add(1);
+                ids.add(2);
+                writer.releaseMetadataPages(ids, 5);
+                Assert.assertEquals(1, writer.getReferenceCount(1));
+                Assert.assertEquals(1, writer.getReferenceCount(2));
+                Assert.assertEquals(
+                        LiveViewCheckpointSegmentDirectory.RETIRE_GENERATION_NONE,
+                        writer.getRetireGeneration(1)
+                );
+
+                // Releasing the last reachable page retires the segment at the
+                // release generation.
+                ids.clear();
+                ids.add(1);
+                ids.add(2);
+                writer.releaseMetadataPages(ids, 6);
+                Assert.assertEquals(0, writer.getReferenceCount(1));
+                Assert.assertEquals(0, writer.getReferenceCount(2));
+                Assert.assertEquals(6, writer.getRetireGeneration(1));
+                Assert.assertEquals(6, writer.getRetireGeneration(2));
+
+                writer.publish(1_001, 2, root);
+            }
+
+            try (LiveViewCheckpointSegmentDirectoryReader reader = openReader(root)) {
+                Assert.assertEquals(2, reader.size());
+                Assert.assertEquals(0, reader.getReferenceCount(1));
+                Assert.assertEquals(0, reader.getReferenceCount(2));
+                Assert.assertEquals(6, reader.getRetireGeneration(1));
+                Assert.assertEquals(6, reader.getRetireGeneration(2));
+            }
+        });
+    }
+
+    @Test
     public void testRandomReferenceAccountingProperty() throws Exception {
         assertMemoryLeak(() -> {
             // Node capacity four, so forty segments stand three levels tall and the

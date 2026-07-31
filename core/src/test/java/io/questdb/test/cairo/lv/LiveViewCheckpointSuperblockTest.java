@@ -117,6 +117,105 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorruptPendingDirectoryRegistrationInvalidatesSlot() throws Exception {
+        // The deferred directory registration is either absent outright or fully
+        // described: a valid-CRC slot carrying a half-set triple would make the next
+        // publication catalogue a segment with a length or page count that names
+        // nothing. Each broken shape must invalidate the slot; the A/B fallback covers it.
+        assertMemoryLeak(() -> {
+            publish(1); // slot 0
+            publish(2); // slot 1 (newest; carries a full registration: 20, 600, 6)
+            final long[][] combos = {
+                    // {segmentId, bytes, pages}
+                    {Numbers.LONG_NULL, 600, 6}, // absent id with leftover bytes and pages
+                    {Numbers.LONG_NULL, 0, 6},   // absent id with leftover pages
+                    {20, 0, 6},                  // registered id with no byte length
+                    {20, 600, 0},                // registered id with no page count
+                    {-2, 600, 6},                // negative id that is not the null sentinel
+            };
+            for (long[] combo : combos) {
+                try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                    final long base = LiveViewCheckpointSuperblock.SLOT_SIZE;
+                    mem.putLong(base + LiveViewCheckpointSuperblock.SLOT_PENDING_DIRECTORY_SEGMENT_ID_OFFSET, combo[0]);
+                    mem.putLong(base + LiveViewCheckpointSuperblock.SLOT_PENDING_DIRECTORY_SEGMENT_BYTES_OFFSET, combo[1]);
+                    mem.putLong(base + LiveViewCheckpointSuperblock.SLOT_PENDING_DIRECTORY_SEGMENT_PAGES_OFFSET, combo[2]);
+                    fixSlotCrc(mem, 1);
+                }
+                try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                    try (Path dir = new Path()) {
+                        sb.of(checkpointsDir(dir));
+                    }
+                    final String detail = "combo [id=" + combo[0] + ", bytes=" + combo[1] + ", pages=" + combo[2] + ']';
+                    Assert.assertEquals(detail, 0, sb.getSelectedSlot());
+                    assertFields(sb, 1);
+                }
+                // Restore the full registration so the next combo starts from a valid slot.
+                try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                    final long base = LiveViewCheckpointSuperblock.SLOT_SIZE;
+                    mem.putLong(base + LiveViewCheckpointSuperblock.SLOT_PENDING_DIRECTORY_SEGMENT_ID_OFFSET, 20);
+                    mem.putLong(base + LiveViewCheckpointSuperblock.SLOT_PENDING_DIRECTORY_SEGMENT_BYTES_OFFSET, 600);
+                    mem.putLong(base + LiveViewCheckpointSuperblock.SLOT_PENDING_DIRECTORY_SEGMENT_PAGES_OFFSET, 6);
+                    fixSlotCrc(mem, 1);
+                }
+            }
+            // The restore itself must be sound: the newest slot reads back once more.
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                try (Path dir = new Path()) {
+                    sb.of(checkpointsDir(dir));
+                }
+                Assert.assertEquals(1, sb.getSelectedSlot());
+                assertFields(sb, 2);
+            }
+        });
+    }
+
+    @Test
+    public void testCorruptRetiredCountInvalidatesSlot() throws Exception {
+        // The live boundary count is nextCheckpointId minus the retired count, so a
+        // valid-CRC slot whose retired count is negative or exceeds the allocated ids
+        // must not be selected - it would derive a negative live count. The A/B
+        // fallback covers it.
+        assertMemoryLeak(() -> {
+            publish(1); // slot 0
+            publish(2); // slot 1 (newest; nextCheckpointId = 25, retired = 2)
+            final long[] forged = {25 + 1, -1};
+            for (long retired : forged) {
+                try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                    final long base = LiveViewCheckpointSuperblock.SLOT_SIZE;
+                    mem.putLong(base + LiveViewCheckpointSuperblock.SLOT_RETIRED_CHECKPOINT_COUNT_OFFSET, retired);
+                    fixSlotCrc(mem, 1);
+                }
+                try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                    try (Path dir = new Path()) {
+                        sb.of(checkpointsDir(dir));
+                    }
+                    Assert.assertEquals("retired=" + retired, 0, sb.getSelectedSlot());
+                    assertFields(sb, 1);
+                }
+            }
+            // The boundary value is still a valid slot: retiring every allocated id is
+            // exactly what a whole-history truncate leaves behind.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                final long base = LiveViewCheckpointSuperblock.SLOT_SIZE;
+                mem.putLong(base + LiveViewCheckpointSuperblock.SLOT_RETIRED_CHECKPOINT_COUNT_OFFSET, 25);
+                fixSlotCrc(mem, 1);
+            }
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                try (Path dir = new Path()) {
+                    sb.of(checkpointsDir(dir));
+                }
+                Assert.assertEquals(1, sb.getSelectedSlot());
+                Assert.assertEquals(2, sb.generation);
+                Assert.assertEquals(25, sb.retiredCheckpointCount);
+            }
+        });
+    }
+
+    @Test
     public void testCorruptSeedCursorOffsetInvalidatesSlot() throws Exception {
         // The seed cursor is a row offset a restart skips the base cursor forward by, so a
         // valid-CRC slot carrying a negative one that is not the sentinel must not be selected -
@@ -478,6 +577,69 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPublishRejectsHalfSetPendingDirectoryRegistration() throws Exception {
+        assertMemoryLeak(() -> {
+            publish(1);
+            publish(2);
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                try (Path dir = new Path()) {
+                    sb.of(checkpointsDir(dir));
+                }
+                final long[][] combos = {
+                        // {segmentId, bytes, pages}
+                        {Numbers.LONG_NULL, 1, 0}, // absent id with leftover bytes
+                        {Numbers.LONG_NULL, 0, 1}, // absent id with leftover pages
+                        {7, 0, 1},                 // registered id with no byte length
+                        {7, 1, 0},                 // registered id with no page count
+                        {-2, 1, 1},                // negative id that is not the null sentinel
+                };
+                for (long[] combo : combos) {
+                    setFields(sb, 3);
+                    sb.pendingDirectorySegmentId = combo[0];
+                    sb.pendingDirectorySegmentBytes = combo[1];
+                    sb.pendingDirectorySegmentPages = combo[2];
+                    try {
+                        sb.publish();
+                        Assert.fail("expected a half-set pending directory registration to be rejected [id="
+                                + combo[0] + ", bytes=" + combo[1] + ", pages=" + combo[2] + ']');
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "pending directory segment registration invalid");
+                    }
+                    Assert.assertEquals(1, sb.getSelectedSlot());
+                }
+            }
+            // A rejected publication writes nothing, so the slot it would have
+            // targeted still holds generation 1 and can still be recovered from.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                corruptGenerationNoCrcFix(mem, 1);
+            }
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                try (Path dir = new Path()) {
+                    sb.of(checkpointsDir(dir));
+                }
+                assertFields(sb, 1);
+
+                // A fully-described registration is the valid shape and publishes.
+                setFields(sb, 3);
+                sb.pendingDirectorySegmentId = 7;
+                sb.pendingDirectorySegmentBytes = 640;
+                sb.pendingDirectorySegmentPages = 2;
+                sb.publish();
+            }
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                try (Path dir = new Path()) {
+                    sb.of(checkpointsDir(dir));
+                }
+                Assert.assertEquals(3, sb.generation);
+                Assert.assertEquals(7, sb.pendingDirectorySegmentId);
+                Assert.assertEquals(640, sb.pendingDirectorySegmentBytes);
+                Assert.assertEquals(2, sb.pendingDirectorySegmentPages);
+            }
+        });
+    }
+
+    @Test
     public void testPublishRejectsNonAdvancingGenerationWithoutTouchingFallback() throws Exception {
         assertMemoryLeak(() -> {
             publish(1);
@@ -509,6 +671,63 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testPublishRejectsOutOfRangeRetiredCount() throws Exception {
+        assertMemoryLeak(() -> {
+            publish(1);
+            publish(2);
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                try (Path dir = new Path()) {
+                    sb.of(checkpointsDir(dir));
+                }
+                setFields(sb, 3);
+                sb.retiredCheckpointCount = -1;
+                try {
+                    sb.publish();
+                    Assert.fail("expected a negative retired count to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "retired boundary count out of range");
+                }
+                Assert.assertEquals(1, sb.getSelectedSlot());
+
+                setFields(sb, 3);
+                sb.retiredCheckpointCount = sb.nextCheckpointId + 1;
+                try {
+                    sb.publish();
+                    Assert.fail("expected a retired count above the allocated ids to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "retired boundary count out of range");
+                }
+                Assert.assertEquals(1, sb.getSelectedSlot());
+            }
+            // A rejected publication writes nothing, so the slot it would have
+            // targeted still holds generation 1 and can still be recovered from.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                corruptGenerationNoCrcFix(mem, 1);
+            }
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                try (Path dir = new Path()) {
+                    sb.of(checkpointsDir(dir));
+                }
+                assertFields(sb, 1);
+
+                // Retiring every allocated id is the boundary and publishes: it is
+                // exactly what a whole-history truncate leaves behind.
+                setFields(sb, 3);
+                sb.retiredCheckpointCount = sb.nextCheckpointId;
+                sb.publish();
+            }
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                try (Path dir = new Path()) {
+                    sb.of(checkpointsDir(dir));
+                }
+                Assert.assertEquals(3, sb.generation);
+                Assert.assertEquals(sb.nextCheckpointId, sb.retiredCheckpointCount);
+            }
+        });
+    }
+
     private static void assertFields(LiveViewCheckpointSuperblock sb, long gen) {
         Assert.assertEquals(gen, sb.generation);
         Assert.assertEquals(gen * 10 + 1, sb.definitionTxn);
@@ -522,6 +741,16 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
         // Alternating so both a real mid-sweep cursor and the "steady seal" sentinel
         // round-trip through every publication test in this class.
         Assert.assertEquals(seedCursorOffset(gen), sb.seedCursorOffset);
+        Assert.assertEquals(gen, sb.retiredCheckpointCount);
+        if ((gen & 1) == 0) {
+            Assert.assertEquals(gen * 10, sb.pendingDirectorySegmentId);
+            Assert.assertEquals(gen * 300, sb.pendingDirectorySegmentBytes);
+            Assert.assertEquals(gen * 3, sb.pendingDirectorySegmentPages);
+        } else {
+            Assert.assertEquals(Numbers.LONG_NULL, sb.pendingDirectorySegmentId);
+            Assert.assertEquals(0, sb.pendingDirectorySegmentBytes);
+            Assert.assertEquals(0, sb.pendingDirectorySegmentPages);
+        }
         Assert.assertEquals(gen, sb.timelineRootRef.getSegmentId());
         Assert.assertEquals(gen * 100, sb.timelineRootRef.getOffset());
         Assert.assertEquals((int) (gen * 4), sb.timelineRootRef.getLength());
@@ -559,6 +788,19 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
         sb.metadataBytes = gen * 10 + 7;
         sb.dataBytes = gen * 10 + 8;
         sb.seedCursorOffset = seedCursorOffset(gen);
+        sb.retiredCheckpointCount = gen;
+        // Alternating like the seed cursor, so both the "wrote a directory segment"
+        // and the "reused the previous root" shapes round-trip through every
+        // publication test in this class.
+        if ((gen & 1) == 0) {
+            sb.pendingDirectorySegmentId = gen * 10;
+            sb.pendingDirectorySegmentBytes = gen * 300;
+            sb.pendingDirectorySegmentPages = gen * 3;
+        } else {
+            sb.pendingDirectorySegmentId = Numbers.LONG_NULL;
+            sb.pendingDirectorySegmentBytes = 0;
+            sb.pendingDirectorySegmentPages = 0;
+        }
         sb.timelineRootRef.of(gen, gen * 100, (int) (gen * 4));
         sb.rowPositionDeltaRootRef.of(gen + 1, gen * 200, (int) (gen * 5));
         sb.segmentDirectoryRootRef.clear();
