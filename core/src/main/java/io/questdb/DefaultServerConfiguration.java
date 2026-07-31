@@ -66,11 +66,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         this.httpServerConfiguration = new DefaultHttpServerConfiguration(cairoConfiguration);
         this.sharedPoolNetworkConfiguration = new DefaultWorkerPoolConfiguration("shared_network", WorkerPoolMode.FIBER_HOST);
         this.sharedPoolQueryConfiguration = new DefaultWorkerPoolConfiguration("shared_query", WorkerPoolMode.FIBER_HOST);
-        this.sharedPoolWriteConfiguration = new DefaultWorkerPoolConfiguration("shared_write", WorkerPoolMode.FIBER_HOST);
+        this.sharedPoolWriteConfiguration = new DefaultWorkerPoolConfiguration("shared_write", WorkerPoolMode.LEGACY);
         this.matViewRefreshPoolConfiguration = new DefaultWorkerPoolConfiguration("mat_view_refresh", WorkerPoolMode.FIBER_HOST);
-        this.exportPoolConfiguration = new DefaultWorkerPoolConfiguration("export", WorkerPoolMode.FIBER_HOST);
-        this.viewCompilerPoolConfiguration = new DefaultWorkerPoolConfiguration("view_compiler", WorkerPoolMode.FIBER_HOST);
-        this.walApplyPoolConfiguration = new DefaultWorkerPoolConfiguration("wal_apply", WorkerPoolMode.FIBER_HOST);
+        this.exportPoolConfiguration = new DefaultWorkerPoolConfiguration("export", WorkerPoolMode.LEGACY);
+        this.viewCompilerPoolConfiguration = new DefaultWorkerPoolConfiguration("view_compiler", WorkerPoolMode.LEGACY);
+        this.walApplyPoolConfiguration = new DefaultWorkerPoolConfiguration("wal_apply", WorkerPoolMode.LEGACY);
     }
 
     public DefaultServerConfiguration(CharSequence dbRoot) {

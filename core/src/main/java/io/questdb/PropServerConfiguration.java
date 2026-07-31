@@ -1521,7 +1521,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     properties,
                     env,
                     PropertyKey.WAL_APPLY_WORKER_FIBER_ENABLED,
-                    true
+                    false
             );
             this.walApplyWorkerSleepThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10_000);
             this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
@@ -1559,7 +1559,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     properties,
                     env,
                     PropertyKey.VIEW_COMPILER_WORKER_FIBER_ENABLED,
-                    true
+                    false
             );
 
             // Export pool configuration
@@ -1571,7 +1571,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     properties,
                     env,
                     PropertyKey.EXPORT_WORKER_FIBER_ENABLED,
-                    true
+                    false
             );
             this.exportWorkerSleepThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_THRESHOLD, 10_000);
             this.exportWorkerSleepTimeout = getMillis(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_TIMEOUT, 10);
@@ -2101,7 +2101,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                         properties,
                         env,
                         PropertyKey.LINE_TCP_WRITER_WORKER_FIBER_ENABLED,
-                        true
+                        false
                 );
                 this.lineTcpWriterWorkerSleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD, 10_000);
                 this.symbolCacheWaitBeforeReload = getMicros(properties, env, PropertyKey.LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD, 500_000);

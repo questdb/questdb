@@ -2583,6 +2583,30 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testWorkerPoolFiberModeDefaults() throws Exception {
+        final PropServerConfiguration configuration = newPropServerConfiguration(new Properties());
+
+        Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getExportPoolConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getHttpMinServerConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getHttpServerConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(
+                WorkerPoolMode.LEGACY,
+                configuration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration().getWorkerPoolMode()
+        );
+        Assert.assertEquals(
+                WorkerPoolMode.LEGACY,
+                configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerPoolMode()
+        );
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getMatViewRefreshPoolConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getPGWireConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getSharedWorkerPoolNetworkConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getSharedWorkerPoolQueryConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getViewCompilerPoolConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getWalApplyPoolConfiguration().getWorkerPoolMode());
+    }
+
+    @Test
     public void testWorkerPoolFiberModeProperties() throws Exception {
         assertWorkerPoolModeProperty(
                 PropertyKey.HTTP_FIBER_ENABLED,
@@ -2638,17 +2662,16 @@ public class PropServerConfigurationTest {
     public void testWritePoolFiberHostFollowsSharedJobModes() throws Exception {
         final Properties properties = new Properties();
         Assert.assertEquals(
-                WorkerPoolMode.FIBER_HOST,
-                newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
-        );
-
-        properties.setProperty(PropertyKey.LINE_TCP_WRITER_WORKER_FIBER_ENABLED.getPropertyPath(), "false");
-        Assert.assertEquals(
                 WorkerPoolMode.LEGACY,
                 newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
         );
 
-        properties.clear();
+        properties.setProperty(PropertyKey.LINE_TCP_WRITER_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
+        Assert.assertEquals(
+                WorkerPoolMode.FIBER_HOST,
+                newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
+        );
+
         properties.setProperty(PropertyKey.LINE_TCP_WRITER_WORKER_COUNT.getPropertyPath(), "1");
         Assert.assertEquals(
                 WorkerPoolMode.LEGACY,
@@ -2659,11 +2682,17 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.LINE_TCP_ENABLED.getPropertyPath(), "false");
         properties.setProperty(PropertyKey.WAL_APPLY_WORKER_COUNT.getPropertyPath(), "0");
         Assert.assertEquals(
+                WorkerPoolMode.LEGACY,
+                newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
+        );
+
+        properties.setProperty(PropertyKey.WAL_APPLY_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
+        Assert.assertEquals(
                 WorkerPoolMode.FIBER_HOST,
                 newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
         );
 
-        properties.setProperty(PropertyKey.WAL_APPLY_WORKER_FIBER_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.SHARED_WRITE_WORKER_FIBER_ENABLED.getPropertyPath(), "false");
         Assert.assertEquals(
                 WorkerPoolMode.LEGACY,
                 newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
@@ -2677,6 +2706,7 @@ public class PropServerConfigurationTest {
 
         properties.clear();
         properties.setProperty(PropertyKey.READ_ONLY_INSTANCE.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.LINE_TCP_WRITER_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
         Assert.assertEquals(
                 WorkerPoolMode.LEGACY,
                 newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()

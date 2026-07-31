@@ -97,9 +97,7 @@ public class HttpServerCtorThrowSelfCleanTest extends AbstractCairoTest {
                                 return new CloseTrackingHandler(closeCount, true);
                             }
                         });
-                        if (workerPool.isFiberHost()) {
-                            server.createSelectorForTesting();
-                        }
+                        server.createSelectorForTesting();
                         Assert.fail();
                     } catch (RuntimeException e) {
                         Assert.assertEquals("default processor failure", e.getMessage());
@@ -165,9 +163,7 @@ public class HttpServerCtorThrowSelfCleanTest extends AbstractCairoTest {
                         }
                     });
 
-                    if (workerPool.isFiberHost()) {
-                        server.createSelectorForTesting();
-                    }
+                    server.createSelectorForTesting();
                     final int closeCountBeforeFailure = closeCount.get();
                     try {
                         server.createSelectorForTesting();

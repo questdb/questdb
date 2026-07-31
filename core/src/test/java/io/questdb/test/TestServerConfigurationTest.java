@@ -35,13 +35,17 @@ public class TestServerConfigurationTest extends AbstractTest {
     @Test
     public void testDefaultWorkerPoolModes() {
         final DefaultServerConfiguration configuration = new DefaultServerConfiguration(root);
-        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getExportPoolConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getExportPoolConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(
+                WorkerPoolMode.LEGACY,
+                configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerPoolMode()
+        );
         Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getMatViewRefreshPoolConfiguration().getWorkerPoolMode());
         Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getSharedWorkerPoolNetworkConfiguration().getWorkerPoolMode());
         Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getSharedWorkerPoolQueryConfiguration().getWorkerPoolMode());
-        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode());
-        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getViewCompilerPoolConfiguration().getWorkerPoolMode());
-        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getWalApplyPoolConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getViewCompilerPoolConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getWalApplyPoolConfiguration().getWorkerPoolMode());
     }
 
     @Test
