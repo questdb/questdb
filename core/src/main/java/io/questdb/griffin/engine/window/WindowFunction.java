@@ -258,6 +258,25 @@ public interface WindowFunction extends Function {
         return null;
     }
 
+    /** Returns partition keys touched since the last durable cadence checkpoint. */
+    @Nullable
+    default Map getCheckpointDirtyPartitionMap() {
+        return null;
+    }
+
+    /** Restore, repair, and partition compaction force a complete map scan. */
+    default boolean checkpointRequiresFullPartitionScan() {
+        return true;
+    }
+
+    default long getCheckpointLogicalStateBytes() {
+        return 0;
+    }
+
+    /** Called only after the checkpoint superblock is durably published. */
+    default void onCheckpointPersisted(long logicalStateBytes) {
+    }
+
     /**
      * @return pass1 scan direction.
      * Some {@link #ONE_PASS} and {@link #TWO_PASS} window functions may be more efficient when using a backward scan.

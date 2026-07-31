@@ -600,6 +600,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void markPartitionAlive(Record record) {
+            markCheckpointPartitionDirty(record);
             if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
                 return;
             }

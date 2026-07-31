@@ -138,6 +138,9 @@ public class LiveViewWindow implements QuietCloseable {
     private final RecordSink partitionKeySink;
     private final String windowName;
     private Map anchorMap;
+    private Map checkpointDirtyAnchorMap;
+    private boolean checkpointFullScanRequired = true;
+    private long checkpointLogicalStateBytes;
     // Frontier-gated compaction state. All mutated only on the refresh-worker
     // thread (processRow / compact / restore / toTop); not volatile.
     //
@@ -385,6 +388,11 @@ public class LiveViewWindow implements QuietCloseable {
      * leave the window with a half-restored map.
      */
     public void beginCheckpointRestore() {
+        checkpointFullScanRequired = true;
+        checkpointLogicalStateBytes = 0;
+        if (checkpointDirtyAnchorMap != null) {
+            checkpointDirtyAnchorMap.clear();
+        }
         anchorMap.clear();
         tombstoneCount = 0;
         resetFrontier();
@@ -397,36 +405,35 @@ public class LiveViewWindow implements QuietCloseable {
         // (LiveViewInstance and WindowRecordCursorFactory respectively); freeing
         // them here would double-free.
         Misc.free(anchorMap);
+        Misc.free(checkpointDirtyAnchorMap);
         Misc.free(scratchAnchorMap);
     }
 
     /**
-     * Encodes every live anchor entry - tombstoned ones are skipped - into
-     * {@code keysOut} and {@code valuesOut}, which stay index-aligned. One entry
-     * is a partition key plus its last-seen anchor value, small enough that a
-     * checkpoint root carries it as scalar metadata rather than a data page.
+     * Encodes every live anchor entry for a complete freeze, or only keys touched
+     * since the durable predecessor for an incremental freeze. Tombstoned entries
+     * are skipped. The keys and anchor values remain index-aligned.
      * <p>
      * {@code keyBuffer} is caller-owned scratch the key codec writes through; it
      * is rewound per entry and holds nothing once this returns.
      */
-    public void freezeCheckpointEntries(
+    public long freezeCheckpointEntries(
             @NotNull MemoryCARW keyBuffer,
             @NotNull ObjList<byte[]> keysOut,
-            @NotNull LongList valuesOut
+            @NotNull LongList valuesOut,
+            boolean incremental
     ) {
         keysOut.clear();
         valuesOut.clear();
-        // MapRecord column layout is [value0, value1, value2, key0, ..., keyN-1] - keys
-        // sit after the three value slots, so the codec needs the key-start index to
-        // address them via record.getXxx(columnIndex).
+        long logicalBytes = incremental ? checkpointLogicalStateBytes : 0;
         final int keyStartIndex = AnchorMapValueTypes.INSTANCE.getColumnCount();
-        final MapRecordCursor cursor = anchorMap.getCursor();
-        final MapRecord record = anchorMap.getRecord();
+        final Map scanMap = incremental ? checkpointDirtyAnchorMap : anchorMap;
+        final MapRecordCursor cursor = scanMap.getCursor();
+        final MapRecord record = scanMap.getRecord();
         while (cursor.hasNext()) {
-            final MapValue value = record.getValue();
-            if (value.getByte(SLOT_TOMBSTONE) == 1) {
-                continue;
-            }
+            final MapValue dirtyOrAnchorValue = record.getValue();
+            final boolean newSinceCheckpoint = incremental
+                    && dirtyOrAnchorValue.getByte(SLOT_INITIALIZED) == 1;
             keyBuffer.jumpTo(0);
             LiveViewSnapshotKeyCodec.writeKey(keyBuffer, record, partitionKeyTypes, keyStartIndex);
             final long length = keyBuffer.getAppendOffset();
@@ -434,12 +441,39 @@ public class LiveViewWindow implements QuietCloseable {
                 throw CairoException.critical(0)
                         .put("live view checkpoint anchor key length out of bounds, bytes=").put(length);
             }
+            final MapValue anchorValue;
+            if (incremental) {
+                final MapKey liveKey = anchorMap.withKey();
+                LiveViewSnapshotKeyCodec.readKey(liveKey, keyBuffer, 0, partitionKeyTypes);
+                anchorValue = liveKey.findValue();
+            } else {
+                anchorValue = dirtyOrAnchorValue;
+            }
+            if (anchorValue == null || anchorValue.getByte(SLOT_TOMBSTONE) == 1) {
+                continue;
+            }
             final byte[] key = new byte[(int) length];
             for (int i = 0; i < key.length; i++) {
                 key[i] = keyBuffer.getByte(i);
             }
             keysOut.add(key);
-            valuesOut.add(value.getLong(SLOT_ANCHOR_VALUE));
+            valuesOut.add(anchorValue.getLong(SLOT_ANCHOR_VALUE));
+            if (!incremental || newSinceCheckpoint) {
+                logicalBytes += key.length + LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE;
+            }
+        }
+        return logicalBytes;
+    }
+
+    public boolean canFreezeCheckpointIncrementally() {
+        return !checkpointFullScanRequired && checkpointDirtyAnchorMap != null;
+    }
+
+    public void onCheckpointPersisted(long logicalStateBytes) {
+        checkpointLogicalStateBytes = logicalStateBytes;
+        checkpointFullScanRequired = false;
+        if (checkpointDirtyAnchorMap != null) {
+            checkpointDirtyAnchorMap.clear();
         }
     }
 
@@ -544,6 +578,7 @@ public class LiveViewWindow implements QuietCloseable {
         MapValue value = key.createValue();
 
         final boolean isNewPartition = value.isNew();
+        markCheckpointPartitionDirty(record, isNewPartition);
         final byte initialized = isNewPartition ? 0 : value.getByte(SLOT_INITIALIZED);
         final long lastAnchor = initialized == 0 ? 0 : value.getLong(SLOT_ANCHOR_VALUE);
         final long currentAnchor = readAnchorValue(record);
@@ -612,6 +647,11 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     public void restore(MemoryR source, long offset, long payloadLength) {
+        checkpointFullScanRequired = true;
+        checkpointLogicalStateBytes = 0;
+        if (checkpointDirtyAnchorMap != null) {
+            checkpointDirtyAnchorMap.clear();
+        }
         final long payloadStart = offset;
         final CharSequence storedName = source.getStrA(offset);
         if (storedName == null || !storedName.toString().equals(windowName)) {
@@ -816,6 +856,11 @@ public class LiveViewWindow implements QuietCloseable {
      * checkpoint) preserve the recorded partition-anchor state.
      */
     public void toTop() {
+        checkpointFullScanRequired = true;
+        checkpointLogicalStateBytes = 0;
+        if (checkpointDirtyAnchorMap != null) {
+            checkpointDirtyAnchorMap.clear();
+        }
         anchorMap.clear();
         tombstoneCount = 0;
         resetFrontier();
@@ -867,6 +912,7 @@ public class LiveViewWindow implements QuietCloseable {
             // Non-monotone/NULL anchor, or no frontier advance yet -> no safe cutoff.
             return;
         }
+        checkpointFullScanRequired = true;
         final long cutoff = prevFrontier;
         if (scratchAnchorMap == null) {
             // Allocate the reusable second anchor map once; subsequent sweeps reuse it. The
@@ -907,6 +953,27 @@ public class LiveViewWindow implements QuietCloseable {
         stalePartitionCount = 0;
         lastCompactedFrontier = maxAnchorValue;
         compactionCount++;
+    }
+
+    /**
+     * Adds one partition key to the checkpoint dirty set and records whether it was new
+     * relative to the last durable checkpoint. The marker keeps logical-size accounting
+     * exact without probing the persistent anchor root.
+     */
+    private void markCheckpointPartitionDirty(Record record, boolean isNewPartition) {
+        if (checkpointDirtyAnchorMap == null) {
+            checkpointDirtyAnchorMap = createTrackedAnchorMap(
+                    cairoConfiguration,
+                    partitionKeyTypes,
+                    memoryTracker
+            );
+        }
+        final MapKey key = checkpointDirtyAnchorMap.withKey();
+        key.put(record, partitionKeySink);
+        final MapValue value = key.createValue();
+        if (value.isNew()) {
+            value.putByte(SLOT_INITIALIZED, isNewPartition ? (byte) 1 : (byte) 0);
+        }
     }
 
     /**

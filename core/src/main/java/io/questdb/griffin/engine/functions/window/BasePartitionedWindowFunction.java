@@ -49,6 +49,10 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     // sweep never allocates. Null until the first sweep, or for functions that opt
     // out (newCompactionScratch returns null).
     protected Map compactionScratch;
+    // Deduplicated partition keys touched since the last durable checkpoint.
+    protected Map checkpointDirtyPartitions;
+    protected boolean checkpointFullScanRequired = true;
+    protected long checkpointLogicalStateBytes;
     // Non-final so retainPartitions can swap the partition state Map during
     // the anchor-driven frontier sweep.
     protected Map map;
@@ -87,7 +91,32 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         super.close();
         Misc.free(map);
         Misc.free(compactionScratch);
+        Misc.free(checkpointDirtyPartitions);
         Misc.freeObjList(partitionByRecord.getFunctions());
+    }
+
+    @Override
+    public Map getCheckpointDirtyPartitionMap() {
+        return checkpointDirtyPartitions;
+    }
+
+    @Override
+    public long getCheckpointLogicalStateBytes() {
+        return checkpointLogicalStateBytes;
+    }
+
+    @Override
+    public boolean checkpointRequiresFullPartitionScan() {
+        return checkpointFullScanRequired;
+    }
+
+    @Override
+    public void onCheckpointPersisted(long logicalStateBytes) {
+        checkpointLogicalStateBytes = logicalStateBytes;
+        checkpointFullScanRequired = false;
+        if (checkpointDirtyPartitions != null) {
+            checkpointDirtyPartitions.clear();
+        }
     }
 
     @Override
@@ -125,6 +154,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
      */
     @Override
     public void markPartitionAlive(Record record) {
+        markCheckpointPartitionDirty(record);
         if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
             return;
         }
@@ -157,6 +187,11 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
             map.clear();
         }
         tombstoneCount = 0;
+        checkpointLogicalStateBytes = 0;
+        checkpointFullScanRequired = true;
+        if (checkpointDirtyPartitions != null) {
+            checkpointDirtyPartitions.clear();
+        }
     }
 
     @Override
@@ -169,6 +204,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
 
     @Override
     public void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
+        checkpointFullScanRequired = true;
         if (compactionScratch == null) {
             // First sweep: allocate the reusable second map once. A null factory
             // result means the function opts out of frontier compaction; its map
@@ -198,7 +234,10 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     public void reset() {
         Misc.free(map);
         compactionScratch = Misc.free(compactionScratch);
+        checkpointDirtyPartitions = Misc.free(checkpointDirtyPartitions);
         tombstoneCount = 0;
+        checkpointLogicalStateBytes = 0;
+        checkpointFullScanRequired = true;
     }
 
     @Override
@@ -209,6 +248,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         this.memoryTracker = tracker;
         if (map != null) {
             map.setMemoryTracker(tracker);
+        }
+        if (checkpointDirtyPartitions != null) {
+            checkpointDirtyPartitions.setMemoryTracker(tracker);
         }
     }
 
@@ -233,7 +275,35 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     public void toTop() {
         super.toTop();
         Misc.clear(map);
+        if (checkpointDirtyPartitions != null) {
+            checkpointDirtyPartitions.clear();
+        }
         tombstoneCount = 0;
+        checkpointLogicalStateBytes = 0;
+        checkpointFullScanRequired = true;
+    }
+
+    /**
+     * Adds the current row partition to the checkpoint dirty set. The scratch map
+     * has the same key layout as the state map, so the existing partition sink can
+     * populate it without allocating or serialising a key on every input row.
+     */
+    protected void markCheckpointPartitionDirty(Record record) {
+        if (checkpointDirtyPartitions == null) {
+            checkpointDirtyPartitions = newCompactionScratch();
+            if (checkpointDirtyPartitions == null) {
+                return;
+            }
+            if (memoryTracker != null) {
+                checkpointDirtyPartitions.close();
+                checkpointDirtyPartitions.setMemoryTracker(memoryTracker);
+                checkpointDirtyPartitions.reopen();
+            }
+        }
+        partitionByRecord.of(record);
+        MapKey key = checkpointDirtyPartitions.withKey();
+        key.put(partitionByRecord, partitionBySink);
+        key.createValue();
     }
 
     /**
