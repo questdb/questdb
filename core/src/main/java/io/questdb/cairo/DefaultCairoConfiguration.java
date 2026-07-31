@@ -537,11 +537,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getLiveViewCheckpointRetentionMicros() {
-        return 0;
-    }
-
-    @Override
     public long getLiveViewCheckpointRows() {
         return 1_000_000L;
     }

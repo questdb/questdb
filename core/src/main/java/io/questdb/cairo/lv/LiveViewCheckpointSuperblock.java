@@ -129,9 +129,8 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      */
     public static final int SLOT_PENDING_DIRECTORY_SEGMENT_PAGES_OFFSET = 188;
     /**
-     * Byte offset of the count of logical boundaries a retention horizon or a
-     * high-side truncate has retired in this history epoch. See
-     * {@link #retiredCheckpointCount}.
+     * Byte offset of the count of logical boundaries a high-side truncate has
+     * retired in this history epoch. See {@link #retiredCheckpointCount}.
      */
     public static final int SLOT_RETIRED_CHECKPOINT_COUNT_OFFSET = 196;
     public static final int SLOT_ROW_POSITION_DELTA_BYTES_OFFSET = 164;
@@ -197,9 +196,8 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      */
     public long pendingDirectorySegmentPages;
     /**
-     * Logical boundaries this history epoch has retired: the prefix a retention
-     * horizon dropped plus the suffix any high-side truncate dropped. Checkpoint
-     * ids are allocated from zero and monotonically, so
+     * Logical boundaries this history epoch has retired: the suffix a high-side
+     * truncate dropped. Checkpoint ids are allocated from zero and monotonically, so
      * {@link #nextCheckpointId} minus this is the number of boundaries the
      * generation actually holds.
      */

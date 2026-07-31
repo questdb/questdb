@@ -200,136 +200,6 @@ public class LiveViewCheckpointRowPositionDeltaTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPruneBelowAccumulatesIntoExistingFloorBreakpoint() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Harness h = new Harness(4, 4)) {
-                h.suffixAdd(10, 1, 5);
-                h.suffixAdd(20, 2, -3);
-                h.suffixAdd(30, 3, 7);
-                h.suffixAdd(40, 4, 11);
-                // The floor key already carries a breakpoint, so the discarded
-                // prefix accumulates into it rather than inserting beside it.
-                h.assertPruneBelowPreservesSuffix(30, 3);
-                Assert.assertEquals(2, h.reader.size(h.root));
-                h.assertIterateAll();
-                h.assertPrefixSum(30, 3); // 5 - 3 + 7
-                h.assertPrefixSum(40, 4);
-                Assert.assertEquals(9, h.reader.prefixSum(h.root, 30, 3));
-            }
-        });
-    }
-
-    @Test
-    public void testPruneBelowEmptiesTreeWhenPrefixCancels() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Harness h = new Harness(4, 4)) {
-                h.suffixAdd(10, 1, 40);
-                h.suffixAdd(20, 2, -40);
-                // Both breakpoints are below the floor and cancel out, so there is
-                // nothing to fold forward and the tree goes empty.
-                Assert.assertTrue(h.pruneBelow(100, 9));
-                Assert.assertTrue("an emptied index must publish a null root", h.root.isNull());
-                Assert.assertEquals(0, h.reader.size(h.root));
-                Assert.assertEquals(0, h.writer.getLastSegmentBytes());
-                h.assertIterateAll();
-                h.assertPrefixSum(100, 9);
-                h.assertPrefixSum(Long.MAX_VALUE, Long.MAX_VALUE);
-            }
-        });
-    }
-
-    @Test
-    public void testPruneBelowFoldsDiscardedPrefixIntoFloorKey() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Harness h = new Harness(3, 3)) {
-                final int n = 40;
-                for (int i = 0; i < n; i++) {
-                    h.suffixAdd(i * 10L, i, i + 1);
-                }
-                // Floor between two breakpoints, so the survivor set starts at a key
-                // the index does not hold and the fold has to insert one.
-                h.assertPruneBelowPreservesSuffix(205, 20);
-                h.assertIterateAll();
-                Assert.assertEquals(
-                        "the folded breakpoint plus the survivors",
-                        n - 21 + 1,
-                        h.reader.size(h.root)
-                );
-                // Nothing below the floor is addressable any more.
-                Assert.assertEquals(0, h.reader.prefixSum(h.root, 204, Long.MAX_VALUE));
-            }
-        });
-    }
-
-    @Test
-    public void testPruneBelowNothingBelowFloorIsNoOp() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Harness h = new Harness(3, 3)) {
-                for (int i = 0; i < 20; i++) {
-                    h.suffixAdd(i * 10L, i, i + 1);
-                }
-                final LiveViewCheckpointPageRef before = new LiveViewCheckpointPageRef();
-                before.of(h.root.getSegmentId(), h.root.getOffset(), h.root.getLength());
-                Assert.assertFalse(h.pruneBelow(0, 0));
-                Assert.assertTrue("a no-op prune must reuse the root", sameRef(before, h.root));
-                Assert.assertEquals(0, h.writer.getLastSegmentBytes());
-                h.assertIterateAll();
-            }
-        });
-    }
-
-    @Test
-    public void testPruneBelowRandomAgainstOracle() throws Exception {
-        assertMemoryLeak(() -> {
-            final Rnd rnd = new Rnd(0x51ED_1234L, 0xDEC0DEL);
-            try (Harness h = new Harness(3, 4)) {
-                for (int i = 0; i < 300; i++) {
-                    h.suffixAdd(rnd.nextLong(120) - 20, rnd.nextLong(3), rnd.nextLong(200) - 100);
-                }
-                // Retire a random prefix repeatedly. Each round asserts that every
-                // key at or above the new floor still reports the prefix sum it
-                // reported before the prune - which is the whole contract - on top
-                // of the oracle comparison.
-                for (int round = 0; round < 8 && !h.root.isNull(); round++) {
-                    final long floorTs = rnd.nextLong(120) - 20;
-                    final long floorId = rnd.nextLong(3);
-                    h.assertPruneBelowPreservesSuffix(floorTs, floorId);
-                    h.assertIterateAll();
-                    for (int q = 0; q < 40; q++) {
-                        h.assertPrefixSum(rnd.nextLong(160) - 40, rnd.nextLong(5) - 1);
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testPruneBelowReusesSuffixSubtrees() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Harness h = new Harness(3, 3)) {
-                for (int i = 0; i < 40; i++) {
-                    h.suffixAdd(i * 10L, i, i + 1);
-                }
-                final int childCount = h.reader.rootChildCount(h.root);
-                Assert.assertTrue("expected a multi-level tree", childCount >= 2);
-                final LiveViewCheckpointPageRef lastChild = new LiveViewCheckpointPageRef();
-                h.reader.rootChildRef(h.root, childCount - 1, lastChild);
-
-                // A shallow prune touches only the leftmost spine, so every other
-                // subtree keeps its page reference and the sums above stay exact.
-                h.assertPruneBelowPreservesSuffix(15, 0);
-                final int wrote = h.writer.getLastSegmentPageCount();
-                Assert.assertEquals("the root shape must be untouched", childCount, h.reader.rootChildCount(h.root));
-                final LiveViewCheckpointPageRef after = new LiveViewCheckpointPageRef();
-                h.reader.rootChildRef(h.root, childCount - 1, after);
-                Assert.assertTrue("rightmost subtree must be reused", sameRef(lastChild, after));
-                Assert.assertTrue("prune copied too many pages: " + wrote, wrote <= childCount + 4);
-                h.assertIterateAll();
-            }
-        });
-    }
-
-    @Test
     public void testRandomAgainstOracle() throws Exception {
         assertMemoryLeak(() -> {
             final Rnd rnd = new Rnd(0x51ED_1234L, 0xC0FFEEL);
@@ -468,31 +338,6 @@ public class LiveViewCheckpointRowPositionDeltaTest extends AbstractCairoTest {
             );
         }
 
-        /**
-         * Snapshots what every key at or above the floor reports, prunes, and
-         * asserts each of them still reports the same value. That equality is the
-         * whole contract of the fold: a difference keyed to a retired boundary
-         * still applies to every surviving one.
-         */
-        void assertPruneBelowPreservesSuffix(long floorTs, long floorId) {
-            final List<long[]> survivors = new ArrayList<>();
-            for (int i = 0; i < oracle.size(); i++) {
-                final long[] e = oracle.get(i);
-                if (compareKey(e[0], e[1], floorTs, floorId) >= 0) {
-                    survivors.add(new long[]{e[0], e[1], reader.prefixSum(root, e[0], e[1])});
-                }
-            }
-            pruneBelow(floorTs, floorId);
-            for (int i = 0; i < survivors.size(); i++) {
-                final long[] s = survivors.get(i);
-                Assert.assertEquals(
-                        "prefixSum(" + s[0] + ", " + s[1] + ") must survive the prune",
-                        s[2],
-                        reader.prefixSum(root, s[0], s[1])
-                );
-            }
-        }
-
         @Override
         public void close() {
             writer.close();
@@ -506,25 +351,6 @@ public class LiveViewCheckpointRowPositionDeltaTest extends AbstractCairoTest {
                 sum += oracle.get(i)[2];
             }
             return sum;
-        }
-
-        boolean pruneBelow(long floorTs, long floorId) {
-            final boolean changed = writer.pruneBelow(root, floorTs, floorId, nextSegmentId++, tmpRoot);
-            root.of(tmpRoot.getSegmentId(), tmpRoot.getOffset(), tmpRoot.getLength());
-            if (changed) {
-                long folded = 0;
-                for (int i = oracle.size() - 1; i >= 0; i--) {
-                    final long[] e = oracle.get(i);
-                    if (compareKey(e[0], e[1], floorTs, floorId) < 0) {
-                        folded += e[2];
-                        oracle.remove(i);
-                    }
-                }
-                if (folded != 0) {
-                    oracleAdd(floorTs, floorId, folded);
-                }
-            }
-            return changed;
         }
 
         void suffixAdd(long ts, long id, long delta) {

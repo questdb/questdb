@@ -62,9 +62,8 @@ public final class LiveViewCheckpointTimelineStats {
     /**
      * @return logical checkpoint boundaries the generation holds. Ids are
      * allocated from zero and monotonically within one history epoch, so the
-     * next id to allocate less the boundaries the epoch has retired - a
-     * retention horizon's prefix and a high-side truncate's suffix - is the size
-     * of the current entry set
+     * next id to allocate less the boundaries the epoch has retired - the suffix
+     * a high-side truncate dropped - is the size of the current entry set
      */
     public long getEntryCount() {
         return entryCount;

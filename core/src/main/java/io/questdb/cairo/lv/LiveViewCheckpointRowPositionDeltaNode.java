@@ -298,41 +298,6 @@ final class LiveViewCheckpointRowPositionDeltaNode {
     }
 
     /**
-     * Drops the prefix, retaining only the records from {@code from} onward and
-     * shifting them down to index zero. Used by a low-side prune, which discards
-     * a contiguous run of the lowest keys (leaf breakpoints or internal children)
-     * after folding their differences into the first surviving key. The vacated
-     * tail slots keep their stale values, but {@link #writeTo} and every accessor
-     * honor {@link #count}.
-     */
-    void retainSuffix(int from) {
-        assert from >= 0 && from <= count;
-        if (from == 0) {
-            return;
-        }
-        final int kept = count - from;
-        if (leaf) {
-            for (int i = 0; i < kept; i++) {
-                final int src = from + i;
-                entryMaxTimestamp[i] = entryMaxTimestamp[src];
-                entryCheckpointId[i] = entryCheckpointId[src];
-                entryDiff[i] = entryDiff[src];
-            }
-        } else {
-            for (int i = 0; i < kept; i++) {
-                final int src = from + i;
-                childMinMaxTimestamp[i] = childMinMaxTimestamp[src];
-                childMinCheckpointId[i] = childMinCheckpointId[src];
-                childSubtreeSum[i] = childSubtreeSum[src];
-                childSegmentId[i] = childSegmentId[src];
-                childOffset[i] = childOffset[src];
-                childLength[i] = childLength[src];
-            }
-        }
-        count = kept;
-    }
-
-    /**
      * Updates child {@code i}'s minimum key, subtree sum, and subtree reference.
      * Used after a child is rewritten copy-on-write: its minimum can drop when a new
      * global-minimum key is inserted, and its subtree sum changes by the added delta.

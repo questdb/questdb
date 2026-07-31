@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.lv.LiveViewCheckpointCompaction;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
@@ -77,11 +79,11 @@ import java.util.Set;
  * closure behind for good.
  * <p>
  * What a cadence seal leaves is retained state rather than garbage - its boundary
- * stays live - so it is still there after these cases run, and only a retention
- * horizon can retire it. Each case therefore pairs its structural assertion with a
- * restart and the from-base recompute oracle, so a count that retired a segment
- * one page or one root too early surfaces as a failed restore rather than as a
- * saving.
+ * stays live - so it is still there after these cases run, and nothing retires it:
+ * only a repair or a truncate ever drops a boundary. Each case therefore pairs its
+ * structural assertion with a restart and the from-base recompute oracle, so a
+ * count that retired a segment one page or one root too early surfaces as a failed
+ * restore rather than as a saving.
  * <p>
  * Two cases cover a third disposition, which is neither unit: the files a
  * publication renamed into place and then failed to commit, which no count ever
@@ -104,10 +106,20 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
     // Four seals per sweep, so the files a failed publication leaves are observable
     // between the pass that writes them and the pass that collects them.
     private static final int ORPHAN_PURGE_INTERVAL = 4;
-    // Event-time retention horizon. At the ten-second commit spacing below it
-    // saturates within the first eight seals, after which a retention pass
-    // publishes - and so can fail - on every seal.
-    private static final long RETENTION_MICROS = 60 * 1_000_000L;
+    // A 30-second look-behind over the ten-second commit spacing below, so the
+    // ring-shaped state a boundary freezes shares chunk pages with its neighbours.
+    // That sharing is what makes a data segment part live and part dead once a
+    // correction re-versions some of the roots naming a shared chunk and not the
+    // others, and a part-dead segment is the only thing compaction accepts as a
+    // candidate. The two orphan cases need one because compaction is the only
+    // non-seal publication whose failure the refresh worker absorbs - a failed
+    // repair answers with a whole-timeline retire, which would take the orphans
+    // with it.
+    private static final String RING_VIEW_SQL = "SELECT ts, sym, sum(x) OVER (" +
+            "PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW" +
+            ") AS s FROM base";
+    // In-order seals the two orphan cases build their fragmentable history from.
+    private static final int RING_SEALS = 40;
     // Two measurement points far enough apart that unbounded growth cannot hide.
     private static final int SEALS_EARLY = 8;
     private static final int SEALS_LATE = 32;
@@ -601,36 +613,23 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
     public void testTheCadenceSweepCollectsTheOrphansOfAFailedPublication() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, ORPHAN_PURGE_INTERVAL);
-            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS, RETENTION_MICROS);
-            createView();
+            createRingView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 int seal = 1;
-                for (; seal <= SEALS_EARLY; seal++) {
-                    commit(job, seal);
+                for (; seal <= RING_SEALS; seal++) {
+                    ringCommit(job, seal);
                 }
+                driveRefreshToQuiescence(job);
                 final LiveViewInstance instance = viewInstance();
+                fragmentHistory(job, instance);
 
-                // A retention pass that renamed its timeline and catalogue segments
-                // into place and then died. It differs from a failed seal in the one
-                // way that matters here: a failed seal re-arms the reconciliation
-                // that reads the id ceiling, and this re-arms nothing at all.
-                job.setCheckpointTimelineTestFailureStage(
-                        LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_RETENTION_METADATA_PUBLISH
-                );
-                commit(job, seal++);
-                job.setCheckpointTimelineTestFailureStage(0);
-
-                final Set<Long> orphans = uncataloguedMetaSegmentIds(instance);
-                Assert.assertFalse(
-                        "the failed retention publication left no file behind, so the case proves nothing",
-                        orphans.isEmpty()
-                );
+                final Set<Long> orphans = failOneCompactionAfterItsMetadataPublish(instance);
 
                 // Enough seals for one sweep to fire whatever phase the cadence
                 // counter is in. Each of them steps its own allocation over the
                 // orphans, which is what the id-ceiling rule cannot survive.
                 for (int last = seal + ORPHAN_PURGE_INTERVAL; seal <= last; seal++) {
-                    commit(job, seal);
+                    ringCommit(job, seal);
                 }
                 driveRefreshToQuiescence(job);
 
@@ -664,29 +663,20 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
             // past every file the failed publication left - so the ceiling rule has no
             // way to name them and the collection has to come from the catalogue.
             setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 0);
-            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS, RETENTION_MICROS);
-            createView();
+            createRingView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 int seal = 1;
-                for (; seal <= SEALS_EARLY; seal++) {
-                    commit(job, seal);
+                for (; seal <= RING_SEALS; seal++) {
+                    ringCommit(job, seal);
                 }
+                driveRefreshToQuiescence(job);
                 final LiveViewInstance instance = viewInstance();
+                fragmentHistory(job, instance);
 
-                job.setCheckpointTimelineTestFailureStage(
-                        LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_RETENTION_METADATA_PUBLISH
-                );
-                commit(job, seal++);
-                job.setCheckpointTimelineTestFailureStage(0);
-
-                final Set<Long> orphans = uncataloguedMetaSegmentIds(instance);
-                Assert.assertFalse(
-                        "the failed retention publication left no file behind, so the case proves nothing",
-                        orphans.isEmpty()
-                );
+                final Set<Long> orphans = failOneCompactionAfterItsMetadataPublish(instance);
 
                 for (int last = seal + ORPHAN_PURGE_INTERVAL; seal <= last; seal++) {
-                    commit(job, seal);
+                    ringCommit(job, seal);
                 }
                 driveRefreshToQuiescence(job);
 
@@ -977,9 +967,37 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
         drainWalQueue();
     }
 
+    /**
+     * Drives one out-of-order correction and proves it took a repair rather than an
+     * append. A repair re-versions the roots it replays over, so the pages their old
+     * versions named stop being reachable while their neighbours' stay - which is
+     * how a data segment ends up part live and part dead.
+     */
+    private void correct(LiveViewRefreshJob job, LiveViewInstance instance, int secondOfDay, long value) throws Exception {
+        final long replayedBefore = instance.getO3BoundaryReplayRows() + instance.getO3ResumeReplayRows();
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        final String rowTs = timestamp(secondOfDay);
+        execute("INSERT INTO base (ts, sym, x) VALUES " +
+                "('" + rowTs + "', 'k0', " + value + "), " +
+                "('" + rowTs + "', 'k1', " + (value + 1) + ")");
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        Assert.assertTrue(
+                "the correction at second " + secondOfDay + " must be repaired rather than appended",
+                instance.getO3BoundaryReplayRows() + instance.getO3ResumeReplayRows() > replayedBefore
+        );
+    }
+
     private void createAnchoredView() throws Exception {
         viewSql = ANCHORED_RECOMPUTE_SQL;
         createView(ANCHORED_VIEW_SQL);
+    }
+
+    private void createRingView() throws Exception {
+        viewSql = RING_VIEW_SQL;
+        createView(RING_VIEW_SQL);
     }
 
     private void createView() throws Exception {
@@ -990,6 +1008,13 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
     private void createView(String sql) throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + sql);
+    }
+
+    private boolean dataSegmentFileExists(LiveViewInstance instance, long segmentId) {
+        try (Path checkpointsDir = checkpointsDir(instance); Path path = new Path()) {
+            LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, segmentId);
+            return configuration.getFilesFacade().exists(path.$());
+        }
     }
 
     /**
@@ -1025,10 +1050,65 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
         return dead;
     }
 
-    private boolean dataSegmentFileExists(LiveViewInstance instance, long segmentId) {
-        try (Path checkpointsDir = checkpointsDir(instance); Path path = new Path()) {
-            LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, segmentId);
-            return configuration.getFilesFacade().exists(path.$());
+    /**
+     * Runs one compaction to the point where it has renamed its rebuilt roots, its
+     * timeline path copy and its catalogue path copy into their final names, and
+     * fails it there. The publication is a real one, on a writer of this case's own
+     * so the seals around it are untouched, and it differs from a failed seal in the
+     * one way that matters here: a failed seal drops the directory from the writer's
+     * reconciled set, so the next one reads the id ceiling naming these files, and a
+     * failed compaction re-arms nothing at all.
+     *
+     * @return the metadata segment ids the failed publication left uncatalogued
+     */
+    private Set<Long> failOneCompactionAfterItsMetadataPublish(LiveViewInstance instance) {
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration)
+        ) {
+            writer.setTestFailureStage(
+                    LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_COMPACTION_METADATA_PUBLISH
+            );
+            try {
+                // Every referenced segment with a dead byte in it qualifies, so the
+                // pass has a candidate whenever the fragmenting corrections left one.
+                LiveViewCheckpointCompaction.compact(
+                        configuration,
+                        dir,
+                        writer,
+                        instance.getLiveViewToken().getTableId(),
+                        0,
+                        true,
+                        100,
+                        1,
+                        64
+                );
+                Assert.fail("the injected pre-commit failure must propagate, so compaction must have published");
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "test failure after live view checkpoint metadata publication"
+                );
+            }
+        }
+        final Set<Long> orphans = uncataloguedMetaSegmentIds(instance);
+        Assert.assertFalse(
+                "the failed compaction left no file behind, so the case proves nothing",
+                orphans.isEmpty()
+        );
+        return orphans;
+    }
+
+    /**
+     * Overlapping corrections deep in the sealed history, which is what leaves a
+     * data segment holding both live and dead pages: each repair re-versions the
+     * roots it replays over while their neighbours keep naming the chunks they
+     * shared, so the segments those chunks sit in lose some pages and keep others.
+     */
+    private void fragmentHistory(LiveViewRefreshJob job, LiveViewInstance instance) throws Exception {
+        for (int base : new int[]{6, 16, 26}) {
+            correct(job, instance, base * 10 + 3, 9_000L + base);
+            correct(job, instance, base * 10 + 13, 9_100L + base);
         }
     }
 
@@ -1123,6 +1203,23 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
                 return directory.getReferenceCount(segmentId);
             }
         }
+    }
+
+    /**
+     * One row per key at the same instant, ten seconds after the previous commit.
+     * Both keys stay inside the ring view's 30-second frame, so a boundary shares
+     * its predecessor's chunk pages instead of re-imaging the whole ring - which is
+     * what leaves a segment several roots name.
+     */
+    private void ringCommit(LiveViewRefreshJob job, int seal) throws Exception {
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        final String rowTs = timestamp(seal * 10);
+        execute("INSERT INTO base (ts, sym, x) VALUES " +
+                "('" + rowTs + "', 'k0', " + seal + "), " +
+                "('" + rowTs + "', 'k1', " + (100 + seal) + ")");
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
     }
 
     private void restartCycle() {
