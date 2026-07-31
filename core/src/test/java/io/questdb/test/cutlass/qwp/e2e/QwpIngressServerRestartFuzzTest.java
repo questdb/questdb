@@ -32,6 +32,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -162,6 +163,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 AtomicLong rowsProduced = new AtomicLong();
                 CountDownLatch producerDone = new CountDownLatch(1);
                 CountDownLatch bouncerDone = new CountDownLatch(1);
+                CountDownLatch firstBatchAcked = new CountDownLatch(1);
 
                 Thread producer = new Thread(() -> {
                     try (Sender sender = Sender.fromConfig(connect)) {
@@ -203,6 +205,17 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                             // buffer.
                             sender.flush();
                             rowsProduced.set(id);
+                            if (firstBatchAcked.getCount() > 0) {
+                                // Deterministic barrier: the first batch's dictionary-
+                                // registering frames must be ACKED (and so trimmed) before
+                                // the first bounce. Unacked, they REPLAY on reconnect with
+                                // their original delta sections and re-register the
+                                // dictionary themselves -- masking a broken catch-up
+                                // completely (see the back-reference comment above).
+                                Assert.assertTrue("first batch must drain before the first bounce",
+                                        sender.drain(30_000));
+                                firstBatchAcked.countDown();
+                            }
                             Os.sleep(batchPauseMillis);
                         }
                         // Final sender.close() (try-with-resources) drains
@@ -218,10 +231,11 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
 
                 Thread bouncer = new Thread(() -> {
                     try {
-                        // Let the producer get into a steady-state rhythm
-                        // before the first bounce, so we exercise the
-                        // mid-flight reconnect path rather than first-connect.
-                        Os.sleep(100);
+                        // Wait for the producer's first batch to be acked and trimmed, so
+                        // every bounce exercises the catch-up as load-bearing rather than
+                        // racing the first connect.
+                        Assert.assertTrue("producer's first batch never drained",
+                                firstBatchAcked.await(60, TimeUnit.SECONDS));
                         for (int i = 0; i < bounces; i++) {
                             LOG.info().$("bouncer: bounce ").$(i + 1).$('/').$(bounces).$();
                             server.stop();
@@ -437,7 +451,11 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                         engine.awaitTable(TABLE_NAME, 30, TimeUnit.SECONDS);
                         assertRowCount(rowsPerPhase);
                     });
-                    Os.sleep(500); // let the acks reach the client so the cursor trims
+                    // Deterministic: drain() returns once the client has the acks, which is
+                    // what lets the cursor trim phase 1 -- the property the comment above
+                    // documents as load-bearing for this test.
+                    Assert.assertTrue("phase-1 acks must reach the client before the bounce",
+                            sender.drain(30_000));
 
                     // Bounce the server. Same port. The sender keeps the same
                     // sfDir and CursorSendEngine; the wire path needs to reconnect.
@@ -522,6 +540,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 drainWalQueue();
                 engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
                 assertRowCount(expected);
+                assertTagsIntact();
             }
         });
     }
@@ -530,7 +549,9 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         assertQuery(
                 "SELECT count() FROM " + TABLE_NAME)
                 .noLeakCheck()
-                .returnsOnce(
+                .noRandomAccess()
+                .expectSize()
+                .returns(
                         "count\n" + expected + "\n"
                 );
     }

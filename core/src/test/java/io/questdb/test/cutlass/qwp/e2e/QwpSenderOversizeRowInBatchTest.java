@@ -160,6 +160,9 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                             "expected 'batch too large for server batch cap' message,"
                                     + " got: " + msg,
                             msg.contains("batch too large for server batch cap"));
+                    Assert.assertTrue("the rejection must name reset() as the non-destructive "
+                                    + "recovery [msg=" + msg + ']',
+                            msg.contains("reset()"));
 
                     // A failed flush intentionally retains the buffered rows for retry
                     // -- so the permanently oversized batch stays buffered here, and
@@ -181,6 +184,9 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                             "expected 'batch too large for server batch cap' message from close(),"
                                     + " got: " + closeMsg,
                             closeMsg.contains("batch too large for server batch cap"));
+                    Assert.assertTrue("the rejection must name reset() as the non-destructive "
+                                    + "recovery [msg=" + closeMsg + ']',
+                            closeMsg.contains("reset()"));
                 }
 
                 // Rows flushed BEFORE the oversized batch must still be committed and
