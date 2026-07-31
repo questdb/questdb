@@ -1067,6 +1067,108 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testReplicationRenameRekeysRegistryAndDependentGraph() throws Exception {
+        // engine.applyTableRename is the replication apply path's entry point: a downloaded
+        // live view whose real name is still taken registers under a pending temp name and
+        // moves to the real name here. The LV registry is keyed by name and the dependent
+        // graph compares tokens by name, so the rename must re-key both. An instance left
+        // under the dead name is one a later drop's removeView(realName) misses: it is never
+        // marked dropped, never fenced and never freed, and WalPurgeJob keeps clamping the
+        // base WAL purge floor to its frozen watermark for the life of the process.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv_pending FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, sum(x) OVER (PARTITION BY x ORDER BY ts " +
+                    "ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s FROM base");
+
+            final LiveViewRegistry registry = engine.getLiveViewRegistry();
+            final LiveViewInstance instance = registry.getViewInstance("lv_pending");
+            Assert.assertNotNull(instance);
+            final String lvDirName;
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES ('2026-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                final TableToken pendingToken = engine.verifyTableName("lv_pending");
+                lvDirName = pendingToken.getDirName();
+                engine.applyTableRename(pendingToken, pendingToken.renamed("lv"));
+
+                // The real name finds the same instance, re-pointed at the renamed token,
+                // and the pending name is dead.
+                Assert.assertSame("the real name must find the renamed instance", instance, registry.getViewInstance("lv"));
+                Assert.assertEquals("lv", instance.getLiveViewToken().getTableName());
+                Assert.assertEquals("lv", instance.getDefinition().getViewName());
+                Assert.assertNull("the pending name must be dead", registry.getViewInstance("lv_pending"));
+
+                // The dependent graph carries the renamed token, so the drop below can
+                // find the entry by token equality, which compares the name too.
+                final ObjList<TableToken> dependents = new ObjList<>();
+                engine.getDependentViewGraph().getDependentViews(engine.verifyTableName("base"), dependents);
+                Assert.assertEquals(1, dependents.size());
+                Assert.assertEquals("lv", dependents.getQuick(0).getTableName());
+                Assert.assertTrue(dependents.getQuick(0).isLiveView());
+
+                // The renamed view keeps refreshing under its new name.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-01-01T00:00:01.000000Z', 2)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                assertQuery("SELECT count() FROM lv")
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
+                                count
+                                2
+                                """);
+
+                // Dropping by the real name tears the renamed instance down: it is fenced
+                // and marked dropped, both name maps forget it, and the base's fan-out
+                // list - the input WalPurgeJob clamps the base WAL purge floor from - is
+                // empty again.
+                execute("DROP LIVE VIEW lv");
+                Assert.assertTrue("the drop must fence and mark the renamed instance", instance.isDropped());
+                Assert.assertNull(registry.getViewInstance("lv"));
+                final ObjList<LiveViewInstance> floorSink = new ObjList<>();
+                registry.getViewsForBaseTable("base", floorSink);
+                Assert.assertEquals(
+                        "a dropped renamed view must stop clamping the base WAL purge floor",
+                        0,
+                        floorSink.size()
+                );
+                dependents.clear();
+                engine.getDependentViewGraph().getDependentViews(engine.verifyTableName("base"), dependents);
+                Assert.assertEquals("the dependent graph must forget the dropped renamed view", 0, dependents.size());
+            }
+
+            // The dropped view's token and files are reclaimed by the standard WAL
+            // machinery, exactly as for a view that was never renamed.
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                for (int i = 0; i < 8; i++) {
+                    drainWalQueue();
+                    purgeJob.drain(0);
+                }
+            }
+            Assert.assertNull(
+                    "the dropped live view's token must be gone from the name registry",
+                    engine.getTableTokenIfExists("lv")
+            );
+            final Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
+            Assert.assertNotEquals(
+                    "the dropped live view's table files must be purged",
+                    TableUtils.TABLE_EXISTS,
+                    TableUtils.exists(
+                            engine.getConfiguration().getFilesFacade(),
+                            path,
+                            engine.getConfiguration().getDbRoot(),
+                            lvDirName
+                    )
+            );
+        });
+    }
+
+    @Test
     public void testRejectDropLiveViewOnPlainTable() throws Exception {
         // DROP LIVE VIEW must refuse a name that is not a live view. The gate is
         // kind-agnostic (a single !isLiveView() check), so a plain table produces the
