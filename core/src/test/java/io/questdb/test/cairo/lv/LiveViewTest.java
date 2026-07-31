@@ -2083,6 +2083,24 @@ public class LiveViewTest extends AbstractLiveViewTest {
                     "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
                     "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\n" +
                     "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n");
+            // A live view is a physical WAL table that owns its symbol maps, so SHOW COLUMNS
+            // opens a reader on the LV table itself and reports the real symbol table size.
+            // A plain VIEW has no reader and always reports 0, so a non-zero size here proves
+            // the LV took the reader path: 2 distinct symbols plus the null slot.
+            execute("INSERT INTO base (sym, price, ts) VALUES " +
+                    "('aaa', 1.0, '2026-01-01T00:00:00.000000Z'), " +
+                    "('bbb', 2.0, '2026-01-01T00:01:00.000000Z'), " +
+                    "('aaa', 3.0, '2026-01-01T00:02:00.000000Z'), " +
+                    "(NULL, 4.0, '2026-01-01T00:03:00.000000Z')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertQuery("SHOW COLUMNS FROM lv").noLeakCheck().noRandomAccess().returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t\n" +
+                    "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\n" +
+                    "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n");
             execute("DROP LIVE VIEW lv");
         });
     }
