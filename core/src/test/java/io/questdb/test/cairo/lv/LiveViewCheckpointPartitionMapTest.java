@@ -230,6 +230,18 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                 // name it replaces would block on Windows.
                 reader.detach();
 
+                // Production re-mints an id only after the retire, repair or
+                // compaction that deleted the segment holding it, and the writer
+                // refuses to publish over a name that still exists. Delete it here
+                // for the same reason, so this rebuild is the one production
+                // performs rather than a rename onto a live file - which POSIX
+                // silently allows and Windows MoveFileW rejects outright.
+                try (Path segment = new Path()) {
+                    configuration.getFilesFacade().removeQuiet(
+                            LiveViewCheckpointLayout.metaSegmentPath(segment, checkpointsDir(dir), 7).$()
+                    );
+                }
+
                 final LiveViewCheckpointPageRef second = new LiveViewCheckpointPageRef();
                 try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration)) {
                     writer.of(checkpointsDir(dir));

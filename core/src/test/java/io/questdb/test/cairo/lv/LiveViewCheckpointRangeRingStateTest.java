@@ -1326,10 +1326,16 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
      */
     private static final class Catalogue implements Closeable {
 
+        // Static, because a test method builds several catalogues over one
+        // checkpoints directory and a published metadata segment is immutable:
+        // a per-instance counter restarts at the same id and the second
+        // catalogue republishes a name the first one already took. POSIX
+        // rename() hides that by replacing the file; Windows MoveFileW refuses
+        // it, which is how the reuse surfaced in the first place.
+        private static long nextMetaSegmentId = 1_000;
         private final LiveViewCheckpointSegmentDirectoryReader reader =
                 new LiveViewCheckpointSegmentDirectoryReader(configuration);
         private final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
-        private long nextMetaSegmentId = 1_000;
 
         @Override
         public void close() {

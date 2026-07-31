@@ -88,6 +88,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntFunction;
 
@@ -15981,6 +15982,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             Assert.assertNotNull(instance);
 
             final int minimumReadCount = 100_000;
+            // Ceiling on the reader's spin: it otherwise reads until the writer
+            // retires, which is a count set by how the host schedules the two
+            // threads rather than by anything the test is proving. Far above the
+            // minimum, so the stress window stays real.
+            final int maximumReadCount = 50_000_000;
             final int publicationCount = 1_000_001;
             final long lvSeqA = 10L;
             final long maxTsA = 100L;
@@ -15992,10 +15998,15 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             final AtomicBoolean isStopped = new AtomicBoolean(false);
             final AtomicBoolean isWriterDone = new AtomicBoolean(false);
-            final AtomicInteger observedA = new AtomicInteger();
-            final AtomicInteger observedB = new AtomicInteger();
-            final AtomicInteger reads = new AtomicInteger();
-            final AtomicInteger writes = new AtomicInteger();
+            // Long counters: the reader spins unbounded until the writer retires,
+            // so on a host that deschedules the writer it can outrun a 32-bit
+            // counter. An overflowed observedA reads as <= 0 and fails the "must
+            // observe tuple A" check while reads, having wrapped further, is
+            // positive again - a torn-pair verdict against a run that never tore.
+            final AtomicLong observedA = new AtomicLong();
+            final AtomicLong observedB = new AtomicLong();
+            final AtomicLong reads = new AtomicLong();
+            final AtomicLong writes = new AtomicLong();
             final AtomicReference<Throwable> failure = new AtomicReference<>();
             final CountDownLatch done = new CountDownLatch(2);
             final CountDownLatch observedSeedA = new CountDownLatch(1);
@@ -16071,7 +16082,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     ready.countDown();
                     start.await();
                     int stressReadCount = 0;
-                    while (!isStopped.get() && (!isWriterDone.get() || stressReadCount < minimumReadCount)) {
+                    while (!isStopped.get()
+                            && stressReadCount < maximumReadCount
+                            && (!isWriterDone.get() || stressReadCount < minimumReadCount)) {
                         pair = instance.getHeadCheckpointSeqAndMaxTs();
                         reads.incrementAndGet();
                         stressReadCount++;

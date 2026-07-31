@@ -136,7 +136,8 @@ public class LiveViewCheckpointMetaSegmentWriter implements Closeable {
      * Finalizes the segment: patches the page count, self-checksums the header,
      * syncs per {@code cairo.commit.mode}, closes the mapping (truncating to the
      * exact written size), and renames {@code m.<segmentId>.tmp} to
-     * {@code m.<segmentId>}.
+     * {@code m.<segmentId>}. The final name must not already exist: segment ids
+     * are monotonic and published files are immutable.
      *
      * @return total bytes written to the segment file
      */
@@ -160,6 +161,21 @@ public class LiveViewCheckpointMetaSegmentWriter implements Closeable {
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
 
         LiveViewCheckpointLayout.metaSegmentPath(finalPath, checkpointsDirCopy, segmentId);
+        // Segment ids are allocated past every published one, so the final name
+        // must be free. Assert that here rather than leaning on the rename:
+        // POSIX rename() silently replaces the destination and would bury an id
+        // reuse, while Windows MoveFileW refuses it and reports only a rename
+        // error code that says nothing about the invariant that broke.
+        if (ff.exists(finalPath.$())) {
+            final long duplicateId = segmentId;
+            isOpen = false;
+            pageHeaderOffset = -1;
+            pageCount = 0;
+            segmentId = -1;
+            throw CairoException.critical(0)
+                    .put("live view checkpoint metadata segment id already published, segmentId=")
+                    .put(duplicateId);
+        }
         final int renameResult = ff.rename(tmpPath.$(), finalPath.$());
         if (renameResult != Files.FILES_RENAME_OK) {
             final int errno = ff.errno();

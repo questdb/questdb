@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -549,9 +550,9 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             @Override
             public long openRW(LPSZ name, int opts) {
                 if (armed.get()) {
-                    if (Utf8s.endsWithAscii(name, '/' + LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME)) {
+                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME)) {
                         order.append("_lv ");
-                    } else if (Utf8s.endsWithAscii(name, '/' + TableUtils.TXN_FILE_NAME)) {
+                    } else if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
                         order.append("_txn ");
                     }
                 }
