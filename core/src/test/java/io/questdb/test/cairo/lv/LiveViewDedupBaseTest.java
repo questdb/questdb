@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.griffin.SqlException;
@@ -811,6 +812,117 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                             "a\t10\t2026-01-01T00:00:01.000000Z\t1\n" +
                             "a\t99\t2026-01-01T00:00:02.000000Z\t2\n" +
                             "a\t30\t2026-01-01T00:00:03.000000Z\t3\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestartRebuildOverTtlEvictedDedupBase() throws Exception {
+        // A dedup base denies the raw-WAL insert-only proof, and a TTL base evicts
+        // whole partitions at apply time. When the checkpoint gap holds both a
+        // below-frontier dedup replacement and a TTL eviction, the restart-restore
+        // rebuild incorporates the gap from the applied base as it now stands: the
+        // replacement's value (in a surviving partition) is reflected post-dedup, and
+        // the surviving region matches a complete recomputation of the view SELECT
+        // over the surviving base rows. Rows the view already derived from the
+        // TTL-evicted partition are retained - eviction retires settled base data
+        // below the view's floor and never retracts derived rows, restart or not.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY TTL 1 DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts " +
+                    "RANGE BETWEEN '9' MINUTE PRECEDING AND CURRENT ROW) AS v FROM base WHERE i > 0");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Day-1 and day-2 rows, applied and refreshed. The pinned clock sits
+                // far below the data max, so TTL's min(maxTimestamp, wallClock)
+                // reference keeps every partition alive.
+                execute("INSERT INTO base (ts, sym, i) VALUES " +
+                        "('2026-01-01T00:01:00.000000Z', 'a', 100), " +
+                        "('2026-01-02T00:01:00.000000Z', 'a', 10), " +
+                        "('2026-01-02T00:05:00.000000Z', 'a', 20)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                // A below-frontier dedup replacement (10 -> 555), refreshed, so the
+                // head checkpoint covers a correction that was never provably
+                // insert-only.
+                setCurrentMicros(currentMicros + 2_000_000L);
+                execute("INSERT INTO base (ts, sym, i) VALUES ('2026-01-02T00:01:00.000000Z', 'a', 555)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                // A zero-row cycle that advances the applied watermark PAST the head
+                // checkpoint, so a later restart takes the checkpoint-lags-applied
+                // branch: a filtered-out row (i <= 0) in an old partition the low
+                // clock keeps TTL away from.
+                setCurrentMicros(currentMicros + 2_000_000L);
+                execute("INSERT INTO base (ts, sym, i) VALUES ('2025-12-31T00:00:00.000000Z', 'z', -1)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                // The gap, applied to the base but never refreshed into the LV, so the
+                // restart-restore is what must incorporate it:
+                // - an intra-commit equal-ts collapse at day-2 00:07: the base keeps
+                //   the last row (999), and with no out-of-order commit behind it,
+                //   only the post-dedup applied base names the survivor - a raw
+                //   pre-dedup replay would derive both rows;
+                // - a day-3 row whose apply advances the TTL reference and evicts the
+                //   day-1 (and 2025-12-31) partitions.
+                setCurrentMicros(currentMicros + 2_000_000L);
+                execute("INSERT INTO base (ts, sym, i) VALUES " +
+                        "('2026-01-02T00:07:00.000000Z', 'a', 30), " +
+                        "('2026-01-02T00:07:00.000000Z', 'a', 999)");
+                drainWalQueue();
+                setCurrentMicros(MicrosTimestampDriver.floor("2026-01-05T00:00:00.000000Z"));
+                execute("INSERT INTO base (ts, sym, i) VALUES ('2026-01-03T00:01:00.000000Z', 'a', 400)");
+                drainWalQueue();
+            }
+
+            // TTL kept only day-2 and day-3, and the collapse kept one 00:07 row.
+            assertQuery("SELECT ts, sym, i FROM base ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    ts\tsym\ti
+                    2026-01-02T00:01:00.000000Z\ta\t555
+                    2026-01-02T00:05:00.000000Z\ta\t20
+                    2026-01-02T00:07:00.000000Z\ta\t999
+                    2026-01-03T00:01:00.000000Z\ta\t400
+                    """);
+
+            // Restart: drop the in-memory registry and rebuild from on-disk state, then
+            // refresh. The rebuild recomputes the whole view from the applied base.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertNoRefreshFaults("lv");
+
+            // The view retains the day-1 row it derived before the eviction, reflects
+            // the below-frontier replacement post-dedup (555, not 10, no duplicate),
+            // derives exactly one row from the collapsed 00:07 commit (999, never 30),
+            // and appends the day-3 row.
+            assertQuery("SELECT ts, sym, i, v FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    ts\tsym\ti\tv
+                    2026-01-01T00:01:00.000000Z\ta\t100\t100.0
+                    2026-01-02T00:01:00.000000Z\ta\t555\t555.0
+                    2026-01-02T00:05:00.000000Z\ta\t20\t575.0
+                    2026-01-02T00:07:00.000000Z\ta\t999\t1574.0
+                    2026-01-03T00:01:00.000000Z\ta\t400\t400.0
+                    """);
+            // The surviving region equals a complete recomputation of the view SELECT
+            // over the base as it now stands (the 9-minute frame never crosses a day
+            // boundary, so the retained day-1 row influences no surviving value).
+            assertQuery("SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts " +
+                    "RANGE BETWEEN '9' MINUTE PRECEDING AND CURRENT ROW) AS v FROM base WHERE i > 0")
+                    .noLeakCheck().timestamp("ts").noRandomAccess().returns("""
+                            ts\tsym\ti\tv
+                            2026-01-02T00:01:00.000000Z\ta\t555\t555.0
+                            2026-01-02T00:05:00.000000Z\ta\t20\t575.0
+                            2026-01-02T00:07:00.000000Z\ta\t999\t1574.0
+                            2026-01-03T00:01:00.000000Z\ta\t400\t400.0
+                            """);
+
             execute("DROP LIVE VIEW lv");
         });
     }
