@@ -140,6 +140,65 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBatchUnorderedRowCountFailureCompletesOwnership() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final RingQueue<UnorderedPageFrameReduceTask> queue = new RingQueue<>(
+                    UnorderedPageFrameReduceTask::new,
+                    2
+            );
+            final MPSequence pubSeq = new MPSequence(queue.getCycle());
+            final MCSequence subSeq = new MCSequence(queue.getCycle());
+            pubSeq.then(subSeq).then(pubSeq);
+            final UnorderedPageFrameSequence<StatefulAtom> frameSequence = new UnorderedPageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _, _) -> {
+                    },
+                    1
+            ) {
+                @Override
+                public SqlExecutionCircuitBreaker getCircuitBreaker() {
+                    return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+                }
+
+                @Override
+                public long getFrameRowCount(int frameIndex) {
+                    if (frameIndex == 1) {
+                        throw new IllegalStateException("row count failure");
+                    }
+                    return 1;
+                }
+            };
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    runtime
+            );
+            try {
+                for (int i = 0; i < 2; i++) {
+                    final long cursor = pubSeq.next();
+                    Assert.assertTrue(cursor > -1);
+                    queue.get(cursor).of(frameSequence, i);
+                    pubSeq.done(cursor);
+                }
+
+                Assert.assertFalse(dispatcher.consumeUnordered(0, queue, subSeq, null));
+                Assert.assertEquals(-2, frameSequence.getDoneLatch().getCount());
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+            } finally {
+                close(runtime);
+                Misc.free(dispatcher);
+                Misc.free(frameSequence);
+                Misc.free(queue);
+            }
+        });
+    }
+
+    @Test
     public void testBrokenConnectionCancellationPreservesReason() throws Exception {
         assertMemoryLeak(() -> {
             final PageFrameSequence<StatefulAtom> orderedFrameSequence = new PageFrameSequence<>(
@@ -450,6 +509,18 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                     return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
                 }
             };
+            final PageFrameSequence<StatefulAtom> otherFrameSequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> {
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_FILTER
+            );
             final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
                     engine,
                     engine.getMessageBus(),
@@ -464,9 +535,9 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
 
                 @Override
                 protected boolean runStep() {
-                    final long observedProgress = dispatcher.getProgressVersion();
+                    final long observedProgress = frameSequence.getProgressVersion();
                     while (true) {
-                        final int reason = dispatcher.awaitProgress(observedProgress, null);
+                        final int reason = dispatcher.awaitProgress(frameSequence, observedProgress, null);
                         if (reason == FiberWaitCoordinator.REASON_PROGRESS) {
                             return true;
                         }
@@ -489,6 +560,10 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Assert.assertFalse(ownerTask.isDone());
                 Assert.assertEquals(1, ownerRuntime.getOutstandingTaskCount());
 
+                dispatcher.signalProgressForTesting(otherFrameSequence);
+                ownerRuntime.drain(1);
+                Assert.assertFalse(ownerTask.isDone());
+
                 waitQueue.fire(1, false);
                 Assert.assertEquals(1, dispatcherRuntime.drain(1));
                 Assert.assertEquals(1, ownerRuntime.drain(1));
@@ -501,6 +576,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 close(dispatcherRuntime);
                 Misc.free(dispatcher);
                 Misc.free(frameSequence);
+                Misc.free(otherFrameSequence);
                 Misc.free(queue);
             }
         });
@@ -1228,7 +1304,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSameRuntimeOwnerCannotPublish() throws Exception {
+    public void testSameRuntimeOwnerFallsBackToLocalReduce() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1);
             final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
@@ -1237,6 +1313,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                     runtime
             );
             final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final AtomicInteger publicationCount = new AtomicInteger();
             final FiberTask ownerTask = new FiberTask() {
                 @Override
                 protected void onError(Throwable th) {
@@ -1246,6 +1323,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 @Override
                 protected boolean runStep() {
                     if (dispatcher.tryAcquirePublication()) {
+                        publicationCount.incrementAndGet();
                         dispatcher.releasePublication();
                     }
                     return true;
@@ -1256,12 +1334,8 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Assert.assertEquals(1, runtime.drain(1));
 
                 Assert.assertTrue(ownerTask.isDone());
-                Assert.assertNotNull(failure.get());
-                Assert.assertEquals(IllegalStateException.class, failure.get().getClass());
-                Assert.assertEquals(
-                        "page frame owner cannot publish work to its current fiber runtime",
-                        failure.get().getMessage()
-                );
+                Assert.assertNull(failure.get());
+                Assert.assertEquals(0, publicationCount.get());
                 Assert.assertEquals(0, runtime.getOutstandingTaskCount());
                 Assert.assertEquals(0, runtime.getParkedFiberCount());
                 Assert.assertTrue(dispatcher.tryAcquirePublication());
@@ -1307,7 +1381,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSameRuntimeProductionPublishersCannotPublish() throws Exception {
+    public void testSameRuntimeProductionPublishersReduceLocally() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE tab AS (
@@ -1340,17 +1414,19 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                         .getUnorderedPageFrameReducePubSeq()
                         .current();
 
-                assertSameRuntimeQueryCannotPublish(
+                assertSameRuntimeQueryReducesLocally(
                         runtime,
                         dispatcher,
                         "SELECT * FROM tab WHERE x > 0",
-                        AsyncFilteredRecordCursorFactory.class
+                        AsyncFilteredRecordCursorFactory.class,
+                        1_000
                 );
-                assertSameRuntimeQueryCannotPublish(
+                assertSameRuntimeQueryReducesLocally(
                         runtime,
                         dispatcher,
                         "SELECT k, count() FROM tab GROUP BY k",
-                        AsyncGroupByRecordCursorFactory.class
+                        AsyncGroupByRecordCursorFactory.class,
+                        1_000
                 );
                 for (int shard = 0; shard < shardCount; shard++) {
                     Assert.assertEquals(
@@ -2023,13 +2099,15 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         }
     }
 
-    private void assertSameRuntimeQueryCannotPublish(
+    private void assertSameRuntimeQueryReducesLocally(
             FiberRuntime runtime,
             PageFrameReduceDispatcher dispatcher,
             String sql,
-            Class<?> expectedFactoryClass
+            Class<?> expectedFactoryClass,
+            int expectedRowCount
     ) throws Exception {
         final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final AtomicInteger rowCount = new AtomicInteger();
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
@@ -2044,7 +2122,9 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 @Override
                 protected boolean runStep() {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        cursor.hasNext();
+                        while (cursor.hasNext()) {
+                            rowCount.incrementAndGet();
+                        }
                     } catch (SqlException e) {
                         throw new AssertionError(e);
                     }
@@ -2053,18 +2133,14 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             };
 
             Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(ownerTask));
-            Assert.assertEquals(1, runtime.drain(1));
+            final long deadline = System.nanoTime() + 5_000_000_000L;
+            while (!ownerTask.isDone() && System.nanoTime() < deadline) {
+                runtime.drain(8);
+            }
 
             Assert.assertTrue(ownerTask.isDone());
-            Assert.assertNotNull(failure.get());
-            Assert.assertTrue(
-                    failure.get().toString(),
-                    failure.get() instanceof CairoException || failure.get() instanceof IllegalStateException
-            );
-            TestUtils.assertContains(
-                    failure.get().getMessage(),
-                    "page frame owner cannot publish work to its current fiber runtime"
-            );
+            Assert.assertNull(failure.get());
+            Assert.assertEquals(expectedRowCount, rowCount.get());
             Assert.assertEquals(0, runtime.getOutstandingTaskCount());
             Assert.assertEquals(0, runtime.getParkedFiberCount());
             Assert.assertEquals(0, dispatcher.getCreatedTaskCount());

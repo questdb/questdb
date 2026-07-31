@@ -43,6 +43,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
+import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
@@ -78,6 +79,14 @@ import java.util.concurrent.atomic.AtomicReference;
  * response.
  */
 public class HttpFiberTest extends AbstractTest {
+
+    @Test
+    public void testBindingAfterSelectorReuseUpdatesSelectors() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            assertBindingAfterSelectorReuse(WorkerPoolMode.FIBER_HOST);
+            assertBindingAfterSelectorReuse(WorkerPoolMode.LEGACY);
+        });
+    }
 
     @Test
     public void testBusyWriterRetryLaunchesRerunOnFiber() throws Exception {
@@ -207,23 +216,27 @@ public class HttpFiberTest extends AbstractTest {
                     new DisconnectingHttpConnectionContext(configuration);
             final HttpConnectionFiberTask task = HttpConnectionFiberTask.createForTesting(context, dispatcher);
             final long taskIncarnation = task.getIncarnation();
+            final CountDownLatch closeComplete = new CountDownLatch(1);
             Thread closeThread = null;
             try {
                 task.setScheduleStateForTesting(FiberTask.STATE_IDLE, FiberTask.STATE_ARMING);
                 waitProcessor.reschedule(context, taskIncarnation);
                 Assert.assertTrue(waitProcessor.runSerially());
 
-                closeThread = new Thread(waitProcessor::close);
+                closeThread = new Thread(() -> {
+                    try {
+                        waitProcessor.close();
+                    } finally {
+                        closeComplete.countDown();
+                    }
+                });
                 closeThread.start();
-                closeThread.join(1_000);
-                final boolean isCloseComplete = !closeThread.isAlive();
-                if (!isCloseComplete) {
-                    task.setScheduleStateForTesting(FiberTask.STATE_ARMING, FiberTask.STATE_IDLE);
-                }
-                closeThread.join(5_000);
+                Assert.assertTrue(context.retryCloseAttempted.await(10, TimeUnit.SECONDS));
 
-                Assert.assertFalse(closeThread.isAlive());
-                Assert.assertTrue("wait processor close blocked on an arming retry", isCloseComplete);
+                Assert.assertTrue(
+                        "wait processor close blocked on an arming retry",
+                        closeComplete.await(10, TimeUnit.SECONDS)
+                );
                 Assert.assertEquals(FiberTask.STATE_ARMING_DISCONNECTED, task.getScheduleState());
             } finally {
                 if (closeThread != null && closeThread.isAlive()) {
@@ -473,6 +486,51 @@ public class HttpFiberTest extends AbstractTest {
     }
 
     @Test
+    public void testRequestJobSkipsIoQueueWhenSaturated() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final Fiber heldFiber = runtime.tryReserveFiber();
+            Assert.assertNotNull(heldFiber);
+            final long heldFiberEpoch = heldFiber.getReservationEpoch();
+            WaitProcessor waitProcessor = null;
+            try {
+                final DefaultHttpServerConfiguration configuration =
+                        new DefaultHttpServerConfiguration(new DefaultTestCairoConfiguration(root));
+                final SaturatedTestHttpDispatcher dispatcher = new SaturatedTestHttpDispatcher();
+                waitProcessor = new WaitProcessor(
+                        configuration.getWaitProcessorConfiguration(),
+                        dispatcher
+                );
+
+                Assert.assertFalse(HttpServer.runFiberRequestJobForTesting(
+                        dispatcher,
+                        waitProcessor,
+                        runtime
+                ));
+                Assert.assertEquals(0, dispatcher.getProcessCount());
+                Assert.assertTrue(dispatcher.hasPendingIOEvents());
+
+                runtime.releaseReservedFiber(heldFiber, heldFiberEpoch);
+                Assert.assertFalse(HttpServer.runFiberRequestJobForTesting(
+                        dispatcher,
+                        waitProcessor,
+                        runtime
+                ));
+                Assert.assertEquals(1, dispatcher.getProcessCount());
+                Assert.assertFalse(dispatcher.hasPendingIOEvents());
+            } finally {
+                if (runtime.getOutstandingTaskCount() > 0) {
+                    runtime.releaseReservedFiber(heldFiber, heldFiberEpoch);
+                }
+                closeFiberRuntime(runtime);
+                if (waitProcessor != null) {
+                    waitProcessor.close();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testResolvedWorkerPoolModeControlsFiberExecution() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             assertQueryExecutionMode(false, WorkerPoolMode.LEGACY, false);
@@ -604,6 +662,55 @@ public class HttpFiberTest extends AbstractTest {
                 }));
     }
 
+    private void assertBindingAfterSelectorReuse(WorkerPoolMode workerPoolMode) throws Exception {
+        final DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root);
+        final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+                .withBaseDir(root)
+                .withFiberEnabled(true)
+                .withWorkerCount(1)
+                .build(cairoConfiguration);
+        final WorkerPoolConfiguration workerPoolConfiguration = new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return Metrics.DISABLED;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public WorkerPoolMode getWorkerPoolMode() {
+                return workerPoolMode;
+            }
+        };
+        try (
+                CairoEngine engine = new CairoEngine(cairoConfiguration);
+                WorkerPool workerPool = new TestWorkerPool(workerPoolConfiguration);
+                HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
+        ) {
+            httpServer.bind(createJsonQueryFactory("/query", httpConfiguration, engine));
+            workerPool.start();
+            try {
+                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                    testHttpClient.assertGet(
+                            "{\"query\":\"SELECT 41 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[41]],\"count\":1}",
+                            "SELECT 41 x"
+                    );
+                    httpServer.bind(createJsonQueryFactory("/query2", httpConfiguration, engine));
+                    testHttpClient.assertGet(
+                            "/query2",
+                            "{\"query\":\"SELECT 42 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[42]],\"count\":1}",
+                            "SELECT 42 x"
+                    );
+                }
+            } finally {
+                workerPool.halt();
+            }
+        }
+    }
+
     private void assertQueryExecutionMode(
             boolean isFiberEnabled,
             WorkerPoolMode workerPoolMode,
@@ -693,6 +800,30 @@ public class HttpFiberTest extends AbstractTest {
         runtime.closeAfterDrained();
     }
 
+    private static HttpRequestHandlerFactory createJsonQueryFactory(
+            String url,
+            DefaultHttpServerConfiguration httpConfiguration,
+            CairoEngine engine
+    ) {
+        return new HttpRequestHandlerFactory() {
+            @Override
+            public ObjHashSet<String> getUrls() {
+                final ObjHashSet<String> urls = new ObjHashSet<>();
+                urls.add(url);
+                return urls;
+            }
+
+            @Override
+            public HttpRequestHandler newInstance() {
+                return new JsonQueryProcessor(
+                        httpConfiguration.getJsonQueryProcessorConfiguration(),
+                        engine,
+                        1
+                );
+            }
+        };
+    }
+
     private static class BatchingTestHttpDispatcher extends TestHttpDispatcher {
         private final HttpConnectionContext firstContext;
         private boolean hasPendingEvents = true;
@@ -720,9 +851,16 @@ public class HttpFiberTest extends AbstractTest {
     }
 
     private static class DisconnectingHttpConnectionContext extends HttpConnectionContext {
+        private final CountDownLatch retryCloseAttempted = new CountDownLatch(1);
 
         private DisconnectingHttpConnectionContext(DefaultHttpServerConfiguration configuration) {
             super(configuration, PlainSocketFactory.INSTANCE);
+        }
+
+        @Override
+        public boolean claimRetryClose(long taskIncarnation) {
+            retryCloseAttempted.countDown();
+            return super.claimRetryClose(taskIncarnation);
         }
 
         @Override
@@ -732,6 +870,25 @@ public class HttpFiberTest extends AbstractTest {
                 RescheduleContext rescheduleContext
         ) throws ServerDisconnectException {
             throw ServerDisconnectException.INSTANCE;
+        }
+    }
+
+    private static class SaturatedTestHttpDispatcher extends TestHttpDispatcher {
+        private int processCount;
+
+        public int getProcessCount() {
+            return processCount;
+        }
+
+        @Override
+        public boolean hasPendingIOEvents() {
+            return processCount == 0;
+        }
+
+        @Override
+        public boolean processIOQueue(IORequestProcessor<HttpConnectionContext> processor) {
+            processCount++;
+            return false;
         }
     }
 

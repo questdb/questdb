@@ -141,7 +141,27 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             if (retry != null) {
                 useful = true;
                 if (retry.isRetryCurrent(taskIncarnation)) {
-                    launcher.launch(fiber, reservationEpoch, retry, taskIncarnation);
+                    try {
+                        launcher.launch(fiber, reservationEpoch, retry, taskIncarnation);
+                    } catch (Throwable th) {
+                        try {
+                            runtime.releaseReservedFiber(fiber, reservationEpoch);
+                        } catch (Throwable cleanupError) {
+                            if (cleanupError != th) {
+                                th.addSuppressed(cleanupError);
+                            }
+                        }
+                        try {
+                            if (retry.claimRetryClose(taskIncarnation)) {
+                                Misc.free(retry);
+                            }
+                        } catch (Throwable cleanupError) {
+                            if (cleanupError != th) {
+                                th.addSuppressed(cleanupError);
+                            }
+                        }
+                        throw th;
+                    }
                     continue;
                 }
             }

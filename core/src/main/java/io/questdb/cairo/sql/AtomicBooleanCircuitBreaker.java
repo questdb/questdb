@@ -36,7 +36,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * and only allows cancelling statement via CANCEL QUERY command.
  */
 public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
-    private final CancellationBinding cancellationBinding = new CancellationBinding(new AtomicBoolean(false));
+    @Deprecated
+    protected AtomicBoolean cancelledFlag = new AtomicBoolean(false);
+    private final CancellationBinding cancellationBinding = new CancellationBinding(cancelledFlag);
     private final CairoEngine engine;
     private final int throttle;
     private long fd = -1;
@@ -58,11 +60,13 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     @Override
     public synchronized void clearCancelledFlag(AtomicBoolean expected) {
         cancellationBinding.clear(expected);
+        cancelledFlag = cancellationBinding.getFlag();
     }
 
     @Override
     public synchronized void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
         cancellationBinding.clear(expected, expectedGeneration);
+        cancelledFlag = cancellationBinding.getFlag();
     }
 
     @Override
@@ -139,16 +143,19 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     @Override
     public synchronized void setCancelledFlag(AtomicBoolean cancelledFlag) {
         cancellationBinding.set(cancelledFlag);
+        this.cancelledFlag = cancelledFlag;
     }
 
     @Override
     public synchronized void setCancelledFlag(CancellationBinding source) {
         source.copyTo(cancellationBinding);
+        cancelledFlag = cancellationBinding.getFlag();
     }
 
     @Override
     public synchronized void setCancelledFlag(AtomicBoolean cancelledFlag, long generation) {
         cancellationBinding.set(cancelledFlag, generation);
+        this.cancelledFlag = cancelledFlag;
     }
 
     @Override

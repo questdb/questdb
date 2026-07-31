@@ -232,6 +232,24 @@ public final class FiberPool {
         }
     }
 
+    boolean releaseReservation(Fiber fiber, long reservationEpoch) {
+        if (!fiber.isReserved(reservationEpoch)) {
+            return false;
+        }
+        synchronized (this) {
+            if (!fiber.tryReleaseReservation(reservationEpoch)) {
+                return false;
+            }
+            runtime.onReservationReleasedForTesting();
+            try {
+                release(fiber);
+            } catch (Throwable th) {
+                runtime.onFiberPoolReleaseFailure(th);
+            }
+            return true;
+        }
+    }
+
     void retireAfterDriverFailure(Fiber fiber, Throwable driverFailure) throws Throwable {
         fiber.beginRetirement();
         Throwable failure = null;

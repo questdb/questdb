@@ -145,11 +145,16 @@ public final class FiberWaitCoordinator {
 
     public synchronized FiberSlotWaitRegistration acquireSlot(long token) {
         checkBuilding(token);
-        // The lock graph is acyclic only while a wait build holds at most one slot registration:
+        // The lock graph is acyclic only while a wait build holds at most one cancellable slot registration:
         // cancelInFlightRegistrations() runs under this monitor and a granted slot's release can take
-        // a peer coordinator's monitor, so a second slot source would close a lock cycle.
-        if (activeSlotRegistrations != null) {
-            throw new IllegalStateException("wait coordinator already has a slot registration");
+        // a peer coordinator's monitor. A FIRING_CANCELLED registration only awaits peer cleanup
+        // outside this monitor and no longer participates in that graph.
+        FiberSlotWaitRegistration activeRegistration = activeSlotRegistrations;
+        while (activeRegistration != null) {
+            if (!activeRegistration.isHandoffPending()) {
+                throw new IllegalStateException("wait coordinator already has a slot registration");
+            }
+            activeRegistration = activeRegistration.nextActive;
         }
         FiberSlotWaitRegistration registration = freeSlotRegistrations;
         if (registration == null) {

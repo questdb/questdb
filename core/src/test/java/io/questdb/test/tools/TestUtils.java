@@ -1856,7 +1856,9 @@ public final class TestUtils {
         if (override != null) {
             return override;
         }
-        return rnd.nextBoolean() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY;
+        return (rnd.getSeed0() ^ rnd.getSeed1()) < 0
+                ? WorkerPoolMode.FIBER_HOST
+                : WorkerPoolMode.LEGACY;
     }
 
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {

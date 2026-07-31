@@ -41,6 +41,8 @@ import java.util.concurrent.atomic.AtomicReference;
 public class Worker extends Thread {
     public static final Clock CLOCK_MICROS = MicrosecondClockImpl.INSTANCE;
     public static final int NO_THREAD_AFFINITY = -1;
+    @Deprecated
+    public static final CarrierLocal<Integer> WORKER_ID = CarrierLocal.withInitial(() -> -1);
     private static final CarrierLocal<Worker> CURRENT = new CarrierLocal<>();
     private final int affinity;
     private final String criticalErrorLine;
@@ -135,6 +137,7 @@ public class Worker extends Thread {
             if (lifecycle.compareAndSet(WorkerLifecycle.BORN, WorkerLifecycle.RUNNING)) {
                 CarrierIdentity.bind();
                 CURRENT.set(this);
+                WORKER_ID.set(workerId);
                 if (fiberRuntime != null) {
                     fiberRuntime.initializeCarrier();
                 }

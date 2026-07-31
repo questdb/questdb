@@ -3440,6 +3440,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         private int fiberMountBudget;
         private int fiberRetainedCount;
 
+        protected PropFiberWorkerPoolConfiguration() {
+        }
+
+        protected PropFiberWorkerPoolConfiguration(WorkerPoolConfiguration configuration) {
+            configureFiber(
+                    configuration.getFiberMaxLiveCount(),
+                    configuration.getFiberMountBudget(),
+                    configuration.getFiberRetainedCount()
+            );
+        }
+
         @Override
         public int getFiberMaxLiveCount() {
             return fiberMaxLiveCount > 0
@@ -5724,6 +5735,13 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     public class PropHttpMinServerConfiguration extends PropFiberWorkerPoolConfiguration implements HttpServerConfiguration {
 
+        public PropHttpMinServerConfiguration() {
+        }
+
+        public PropHttpMinServerConfiguration(WorkerPoolConfiguration configuration) {
+            super(configuration);
+        }
+
         @Override
         public long getAcceptLoopTimeout() {
             return httpMinNetAcceptLoopTimeout;
@@ -5916,6 +5934,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public class PropHttpServerConfiguration extends PropFiberWorkerPoolConfiguration implements HttpFullFatServerConfiguration {
+
+        public PropHttpServerConfiguration() {
+        }
+
+        public PropHttpServerConfiguration(WorkerPoolConfiguration configuration) {
+            super(configuration);
+        }
 
         @Override
         public long getAcceptLoopTimeout() {

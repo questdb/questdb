@@ -643,7 +643,124 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
         });
     }
 
-    // --- helpers ---
+    @Test
+    public void testRoleSwitchWriteLockReentrancyAndDowngrade() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                writeLock.lock();
+                writeLock.lock();
+                readLock.lock();
+                Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+
+                writeLock.unlock();
+                Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+                writeLock.unlock();
+                Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+
+                readLock.unlock();
+                Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+                Assert.assertTrue(writeLock.tryLock());
+                writeLock.unlock();
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchWriteLockTryLockWithMinimumTimeout() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicBoolean isWriteLocked = new AtomicBoolean();
+                final AtomicReference<Throwable> writerFailure = new AtomicReference<>();
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final Thread writer = new Thread(() -> {
+                    try {
+                        isWriteLocked.set(writeLock.tryLock(Long.MIN_VALUE, TimeUnit.NANOSECONDS));
+                    } catch (Throwable th) {
+                        writerFailure.set(th);
+                    }
+                });
+                writer.setDaemon(true);
+
+                readLock.lock();
+                try {
+                    writer.start();
+                    writer.join(TimeUnit.SECONDS.toMillis(10));
+                    Assert.assertFalse(writer.isAlive());
+                    Assert.assertFalse(isWriteLocked.get());
+                    Assert.assertNull(writerFailure.get());
+                } finally {
+                    readLock.unlock();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchWriterPreventsReaderBarging() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicInteger acquireOrder = new AtomicInteger();
+                final AtomicReference<Throwable> readerFailure = new AtomicReference<>();
+                final AtomicReference<Throwable> writerFailure = new AtomicReference<>();
+                final CountDownLatch readerStarted = new CountDownLatch(1);
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final Thread writer = new Thread(() -> {
+                    try {
+                        writeLock.lock();
+                        try {
+                            if (!acquireOrder.compareAndSet(0, 1)) {
+                                throw new AssertionError("reader barged ahead of role-switch writer");
+                            }
+                        } finally {
+                            writeLock.unlock();
+                        }
+                    } catch (Throwable th) {
+                        writerFailure.set(th);
+                    }
+                });
+                final Thread reader = new Thread(() -> {
+                    readerStarted.countDown();
+                    try {
+                        readLock.lock();
+                        try {
+                            if (!acquireOrder.compareAndSet(1, 2)) {
+                                throw new AssertionError("role-switch reader acquired out of order");
+                            }
+                        } finally {
+                            readLock.unlock();
+                        }
+                    } catch (Throwable th) {
+                        readerFailure.set(th);
+                    }
+                });
+                writer.setDaemon(true);
+                reader.setDaemon(true);
+
+                readLock.lock();
+                try {
+                    writer.start();
+                    awaitThreadWaiting(writer);
+                    reader.start();
+                    Assert.assertTrue(readerStarted.await(10, TimeUnit.SECONDS));
+                    awaitThreadWaiting(reader);
+                } finally {
+                    readLock.unlock();
+                }
+
+                writer.join(TimeUnit.SECONDS.toMillis(10));
+                reader.join(TimeUnit.SECONDS.toMillis(10));
+                Assert.assertFalse(writer.isAlive());
+                Assert.assertFalse(reader.isAlive());
+                Assert.assertNull(writerFailure.get());
+                Assert.assertNull(readerFailure.get());
+                Assert.assertEquals(2, acquireOrder.get());
+            }
+        });
+    }
 
     private static void assertReadOnlyRefusal(CairoException e) {
         Assert.assertTrue("exception must be an authorization error", e.isAuthorizationError());

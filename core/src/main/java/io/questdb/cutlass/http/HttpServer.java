@@ -557,16 +557,18 @@ public class HttpServer implements Closeable {
                 boolean useful = false;
                 if (dispatcher.hasPendingIOEvents()) {
                     reservedFiber = runtime.tryReserveFiber();
-                    reservedFiberEpoch = reservedFiber != null ? reservedFiber.getReservationEpoch() : 0;
-                    try {
-                        useful = dispatcher.processIOQueue(processor);
-                    } finally {
-                        final Fiber unusedFiber = reservedFiber;
-                        final long unusedFiberEpoch = reservedFiberEpoch;
-                        reservedFiber = null;
-                        reservedFiberEpoch = 0;
-                        if (unusedFiber != null) {
-                            runtime.releaseReservedFiber(unusedFiber, unusedFiberEpoch);
+                    if (reservedFiber != null) {
+                        reservedFiberEpoch = reservedFiber.getReservationEpoch();
+                        try {
+                            useful = dispatcher.processIOQueue(processor);
+                        } finally {
+                            final Fiber unusedFiber = reservedFiber;
+                            final long unusedFiberEpoch = reservedFiberEpoch;
+                            reservedFiber = null;
+                            reservedFiberEpoch = 0;
+                            if (unusedFiber != null) {
+                                runtime.releaseReservedFiber(unusedFiber, unusedFiberEpoch);
+                            }
                         }
                     }
                 }
@@ -581,6 +583,7 @@ public class HttpServer implements Closeable {
                     SuspensionScope.Mode.BLOCKING
             );
             try {
+                selectorFactory.populateMissing(selector);
                 boolean useful = dispatcher.processIOQueue(processor);
                 useful |= rescheduleContext.runReruns(selector);
                 return useful;
@@ -622,6 +625,7 @@ public class HttpServer implements Closeable {
         private final ObjList<FactoryHolder> factoryHolders = new ObjList<>();
         private final int maxRecycledSelectors;
         private int nextHandlerId = 0;
+        private volatile int publishedFactoryCount;
         private final AtomicInteger recycledSelectorCount = new AtomicInteger();
         // Lock-free: acquire/release run twice per HTTP I/O event on every worker, so a server-wide
         // monitor here would serialize the whole request path.
@@ -654,6 +658,14 @@ public class HttpServer implements Closeable {
             if (s == null) {
                 s = create();
                 selectors.setQuick(jobIndex, s);
+            } else {
+                try {
+                    populateMissing(s);
+                } catch (Throwable th) {
+                    selectors.setQuick(jobIndex, null);
+                    Misc.free(s, th);
+                    throw th;
+                }
             }
             return s;
         }
@@ -663,7 +675,13 @@ public class HttpServer implements Closeable {
                 final HttpRequestProcessorSelectorImpl selector = recycledSelectors.pop();
                 if (selector != null) {
                     recycledSelectorCount.decrementAndGet();
-                    return selector;
+                    try {
+                        populateMissing(selector);
+                        return selector;
+                    } catch (Throwable th) {
+                        Misc.free(selector, th);
+                        throw th;
+                    }
                 }
                 if (recycledSelectorCount.get() == 0) {
                     return create();
@@ -672,7 +690,7 @@ public class HttpServer implements Closeable {
             }
         }
 
-        void bind(HttpRequestHandlerFactory factory, boolean useAsDefault) {
+        synchronized void bind(HttpRequestHandlerFactory factory, boolean useAsDefault) {
             final FactoryHolder holder = new FactoryHolder(factory, useAsDefault);
             final ObjHashSet<String> urls = factory.getUrls();
             assert urls != null;
@@ -680,28 +698,13 @@ public class HttpServer implements Closeable {
                 holder.handlerIds.add(nextHandlerId++);
             }
             factoryHolders.add(holder);
-            // Populate any selectors that already exist (eagerly created in
-            // the HttpServer ctor); selectors created later via create() will
-            // pick up this holder by walking factoryHolders.
-            for (int i = 0, n = selectors.size(); i < n; i++) {
-                HttpRequestProcessorSelectorImpl s = selectors.getQuick(i);
-                if (s != null) {
-                    populate(s, holder);
-                }
-            }
-            // Selectors currently sitting in the recycle pool would also be
-            // out-of-date, but pooled selectors are only valid for already-
-            // bound URLs. bind() runs at server setup before any client
-            // traffic reaches the recycle path, so the pool is empty here.
-            assert recycledSelectorCount.get() == 0 : "bind() called after selector reuse began";
+            publishedFactoryCount = factoryHolders.size();
         }
 
         HttpRequestProcessorSelectorImpl create() {
             final HttpRequestProcessorSelectorImpl selector = new HttpRequestProcessorSelectorImpl();
             try {
-                for (int i = 0, n = factoryHolders.size(); i < n; i++) {
-                    populate(selector, factoryHolders.getQuick(i));
-                }
+                populateMissing(selector);
                 return selector;
             } catch (Throwable th) {
                 Misc.free(selector, th);
@@ -724,35 +727,52 @@ public class HttpServer implements Closeable {
             Misc.free(selector);
         }
 
+        private void populateMissing(HttpRequestProcessorSelectorImpl selector) {
+            final int factoryCount = publishedFactoryCount;
+            for (int i = selector.factoryCount; i < factoryCount; i++) {
+                populate(selector, factoryHolders.getQuick(i));
+                selector.factoryCount = i + 1;
+            }
+        }
+
+        private static HttpRequestHandler getOrCreateHandler(
+                HttpRequestProcessorSelectorImpl selector,
+                FactoryHolder holder,
+                int handlerId
+        ) {
+            HttpRequestHandler handler = selector.handlersByIdList.getQuiet(handlerId);
+            if (handler == null) {
+                handler = holder.factory.newInstance();
+                try {
+                    selector.handlersByIdList.extendAndSet(handlerId, handler);
+                } catch (Throwable th) {
+                    Misc.freeIfCloseableBestEffort(th, handler);
+                    throw th;
+                }
+            }
+            return handler;
+        }
+
         private static void populate(HttpRequestProcessorSelectorImpl selector, FactoryHolder holder) {
             final ObjHashSet<String> urls = holder.factory.getUrls();
             for (int j = 0, n = urls.size(); j < n; j++) {
                 final String url = urls.get(j);
                 final int handlerId = holder.handlerIds.getQuick(j);
                 if (HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
-                    final HttpRequestHandler handler = holder.factory.newInstance();
-                    try {
-                        selector.handlersByIdList.extendAndSet(handlerId, handler);
-                    } catch (Throwable th) {
-                        Misc.freeIfCloseableBestEffort(th, handler);
-                        throw th;
-                    }
+                    final HttpRequestHandler handler = getOrCreateHandler(selector, holder, handlerId);
                     selector.defaultRequestProcessor = handler.getDefaultProcessor();
                     selector.defaultProcessorId = handlerId;
                 } else {
                     final Utf8String key = new Utf8String(url);
                     int keyIndex = selector.requestHandlerMap.keyIndex(key);
                     if (keyIndex > -1) {
-                        final HttpRequestHandler requestHandler = holder.factory.newInstance();
-                        try {
-                            selector.handlersByIdList.extendAndSet(handlerId, requestHandler);
-                        } catch (Throwable th) {
-                            Misc.freeIfCloseableBestEffort(th, requestHandler);
-                            throw th;
-                        }
+                        final HttpRequestHandler requestHandler = getOrCreateHandler(selector, holder, handlerId);
+                        final HttpRequestProcessor defaultProcessor = holder.useAsDefault
+                                ? requestHandler.getDefaultProcessor()
+                                : null;
                         selector.requestHandlerMap.putAt(keyIndex, key, new IndexedHandler(requestHandler, handlerId));
                         if (holder.useAsDefault) {
-                            selector.defaultRequestProcessor = requestHandler.getDefaultProcessor();
+                            selector.defaultRequestProcessor = defaultProcessor;
                             selector.defaultProcessorId = handlerId;
                         }
                     }
@@ -778,6 +798,7 @@ public class HttpServer implements Closeable {
         private final Utf8SequenceObjHashMap<IndexedHandler> requestHandlerMap = new Utf8SequenceObjHashMap<>();
         private int defaultProcessorId = REJECT_PROCESSOR_ID;
         private HttpRequestProcessor defaultRequestProcessor = null;
+        private int factoryCount;
         private int lastSelectedHandlerId = REJECT_PROCESSOR_ID;
 
         @Override

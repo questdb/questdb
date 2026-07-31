@@ -94,9 +94,9 @@ public final class FiberSlotWaitRegistration extends FiberWaitRegistrationNode<F
         return slot;
     }
 
-    void fire() {
+    boolean hasFired() {
         if (!Unsafe.cas(this, STATE_OFFSET, STATE_GRANTED, STATE_FIRING)) {
-            return;
+            return true;
         }
         final long token = this.token;
         if (Unsafe.cas(this, STATE_OFFSET, STATE_FIRING, STATE_NOTIFIED)) {
@@ -115,13 +115,19 @@ public final class FiberSlotWaitRegistration extends FiberWaitRegistrationNode<F
                 throw th;
             }
         } else if (Unsafe.cas(this, STATE_OFFSET, STATE_FIRING_CANCELLED, STATE_FREE)) {
-            releaseGrantedSlot();
+            releaseCancelledGrant();
+            return false;
         }
+        return true;
     }
 
     @Override
     boolean isForToken(long token) {
         return this.token == token;
+    }
+
+    boolean isHandoffPending() {
+        return state == STATE_FIRING_CANCELLED;
     }
 
     boolean markGranted(int slot) {
@@ -195,6 +201,24 @@ public final class FiberSlotWaitRegistration extends FiberWaitRegistrationNode<F
         }
         if (failure != null) {
             throw (Error) failure;
+        }
+    }
+
+    private void releaseCancelledGrant() {
+        final int slot = grantedSlot;
+        final FiberSlotWaitQueue grantedQueue = queue;
+        clear();
+        try {
+            coordinator.release(this);
+        } catch (RuntimeException | Error th) {
+            try {
+                grantedQueue.releaseGrantedSlot(slot);
+            } catch (RuntimeException | Error cleanupError) {
+                if (cleanupError != th) {
+                    th.addSuppressed(cleanupError);
+                }
+            }
+            throw th;
         }
     }
 

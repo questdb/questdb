@@ -321,6 +321,45 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
+    public void testLineTcpSharedWriterPoolHaltsWhenIoPoolTimesOut() {
+        final AtomicInteger closeOrder = new AtomicInteger();
+        final AtomicInteger haltSignalCount = new AtomicInteger();
+        final AtomicBoolean releaseJob = new AtomicBoolean();
+        final SOCountDownLatch jobEntered = new SOCountDownLatch(1);
+        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
+        final WorkerPool ioPool = workerPoolManager.getSharedPoolNetwork(
+                workerPoolConfiguration("line-io", 0),
+                WorkerPoolManager.Requester.LINE_TCP_IO
+        );
+        final WorkerPool writerPool = workerPoolManager.getSharedPoolWrite(
+                workerPoolConfiguration("line-writer", 0),
+                WorkerPoolManager.Requester.LINE_TCP_WRITER
+        );
+        Assert.assertSame(workerPoolManager.getSharedPoolNetwork(), ioPool);
+        Assert.assertNotSame(ioPool, writerPool);
+        ioPool.assign(workerContext -> {
+            jobEntered.countDown();
+            while (!releaseJob.get()) {
+                Os.pause();
+            }
+            return false;
+        });
+        writerPool.freeOnExit(new OrderedCloseJob(closeOrder, 0));
+        writerPool.setAfterClosedSignalForTesting(haltSignalCount::incrementAndGet);
+        workerPoolManager.start(null);
+        try {
+            Assert.assertTrue(jobEntered.await(TimeUnit.SECONDS.toNanos(30)));
+            Assert.assertFalse(workerPoolManager.halt(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
+            Assert.assertEquals(1, haltSignalCount.get());
+        } finally {
+            releaseJob.set(true);
+            Assert.assertTrue(workerPoolManager.halt(System.nanoTime() + TimeUnit.SECONDS.toNanos(30)));
+        }
+        Assert.assertEquals(1, closeOrder.get());
+        Assert.assertEquals(1, haltSignalCount.get());
+    }
+
+    @Test
     public void testLineTcpWriterPoolAliasedToSharedNetworkWaitsForProducer() {
         final AtomicInteger closeOrder = new AtomicInteger();
         final AtomicBoolean releaseTask = new AtomicBoolean();

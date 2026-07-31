@@ -1036,7 +1036,7 @@ public class FiberWaitRegistrationTest {
 
     private static final class BlockerEntry implements DelayedFireable {
         private final long deadlineMillis;
-        private int heapIndex;
+        private int heapIndex = -1;
 
         private BlockerEntry(long deadlineMillis) {
             this.deadlineMillis = deadlineMillis;

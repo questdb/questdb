@@ -31,6 +31,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.ConcurrentPool;
 import io.questdb.mp.Worker;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentLongHashMap;
@@ -58,13 +59,15 @@ public class QueryRegistry {
     private final Clock clock;
     private final AtomicLong idSeq = new AtomicLong();
     private final ConcurrentPool<Entry> queryPool = new ConcurrentPool<>();
+    private final int queryPoolCapacity;
     private final ConcurrentLongHashMap<Entry> registry = new ConcurrentLongHashMap<>();
 
     private volatile Listener listener;
 
     public QueryRegistry(CairoConfiguration configuration) {
         this.clock = configuration.getMicrosecondClock();
-        for (int i = 0, n = configuration.getQueryRegistryPoolSize(); i < n; i++) {
+        this.queryPoolCapacity = configuration.getQueryRegistryPoolSize();
+        for (int i = 0; i < queryPoolCapacity; i++) {
             queryPool.push(new Entry());
         }
     }
@@ -169,6 +172,11 @@ public class QueryRegistry {
         }
     }
 
+    @TestOnly
+    public int getPoolSize() {
+        return queryPool.count();
+    }
+
     /**
      * Add given command to registry.
      *
@@ -271,6 +279,7 @@ public class QueryRegistry {
             throw th;
         }
 
+        executionContext.getCircuitBreaker().copyCancelledFlagTo(e.previousCancelledBinding);
         executionContext.setCancelledFlag(e.cancelled, e.cancelledGeneration);
         return queryId;
     }
@@ -294,7 +303,13 @@ public class QueryRegistry {
 
         final Entry e = registry.remove(queryId);
         if (e != null) {
-            executionContext.clearCancelledFlag(e.cancelled, e.cancelledGeneration);
+            final AtomicBoolean previousCancelledFlag = e.previousCancelledBinding.getFlag();
+            if (previousCancelledFlag instanceof FiberCancellationSignal previousSignal
+                    && previousSignal.getGeneration()
+                    != e.previousCancelledBinding.getGeneration(previousCancelledFlag)) {
+                e.previousCancelledBinding.clear();
+            }
+            executionContext.restoreCancelledFlag(e.cancelled, e.previousCancelledBinding);
             // Release the per-workload memory tracker if this register() call
             // acquired it. A null e.memoryTracker means the registration was
             // nested under an outer workload that owns the tracker; in that
@@ -326,7 +341,7 @@ public class QueryRegistry {
 
     private void recycle(Entry entry) {
         entry.clear();
-        queryPool.push(entry);
+        queryPool.hasPushed(entry, queryPoolCapacity);
     }
 
     public interface Listener {
@@ -361,6 +376,7 @@ public class QueryRegistry {
         private static final long LIFECYCLE_STATE_RETIRED = 2;
 
         private final FiberCancellationSignal cancelled = new FiberCancellationSignal();
+        private final CancellationBinding previousCancelledBinding = new CancellationBinding();
         private final StringSink query = new StringSink();
         private long cancelledGeneration;
         private long changedAtNs;
@@ -408,6 +424,7 @@ public class QueryRegistry {
             cancelledGeneration = cancelled.reopen();
             memoryTracker = null;
             poolName = null;
+            previousCancelledBinding.clear();
             workerId = -1;
             principal = null;
             state = State.IDLE;

@@ -213,6 +213,19 @@ public class DelayHeapTest {
         }
     }
 
+    @Test
+    public void testOfferRejectsLinkedEntry() {
+        DelayHeap<TestEntry> heap = new DelayHeap<>();
+        TestEntry entry = TestEntry.future("entry", TimeUnit.SECONDS.toNanos(1));
+        heap.offer(entry);
+        try {
+            heap.offer(entry);
+            Assert.fail();
+        } catch (AssertionError e) {
+            Assert.assertEquals("entry is already in a heap", e.getMessage());
+        }
+    }
+
     @Test(timeout = 5_000)
     public void testOfferReturnsTrue() {
         DelayHeap<TestEntry> heap = new DelayHeap<>();

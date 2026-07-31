@@ -40,6 +40,9 @@ public final class FiberRuntime {
     private static final long ADMISSION_OPEN = Long.MIN_VALUE;
     private static final long ADMISSION_PERMIT_MASK = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(FiberRuntime.class);
+    private static final int PROCESS_OWNED = 2;
+    private static final int PROCESS_RELEASED = 1;
+    private static final int PROCESS_TERMINATED = 0;
     private final AtomicLong admission = new AtomicLong(ADMISSION_OPEN);
     private final @Nullable Runnable beforeFiberAcquireForTesting;
     private final LongAdder budgetExhaustionCount = new LongAdder();
@@ -58,6 +61,7 @@ public final class FiberRuntime {
     private final FiberRunQueue runQueue;
     private final LongAdder saturationCount = new LongAdder();
     private volatile @Nullable Runnable afterProcessForTesting;
+    private volatile @Nullable Runnable afterReservationReleaseForTesting;
     private volatile boolean isPoolQuiesced;
     private volatile FiberRuntimeState state = FiberRuntimeState.OPEN;
 
@@ -212,8 +216,9 @@ public final class FiberRuntime {
                 break;
             }
             attempts++;
-            if (process(fiber, fiber.getOutcomeScratch(), false)) {
-                finishProcessingAfterUnmount(fiber);
+            final int processResult = process(fiber, fiber.getOutcomeScratch(), false);
+            if (processResult != PROCESS_TERMINATED) {
+                finishProcessingAfterUnmount(fiber, processResult == PROCESS_OWNED);
             }
         }
         if (attempts == attemptBudget && runQueue.depth() > 0) {
@@ -367,6 +372,11 @@ public final class FiberRuntime {
     }
 
     @TestOnly
+    public void setAfterReservationReleaseForTesting(@Nullable Runnable afterReservationReleaseForTesting) {
+        this.afterReservationReleaseForTesting = afterReservationReleaseForTesting;
+    }
+
+    @TestOnly
     public void setRunQueueDepthForTesting(int depth) {
         runQueue.setDepthForTesting(depth);
     }
@@ -382,10 +392,8 @@ public final class FiberRuntime {
         }
         boolean isReserved = false;
         try {
-            // xadd instead of a CAS loop; the transient overshoot is only ever read by
-            // conservative checks, and the rollback happens under the admission permit
             if (outstandingTaskCount.getAndIncrement() >= maxLiveFiberCount) {
-                outstandingTaskCount.decrementAndGet();
+                releaseTaskSlot();
                 saturationCount.increment();
                 return null;
             }
@@ -541,12 +549,14 @@ public final class FiberRuntime {
                     completeAbandoned(task, false);
                 }
             } catch (Throwable th) {
-                task.abortArming();
+                final boolean isTaskOwned = task.abortArming();
                 if (hasFiberOwnership) {
                     releaseFiber(fiber);
                     hasFiberOwnership = false;
                 }
-                terminalError(task, th);
+                if (isTaskOwned) {
+                    terminalError(task, th);
+                }
             } finally {
                 releaseAdmission();
             }
@@ -564,14 +574,16 @@ public final class FiberRuntime {
         }
     }
 
-    private void finishProcessingAfterUnmount(Fiber fiber) {
+    private void finishProcessingAfterUnmount(Fiber fiber, boolean hasFiberOwnership) {
         try {
             fiber.finishProcessing();
         } catch (Throwable th) {
             LOG.critical().$("fiber notification finalization failed [error=").$(th).I$();
             final Fiber.Outcome outcome = fiber.getOutcomeScratch();
             outcome.clear();
-            if (handleDriverFailure(fiber, outcome, true, th)) {
+            final boolean hasCurrentOwnership = hasFiberOwnership
+                    || fiber.getTaskAfterDriverFailure(outcome) != null;
+            if (handleDriverFailure(fiber, outcome, hasCurrentOwnership, th)) {
                 try {
                     fiber.finishTerminatedProcessing();
                 } catch (Throwable notificationError) {
@@ -710,8 +722,9 @@ public final class FiberRuntime {
             }
         }
         if (directFiber != null) {
-            if (process(directFiber, directFiber.getOutcomeScratch(), true)) {
-                finishProcessingAfterUnmount(directFiber);
+            final int processResult = process(directFiber, directFiber.getOutcomeScratch(), true);
+            if (processResult != PROCESS_TERMINATED) {
+                finishProcessingAfterUnmount(directFiber, processResult == PROCESS_OWNED);
             }
         }
         return record(result);
@@ -738,10 +751,10 @@ public final class FiberRuntime {
         }
     }
 
-    private boolean process(Fiber fiber, Fiber.Outcome outcome, boolean isDirectMount) {
+    private int process(Fiber fiber, Fiber.Outcome outcome, boolean isDirectMount) {
         if (!isDirectMount && !fiber.beginProcessing()) {
             LOG.critical().$("fiber queue invariant failed [state=").$(fiber.getExecutionState()).I$();
-            return false;
+            return PROCESS_TERMINATED;
         }
         boolean hasFiberOwnership = true;
         boolean isTerminated = false;
@@ -795,7 +808,9 @@ public final class FiberRuntime {
                 }
             }
         }
-        return !isTerminated;
+        return isTerminated
+                ? PROCESS_TERMINATED
+                : hasFiberOwnership ? PROCESS_OWNED : PROCESS_RELEASED;
     }
 
     private LaunchResult record(LaunchResult result) {
@@ -811,15 +826,14 @@ public final class FiberRuntime {
         try {
             fiberPool.release(fiber);
         } catch (Throwable th) {
-            LOG.critical().$("fiber pool release failed [error=").$(th).I$();
+            onFiberPoolReleaseFailure(th);
         }
     }
 
     private void releaseReservation(Fiber fiber, long reservationEpoch, boolean hasTaskSlot) {
-        if (!fiber.tryReleaseReservation(reservationEpoch)) {
+        if (!fiberPool.releaseReservation(fiber, reservationEpoch)) {
             return;
         }
-        releaseFiber(fiber);
         if (hasTaskSlot) {
             try {
                 releaseTaskSlot();
@@ -884,10 +898,22 @@ public final class FiberRuntime {
         runQueue.put(fiber);
     }
 
+    void onFiberPoolReleaseFailure(Throwable th) {
+        LOG.critical().$("fiber pool release failed [error=").$(th).I$();
+    }
+
     void onInlineSuspendViolation(CharSequence pinnedReason) {
         inlineSuspendViolationCount.increment();
         if (isInlineSuspendViolationLogged.compareAndSet(false, true)) {
             LOG.critical().$("fiber suspension refused, carrier is pinned [reason=").$(pinnedReason).I$();
+        }
+    }
+
+    @TestOnly
+    void onReservationReleasedForTesting() {
+        final Runnable hook = afterReservationReleaseForTesting;
+        if (hook != null) {
+            hook.run();
         }
     }
 

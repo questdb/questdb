@@ -118,6 +118,7 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                 sqlCircuitBreaker.statefulThrowExceptionIfTripped();
                 throw CairoException.nonCritical().put("query aborted").setInterruption(true);
             }
+            throw CairoException.nonCritical().put("reducer slot wait cannot suspend in this execution scope");
         }
         if (mode == SuspensionScope.Mode.FORBIDDEN) {
             throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
@@ -158,6 +159,7 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
             if (fiberSlot != SLOT_WAIT_ABORTED) {
                 throw CairoException.nonCritical().put("query aborted").setInterruption(true);
             }
+            throw CairoException.nonCritical().put("reducer slot wait cannot suspend in this execution scope");
         } else if (mode == SuspensionScope.Mode.FORBIDDEN) {
             throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
         }

@@ -298,6 +298,17 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void reset();
 
+    default void restoreCancelledFlag(AtomicBoolean expected, CancellationBinding previous) {
+        final SqlExecutionCircuitBreaker circuitBreaker = getCircuitBreaker();
+        final SqlExecutionCircuitBreaker simpleCircuitBreaker = getSimpleCircuitBreaker();
+        if (circuitBreaker.getCancelledFlag() == expected) {
+            circuitBreaker.setCancelledFlag(previous);
+        }
+        if (simpleCircuitBreaker != circuitBreaker && simpleCircuitBreaker.getCancelledFlag() == expected) {
+            simpleCircuitBreaker.setCancelledFlag(previous);
+        }
+    }
+
     void restoreToDefaultPageFrameSizes();
 
     void setAllowNonDeterministicFunction(boolean value);

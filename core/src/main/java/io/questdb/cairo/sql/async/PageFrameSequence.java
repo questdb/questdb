@@ -145,7 +145,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         while (!done) {
             // Sampled before the work checks below: a producer that signals progress after the
             // checks but before the sample would otherwise be missed and this fiber would park.
-            final long observedProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            final long observedProgress = canPark ? getProgressVersion() : 0;
             // First check the local task: maybe we were reducing locally and got interrupted by an exception?
             if (localTask != null && localTask.getFrameSequence() == this && dispatchStartFrameIndex == localTask.getFrameIndex() + 1) {
                 collectedFrameIndex = localTask.getFrameIndex();
@@ -186,14 +186,15 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 if (cursor > -1) {
                     // Discard collected items.
                     final PageFrameReduceTask task = reduceQueue.get(cursor);
-                    if (task.getFrameSequence() == this) {
+                    final PageFrameSequence<?> taskFrameSequence = task.getFrameSequence();
+                    if (taskFrameSequence == this) {
                         assert id == task.getFrameSequenceId() : "ids mismatch: " + id + ", " + task.getFrameSequenceId();
                         collectedFrameIndex = task.getFrameIndex();
                         task.collected(true);
                     }
                     collectSubSeq.done(cursor);
                     if (dispatcher != null) {
-                        dispatcher.signalProgress();
+                        taskFrameSequence.signalProgress();
                     }
                 } else if (canPark) {
                     awaitProgress(dispatcher, observedProgress, true);
@@ -206,7 +207,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         // It could be the case that one of the workers reduced a page frame, then marked the task as done,
         // but haven't incremented reduce counter yet. In this case, we wait for the desired counter value.
         while (true) {
-            final long observedProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            final long observedProgress = canPark ? getProgressVersion() : 0;
             if (reduceFinishedCounter.get() == dispatchStartFrameIndex) {
                 break;
             }
@@ -255,7 +256,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         collectSubSeq.done(cursor);
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
         if (dispatcher != null) {
-            dispatcher.signalProgress();
+            signalProgress();
         }
     }
 
@@ -369,7 +370,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         while (true) {
             // Sampled before collectSubSeq.next() so a producer signalling progress between the
             // failed collect and the sample cannot be missed.
-            final long observedProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            final long observedProgress = canPark ? getProgressVersion() : 0;
             long cursor = collectSubSeq.next();
             if (cursor > -1) {
                 PageFrameReduceTask task = reduceQueue.get(cursor);
@@ -381,7 +382,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     // Not our task, nothing to collect. Go for another spin.
                     collectSubSeq.done(cursor);
                     if (dispatcher != null) {
-                        dispatcher.signalProgress();
+                        thatFrameSequence.signalProgress();
                     }
                 }
             } else if (cursor == -1) {
@@ -397,6 +398,11 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     continue;
                 }
                 if (dispatcher != null) {
+                    if (dispatcher.isCurrentFiberOwned()
+                            && dispatchStartFrameIndex == collectedFrameIndex + 1) {
+                        reduceLocally(countOnly);
+                        return LOCAL_TASK_CURSOR;
+                    }
                     if (canPark) {
                         final boolean isDraining = !isActive();
                         awaitProgress(dispatcher, observedProgress, isDraining);
@@ -534,7 +540,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeqToRemove);
                 final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
                 if (dispatcher != null) {
-                    dispatcher.signalProgress();
+                    signalProgress();
                 }
                 LOG.debug().$("removed [seq=").$(collectSubSeqToRemove).I$();
             } catch (Throwable th) {
@@ -645,15 +651,17 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             MPSequence reducePubSeq
     ) {
         boolean hasPublication = dispatcher == null || dispatcher.tryAcquirePublication();
-        if (!hasPublication) {
-            cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
-            return false;
-        }
         boolean idle = true;
         boolean dispatched = false;
         final int collectedFrameCount = collectedFrameIndex + 1;
 
         try {
+            if (!hasPublication) {
+                if (!dispatcher.isCurrentFiberOwned()) {
+                    cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+                }
+                return false;
+            }
             long cursor;
             int i = dispatchStartFrameIndex;
             OUT:
@@ -703,7 +711,9 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                             if (dispatcher != null) {
                                 hasPublication = dispatcher.tryAcquirePublication();
                                 if (!hasPublication) {
-                                    cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+                                    if (!dispatcher.isCurrentFiberOwned()) {
+                                        cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+                                    }
                                     return dispatched;
                                 }
                             }

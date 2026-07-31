@@ -53,6 +53,76 @@ import java.util.concurrent.atomic.AtomicReference;
 public class FiberRuntimeTest {
 
     @Test
+    public void testCancellationGenerationRemainsBoundAcrossResume() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
+            final long taskGeneration = cancellationSignal.getGeneration();
+            final CancellationGenerationTask task = new CancellationGenerationTask(
+                    cancellationSignal,
+                    taskGeneration
+            );
+            final FiberRuntime runtime = new FiberRuntime(1);
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertFalse(task.isDone());
+
+                final long nextGeneration = cancellationSignal.reopen();
+                Assert.assertNotEquals(taskGeneration, nextGeneration);
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertTrue(task.isDone());
+                Assert.assertEquals(taskGeneration, task.resumedGeneration);
+                Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, task.secondWaitReason);
+            } finally {
+                cancellationSignal.cancel();
+                close(runtime);
+            }
+        });
+    }
+
+    @Test
+    public void testCancellationGenerationRemainsBoundAcrossTaskPark() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
+            final long taskGeneration = cancellationSignal.getGeneration();
+            final CancellationGenerationParkTask task = new CancellationGenerationParkTask(cancellationSignal);
+            final FiberRuntime runtime = new FiberRuntime(1);
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertFalse(task.isDone());
+
+                Assert.assertNotEquals(taskGeneration, cancellationSignal.reopen());
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertTrue(task.isDone());
+                Assert.assertEquals(taskGeneration, task.resumedGeneration);
+            } finally {
+                close(runtime);
+            }
+        });
+    }
+
+    @Test
+    public void testCancellationWinsDuringParkPublication() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(2);
+            final CancelOnParkTask task = new CancelOnParkTask();
+
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            Assert.assertEquals(1, runtime.drain(8));
+            Assert.assertTrue(task.isCancelled());
+            Assert.assertEquals(12, task.callbackOrder);
+            Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+            Assert.assertEquals(0, runtime.getParkedFiberCount());
+
+            close(runtime);
+        });
+    }
+
+    @Test
     public void testCapacityWaitsForRetiringFiber() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1, 2);
@@ -293,76 +363,6 @@ public class FiberRuntimeTest {
             Assert.assertEquals(1, runtime.getOutstandingTaskCount());
             runtime.releaseReservedFiber(reusedFiber, reusedReservationEpoch);
             Assert.assertEquals(0, runtime.getOutstandingTaskCount());
-
-            close(runtime);
-        });
-    }
-
-    @Test
-    public void testCancellationGenerationRemainsBoundAcrossResume() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
-            final long taskGeneration = cancellationSignal.getGeneration();
-            final CancellationGenerationTask task = new CancellationGenerationTask(
-                    cancellationSignal,
-                    taskGeneration
-            );
-            final FiberRuntime runtime = new FiberRuntime(1);
-            try {
-                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
-                Assert.assertEquals(1, runtime.drain(1));
-                Assert.assertFalse(task.isDone());
-
-                final long nextGeneration = cancellationSignal.reopen();
-                Assert.assertNotEquals(taskGeneration, nextGeneration);
-                Assert.assertEquals(1, runtime.drain(1));
-
-                Assert.assertTrue(task.isDone());
-                Assert.assertEquals(taskGeneration, task.resumedGeneration);
-                Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, task.secondWaitReason);
-            } finally {
-                cancellationSignal.cancel();
-                close(runtime);
-            }
-        });
-    }
-
-    @Test
-    public void testCancellationGenerationRemainsBoundAcrossTaskPark() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
-            final long taskGeneration = cancellationSignal.getGeneration();
-            final CancellationGenerationParkTask task = new CancellationGenerationParkTask(cancellationSignal);
-            final FiberRuntime runtime = new FiberRuntime(1);
-            try {
-                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
-                Assert.assertEquals(1, runtime.drain(1));
-                Assert.assertFalse(task.isDone());
-
-                Assert.assertNotEquals(taskGeneration, cancellationSignal.reopen());
-                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
-                Assert.assertEquals(1, runtime.drain(1));
-
-                Assert.assertTrue(task.isDone());
-                Assert.assertEquals(taskGeneration, task.resumedGeneration);
-            } finally {
-                close(runtime);
-            }
-        });
-    }
-
-    @Test
-    public void testCancellationWinsDuringParkPublication() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final FiberRuntime runtime = new FiberRuntime(2);
-            final CancelOnParkTask task = new CancelOnParkTask();
-
-            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
-            Assert.assertEquals(1, runtime.drain(8));
-            Assert.assertTrue(task.isCancelled());
-            Assert.assertEquals(12, task.callbackOrder);
-            Assert.assertEquals(0, runtime.getOutstandingTaskCount());
-            Assert.assertEquals(0, runtime.getParkedFiberCount());
 
             close(runtime);
         });
@@ -686,6 +686,82 @@ public class FiberRuntimeTest {
     }
 
     @Test
+    public void testQuiesceSerializesReservationRelease() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CountDownLatch continueRelease = new CountDownLatch(1);
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final CountDownLatch quiesceComplete = new CountDownLatch(1);
+            final CountDownLatch reservationReleased = new CountDownLatch(1);
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final Fiber fiber = runtime.tryReserveFiber();
+            Assert.assertNotNull(fiber);
+            final long reservationEpoch = fiber.getReservationEpoch();
+            runtime.setAfterReservationReleaseForTesting(() -> {
+                reservationReleased.countDown();
+                try {
+                    if (!continueRelease.await(5, TimeUnit.SECONDS)) {
+                        error.compareAndSet(null, new AssertionError("timed out releasing fiber reservation"));
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    error.compareAndSet(null, e);
+                }
+            });
+
+            final Thread quiesceThread = new Thread(() -> {
+                try {
+                    runtime.beginQuiesce();
+                } catch (Throwable th) {
+                    error.compareAndSet(null, th);
+                } finally {
+                    quiesceComplete.countDown();
+                }
+            });
+            final Thread releaseThread = new Thread(() -> {
+                try {
+                    runtime.releaseReservedFiber(fiber, reservationEpoch);
+                } catch (Throwable th) {
+                    error.compareAndSet(null, th);
+                }
+            });
+            try {
+                releaseThread.start();
+                Assert.assertTrue(reservationReleased.await(5, TimeUnit.SECONDS));
+                quiesceThread.start();
+                TestUtils.assertEventually(() -> Assert.assertEquals(
+                        Thread.State.BLOCKED,
+                        quiesceThread.getState()
+                ));
+                Assert.assertEquals(1, quiesceComplete.getCount());
+                continueRelease.countDown();
+                releaseThread.join(5_000);
+                quiesceThread.join(5_000);
+                runtime.setAfterReservationReleaseForTesting(null);
+
+                Assert.assertFalse(releaseThread.isAlive());
+                Assert.assertFalse(quiesceThread.isAlive());
+                Assert.assertNull(error.get());
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertEquals(1, runtime.getRetiredFiberCount());
+                Assert.assertTrue(runtime.awaitClosed(System.nanoTime() + 5_000_000_000L));
+                runtime.closeAfterDrained();
+            } finally {
+                continueRelease.countDown();
+                releaseThread.join(5_000);
+                if (quiesceThread.getState() != Thread.State.NEW) {
+                    quiesceThread.join(5_000);
+                }
+                runtime.setAfterReservationReleaseForTesting(null);
+                runtime.releaseReservedFiber(fiber, reservationEpoch);
+                if (runtime.state() != FiberRuntimeState.CLOSED) {
+                    close(runtime);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testResignalEnqueueFailureTerminalizesReusedFiberTask() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1);
@@ -706,6 +782,31 @@ public class FiberRuntimeTest {
             Assert.assertEquals(1, runtime.getRetiredFiberCount());
 
             close(runtime);
+        });
+    }
+
+    @Test
+    public void testSaturationRollbackSignalsCapacityWaiter() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(2, 2);
+            final Fiber reservedFiber = runtime.tryReserveFiber();
+            Assert.assertNotNull(reservedFiber);
+            final CapacitySignalTask task = new CapacitySignalTask(runtime);
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertFalse(task.isDone());
+                Assert.assertEquals(1, runtime.getParkedFiberCount());
+
+                Assert.assertNull(runtime.tryReserveFiber());
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertTrue(task.isDone());
+                Assert.assertEquals(FiberWaitCoordinator.REASON_CAPACITY, task.reason);
+                Assert.assertEquals(0, runtime.getParkedFiberCount());
+            } finally {
+                runtime.releaseReservedFiber(reservedFiber, reservedFiber.getReservationEpoch());
+                close(runtime);
+            }
         });
     }
 
@@ -1010,11 +1111,11 @@ public class FiberRuntimeTest {
         final Fiber fiber = runtime.tryReserveFiber();
         if (fiber == null
                 || runtime.launchReserved(
-                        fiber,
-                        fiber.getReservationEpoch(),
-                        task,
-                        task.getIncarnation()
-                ) != LaunchResult.LAUNCHED
+                fiber,
+                fiber.getReservationEpoch(),
+                task,
+                task.getIncarnation()
+        ) != LaunchResult.LAUNCHED
                 || runtime.drain(1) != 1
                 || !task.isDone()) {
             throw new AssertionError("reserved fiber did not complete");
@@ -1063,6 +1164,18 @@ public class FiberRuntimeTest {
         }
     }
 
+    private static class CancelOnParkTask extends CallbackTask {
+        @Override
+        protected void onParked() {
+            signalAxisA(SIGNAL_CANCEL);
+        }
+
+        @Override
+        protected boolean runStep() {
+            return false;
+        }
+    }
+
     private static class CancellationGenerationParkTask extends FiberTask {
         private final FiberCancellationSignal cancellationSignal;
         private long resumedGeneration;
@@ -1103,20 +1216,6 @@ public class FiberRuntimeTest {
             return cancellationSignal;
         }
 
-        @Override
-        protected long getCancellationSignalGeneration(FiberCancellationSignal cancellationSignal) {
-            return generation;
-        }
-
-        @Override
-        protected boolean runStep() {
-            Assert.assertEquals(generation, SuspensionScope.getCancellationSignalGeneration());
-            Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, awaitCancellation());
-            resumedGeneration = SuspensionScope.getCancellationSignalGeneration();
-            secondWaitReason = awaitCancellation();
-            return true;
-        }
-
         private int awaitCancellation() {
             final Fiber fiber = Objects.requireNonNull(Fiber.current());
             final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
@@ -1136,11 +1235,40 @@ public class FiberRuntimeTest {
                 throw th;
             }
         }
+
+        @Override
+        protected long getCancellationSignalGeneration(FiberCancellationSignal cancellationSignal) {
+            return generation;
+        }
+
+        @Override
+        protected boolean runStep() {
+            Assert.assertEquals(generation, SuspensionScope.getCancellationSignalGeneration());
+            Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, awaitCancellation());
+            resumedGeneration = SuspensionScope.getCancellationSignalGeneration();
+            secondWaitReason = awaitCancellation();
+            return true;
+        }
+    }
+
+    private static class CapacitySignalTask extends FiberTask {
+        private final FiberRuntime runtime;
+        private int reason;
+
+        private CapacitySignalTask(FiberRuntime runtime) {
+            this.runtime = runtime;
+        }
+
+        @Override
+        protected boolean runStep() {
+            reason = runtime.awaitCapacity();
+            return true;
+        }
     }
 
     private static class CapacityWaitTask extends FiberTask {
-        private boolean hasReservedAfterWake;
         private final FiberRuntime runtime;
+        private boolean hasReservedAfterWake;
 
         private CapacityWaitTask(FiberRuntime runtime) {
             this.runtime = runtime;
@@ -1167,29 +1295,12 @@ public class FiberRuntimeTest {
         }
     }
 
-    private static class CancelOnParkTask extends CallbackTask {
-        @Override
-        protected void onParked() {
-            signalAxisA(SIGNAL_CANCEL);
-        }
-
-        @Override
-        protected boolean runStep() {
-            return false;
-        }
-    }
-
     private static class DeepWaitTask extends PooledWaitTask {
         private final int depth;
 
         private DeepWaitTask(FiberWalWaitQueue waitQueue, int depth) {
             super(waitQueue);
             this.depth = depth;
-        }
-
-        @Override
-        protected boolean runStep() {
-            return descend(depth);
         }
 
         // HotSpot inlines at most MaxRecursiveInlineLevel (1) self-recursive levels,
@@ -1199,6 +1310,23 @@ public class FiberRuntimeTest {
                 return super.runStep();
             }
             return descend(remaining - 1);
+        }
+
+        @Override
+        protected boolean runStep() {
+            return descend(depth);
+        }
+    }
+
+    private static class DirectTask extends FiberTask {
+        private SuspensionScope.Mode mode;
+        private Thread thread;
+
+        @Override
+        protected boolean runStep() {
+            mode = SuspensionScope.getMode();
+            thread = Thread.currentThread();
+            return true;
         }
     }
 
@@ -1236,9 +1364,9 @@ public class FiberRuntimeTest {
     }
 
     private static class DriverFailureUnwindTask extends DriverFailureTask {
-        private int cleanupCount;
         private final FiberRuntime runtime;
         private final FiberWalWaitQueue waitQueue;
+        private int cleanupCount;
 
         private DriverFailureUnwindTask(FiberRuntime runtime, FiberWalWaitQueue waitQueue) {
             this.runtime = runtime;
@@ -1320,18 +1448,6 @@ public class FiberRuntimeTest {
         }
     }
 
-    private static class DirectTask extends FiberTask {
-        private SuspensionScope.Mode mode;
-        private Thread thread;
-
-        @Override
-        protected boolean runStep() {
-            mode = SuspensionScope.getMode();
-            thread = Thread.currentThread();
-            return true;
-        }
-    }
-
     private static class EarlyReadyTask extends FiberTask {
         private final FiberRuntime runtime;
         int observedParkState;
@@ -1398,8 +1514,8 @@ public class FiberRuntimeTest {
 
     private static class LaunchDirectReplacementOnDoneTask extends FiberTask {
         private final OneShotTask replacement;
-        private LaunchResult replacementLaunchResult;
         private final FiberRuntime runtime;
+        private LaunchResult replacementLaunchResult;
 
         private LaunchDirectReplacementOnDoneTask(FiberRuntime runtime, OneShotTask replacement) {
             this.runtime = runtime;
@@ -1428,8 +1544,8 @@ public class FiberRuntimeTest {
 
     private static class LaunchReplacementOnDoneTask extends FiberTask {
         private final EnqueueFailureTask replacement;
-        private LaunchResult replacementLaunchResult;
         private final FiberRuntime runtime;
+        private LaunchResult replacementLaunchResult;
 
         private LaunchReplacementOnDoneTask(FiberRuntime runtime, EnqueueFailureTask replacement) {
             this.runtime = runtime;
@@ -1467,8 +1583,8 @@ public class FiberRuntimeTest {
     }
 
     private static class PooledWaitTask extends FiberTask {
-        private Throwable error;
         private final FiberWalWaitQueue waitQueue;
+        private Throwable error;
 
         private PooledWaitTask(FiberWalWaitQueue waitQueue) {
             this.waitQueue = waitQueue;

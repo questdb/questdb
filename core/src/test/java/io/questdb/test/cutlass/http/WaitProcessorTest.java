@@ -241,6 +241,63 @@ public class WaitProcessorTest {
     }
 
     @Test
+    public void testRetryLaunchFailureReleasesFiberAndRetry() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final WaitProcessor processor = createProcessor();
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final boolean[] isClosed = {false};
+            final Retry retry = new Retry() {
+                private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
+
+                @Override
+                public void close() {
+                    isClosed[0] = true;
+                }
+
+                @Override
+                public void fail(HttpRequestProcessorSelector selector, HttpException e) {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public RetryAttemptAttributes getAttemptDetails() {
+                    return attemptAttributes;
+                }
+
+                @Override
+                public boolean tryRerun(
+                        HttpRequestProcessorSelector selector,
+                        RescheduleContext rescheduleContext
+                ) {
+                    throw new UnsupportedOperationException();
+                }
+            };
+            try {
+                processor.reschedule(retry, 1);
+                Assert.assertTrue(processor.runSerially());
+                currentTimeMs += 10;
+                Assert.assertTrue(processor.runSerially());
+
+                final OutOfMemoryError failure = new OutOfMemoryError("test launch failure");
+                try {
+                    processor.launchReruns(runtime, (_, _, _, _) -> {
+                        throw failure;
+                    });
+                    Assert.fail("expected launch failure");
+                } catch (OutOfMemoryError expected) {
+                    Assert.assertSame(failure, expected);
+                }
+
+                Assert.assertTrue(isClosed[0]);
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+            } finally {
+                processor.close();
+                close(runtime);
+            }
+        });
+    }
+
+    @Test
     public void testSaturationLeavesRetryInOutQueue() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final WaitProcessor processor = createProcessor();

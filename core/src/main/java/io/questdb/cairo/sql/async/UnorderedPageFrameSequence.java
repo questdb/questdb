@@ -140,7 +140,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
         final boolean canPark = dispatcher != null && isFiberSuspendable();
         while (true) {
-            final long observedProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            final long observedProgress = canPark ? getProgressVersion() : 0;
             if (doneLatch.done(queuedCount)) {
                 break;
             }
@@ -221,7 +221,14 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         boolean hasPublication = dispatcher == null || dispatcher.tryAcquirePublication();
         try {
             if (!hasPublication) {
-                cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+                if (dispatcher.isCurrentFiberOwned()) {
+                    for (int i = 0; i < frameCount && isActive(); i++) {
+                        reduceLocally(i);
+                        localCount++;
+                    }
+                } else {
+                    cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+                }
             } else {
                 DISPATCH:
                 for (int i = 0; i < frameCount; i++) {
@@ -232,11 +239,16 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                         if (dispatcher != null && !hasPublication) {
                             hasPublication = dispatcher.tryAcquirePublication();
                             if (!hasPublication) {
+                                if (dispatcher.isCurrentFiberOwned()) {
+                                    reduceLocally(i);
+                                    localCount++;
+                                    break;
+                                }
                                 cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
                                 break DISPATCH;
                             }
                         }
-                        final long observedProgress = canPark ? dispatcher.getProgressVersion() : 0;
+                        final long observedProgress = canPark ? getProgressVersion() : 0;
                         final long cursor;
                         cursor = reducePubSeq.next();
                         if (cursor > -1) {
@@ -293,7 +305,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         // Phase 2: Wait for all queued frames to complete.
         final SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         while (true) {
-            final long observedProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            final long observedProgress = canPark ? getProgressVersion() : 0;
             if (doneLatch.done(queued)) {
                 break;
             }
@@ -316,7 +328,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         // If we exited early due to cancellation, still wait for in-flight tasks
         // to complete to avoid data races with setError().
         while (true) {
-            final long observedProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            final long observedProgress = canPark ? getProgressVersion() : 0;
             if (doneLatch.done(queued)) {
                 break;
             }

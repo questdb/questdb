@@ -7,6 +7,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -226,8 +227,13 @@ public class LifecycleOrchestrator implements QuietCloseable {
                 }
             }
             boolean isEveryComponentStopped = true;
+            final ObjHashSet<String> retainedComponentNames = new ObjHashSet<>();
             for (int i = 0, n = reverseTopoOrder.size(); i < n; i++) {
                 Component c = reverseTopoOrder.getQuick(i);
+                if (retainedComponentNames.contains(c.name())) {
+                    isEveryComponentStopped = false;
+                    continue;
+                }
                 State current = stateOf(c.name());
                 // STARTING is included so a SIGTERM that arrives while a long-running start
                 // is in flight (e.g. BackupRestoreEnvelope mid-PITR-restore, which can run for
@@ -256,7 +262,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
                         injectedLog.error()
                                 .$("component stop failed [component=").$(c.name())
                                 .$(", error=").$(t).I$();
-                        break;
+                        retainHardDependencies(c, retainedComponentNames);
                     }
                 }
             }
@@ -758,6 +764,19 @@ public class LifecycleOrchestrator implements QuietCloseable {
             });
             return t;
         };
+    }
+
+    private void retainHardDependencies(Component component, ObjHashSet<String> retainedComponentNames) {
+        final ObjList<String> dependencies = component.hardRequiredDependencies();
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            final String dependencyName = dependencies.getQuick(i).toString();
+            if (retainedComponentNames.add(dependencyName)) {
+                final Component dependency = registryByName.get(dependencyName);
+                if (dependency != null) {
+                    retainHardDependencies(dependency, retainedComponentNames);
+                }
+            }
+        }
     }
 
     private void startAllInTopologicalOrder() {

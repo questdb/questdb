@@ -126,41 +126,23 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPinnedSlotWaitFallsBackToBlockingAcquire() throws Exception {
+    public void testPinnedSlotWaitFailsWithoutBlockingCarrier() throws Exception {
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, 1);
         final int heldSlot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
         final FiberRuntime runtime = new FiberRuntime(1);
         final PinnedSlotTask task = new PinnedSlotTask(locks);
-        final AtomicReference<Throwable> releaseFailure = new AtomicReference<>();
-        final Thread releaseThread = new Thread(() -> {
-            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (runtime.getInlineSuspendViolationCount() == 0 && System.nanoTime() < deadline) {
-                Os.pause();
-            }
-            try {
-                locks.releaseSlot(heldSlot);
-            } catch (Throwable th) {
-                releaseFailure.set(th);
-            }
-        });
         try {
             Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
-            releaseThread.start();
             Assert.assertEquals(1, runtime.drain(1));
-            releaseThread.join(5_000);
 
-            Assert.assertFalse(releaseThread.isAlive());
-            Assert.assertNull(releaseFailure.get());
-            Assert.assertFalse(task.hasError);
-            Assert.assertTrue(task.hasRun);
+            Assert.assertTrue(task.hasError);
+            Assert.assertFalse(task.hasRun);
+            Assert.assertTrue(task.error instanceof ExceptionInInitializerError);
+            Assert.assertTrue(task.error.getCause().getMessage().contains("cannot suspend"));
             Assert.assertTrue(runtime.getInlineSuspendViolationCount() > 0);
-            Assert.assertEquals(0, locks.getAcquiredSlotCount());
+            Assert.assertEquals(1, locks.getAcquiredSlotCount());
         } finally {
-            if (releaseThread.getState() == Thread.State.NEW) {
-                locks.releaseSlot(heldSlot);
-            } else {
-                releaseThread.join(5_000);
-            }
+            locks.releaseSlot(heldSlot);
             close(runtime);
         }
     }
@@ -347,6 +329,7 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
 
     private static class PinnedSlotTask extends FiberTask {
         private static final ThreadLocal<PinnedSlotTask> CURRENT_TASK = new ThreadLocal<>();
+        private Throwable error;
         private boolean hasError;
         private boolean hasRun;
         private final PerWorkerLocks locks;
@@ -357,6 +340,7 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
 
         @Override
         protected void onError(Throwable th) {
+            error = th;
             hasError = true;
         }
 
@@ -382,6 +366,7 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
     }
 
     private static class PinnedSlotTaskInitializer {
+        // Class initialization pins the continuation while runPinned() attempts to suspend.
         static {
             PinnedSlotTask.CURRENT_TASK.get().runPinned();
         }

@@ -168,7 +168,7 @@ public abstract class WorkerPoolManager implements Target {
             isHaltComplete &= closePool(lineTcpWriterPool, "closing Line TCP writer pool [name=", deadlineNanos);
         }
         if (sharedPoolWrite != lineTcpIOPool
-                && sharedPoolWrite != lineTcpWriterPool
+                && (sharedPoolWrite != lineTcpWriterPool || !isLineTcpIOHaltComplete)
                 && sharedPoolWrite != sharedPoolNetwork
                 && sharedPoolWrite != sharedPoolQuery) {
             isHaltComplete &= closePool(sharedPoolWrite, "closing shared Write pool [name=", deadlineNanos);

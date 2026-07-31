@@ -503,6 +503,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public synchronized void restoreCancelledFlag(AtomicBoolean expected, CancellationBinding previous) {
+        if (circuitBreaker.getCancelledFlag() == expected) {
+            circuitBreaker.setCancelledFlag(previous);
+        }
+        if (simpleCircuitBreaker.getCancelledFlag() == expected) {
+            simpleCircuitBreaker.setCancelledFlag(previous);
+        }
+    }
+
+    @Override
     public void restoreToDefaultPageFrameSizes() {
         this.pageFrameMinRows = defaultPageFrameMinRows;
         this.pageFrameMaxRows = defaultPageFrameMaxRows;

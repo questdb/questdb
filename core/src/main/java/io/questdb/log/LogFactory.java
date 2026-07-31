@@ -103,6 +103,8 @@ public class LogFactory implements Closeable {
     private boolean configured = false;
     @TestOnly
     private volatile boolean isHaltRefusedForTesting;
+    private boolean isThreadHaltComplete;
+    private boolean isThreadHaltStarted;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
 
@@ -199,8 +201,8 @@ public class LogFactory implements Closeable {
 
     public static synchronized void haltInstance() {
         LogFactory logFactory = INSTANCE;
-        if (logFactory != null) {
-            logFactory.haltThread();
+        if (logFactory != null && !logFactory.haltThread()) {
+            throw new IllegalStateException("logging worker pool did not halt");
         }
     }
 
@@ -397,6 +399,9 @@ public class LogFactory implements Closeable {
 
     public void startThread() {
         assert !closed.get();
+        if (isThreadHaltStarted) {
+            throw new IllegalStateException("logging worker pool cannot restart after halt");
+        }
         if (running.compareAndSet(false, true)) {
             for (int i = 0, n = jobs.size(); i < n; i++) {
                 loggingWorkerPool.assign(jobs.get(i));
@@ -736,15 +741,18 @@ public class LogFactory implements Closeable {
     }
 
     private boolean haltThread() {
+        if (isThreadHaltComplete) {
+            return true;
+        }
         if (isHaltRefusedForTesting) {
             return false;
         }
-        if (running.compareAndSet(true, false)) {
-            if (!loggingWorkerPool.halt(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
-                running.set(true);
-                return false;
-            }
+        isThreadHaltStarted = true;
+        running.set(false);
+        if (!loggingWorkerPool.halt(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
+            return false;
         }
+        isThreadHaltComplete = true;
         return true;
     }
 

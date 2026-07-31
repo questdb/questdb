@@ -29,17 +29,23 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberEventWaitQueue;
+import io.questdb.mp.continuation.FiberWaitCoordinator;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Os;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 abstract class AbstractPageFrameSequence {
     private static final int CANCEL_REASON_REDUCER_ERROR = -2;
     private static final int CANCEL_REASON_UNSET = -1;
     private final AtomicInteger cancelReason = new AtomicInteger(CANCEL_REASON_UNSET);
     private final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
+    private final AtomicLong progressVersion = new AtomicLong();
+    private final FiberEventWaitQueue progressWaitQueue =
+            new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
 
     public CairoException buildInterruptionException() {
         final int reason = getCancelReason();
@@ -80,38 +86,20 @@ abstract class AbstractPageFrameSequence {
 
     public abstract SqlExecutionCircuitBreaker getCircuitBreaker();
 
+    public long getProgressVersion() {
+        return progressVersion.get();
+    }
+
     public boolean isActive() {
         return cancelReason.get() == CANCEL_REASON_UNSET;
     }
 
     public abstract boolean isUninterruptible();
 
-    private boolean hasNonInterruptionWon(int interruptionReason) {
-        cancel(interruptionReason);
-        final int reason = cancelReason.get();
-        return reason == SqlExecutionCircuitBreaker.STATE_OK || reason == CANCEL_REASON_REDUCER_ERROR;
-    }
-
-    private static boolean isCancelReasonTransitionAllowed(int current, int next) {
-        return current == CANCEL_REASON_UNSET
-                || current == SqlExecutionCircuitBreaker.STATE_OK
-                && next != SqlExecutionCircuitBreaker.STATE_OK
-                && next != CANCEL_REASON_REDUCER_ERROR;
-    }
-
     // Hoist out of collect/dispatch loops: invariant while the loop runs, and each evaluation
     // costs a carrier-identity lookup.
     protected static boolean isFiberSuspendable() {
         return SuspensionScope.isFiberMode() && Fiber.isMounted();
-    }
-
-    final void cancelOnReducerError(Throwable th) {
-        final int interruptionReason = th instanceof CairoException e
-                ? e.getInterruptionReason()
-                : SqlExecutionCircuitBreaker.STATE_OK;
-        cancel(interruptionReason == SqlExecutionCircuitBreaker.STATE_OK
-                ? CANCEL_REASON_REDUCER_ERROR
-                : interruptionReason);
     }
 
     protected final void awaitProgress(
@@ -139,6 +127,7 @@ abstract class AbstractPageFrameSequence {
         final boolean isProgressWaitTerminated;
         try {
             isProgressWaitTerminated = dispatcher.isProgressWaitTerminated(
+                    this,
                     observedProgress,
                     cancellationSignal,
                     cancellationSignalGeneration,
@@ -184,5 +173,36 @@ abstract class AbstractPageFrameSequence {
     protected final void resetCancellation() {
         cancellationSignal.reopen();
         cancelReason.set(CANCEL_REASON_UNSET);
+    }
+
+    final void cancelOnReducerError(Throwable th) {
+        final int interruptionReason = th instanceof CairoException e
+                ? e.getInterruptionReason()
+                : SqlExecutionCircuitBreaker.STATE_OK;
+        cancel(interruptionReason == SqlExecutionCircuitBreaker.STATE_OK
+                ? CANCEL_REASON_REDUCER_ERROR
+                : interruptionReason);
+    }
+
+    FiberEventWaitQueue getProgressWaitQueue() {
+        return progressWaitQueue;
+    }
+
+    void signalProgress() {
+        progressVersion.incrementAndGet();
+        progressWaitQueue.fire();
+    }
+
+    private boolean hasNonInterruptionWon(int interruptionReason) {
+        cancel(interruptionReason);
+        final int reason = cancelReason.get();
+        return reason == SqlExecutionCircuitBreaker.STATE_OK || reason == CANCEL_REASON_REDUCER_ERROR;
+    }
+
+    private static boolean isCancelReasonTransitionAllowed(int current, int next) {
+        return current == CANCEL_REASON_UNSET
+                || current == SqlExecutionCircuitBreaker.STATE_OK
+                && next != SqlExecutionCircuitBreaker.STATE_OK
+                && next != CANCEL_REASON_REDUCER_ERROR;
     }
 }

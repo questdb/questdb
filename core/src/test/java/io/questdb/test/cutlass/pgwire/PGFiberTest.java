@@ -26,11 +26,18 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.Metrics;
 import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGConnectionContext;
 import io.questdb.cutlass.pgwire.PGServer;
+import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IORequestProcessor;
 import io.questdb.std.LongList;
 import io.questdb.std.Os;
 import io.questdb.test.mp.TestWorkerPool;
@@ -138,6 +145,41 @@ public class PGFiberTest extends BasePGTest {
             assertQueryExecutionMode(false, WorkerPoolMode.FIBER_HOST, true);
             assertQueryExecutionMode(true, WorkerPoolMode.LEGACY, false);
             assertQueryExecutionMode(true, WorkerPoolMode.FIBER_HOST, true);
+        });
+    }
+
+    @Test
+    public void testRequestJobSkipsIoQueueWhenSaturated() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final Fiber heldFiber = runtime.tryReserveFiber();
+            Assert.assertNotNull(heldFiber);
+            final long heldFiberEpoch = heldFiber.getReservationEpoch();
+            try {
+                final SaturatedTestPGDispatcher dispatcher = new SaturatedTestPGDispatcher();
+
+                Assert.assertFalse(PGServer.runFiberRequestJobForTesting(
+                        dispatcher,
+                        Metrics.DISABLED,
+                        runtime
+                ));
+                Assert.assertEquals(0, dispatcher.getProcessCount());
+                Assert.assertTrue(dispatcher.hasPendingIOEvents());
+
+                runtime.releaseReservedFiber(heldFiber, heldFiberEpoch);
+                Assert.assertFalse(PGServer.runFiberRequestJobForTesting(
+                        dispatcher,
+                        Metrics.DISABLED,
+                        runtime
+                ));
+                Assert.assertEquals(1, dispatcher.getProcessCount());
+                Assert.assertFalse(dispatcher.hasPendingIOEvents());
+            } finally {
+                if (runtime.getOutstandingTaskCount() > 0) {
+                    runtime.releaseReservedFiber(heldFiber, heldFiberEpoch);
+                }
+                closeFiberRuntime(runtime);
+            }
         });
     }
 
@@ -277,6 +319,67 @@ public class PGFiberTest extends BasePGTest {
                         workerPool.getFiberRuntime().getCreatedFiberCount() > 0
                 );
             }
+        }
+    }
+
+    private void closeFiberRuntime(FiberRuntime runtime) {
+        runtime.beginQuiesce();
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
+            runtime.drain(64);
+        }
+        Assert.assertTrue(runtime.awaitClosed(deadline));
+        runtime.closeAfterDrained();
+    }
+
+    private static class SaturatedTestPGDispatcher implements IODispatcher<PGConnectionContext> {
+        private int processCount;
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public void disconnect(PGConnectionContext context, int reason) {
+        }
+
+        @Override
+        public int getConnectionCount() {
+            return 0;
+        }
+
+        public int getProcessCount() {
+            return processCount;
+        }
+
+        @Override
+        public int getPort() {
+            return 0;
+        }
+
+        @Override
+        public boolean hasPendingIOEvents() {
+            return processCount == 0;
+        }
+
+        @Override
+        public boolean isListening() {
+            return false;
+        }
+
+        @Override
+        public boolean processIOQueue(IORequestProcessor<PGConnectionContext> processor) {
+            processCount++;
+            return false;
+        }
+
+        @Override
+        public void registerChannel(PGConnectionContext context, int operation) {
+        }
+
+        @Override
+        public boolean run(Job.WorkerContext workerContext) {
+            return false;
         }
     }
 }

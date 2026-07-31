@@ -77,6 +77,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         delegate.clearCancelledFlag(expected, expectedGeneration);
     }
 
+    public void clear() {
+        networkSqlExecutionCircuitBreaker.setCancelledFlag((AtomicBoolean) null);
+        delegate = networkSqlExecutionCircuitBreaker;
+    }
+
     @Override
     public void close() {
         networkSqlExecutionCircuitBreaker = Misc.free(networkSqlExecutionCircuitBreaker);

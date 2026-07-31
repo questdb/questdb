@@ -28,6 +28,7 @@ import io.questdb.log.Log;
 import io.questdb.mp.CarrierIdentity;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.TimeUnit;
@@ -63,18 +64,30 @@ import java.util.concurrent.TimeUnit;
  * A stopped instance cannot restart.
  */
 public final class TimerShards {
+    private final @Nullable Runnable afterOfferForTesting;
     private final Log log;
     private final ObjList<DelayHeap<DelayedFireable>> shards;
     private final String threadNamePrefix;
     private final ObjList<Thread> threads;
     private boolean isShutdownComplete;
     private boolean isShutdownRequested;
-    private volatile boolean running;
+    private volatile boolean isRunning;
 
     public TimerShards(int shardCount, @NotNull String threadNamePrefix, @NotNull Log log) {
+        this(shardCount, threadNamePrefix, log, null);
+    }
+
+    @TestOnly
+    public TimerShards(
+            int shardCount,
+            @NotNull String threadNamePrefix,
+            @NotNull Log log,
+            @Nullable Runnable afterOfferForTesting
+    ) {
         if (shardCount < 1) {
             throw new IllegalArgumentException("shardCount must be >= 1, got " + shardCount);
         }
+        this.afterOfferForTesting = afterOfferForTesting;
         this.shards = new ObjList<>(shardCount);
         this.threads = new ObjList<>(shardCount);
         for (int i = 0; i < shardCount; i++) {
@@ -102,12 +115,15 @@ public final class TimerShards {
      * one expire, shutdown, or successful unregister outcome.
      */
     public SourceRegistrationResult register(@NotNull DelayedFireable entry) {
-        if (!running) {
+        if (!isRunning) {
             return SourceRegistrationResult.NOT_ACCEPTED;
         }
         final DelayHeap<DelayedFireable> shard = shards.getQuick(shardFor(entry));
         shard.offer(entry);
-        if (!running) {
+        if (afterOfferForTesting != null) {
+            afterOfferForTesting.run();
+        }
+        if (!isRunning) {
             if (shard.remove(entry)) {
                 return SourceRegistrationResult.NOT_ACCEPTED;
             }
@@ -158,13 +174,13 @@ public final class TimerShards {
      * misbehaving entry cannot kill the timer.
      */
     public synchronized void start() {
-        if (running) {
+        if (isRunning) {
             return;
         }
         if (isShutdownRequested) {
             throw new IllegalStateException("timer shards cannot restart after shutdown");
         }
-        running = true;
+        isRunning = true;
         for (int i = 0, n = shards.size(); i < n; i++) {
             final DelayHeap<DelayedFireable> shard = shards.getQuick(i);
             Thread t = new Thread(() -> runShard(shard), threadNamePrefix + "-" + i);
@@ -259,7 +275,7 @@ public final class TimerShards {
 
     private void requestShutdown() {
         isShutdownRequested = true;
-        running = false;
+        isRunning = false;
         for (int i = 0, n = shards.size(); i < n; i++) {
             if (threads.getQuick(i) != null) {
                 shards.getQuick(i).offer(new PoisonSentinel());
@@ -270,13 +286,13 @@ public final class TimerShards {
     private void runShard(DelayHeap<DelayedFireable> shard) {
         CarrierIdentity.bind();
         try {
-            while (running) {
+            while (isRunning) {
                 try {
                     DelayedFireable e = shard.take();
                     if (e instanceof PoisonSentinel) {
                         return;
                     }
-                    if (!running) {
+                    if (!isRunning) {
                         // shutdown() flipped running after take() already removed e from the
                         // heap, so its drain snapshot will never see e. Fire e's shutdown hook
                         // here instead of dropping it, otherwise the continuation bound to e is
@@ -287,7 +303,7 @@ public final class TimerShards {
                     }
                     e.expire();
                 } catch (InterruptedException ie) {
-                    if (!running) {
+                    if (!isRunning) {
                         Thread.currentThread().interrupt();
                         return;
                     }

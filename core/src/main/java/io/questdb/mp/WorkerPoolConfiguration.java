@@ -86,6 +86,14 @@ public interface WorkerPoolConfiguration {
         return true;
     }
 
+    /**
+     * @deprecated use {@link #getWorkerPoolMode()}
+     */
+    @Deprecated
+    default boolean isLegacy() {
+        return getWorkerPoolMode() == WorkerPoolMode.LEGACY;
+    }
+
     default int workerPoolPriority() {
         return Thread.NORM_PRIORITY;
     }

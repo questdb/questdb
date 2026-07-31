@@ -61,6 +61,7 @@ public interface Job {
      * no-op default. Must be idempotent and must not throw.
      */
     default void closeInstance() {
+        recycleInstance();
     }
 
     default void drain(int workerId) {
@@ -103,6 +104,13 @@ public interface Job {
      */
     default boolean run() {
         return run(RUNNING_STATUS);
+    }
+
+    /**
+     * @deprecated override {@link #closeInstance()} instead
+     */
+    @Deprecated
+    default void recycleInstance() {
     }
 
     /**

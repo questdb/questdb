@@ -47,18 +47,18 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
             "requestVersion"
     );
     private final CairoEngine engine;
-    private ApplyWal2TableJob executor;
     private final WalApplyExecutorPool executorPool;
+    private final WalApplyFiberJob job;
+    private final FiberRuntime runtime;
+    private final TableToken tableToken;
+    private ApplyWal2TableJob executor;
     private boolean isForceRepublish;
     private boolean isReusable;
-    private final WalApplyFiberJob job;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile int leaseState = LEASE_IDLE;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long requestVersion;
     private long runVersion;
-    private final FiberRuntime runtime;
-    private final TableToken tableToken;
 
     WalApplyFiberTask(
             CairoEngine engine,
@@ -84,62 +84,6 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
         return runtime.state() != FiberRuntimeState.OPEN;
     }
 
-    String getTableDirName() {
-        return tableToken.getDirName();
-    }
-
-    void releaseAfterLaunchFailure(boolean isRepublish) {
-        if (executor != null) {
-            releaseLease(false, isRepublish);
-        }
-    }
-
-    void signal() {
-        Unsafe.getAndAddLong(this, REQUEST_VERSION_OFFSET, 1);
-    }
-
-    boolean tryBind(ApplyWal2TableJob executor) {
-        if (!Unsafe.cas(this, LEASE_STATE_OFFSET, LEASE_IDLE, LEASE_BOUND)) {
-            return false;
-        }
-        if (getScheduleState() != STATE_IDLE) {
-            leaseState = LEASE_IDLE;
-            throw nonIdleTask(getScheduleState());
-        }
-        this.executor = executor;
-        isForceRepublish = false;
-        isReusable = true;
-        runVersion = requestVersion;
-        return true;
-    }
-
-    @Override
-    protected void onAbandoned() {
-        isForceRepublish = true;
-        isReusable = false;
-    }
-
-    @Override
-    protected void onDone() {
-        releaseLease(isReusable, isForceRepublish);
-    }
-
-    @Override
-    protected void onError(Throwable th) {
-        LOG.critical().$("WAL apply fiber failed [table=").$(tableToken).$(", error=").$(th).I$();
-        isForceRepublish = true;
-    }
-
-    @Override
-    protected boolean runStep() {
-        final ApplyWal2TableJob executor = this.executor;
-        if (executor == null) {
-            throw new IllegalStateException("WAL apply fiber has no executor");
-        }
-        executor.applyWal(tableToken, this);
-        return true;
-    }
-
     private static Throwable addCleanupFailure(@Nullable Throwable primary, Throwable failure) {
         if (primary == null) {
             return failure;
@@ -154,7 +98,7 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
         return new IllegalStateException("idle WAL apply lease has non-idle task [state=" + state + ']');
     }
 
-    private void releaseLease(boolean isReusable, boolean isForceRepublish) {
+    private void releaseLease(boolean isLeaseReusable, boolean isRepublishForced) {
         final ApplyWal2TableJob executor = this.executor;
         final long completedVersion = runVersion;
         if (executor == null) {
@@ -220,10 +164,10 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
         try {
             if (engine.isWalTableDropped(tableToken.getDirName())
                     && Unsafe.cas(
-                            this,
-                            LEASE_STATE_OFFSET,
-                            LEASE_IDLE,
-                            LEASE_EVICTED
+                    this,
+                    LEASE_STATE_OFFSET,
+                    LEASE_IDLE,
+                    LEASE_EVICTED
             )) {
                 job.evict(this);
                 isDroppedAfterRelease = true;
@@ -237,8 +181,8 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
         }
 
         if (runtime.state() == FiberRuntimeState.OPEN
-                && (isForceRepublish
-                || (isReusable && requestVersion != completedVersion))) {
+                && (isRepublishForced
+                || (isLeaseReusable && requestVersion != completedVersion))) {
             try {
                 engine.notifyWalTxnCommitted(tableToken);
             } catch (Throwable th) {
@@ -246,5 +190,61 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
             }
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    String getTableDirName() {
+        return tableToken.getDirName();
+    }
+
+    @Override
+    protected void onAbandoned() {
+        isForceRepublish = true;
+        isReusable = false;
+    }
+
+    @Override
+    protected void onDone() {
+        releaseLease(isReusable, isForceRepublish);
+    }
+
+    @Override
+    protected void onError(Throwable th) {
+        LOG.critical().$("WAL apply fiber failed [table=").$(tableToken).$(", error=").$(th).I$();
+        isForceRepublish = true;
+    }
+
+    void releaseAfterLaunchFailure(boolean isRepublish) {
+        if (executor != null) {
+            releaseLease(false, isRepublish);
+        }
+    }
+
+    @Override
+    protected boolean runStep() {
+        final ApplyWal2TableJob executor = this.executor;
+        if (executor == null) {
+            throw new IllegalStateException("WAL apply fiber has no executor");
+        }
+        executor.applyWal(tableToken, this);
+        return true;
+    }
+
+    void signal() {
+        Unsafe.getAndAddLong(this, REQUEST_VERSION_OFFSET, 1);
+    }
+
+    boolean hasBound(ApplyWal2TableJob executor) {
+        if (!Unsafe.cas(this, LEASE_STATE_OFFSET, LEASE_IDLE, LEASE_BOUND)) {
+            return false;
+        }
+        if (getScheduleState() != STATE_IDLE) {
+            leaseState = LEASE_IDLE;
+            throw nonIdleTask(getScheduleState());
+        }
+        this.executor = executor;
+        isForceRepublish = false;
+        isReusable = true;
+        runVersion = requestVersion;
+        return true;
     }
 }

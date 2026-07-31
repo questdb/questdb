@@ -361,7 +361,10 @@ public class PGServer implements Closeable {
                 return false;
             }
             reservedFiber = fiberRuntime.tryReserveFiber();
-            reservedFiberEpoch = reservedFiber != null ? reservedFiber.getReservationEpoch() : 0;
+            if (reservedFiber == null) {
+                return false;
+            }
+            reservedFiberEpoch = reservedFiber.getReservationEpoch();
             try {
                 return dispatcher.processIOQueue(processor);
             } finally {

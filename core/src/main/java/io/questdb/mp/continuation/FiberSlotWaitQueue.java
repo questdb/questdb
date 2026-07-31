@@ -63,22 +63,23 @@ public final class FiberSlotWaitQueue {
     }
 
     public boolean transfer(int slot) {
-        if (waiterCount == 0) {
-            return false;
-        }
-        FiberSlotWaitRegistration registration = null;
-        synchronized (this) {
-            while ((registration = head) != null) {
-                if (registration.markGranted(slot)) {
-                    unlink(registration, false);
-                    break;
+        while (waiterCount != 0) {
+            FiberSlotWaitRegistration registration = null;
+            synchronized (this) {
+                while ((registration = head) != null) {
+                    if (registration.markGranted(slot)) {
+                        unlink(registration, false);
+                        break;
+                    }
+                    unlink(registration, true);
                 }
-                unlink(registration, true);
             }
-        }
-        if (registration != null) {
-            registration.fire();
-            return true;
+            if (registration == null) {
+                return false;
+            }
+            if (registration.hasFired()) {
+                return true;
+            }
         }
         return false;
     }

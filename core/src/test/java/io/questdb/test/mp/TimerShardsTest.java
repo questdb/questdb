@@ -35,9 +35,12 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.concurrent.locks.LockSupport;
 
 public class TimerShardsTest {
     private static final Log LOG = LogFactory.getLog(TimerShardsTest.class);
@@ -100,8 +103,61 @@ public class TimerShardsTest {
         Thread.sleep(2);
         shards.shutdown();
         // Either expire or shutdown won - exactly one terminal transition.
-        Assert.assertEquals("one CAS should win, one no-op", 1, terminalCount.get() == 1 ? 1 : 0);
+        Assert.assertEquals("one CAS should win, one no-op", 1, terminalCount.get());
         Assert.assertEquals(1, fired.get() + shutdown.get());
+    }
+
+    @Test
+    public void testRegistrationRejectedWhenShutdownStartsAfterOffer() throws InterruptedException {
+        CountDownLatch blockerEntered = new CountDownLatch(1);
+        CountDownLatch releaseBlocker = new CountDownLatch(1);
+        AtomicBoolean isShutdownHookEnabled = new AtomicBoolean();
+        AtomicInteger terminalCount = new AtomicInteger();
+        AtomicReference<Thread> shutdownThreadRef = new AtomicReference<>();
+        AtomicReference<TimerShards> shardsRef = new AtomicReference<>();
+        TimerShards shards = new TimerShards(1, "test-timer", LOG, () -> {
+            if (isShutdownHookEnabled.compareAndSet(true, false)) {
+                Thread shutdownThread = new Thread(shardsRef.get()::shutdown);
+                shutdownThread.setDaemon(true);
+                shutdownThreadRef.set(shutdownThread);
+                shutdownThread.start();
+                awaitThreadWaiting(shutdownThread);
+            }
+        });
+        shardsRef.set(shards);
+        shards.start();
+        try {
+            Assert.assertSame(
+                    SourceRegistrationResult.ACCEPTED,
+                    shards.register(new TestEntry(System.currentTimeMillis(), () -> {
+                        blockerEntered.countDown();
+                        try {
+                            releaseBlocker.await();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }, null))
+            );
+            Assert.assertTrue(blockerEntered.await(5, TimeUnit.SECONDS));
+
+            isShutdownHookEnabled.set(true);
+            TestEntry entry = new TestEntry(
+                    System.currentTimeMillis() + 60_000,
+                    terminalCount::incrementAndGet,
+                    terminalCount::incrementAndGet
+            );
+            Assert.assertSame(SourceRegistrationResult.NOT_ACCEPTED, shards.register(entry));
+            Assert.assertEquals(0, terminalCount.get());
+
+            releaseBlocker.countDown();
+            Thread shutdownThread = shutdownThreadRef.get();
+            shutdownThread.join(TimeUnit.SECONDS.toMillis(10));
+            Assert.assertFalse(shutdownThread.isAlive());
+            Assert.assertEquals(0, terminalCount.get());
+        } finally {
+            releaseBlocker.countDown();
+            shards.shutdown();
+        }
     }
 
     @Test
@@ -299,6 +355,23 @@ public class TimerShardsTest {
         Assert.assertTrue(shards.unregister(entry));
         shards.shutdown();
         Assert.assertEquals(0, terminalCount.get());
+    }
+
+    private static void awaitThreadWaiting(Thread thread) {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            final Thread.State state = thread.getState();
+            if (state == Thread.State.BLOCKED
+                    || state == Thread.State.TIMED_WAITING
+                    || state == Thread.State.WAITING) {
+                return;
+            }
+            if (state == Thread.State.TERMINATED) {
+                Assert.fail("thread terminated before waiting [name=" + thread.getName() + ']');
+            }
+            LockSupport.parkNanos(100_000);
+        }
+        Assert.fail("thread did not wait [name=" + thread.getName() + ", state=" + thread.getState() + ']');
     }
 
     private static final class TestEntry implements DelayedFireable {

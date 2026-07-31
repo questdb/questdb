@@ -147,11 +147,13 @@ public interface TableTransactionLogFile extends Closeable {
      * @param cursorPool optional caller-owned cursor pool
      * @return cursor
      */
-    TransactionLogCursor getCursor(
+    default TransactionLogCursor getCursor(
             long txnLo,
             @Transient Path path,
             @Nullable TableSequencerCursorPool cursorPool
-    );
+    ) {
+        return getCursor(txnLo, path);
+    }
 
     /**
      * @return Returns true if the table is marked as dropped in the sequencer log files

@@ -52,6 +52,7 @@ public class LifecycleOrchestratorTest {
     public void testCloseRetriesFailedComponentStop() {
         final AtomicInteger stopAttempts = new AtomicInteger();
         final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        final ProbeComponent independent = new ProbeComponent("independent");
         final ProbeComponent dependency = new ProbeComponent("a");
         final ObjList<String> hardDeps = new ObjList<>();
         hardDeps.add("a");
@@ -64,6 +65,7 @@ public class LifecycleOrchestratorTest {
                 super.stop();
             }
         };
+        orch.register(independent);
         orch.register(dependency);
         orch.register(component);
         orch.run();
@@ -72,6 +74,8 @@ public class LifecycleOrchestratorTest {
         Assert.assertEquals(State.READY, orch.stateOf("a"));
         Assert.assertEquals(State.STOPPING, orch.stateOf("b"));
         Assert.assertEquals(-1, dependency.getStopSeq());
+        Assert.assertEquals(State.STOPPED, orch.stateOf("independent"));
+        Assert.assertTrue(independent.getStopSeq() > -1);
         Assert.assertEquals(1, stopAttempts.get());
         orch.close();
         Assert.assertTrue(orch.isStopComplete());

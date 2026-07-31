@@ -134,7 +134,7 @@ public final class WalApplyFiberJob implements Closeable, Job {
 
             fiberTask = getTask(tableToken);
             fiberTask.signal();
-            if (!fiberTask.tryBind(executor)) {
+            if (!fiberTask.hasBound(executor)) {
                 return true;
             }
             isTaskBound = true;

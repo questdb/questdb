@@ -76,6 +76,7 @@ public class DelayHeap<E extends DelayHeap.Entry> {
     }
 
     public synchronized boolean offer(E e) {
+        assert e.getHeapIndex() < 0 : "entry is already in a heap";
         if (size == heap.size()) {
             heap.extendPos(heap.size() << 1);
         }

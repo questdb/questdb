@@ -38,6 +38,7 @@ import io.questdb.mp.continuation.FiberWalWaitQueue;
 import io.questdb.mp.continuation.FiberWalWaitRegistration;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SourceRegistrationResult;
+import io.questdb.std.ObjList;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -89,6 +90,102 @@ public class FiberWorkerPoolTest {
                 releaseTask.countDown();
                 Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(10)));
                 Assert.assertTrue(isCleanerClosed.get());
+                Assert.assertEquals(FiberRuntimeState.CLOSED, runtime.state());
+            } finally {
+                releaseTask.countDown();
+                pool.halt(TimeUnit.SECONDS.toNanos(10));
+            }
+        });
+    }
+
+    @Test
+    public void testFiberHostHaltStrictTimeoutSignalsWorkersBeforeThrowing() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestWorkerPool pool = new TestWorkerPool(fiberHostConfiguration(
+                    "fiber-strict-halt-timeout-test",
+                    1,
+                    true
+            ));
+            final CountDownLatch cleanerClosed = new CountDownLatch(1);
+            final CountDownLatch releaseTask = new CountDownLatch(1);
+            final CountDownLatch taskEntered = new CountDownLatch(1);
+            final FiberTask task = new FiberTask() {
+                @Override
+                protected boolean runStep() {
+                    taskEntered.countDown();
+                    try {
+                        releaseTask.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                    return true;
+                }
+            };
+            pool.assign(workerContext -> true);
+            pool.assignThreadLocalCleaner(0, cleanerClosed::countDown);
+            final FiberRuntime runtime = pool.getFiberRuntime();
+            pool.start();
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertTrue(taskEntered.await(10, TimeUnit.SECONDS));
+                try {
+                    pool.haltAndAssertCleanForTest(TimeUnit.MILLISECONDS.toNanos(1));
+                    Assert.fail();
+                } catch (AssertionError ignored) {
+                }
+
+                releaseTask.countDown();
+                Assert.assertTrue(cleanerClosed.await(10, TimeUnit.SECONDS));
+            } finally {
+                releaseTask.countDown();
+                pool.halt(TimeUnit.SECONDS.toNanos(10));
+            }
+        });
+    }
+
+    @Test
+    public void testFiberHostHaltTerminalRetriesAfterRuntimeDrainTimeout() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestWorkerPool pool = new TestWorkerPool(fiberHostConfiguration(
+                    "fiber-terminal-halt-retry-test",
+                    1,
+                    true,
+                    129
+            ));
+            final CountDownLatch releaseTask = new CountDownLatch(1);
+            final CountDownLatch taskEntered = new CountDownLatch(1);
+            final FiberTask blockingTask = new FiberTask() {
+                @Override
+                protected boolean runStep() {
+                    taskEntered.countDown();
+                    try {
+                        releaseTask.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                    return true;
+                }
+            };
+            final ObjList<OneShotTask> queuedTasks = new ObjList<>(128);
+            final FiberRuntime runtime = pool.getFiberRuntime();
+            pool.start();
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(blockingTask));
+                Assert.assertTrue(taskEntered.await(10, TimeUnit.SECONDS));
+                for (int i = 0; i < 128; i++) {
+                    final OneShotTask queuedTask = new OneShotTask();
+                    queuedTasks.add(queuedTask);
+                    Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(queuedTask));
+                }
+
+                Assert.assertFalse(pool.isHaltTerminalSuccessfulForTesting(TimeUnit.MILLISECONDS.toNanos(1)));
+                releaseTask.countDown();
+                Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(10)));
+                for (int i = 0; i < queuedTasks.size(); i++) {
+                    Assert.assertTrue(queuedTasks.getQuick(i).isDone());
+                }
                 Assert.assertEquals(FiberRuntimeState.CLOSED, runtime.state());
             } finally {
                 releaseTask.countDown();
@@ -241,10 +338,19 @@ public class FiberWorkerPoolTest {
     }
 
     private static WorkerPoolConfiguration fiberHostConfiguration(String poolName, int workerCount, boolean isDaemon) {
+        return fiberHostConfiguration(poolName, workerCount, isDaemon, 1);
+    }
+
+    private static WorkerPoolConfiguration fiberHostConfiguration(
+            String poolName,
+            int workerCount,
+            boolean isDaemon,
+            int maxLiveCount
+    ) {
         return new WorkerPoolConfiguration() {
             @Override
             public int getFiberMaxLiveCount() {
-                return 1;
+                return maxLiveCount;
             }
 
             @Override

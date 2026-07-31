@@ -364,6 +364,8 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 failure.addSuppressed(th);
             }
         } finally {
+            roleSwitchReadLock = null;
+            roleSwitchReadLockDepth = 0;
             scope.fiber = previousFiber;
         }
         return failure;
