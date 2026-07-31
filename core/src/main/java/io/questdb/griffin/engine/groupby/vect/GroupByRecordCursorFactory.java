@@ -59,7 +59,6 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -87,8 +86,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final ObjectPool<VectorAggregateEntry> entryPool;
     private final PageFrameAddressCache frameAddressCache;
-    // set by any worker that sees a page frame whose key column is a column top; consumed once,
-    // after the drain, to materialize the null group in the rosti that survives the merge
+    // any worker that sees a page frame whose key column is a column top raises this flag;
+    // insertNullKeyConditionally() consumes it once, after the drain, and materializes the null
+    // group in the rosti that survives the merge
     private final AtomicBoolean hasNullKeyRows = new AtomicBoolean();
     private final int keyColumnIndex;
     private final AtomicInteger oomCounter = new AtomicInteger();
@@ -100,7 +100,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int workerCount;
     private RecordCursorFactory base;
     private ObjList<PageFrameMemoryPool> frameMemoryPools; // per worker pools
-    private long pNullKey; // 4 bytes holding the key sentinel, argument of the null group insert
     private long[] pRosti;
     private ObjList<RostiSharedCursor> sharedCursors;
     private ObjList<VectorAggregateFunction> vafList;
@@ -120,7 +119,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         super(metadata);
         try {
             this.workerCount = workerCount;
-            pNullKey = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
             entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
             // columnTypes and functions must align in the following way:
             // columnTypes[0] is the type of key, for now single key is supported
@@ -141,6 +139,18 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.vafList = new ObjList<>(vafCount);
             this.vafList.addAll(vafList);
             raf = configuration.getRostiAllocFacade();
+            // remember, single key for now
+            final int nullKeySentinel = switch (ColumnType.tagOf(columnTypes.getColumnType(0))) {
+                case ColumnType.INT -> Numbers.INT_NULL;
+                case ColumnType.SYMBOL -> SymbolTable.VALUE_IS_NULL;
+                // Only INT and SYMBOL reach the vectorized keyed group by, and both are
+                // stored as a 32-bit key. Anything else would leave the null-key sentinel
+                // at whatever the template held, which the null group is then built from.
+                default -> throw CairoException.nonCritical()
+                        .put("unexpected vectorized group by key type [type=")
+                        .put(ColumnType.nameOf(columnTypes.getColumnType(0)))
+                        .put(']');
+            };
             for (int i = 0; i < workerCount; i++) {
                 long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
                 if (ptr == 0) {
@@ -153,24 +163,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             .setOutOfMemory(true);
                 }
                 pRosti[i] = ptr;
-
-                // remember, single key for now
-                switch (ColumnType.tagOf(columnTypes.getColumnType(0))) {
-                    case ColumnType.INT:
-                        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti[i], 0), Numbers.INT_NULL);
-                        break;
-                    case ColumnType.SYMBOL:
-                        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti[i], 0), SymbolTable.VALUE_IS_NULL);
-                        break;
-                    default:
-                        // Only INT and SYMBOL reach the vectorized keyed group by, and both are
-                        // stored as a 32-bit key. Anything else would leave the null-key sentinel
-                        // at whatever the template held, which the null group is then built from.
-                        throw CairoException.critical(0)
-                                .put("unexpected vectorized group by key type [type=")
-                                .put(ColumnType.nameOf(columnTypes.getColumnType(0)))
-                                .put(']');
-                }
+                Unsafe.putInt(Rosti.getInitialValueSlot(pRosti[i], 0), nullKeySentinel);
 
                 // configure map with default values
                 // when our execution order is sum(x) then min(y) over the same map
@@ -227,7 +220,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         oomCounter.set(0);
-        hasNullKeyRows.set(false);
         // clear maps
         for (int i = 0, n = pRosti.length; i < n; i++) {
             raf.clear(pRosti[i]);
@@ -402,9 +394,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
         failure = Misc.freeBestEffort(failure, base);
-        if (pNullKey != 0) {
-            pNullKey = Unsafe.free(pNullKey, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
-        }
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
         CairoException.rethrowCleanupFailure(failure);
@@ -577,6 +566,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             startedCounter.set(0);
             doneLatch.reset();
             entryPool.clear();
+            // Reset here rather than in getCursor(): a build that throws leaves isRostiBuilt false,
+            // and the next entry through hasNext()/calculateSize()/a shared cursor would otherwise
+            // read a stale flag and insert a null group no page frame justified.
+            hasNullKeyRows.set(false);
 
             int queuedCount = 0;
             int ownCount = 0;
@@ -609,17 +602,18 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 // runWhatsLeft has drained the done-latch (so no worker is reading).
                 frameAddressCache.freezeCoveredReaders();
 
+                // Carries a claimed entry the work stealing branch left unused into the next
+                // dispatch, so the eager claim below costs no extra pool entries.
+                VectorAggregateEntry entry = null;
                 for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
                     final long frameRowCount = frameAddressCache.getFrameSize(frameIndex);
                     if (frameRowCount == 0) {
-                        // An empty frame contributes nothing to either accumulator, and dispatching it
-                        // is not merely wasteful: count(x) folds in a row on any non-zero value address
-                        // without consulting the row count, so its wrapUp() would create a group no row
-                        // belongs to - and a group created there, after an earlier aggregate's sweep has
-                        // run, renders 0 where it should render null. The table-reader cursors never
-                        // emit an empty frame (FullFwd and IntervalFwd skip empty partitions, and both
-                        // the native and parquet splitters advance by at least one row); read_parquet
-                        // does not check for an empty row group.
+                        // Dispatching an empty frame is not merely wasteful: count(x) bumps aggCount
+                        // on any non-zero value address without consulting the row count, and a
+                        // non-zero aggCount is what makes its wrapUp() materialize the null group -
+                        // a group no row belongs to, and one that renders 0 where it should render
+                        // null once an earlier aggregate's sweep has already run. Only read_parquet
+                        // can emit an empty frame; every table-reader cursor filters them out.
                         continue;
                     }
                     for (int vafIndex = 0; vafIndex < vafCount; vafIndex++) {
@@ -627,6 +621,30 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         // when column index = -1 we assume that vector function does not have value
                         // argument, and it can only derive count via memory size
                         final int valueColumnIndex = vaf.getColumnIndex();
+
+                        // Claim and populate the entry before pubSeq.next() claims a ring slot:
+                        // entryPool.next() expands and allocates, and a throw between the claim and
+                        // pubSeq.done() would leave the slot forever unpublished, blocking every
+                        // later vectorized GROUP BY in this JVM on subSeq.next().
+                        if (entry == null) {
+                            entry = entryPool.next();
+                        }
+                        entry.of(
+                                frameIndex,
+                                frameRowCount,
+                                keyColumnIndex,
+                                valueColumnIndex,
+                                vaf,
+                                pRosti,
+                                frameMemoryPools,
+                                startedCounter,
+                                doneLatch,
+                                oomCounter,
+                                hasNullKeyRows,
+                                raf,
+                                perWorkerLocks,
+                                sharedCircuitBreaker
+                        );
 
                         while (true) {
                             long cursor = pubSeq.next();
@@ -656,24 +674,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                 }
                                 mergedCount = doneLatch.getCount();
                             } else {
-                                final VectorAggregateEntry entry = entryPool.next();
-                                entry.of(
-                                        frameIndex,
-                                        frameRowCount,
-                                        keyColumnIndex,
-                                        valueColumnIndex,
-                                        vaf,
-                                        pRosti,
-                                        frameMemoryPools,
-                                        startedCounter,
-                                        doneLatch,
-                                        oomCounter,
-                                        hasNullKeyRows,
-                                        raf,
-                                        perWorkerLocks,
-                                        sharedCircuitBreaker
-                                );
                                 queue.get(cursor).entry = entry;
+                                entry = null;
                                 pubSeq.done(cursor);
                                 queuedCount++;
                                 total++;
@@ -726,22 +728,25 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         .setOutOfMemory(true);
             }
 
-            // merge maps only when cursor was fetched successfully
-            // otherwise assume error and save CPU cycles
-            pRostiBig = pRosti[0];
-            if (pRosti.length > 1) {
+            try {
+                // A tripped breaker has already minimized every rosti above, so consult it before
+                // the null key insert: an insert into a 16-slot map that cannot grow would report
+                // memory pressure where the user is owed the cancellation or timeout error.
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+
+                // merge maps only when cursor was fetched successfully
+                // otherwise assume error and save CPU cycles
                 // due to uneven load distribution some rostis could be much bigger and some empty
-                long size = raf.getSize(pRostiBig);
+                pRostiBig = pRosti[0];
+                long biggestSize = raf.getSize(pRostiBig);
                 for (int i = 1, n = pRosti.length; i < n; i++) {
-                    long curSize = raf.getSize(pRosti[i]);
-                    if (curSize > size) {
-                        size = curSize;
+                    final long curSize = raf.getSize(pRosti[i]);
+                    if (curSize > biggestSize) {
+                        biggestSize = curSize;
                         pRostiBig = pRosti[i];
                     }
                 }
-            }
 
-            try {
                 insertNullKeyConditionally();
 
                 if (pRosti.length > 1) {
@@ -836,11 +841,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (!hasNullKeyRows.get()) {
                 return;
             }
-            // The key sentinel lives in the initial values template. Copy it out rather than hand its
-            // address to the insert: a resize frees the block the template sits in.
-            Unsafe.putInt(pNullKey, Unsafe.getInt(Rosti.getInitialValueSlot(pRostiBig, 0)));
+            // The key sentinel lives in the initial values template, so the insert reads its own
+            // argument out of the block a resize would free. kIntDistinct copies the key into a
+            // local before it calls find(), and this call passes count == 1, so the single read
+            // always precedes the resize - passing the template address directly is safe.
             final long oldSize = Rosti.getAllocMemory(pRostiBig);
-            final boolean inserted = Rosti.keyedIntDistinct(pRostiBig, pNullKey, 1);
+            final boolean inserted = Rosti.keyedIntDistinct(pRostiBig, Rosti.getInitialValueSlot(pRostiBig, 0), 1);
             // account for the growth before reporting failure, the insert can grow and then fail
             raf.updateMemoryUsage(pRostiBig, oldSize);
             if (!inserted) {

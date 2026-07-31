@@ -103,7 +103,13 @@ public class VectorAggregateEntry implements Mutable {
                     // Every row in this frame has a null key. wrapUp() only creates that group when the
                     // value it folds in is non-null, so record row presence here; the coordinator
                     // materializes the group once, in the rosti that survives the merge.
-                    hasNullKeyRows.set(true);
+                    // The factory clears the flag only between drains, so within a drain it travels
+                    // false -> true once. The guard read drops the repeat stores, which leaves a single
+                    // cache line invalidation instead of one per (frame, vaf) that lands here. A worker
+                    // reading a stale false pays one redundant store and nothing else.
+                    if (!hasNullKeyRows.get()) {
+                        hasNullKeyRows.set(true);
+                    }
                 }
                 func.aggregate(valueAddress, frameRowCount, slot);
             }
@@ -182,14 +188,17 @@ public class VectorAggregateEntry implements Mutable {
             AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch
     ) {
-        startedCounter.incrementAndGet();
-
-        if (circuitBreaker.checkIfTripped() || (oomCounter != null && oomCounter.get() > 0)) {
-            doneLatch.countDown();
-            return;
-        }
-
+        // GroupByVectorAggregateJob.doRun() swallows any Throwable that escapes run(), so a throw
+        // before the countdown leaves the coordinator spinning forever in runWhatsLeft(), which has
+        // no circuit-breaker exit. The try therefore covers the counter bump and the breaker probe
+        // as well as the aggregation itself, and the finally is the single countdown site.
         try {
+            startedCounter.incrementAndGet();
+
+            if (circuitBreaker.checkIfTripped() || (oomCounter != null && oomCounter.get() > 0)) {
+                return;
+            }
+
             aggregateUnsafe(
                     workerId,
                     oomCounter,

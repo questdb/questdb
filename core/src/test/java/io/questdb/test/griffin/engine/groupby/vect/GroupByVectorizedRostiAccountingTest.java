@@ -53,16 +53,21 @@ import org.junit.Test;
  * negative net delta at end of run - which is how the query fuzzer's malloc fault injection
  * surfaced the original over-free in the single-worker build path, where {@code wrapUp()}
  * was not bracketed with {@code updateMemoryUsage()}.
+ * <p>
+ * Each sweep guards itself with {@link NullKeyInsertGrowthRostiAllocFacade}, which counts only the
+ * growth the null-key insert itself causes. Counting any growth would not guard anything: the keyed
+ * aggregation brackets every (page frame, aggregate) pair with {@code updateMemoryUsage()} too, and
+ * the live keys alone cross the threshold at the top of the sweep.
  */
 public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
 
     @Test
     public void testNullGroupInsertResizeKeepsNativeRostiBalancedColumnTopFirst() throws Exception {
-        final GrowthRecordingRostiAllocFacade facade = new GrowthRecordingRostiAllocFacade();
+        final NullKeyInsertGrowthRostiAllocFacade facade = new NullKeyInsertGrowthRostiAllocFacade();
         configOverrideRostiAllocFacade(facade);
         assertMemoryLeak(() -> {
             for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
-                createColumnTopTable(liveKeys, true, sqlExecutionContext);
+                createColumnTopTable(liveKeys, true, false, sqlExecutionContext);
 
                 final String query = "SELECT k, count() FROM tab";
                 assertQuery(query).noLeakCheck().assertsPlanContaining("GroupBy vectorized: true");
@@ -73,7 +78,7 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
 
                 execute("DROP TABLE tab");
             }
-            assertHasResized(facade);
+            assertNullKeyInsertResized(facade);
         });
     }
 
@@ -82,11 +87,11 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
         // The reversed partition order scans the column-top rows after the live keys have filled
         // the map. The insert lands at the end of the build either way, so both orders must record
         // the growth it causes, or close() subtracts more than was added.
-        final GrowthRecordingRostiAllocFacade facade = new GrowthRecordingRostiAllocFacade();
+        final NullKeyInsertGrowthRostiAllocFacade facade = new NullKeyInsertGrowthRostiAllocFacade();
         configOverrideRostiAllocFacade(facade);
         assertMemoryLeak(() -> {
             for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
-                createColumnTopTable(liveKeys, false, sqlExecutionContext);
+                createColumnTopTable(liveKeys, false, false, sqlExecutionContext);
 
                 final String query = "SELECT k, count() FROM tab";
                 assertQuery(query).noLeakCheck().assertsPlanContaining("GroupBy vectorized: true");
@@ -97,7 +102,7 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
 
                 execute("DROP TABLE tab");
             }
-            assertHasResized(facade);
+            assertNullKeyInsertResized(facade);
         });
     }
 
@@ -106,7 +111,7 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
         // Same boundary sweep, but with a four-worker execution context so the build
         // runs through the multi-worker merge path. Confirms the merge path stays
         // balanced too, and that the null group survives the merge exactly once.
-        final GrowthRecordingRostiAllocFacade facade = new GrowthRecordingRostiAllocFacade();
+        final NullKeyInsertGrowthRostiAllocFacade facade = new NullKeyInsertGrowthRostiAllocFacade();
         configOverrideRostiAllocFacade(facade);
         assertMemoryLeak(() -> {
             final int workerCount = 4;
@@ -127,7 +132,7 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
                     .with(securityContext, bindVariableService, null, -1, circuitBreaker)) {
                 parallelCtx.initNow();
                 for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
-                    createColumnTopTable(liveKeys, true, parallelCtx);
+                    createColumnTopTable(liveKeys, true, false, parallelCtx);
 
                     final String query = "SELECT k, count() FROM tab";
                     try (RecordCursorFactory factory = select(query, parallelCtx)) {
@@ -136,16 +141,18 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
 
                     execute("DROP TABLE tab", parallelCtx);
                 }
-                assertHasResized(facade);
+                assertNullKeyInsertResized(facade);
             } finally {
                 pool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
             }
         });
     }
 
-    private static void assertHasResized(GrowthRecordingRostiAllocFacade facade) {
-        Assert.assertTrue("no sweep iteration grew the rosti, so none of them covered the insert "
-                + "resize; the growth threshold moved -- re-derive the liveKeys sweep", facade.hasGrown);
+    private static void assertNullKeyInsertResized(NullKeyInsertGrowthRostiAllocFacade facade) {
+        Assert.assertTrue("no sweep iteration grew the rosti inside the post-drain null group insert, "
+                + "so none of them covered the insert resize; either the growth threshold moved, or the "
+                + "insert no longer runs under a method named " + NullKeyInsertGrowthRostiAllocFacade.NULL_KEY_INSERT_METHOD
+                + "() -- re-derive the liveKeys sweep", facade.hasGrownOnNullKeyInsert);
     }
 
     // The default 1024 map capacity gives a growth threshold of 896 live keys; at exactly that
@@ -155,11 +162,21 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
     // isColumnTopFirst puts the partition written before k existed at the EARLIER timestamps, so
     // its column-top rows are scanned before the live keys fill the map; false scans them after.
     // Either way the null group is materialized from row presence alone.
-    private static void createColumnTopTable(int liveKeys, boolean isColumnTopFirst, SqlExecutionContext context) throws Exception {
+    //
+    // isValueColumnTop adds v late as well, so the column-top rows carry neither a key nor a value.
+    // GroupByVectorizedOomTest needs that: an aggregate that sees no value cannot create the null
+    // group in its wrapUp(), which leaves the post-drain insert as the only thing that can.
+    static void createColumnTopTable(int liveKeys, boolean isColumnTopFirst, boolean isValueColumnTop, SqlExecutionContext context) throws Exception {
         final long columnTopDay = isColumnTopFirst ? 0 : 86_400_000_000L;
         final long liveKeysDay = isColumnTopFirst ? 86_400_000_000L : 0;
-        execute("CREATE TABLE tab (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
-        execute("INSERT INTO tab SELECT (" + columnTopDay + " + x * 1_000_000L)::timestamp, x FROM long_sequence(8)", context);
+        if (isValueColumnTop) {
+            execute("CREATE TABLE tab (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", context);
+            execute("INSERT INTO tab SELECT (" + columnTopDay + " + x * 1_000_000L)::timestamp FROM long_sequence(8)", context);
+            execute("ALTER TABLE tab ADD COLUMN v LONG", context);
+        } else {
+            execute("CREATE TABLE tab (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
+            execute("INSERT INTO tab SELECT (" + columnTopDay + " + x * 1_000_000L)::timestamp, x FROM long_sequence(8)", context);
+        }
         execute("ALTER TABLE tab ADD COLUMN k INT", context);
         execute("""
                 INSERT INTO tab SELECT (%d + x * 1_000_000L)::timestamp, x, x::int
@@ -185,17 +202,35 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
         }
     }
 
-    // Records whether any bracketed rosti operation actually grew the map, so a sweep that stops
-    // straddling the growth threshold fails instead of passing vacuously.
-    private static class GrowthRecordingRostiAllocFacade extends RostiAllocFacadeImpl {
-        private volatile boolean hasGrown;
+    // Records whether the post-drain null group insert grew the map, so a sweep that stops straddling
+    // the growth threshold fails instead of passing vacuously.
+    //
+    // Recording any growth would guard nothing. GroupByRecordCursorFactory brackets four different
+    // operations with updateMemoryUsage(): the keyed aggregation of every (page frame, aggregate)
+    // pair, the null group insert, each merge source, and each wrapUp(). The live keys alone cross
+    // the growth threshold over the top of the sweep, so an "any growth" flag is set by the
+    // aggregation whether or not the insert ever resized anything - which is what it exists to
+    // detect. The other three post-drain operations run after the insert and can grow the map too,
+    // so "growth after the drain" does not separate them either; the calling frame does.
+    private static class NullKeyInsertGrowthRostiAllocFacade extends RostiAllocFacadeImpl {
+        static final String NULL_KEY_INSERT_METHOD = "insertNullKeyConditionally";
+        private volatile boolean hasGrownOnNullKeyInsert;
 
         @Override
         public void updateMemoryUsage(long pRosti, long oldSize) {
-            if (Rosti.getAllocMemory(pRosti) != oldSize) {
-                hasGrown = true;
+            if (Rosti.getAllocMemory(pRosti) != oldSize && isNullKeyInsertOnStack()) {
+                hasGrownOnNullKeyInsert = true;
             }
             super.updateMemoryUsage(pRosti, oldSize);
+        }
+
+        // Walks the caller's frames rather than only its immediate caller, so splitting the insert
+        // across a helper keeps the guard working. No other bracketed operation can reach this
+        // facade with the insert on its stack: the insert neither aggregates, merges nor wraps up.
+        private static boolean isNullKeyInsertOnStack() {
+            return StackWalker.getInstance().walk(
+                    frames -> frames.anyMatch(frame -> NULL_KEY_INSERT_METHOD.equals(frame.getMethodName()))
+            );
         }
     }
 }

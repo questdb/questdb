@@ -40,7 +40,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
@@ -3445,15 +3444,20 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelRostiColumnTopKey() throws Exception {
-        // Same harness, but the KEY column is added by ALTER, so the partitions written before it
-        // read back as a column top: every one of their rows belongs to the NULL group, and the
-        // build has to materialize that group from row presence alone. Runs through the whole
-        // matrix this class parameterises -- four workers x {parquet, native} x {parallel, serial}
-        // x {JIT, no JIT} -- which is the only coverage the column-top path gets over parquet.
+        // Same harness, but ALTER adds the KEY column, so the partitions written before it read
+        // back as a column top: every one of their rows belongs to the NULL group, and the build
+        // has to materialize that group from row presence alone.
+        //
+        // The class is not parameterised: the constructor draws one random configuration per run,
+        // flipping parallel GROUP BY, JIT and parquet independently (80/80/66 in favour of each)
+        // alongside a random batch size, shard count and page frame size. A single run therefore
+        // covers one combination -- always over four workers -- and repeated CI runs sample the
+        // space. GroupByTest.testGroupByInt32KeyColumnTopParquet pins the parquet column-top case
+        // deterministically; this test adds the concurrent, randomly configured variant.
         //
         // The value columns have no column top, so the vectorized and row-wise plans owe the same
         // answers and one expectation serves both.
-        testParallelRostiColumnTopGroupBy(
+        testParallelRostiGroupBy(
                 "SELECT key, count(), sum(v) sum_v, min(v) min_v, max(v) max_v, avg(v) avg_v, " +
                         "ksum(d) ksum_d, nsum(d) nsum_d " +
                         "FROM tab " +
@@ -3463,7 +3467,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         null\t100\t5050\t1\t100\t50.5\t100.0\t100.0
                         0\t50\t2550\t2\t100\t51.0\t100.0\t100.0
                         1\t50\t2500\t1\t99\t50.0\t100.0\t100.0
-                        """
+                        """,
+                true
         );
     }
 
@@ -5443,113 +5448,82 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         });
     }
 
-    private void testParallelRostiColumnTopGroupBy(String query, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(
-                    pool,
-                    (engine, compiler, sqlExecutionContext) -> {
-                        // One row per partition, so the frames spread over the workers.
-                        execute(
-                                compiler,
-                                "CREATE TABLE tab AS (SELECT " +
-                                        "x v, " +
-                                        "1.0 d, " +
-                                        "(x * 86400000000L)::timestamp ts " +
-                                        "from long_sequence(100)) timestamp (ts) PARTITION BY DAY",
-                                sqlExecutionContext
-                        );
-                        execute(compiler, "ALTER TABLE tab ADD COLUMN key INT", sqlExecutionContext);
-                        execute(
-                                compiler,
-                                "INSERT INTO tab SELECT x, 2.0, ((100 + x) * 86400000000L)::timestamp, (x % 2)::int " +
-                                        "FROM long_sequence(100)",
-                                sqlExecutionContext
-                        );
-                        if (convertToParquet) {
-                            execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
-                        }
-
-                        assertQuery(query)
-                                .withEngine(engine)
-                                .withContext(sqlExecutionContext)
-                                .noLeakCheck()
-                                .expectSize()
-                                .returns(expected);
-
-                        if (enableParallelGroupBy) {
-                            // Make sure that we're testing Rosti here.
-                            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                                RecordCursorFactory nestedFactory = factory.getBaseFactory();
-                                while (nestedFactory != null) {
-                                    if (nestedFactory.getClass() == GroupByRecordCursorFactory.class) {
-                                        break;
-                                    }
-                                    nestedFactory = nestedFactory.getBaseFactory();
-                                }
-                                Assert.assertNotNull("parallel GROUP BY doesn't use vect.GroupByRecordCursorFactory", nestedFactory);
-                            }
-                        }
-                    },
-                    configuration,
-                    LOG
-            );
-        });
+    private void testParallelRostiGroupBy(String query, String expected) throws Exception {
+        testParallelRostiGroupBy(query, expected, false);
     }
 
-    private void testParallelRostiGroupBy(String query, String expected) throws Exception {
+    /**
+     * Runs {@code query} over a table built for the vectorized keyed GROUP BY (Rosti) on a
+     * four-worker pool and asserts {@code expected}. When {@code hasColumnTopKey} is set, ALTER
+     * adds the key column mid-table so the earlier partitions read it back as a column top and
+     * every one of their rows lands in the NULL group; otherwise the key is a SYMBOL present from
+     * the start and three explicitly NULL-keyed rows carry the NULL group.
+     */
+    private void testParallelRostiGroupBy(String query, String expected, boolean hasColumnTopKey) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        // We want each row to be in its own partition
-                        execute(
-                                compiler,
-                                "CREATE TABLE tab AS (SELECT " +
-                                        "cast('k' || (x%5) as symbol) key, " +
-                                        "rnd_short() s, " +
-                                        "rnd_int(0, 256, 2) i, " +
-                                        "rnd_long(0, 1024, 2) l, " +
-                                        "rnd_long256(2) l256, " +
-                                        "rnd_double(2) d, " +
-                                        "rnd_timestamp(to_date('1980', 'yyyy'), to_date('1990', 'yyyy'), 2) t, " +
-                                        "rnd_date(to_date('1980', 'yyyy'), to_date('1990', 'yyyy'), 2) dd, " +
-                                        "(x * 864000000)::timestamp ts " +
-                                        "from long_sequence(500)) timestamp (ts) PARTITION BY DAY",
-                                sqlExecutionContext
-                        );
-                        execute(
-                                compiler,
-                                "insert into tab values (null, 1, 2, 3, 4::long256, 5.0, '1991-01-01', '1992-01-01', 0::timestamp)," +
-                                        "(null, 11, 12, 13, 14::long256, 15.0, '2001-01-01', '2002-01-01', (250L*864000000)::timestamp)," +
-                                        "(null, 21, 22, 23, 24::long256, 25.0, '2101-01-01', '2102-01-01', (500L*864000000)::timestamp)",
-                                sqlExecutionContext
-                        );
+                        if (hasColumnTopKey) {
+                            // One row per partition, so the frames spread over the workers.
+                            execute(
+                                    compiler,
+                                    "CREATE TABLE tab AS (SELECT " +
+                                            "x v, " +
+                                            "1.0 d, " +
+                                            "(x * 86_400_000_000L)::timestamp ts " +
+                                            "from long_sequence(100)) timestamp (ts) PARTITION BY DAY",
+                                    sqlExecutionContext
+                            );
+                            execute(compiler, "ALTER TABLE tab ADD COLUMN key INT", sqlExecutionContext);
+                            execute(
+                                    compiler,
+                                    "INSERT INTO tab SELECT x, 2.0, ((100 + x) * 86_400_000_000L)::timestamp, (x % 2)::int " +
+                                            "FROM long_sequence(100)",
+                                    sqlExecutionContext
+                            );
+                        } else {
+                            // We want each row to be in its own partition
+                            execute(
+                                    compiler,
+                                    "CREATE TABLE tab AS (SELECT " +
+                                            "cast('k' || (x%5) as symbol) key, " +
+                                            "rnd_short() s, " +
+                                            "rnd_int(0, 256, 2) i, " +
+                                            "rnd_long(0, 1024, 2) l, " +
+                                            "rnd_long256(2) l256, " +
+                                            "rnd_double(2) d, " +
+                                            "rnd_timestamp(to_date('1980', 'yyyy'), to_date('1990', 'yyyy'), 2) t, " +
+                                            "rnd_date(to_date('1980', 'yyyy'), to_date('1990', 'yyyy'), 2) dd, " +
+                                            "(x * 864000000)::timestamp ts " +
+                                            "from long_sequence(500)) timestamp (ts) PARTITION BY DAY",
+                                    sqlExecutionContext
+                            );
+                            execute(
+                                    compiler,
+                                    "insert into tab values (null, 1, 2, 3, 4::long256, 5.0, '1991-01-01', '1992-01-01', 0::timestamp)," +
+                                            "(null, 11, 12, 13, 14::long256, 15.0, '2001-01-01', '2002-01-01', (250L*864000000)::timestamp)," +
+                                            "(null, 21, 22, 23, 24::long256, 25.0, '2101-01-01', '2102-01-01', (500L*864000000)::timestamp)",
+                                    sqlExecutionContext
+                            );
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
 
-                        assertQuery(query)
+                        final QueryAssertion assertion = assertQuery(query)
                                 .withEngine(engine)
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
-                                .expectSize()
-                                .returns(expected);
-
+                                .expectSize();
                         if (enableParallelGroupBy) {
-                            // Make sure that we're testing Rosti here.
-                            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                                RecordCursorFactory nestedFactory = factory.getBaseFactory();
-                                while (nestedFactory != null) {
-                                    if (nestedFactory.getClass() == GroupByRecordCursorFactory.class) {
-                                        break;
-                                    }
-                                    nestedFactory = nestedFactory.getBaseFactory();
-                                }
-                                Assert.assertNotNull("parallel GROUP BY doesn't use vect.GroupByRecordCursorFactory", nestedFactory);
-                            }
+                            // Make sure that we're testing Rosti here. The fragment has to appear
+                            // somewhere in the plan of the whole query, root included, so a silent
+                            // fallback to the row-wise GroupBy factory fails the assertion.
+                            assertion.withPlanContaining("GroupBy vectorized: true");
                         }
+                        assertion.returns(expected);
                     },
                     configuration,
                     LOG

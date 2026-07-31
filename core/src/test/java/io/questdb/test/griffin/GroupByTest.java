@@ -28,12 +28,15 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Rosti;
 import io.questdb.std.RostiAllocFacadeImpl;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -1257,7 +1260,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testGroupByInt32KeyColumnTop() throws Exception {
         // Reproduces https://github.com/questdb/questdb/issues/5150
         assertMemoryLeak(() -> {
-            createColumnTopTable(false, false);
+            createColumnTopTable();
 
             assertQuery("select id, max(id2) from x order by id")
                     .noLeakCheck()
@@ -1333,7 +1336,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByInt32KeyColumnTopCountStar() throws Exception {
         assertMemoryLeak(() -> {
-            createColumnTopTable(false, false);
+            createColumnTopTable();
 
             assertQuery("select id, count() from x order by id")
                     .noLeakCheck()
@@ -1467,30 +1470,6 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGroupByInt32KeyColumnTopMaxShortNegativeFold() throws Exception {
-        // The column-top frame's own max(s) entry inserts the NULL-key slot pre-initialized
-        // from slot_initial_values_, so max(s) reaches wrapUp() with its offset still at the
-        // L_MIN sentinel while its accumulator holds -5. Reading that offset as a jshort out
-        // of jlong storage yields 0 and clamps the negative maximum away.
-        assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, s short, l long) timestamp(ts) partition by day");
-            execute("insert into x values ('2024-11-08T00:00:00.000000Z', -5, 1)");
-            execute("alter table x add column id int");
-            execute("insert into x values ('2025-11-08T00:00:00.000000Z', -7, 2, 42)");
-
-            assertQuery("select id, sum(l), max(s), min(s) from x order by id")
-                    .noLeakCheck()
-                    .expectSize()
-                    .withPlanContaining("GroupBy vectorized: true")
-                    .returns("""
-                            id\tsum\tmax\tmin
-                            null\t1\t-5\t-5
-                            42\t2\t-7\t-7
-                            """);
-        });
-    }
-
-    @Test
     public void testGroupByInt32KeyColumnTopMergesWithStoredNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp) timestamp(ts) partition by day");
@@ -1541,6 +1520,33 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByInt32KeyColumnTopMinMaxShortMergesWithStoredNull() throws Exception {
+        // The NULL-key group is built from two different sources: the column-top row (s = 3, which
+        // predates "id") and a row that stores an explicit NULL id (s = 5). Both must land in the
+        // same group, so min(s) is 3 and max(s) is 5 -- a wrapUp() that folded the column-top row
+        // in with a max-shaped comparison would leave min(s) at 5.
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, s short) timestamp(ts) partition by day");
+            execute("insert into x values ('2024-11-08T06:54:47.803364Z', 3)");
+            execute("alter table x add column id int");
+            execute("""
+                    insert into x values
+                        ('2025-11-08T00:00:00.000000Z', 5, null),
+                        ('2026-11-08T00:00:00.000000Z', 7, 42)""");
+
+            assertQuery("select id, min(s), max(s) from x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            id\tmin\tmax
+                            null\t3\t5
+                            42\t7\t7
+                            """);
+        });
+    }
+
+    @Test
     public void testGroupByInt32KeyColumnTopMinMaxShortNegative() throws Exception {
         // The NULL-key group renders 0, not null: SHORT has no NULL representation.
         assertMemoryLeak(() -> {
@@ -1566,45 +1572,43 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGroupByInt32KeyColumnTopMinShortFold() throws Exception {
+    public void testGroupByInt32KeyColumnTopMinMaxShortNegativeFold() throws Exception {
+        // The column-top frame's own max(s) entry inserts the NULL-key slot pre-initialized
+        // from slot_initial_values_, so max(s) reaches wrapUp() with its offset still at the
+        // L_MIN sentinel while its accumulator holds -5. Reading that offset as a jshort out
+        // of jlong storage yields 0 and clamps the negative maximum away. min(s) rides along on
+        // the same slot and pins the mirror-image sentinel.
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, s short) timestamp(ts) partition by day");
-            execute("insert into x values ('2024-11-08T06:54:47.803364Z', 3)");
+            execute("create table x (ts timestamp, s short, l long) timestamp(ts) partition by day");
+            execute("insert into x values ('2024-11-08T00:00:00.000000Z', -5, 1)");
             execute("alter table x add column id int");
-            execute("""
-                    insert into x values
-                        ('2025-11-08T00:00:00.000000Z', 5, null),
-                        ('2026-11-08T00:00:00.000000Z', 7, 42)""");
+            execute("insert into x values ('2025-11-08T00:00:00.000000Z', -7, 2, 42)");
 
-            assertQuery("select id, min(s), max(s) from x order by id")
+            assertQuery("select id, sum(l), max(s), min(s) from x order by id")
                     .noLeakCheck()
                     .expectSize()
                     .withPlanContaining("GroupBy vectorized: true")
                     .returns("""
-                            id\tmin\tmax
-                            null\t3\t5
-                            42\t7\t7
+                            id\tsum\tmax\tmin
+                            null\t1\t-5\t-5
+                            42\t2\t-7\t-7
                             """);
         });
     }
 
     @Test
     public void testGroupByInt32KeyColumnTopMultiWorkerMerge() throws Exception {
-        // Several column-top frames spread across four workers must still yield exactly one NULL
-        // group, neither dropped nor counted twice.
+        // Four column-top frames and four keyed ones over a four-worker pool. Which shard a frame
+        // lands in is the scheduler's choice -- the coordinator work-steals as well -- so the
+        // asserted answers are the ones that hold for every possible split. The facade reports
+        // whether a run actually populated more than one shard, and the loop stops as soon as one
+        // did; it cannot assert that, because a loaded box can legitimately keep every frame on
+        // one shard.
+        final ShardCountingRostiAllocFacade facade = new ShardCountingRostiAllocFacade();
+        configOverrideRostiAllocFacade(facade);
         assertMemoryLeak(() -> {
             final int workerCount = 4;
-            final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public String getPoolName() {
-                    return "groupBy";
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return workerCount;
-                }
-            });
+            final WorkerPool pool = new TestWorkerPool("groupBy", workerCount);
             try {
                 WorkerPoolUtils.setupQueryJobs(pool, engine);
                 pool.start(null);
@@ -1615,32 +1619,34 @@ public class GroupByTest extends AbstractCairoTest {
                     execute("insert into t select (x * 86_400_000_000L)::timestamp, x from long_sequence(4)", parallelCtx);
                     execute("alter table t add column id int", parallelCtx);
                     execute("alter table t add column v2 long", parallelCtx);
-                    execute("insert into t select ((x + 4) * 86400000000L)::timestamp, x + 4, 42, x + 4 from long_sequence(4)", parallelCtx);
+                    execute("insert into t select ((x + 4) * 86_400_000_000L)::timestamp, x + 4, 42, x + 4 from long_sequence(4)", parallelCtx);
 
-                    assertQuery("select id, max(v2) from t order by id")
-                            .withContext(parallelCtx)
-                            .noLeakCheck()
-                            .expectSize()
-                            .withPlanContaining("GroupBy vectorized: true")
-                            .returns("""
-                                    id\tmax
-                                    null\tnull
-                                    42\t8
-                                    """);
+                    for (int i = 0; i < 20 && facade.maxPopulatedShards() < 2; i++) {
+                        assertQuery("select id, max(v2) from t order by id")
+                                .withContext(parallelCtx)
+                                .noLeakCheck()
+                                .expectSize()
+                                .withPlanContaining("GroupBy vectorized: true")
+                                .returns("""
+                                        id\tmax
+                                        null\tnull
+                                        42\t8
+                                        """);
 
-                    assertQuery("select id, sum(v), max(v2), count() from t order by id")
-                            .withContext(parallelCtx)
-                            .noLeakCheck()
-                            .expectSize()
-                            .withPlanContaining("GroupBy vectorized: true")
-                            .returns("""
-                                    id\tsum\tmax\tcount
-                                    null\t10\tnull\t4
-                                    42\t26\t8\t4
-                                    """);
+                        assertQuery("select id, sum(v), max(v2), count() from t order by id")
+                                .withContext(parallelCtx)
+                                .noLeakCheck()
+                                .expectSize()
+                                .withPlanContaining("GroupBy vectorized: true")
+                                .returns("""
+                                        id\tsum\tmax\tcount
+                                        null\t10\tnull\t4
+                                        42\t26\t8\t4
+                                        """);
+                    }
                 }
             } finally {
-                pool.halt();
+                pool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
             }
         });
     }
@@ -1699,7 +1705,7 @@ public class GroupByTest extends AbstractCairoTest {
         // Control for https://github.com/questdb/questdb/issues/5150: max(id2 + 0) is not
         // vectorizable, so the general path's two groups are the oracle.
         assertMemoryLeak(() -> {
-            createColumnTopTable(false, false);
+            createColumnTopTable();
 
             assertQuery("select id, max(id2 + 0) from x order by id")
                     .noLeakCheck()
@@ -1718,12 +1724,20 @@ public class GroupByTest extends AbstractCairoTest {
         // The build derives the NULL group from a flag the workers raise, and the same factory can
         // be executed again after the column-top partition is gone. A flag that survived the first
         // execution would add a group the data no longer has.
+        //
+        // The second execution has to go through the SAME factory for that to be a test at all.
+        // DROP PARTITION only advances the txn -- it writes through the column version and txn
+        // files and never bumps the metadata version -- so the held factory stays valid and the
+        // builder's recompile-on-TableReferenceOutOfDateException fallback never fires here. Were
+        // that to change, the fallback would hand the second assertion a fresh factory with a
+        // fresh flag and this test would pass no matter what the flag did.
         assertMemoryLeak(() -> {
-            createColumnTopTable(false, false);
+            createColumnTopTable();
 
             assertQuery("select id, max(id2) from x order by id")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
                     .mutateWith("alter table x drop partition list '2024-11-08'")
                     .returns("""
                             id\tmax
@@ -1767,7 +1781,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testGroupByInt32KeyColumnTopParquet() throws Exception {
         // A column absent from a parquet file must behave exactly like a native column top.
         assertMemoryLeak(() -> {
-            createColumnTopTable(false, true);
+            createColumnTopTableParquet();
 
             // Pin the conversion: the active partition is skipped by design, so exactly the two
             // column-top partitions become parquet. Without this the test would silently
@@ -1854,9 +1868,13 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByInt32KeyColumnTopVectorizedMatchesGeneralPlan() throws Exception {
         // Issue 5150 was a divergence between the two plans, not a wrong value in isolation, so
-        // per-family plan agreement is the strongest available oracle: each aggregate is asserted
-        // once through the rosti path and once through the general path, forced off vectorization
-        // by an arithmetically neutral "+ 0" on its argument.
+        // each aggregate runs twice: once through the rosti path and once through the general path,
+        // forced off vectorization by an arithmetically neutral "+ 0" on its argument.
+        //
+        // assertPlansAgree does not compare the two results against each other. It pins each of
+        // them against the same hand-written literal, which subsumes agreement: two plans that
+        // diverge cannot both match, and two plans that agree on a wrong value still fail. The
+        // literal is what carries the oracle; the pairing is what localizes a failure to one plan.
         //
         // "+ 0" does not defeat vectorization for an integer sum: the optimizer rewrites
         // sum(vi + 0) into sum(vi) + count(vi) * 0 and keeps the rosti path (same for "* 1").
@@ -1867,7 +1885,7 @@ public class GroupByTest extends AbstractCairoTest {
         // SHORT is excluded deliberately: "vs + 0" widens to INT, and INT has a NULL sentinel
         // where SHORT has none, so an empty group renders null instead of 0. That is a type
         // semantics difference rather than a plan divergence. SHORT is covered instead by
-        // testGroupByInt32KeyColumnTopMinMaxShortNegative and ...MaxShortNegativeFold.
+        // testGroupByInt32KeyColumnTopMinMaxShortNegative and ...MinMaxShortNegativeFold.
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, vi int, vl long, vd double) timestamp(ts) partition by day");
             execute("insert into x values ('2024-11-08T00:00:00.000000Z', 2, 20, 2.5)");
@@ -1898,7 +1916,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testGroupByInt32KeyColumnTopWal() throws Exception {
         // The WAL apply path writes column tops through a different writer.
         assertMemoryLeak(() -> {
-            createColumnTopTable(true, false);
+            createColumnTopTableWal();
 
             assertQuery("select id, max(id2) from x order by id")
                     .noLeakCheck()
@@ -1943,7 +1961,7 @@ public class GroupByTest extends AbstractCairoTest {
             execute("create table x (ts timestamp, id int, d double) timestamp(ts) partition by day");
             execute("""
                     insert into x values
-                        ('2024-11-08T00:00:00.000000Z', 42, 9007199254740992.0),
+                        ('2024-11-08T00:00:00.000000Z', 42, 9_007_199_254_740_992::double),
                         ('2024-11-08T01:00:00.000000Z', 42, 1.0),
                         ('2024-11-08T02:00:00.000000Z', 42, null),
                         ('2024-11-08T03:00:00.000000Z', 42, 1.0)""");
@@ -1979,37 +1997,21 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByInt32KeyMergesWorkerShardsExactly() throws Exception {
         // End-to-end cover for the merge step, which only runs when one group's rows land in more
-        // than one worker shard. Nothing pins a row to a shard -- the slot belongs to whichever
-        // pool thread dequeues the task, plus the inline work-stealing path -- so the data is built
-        // so that every aggregate's answer is the same for EVERY possible split, and the facade
-        // below reports whether the run actually fanned out.
+        // than one worker shard. Nothing pins a row to a shard, so the data is built so that every
+        // aggregate's answer is the same for EVERY possible split.
         //
         // nsum is the one that needs the care. 2^60 and 2^59 have ulps of 256 and 128, so the rows
         // of 1.0 round away against either and survive only in the Neumaier compensation. Putting
         // one large value in the first partition and the other in the last gives two shards that
-        // both accumulate a compensation, and at least one of them has to be a merge SOURCE --
-        // the side whose compensation used to be dropped. 2^60 + 2^59 + 256 is exactly one ulp
-        // above 2^60 + 2^59, so the total is exact for every possible split, and the query
-        // subtracts the large part rather than asserting seventeen significant digits.
-        //
-        // sum(i) covers the same merge for the 64-bit accumulator behind a 32-bit column: three
-        // rows of 1_500_000_000 total 4_500_000_000, which is past INT_MAX, so a shard partial read
-        // back as 32 bits would come back short by a multiple of 2^32.
+        // both accumulate a compensation, so one of them can be a merge SOURCE -- the side whose
+        // compensation used to be dropped. 2^60 + 2^59 + 256 is exactly one ulp above 2^60 + 2^59,
+        // so the total is exact for every possible split, and the query subtracts the large part
+        // rather than asserting seventeen significant digits.
         final ShardCountingRostiAllocFacade facade = new ShardCountingRostiAllocFacade();
         configOverrideRostiAllocFacade(facade);
         assertMemoryLeak(() -> {
             final int workerCount = 4;
-            final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public String getPoolName() {
-                    return "groupByMerge";
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return workerCount;
-                }
-            });
+            final WorkerPool pool = new TestWorkerPool("groupByMerge", workerCount);
             try {
                 WorkerPoolUtils.setupQueryJobs(pool, engine);
                 pool.start(null);
@@ -2022,15 +2024,19 @@ public class GroupByTest extends AbstractCairoTest {
                     execute("""
                             insert into t select (x * 3600 * 1_000_000L)::timestamp, 42, x,
                                 case when x <= 3 then 1_500_000_000 else 0 end,
-                                case when x = 1 then 1152921504606846976.0
-                                     when x = 258 then 576460752303423488.0
+                                case when x = 1 then 1_152_921_504_606_846_976::double
+                                     when x = 258 then 576_460_752_303_423_488::double
                                      else 1.0 end
                             from long_sequence(258)""", parallelCtx);
 
-                    // Repeated because fan-out is up to the scheduler; the answers are asserted on
-                    // every run, so a run that stayed on one shard still checks the result.
-                    for (int i = 0; i < 20 && facade.maxPopulatedShards() < 2; i++) {
-                        assertQuery("select k, nsum(d) - 1729382256910270464.0 nsum from t")
+                    // nsum lays its value columns out as [1] sum, [2] compensation, [3] count, so a
+                    // shard that accumulated a residual carries it at value column 2. Retry until a
+                    // shard holding such a residual was a merge SOURCE -- the case the merge fix is
+                    // about -- and stop either way, because which shard gets which frame is the
+                    // scheduler's choice and the asserted answer holds for every split.
+                    facade.watchCompensationAt(2);
+                    for (int i = 0; i < 20 && !facade.hasCompensatedMergeSource(); i++) {
+                        assertQuery("select k, nsum(d) - 1_729_382_256_910_270_464::double nsum from t")
                                 .withContext(parallelCtx)
                                 .noLeakCheck()
                                 .expectSize()
@@ -2039,7 +2045,15 @@ public class GroupByTest extends AbstractCairoTest {
                                         k\tnsum
                                         42\t256.0
                                         """);
+                    }
+                    facade.stopWatchingCompensation();
+                    facade.resetObservations();
 
+                    // sum(i) covers the same merge for the 64-bit accumulator behind a 32-bit
+                    // column: three rows of 1_500_000_000 total 4_500_000_000, which is past
+                    // INT_MAX, so a shard partial read back as 32 bits would come back short by a
+                    // multiple of 2^32.
+                    for (int i = 0; i < 20 && facade.maxPopulatedShards() < 2; i++) {
                         assertQuery("select k, sum(v), min(v), max(v), count(), avg(v), sum(i), min(i), max(i) from t")
                                 .withContext(parallelCtx)
                                 .noLeakCheck()
@@ -2050,8 +2064,6 @@ public class GroupByTest extends AbstractCairoTest {
                                         42\t33411\t1\t258\t258\t129.5\t4500000000\t0\t1500000000
                                         """);
                     }
-                    Assert.assertTrue("every run put all the rows in one shard, so nothing merged",
-                            facade.maxPopulatedShards() > 1);
                 }
             } finally {
                 pool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
@@ -2310,6 +2322,57 @@ public class GroupByTest extends AbstractCairoTest {
                             sym\tmax
                             \tnull
                             abc\t42
+                            """);
+        });
+    }
+
+    @Test
+    public void testGroupBySymbolKeyColumnTopSumAvgFamiliesNullValues() throws Exception {
+        // The INT-keyed sum/avg coverage cannot stand in for this one: a SYMBOL key writes
+        // SymbolTable.VALUE_IS_NULL (-1) into the null slot where an INT key writes
+        // Numbers.INT_NULL, so the two take different arms everywhere the key is compared. Here
+        // the NULL-key group is made of column-top rows only, so every accumulator stays at its
+        // initial value and each aggregate has to render what it renders for an empty group.
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp) timestamp(ts) partition by day");
+            execute("insert into x values ('2024-11-08T06:54:47.803364Z')");
+            execute("alter table x add column sym symbol");
+            execute("alter table x add column vi int");
+            execute("alter table x add column vl long");
+            execute("alter table x add column vd double");
+            execute("insert into x values ('2025-11-08T00:00:00.000000Z', 'abc', 2, 20, 2.5)");
+
+            assertQuery("select sym, sum(vi), sum(vl), sum(vd), avg(vi), avg(vl), avg(vd), ksum(vd), count(vi), count() from x order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            sym\tsum\tsum1\tsum2\tavg\tavg1\tavg2\tksum\tcount\tcount1
+                            \tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t1
+                            abc\t2\t20\t2.5\t2.0\t20.0\t2.5\t2.5\t1\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testGroupBySymbolKeyColumnTopSumAvgFamiliesWithSiblings() throws Exception {
+        // The SYMBOL-keyed counterpart of testGroupByInt32KeyColumnTopSumAvgFamiliesWithSiblings:
+        // the NULL-key group carries real values here, so every aggregate has to fold the
+        // column-top rows in rather than report an empty group.
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, vi int, vl long, vd double) timestamp(ts) partition by day");
+            execute("insert into x values ('2024-11-08T06:54:47.803364Z', 1, 10, 1.5)");
+            execute("alter table x add column sym symbol");
+            execute("insert into x values ('2025-11-08T00:00:00.000000Z', 2, 20, 2.5, 'abc')");
+
+            assertQuery("select sym, sum(vi), sum(vl), sum(vd), avg(vi), avg(vl), avg(vd), ksum(vd), count(vi), count() from x order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            sym\tsum\tsum1\tsum2\tavg\tavg1\tavg2\tksum\tcount\tcount1
+                            \t1\t10\t1.5\t1.0\t10.0\t1.5\t1.5\t1\t1
+                            abc\t2\t20\t2.5\t2.0\t20.0\t2.5\t2.5\t1\t1
                             """);
         });
     }
@@ -4612,17 +4675,51 @@ public class GroupByTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
-    // Records which worker shards the build actually populated, so a run that happened to keep
-    // every frame on one of them cannot pass for merge coverage. getSize() is the facade call the
-    // build makes once per shard while picking the biggest one, and only the coordinator makes it.
+    // Three partitions: one written before "id" exists (the column top), one before "id2" exists,
+    // and one with both columns present.
+    private void createColumnTopTable() throws Exception {
+        execute("create table x (ts timestamp) timestamp(ts) partition by day");
+        populateColumnTopTable();
+    }
+
+    private void createColumnTopTableParquet() throws Exception {
+        createColumnTopTable();
+        execute("alter table x convert partition to parquet where ts >= 0");
+    }
+
+    private void createColumnTopTableWal() throws Exception {
+        execute("create table x (ts timestamp) timestamp(ts) partition by day wal");
+        populateColumnTopTable();
+        drainWalQueue();
+    }
+
+    private void populateColumnTopTable() throws Exception {
+        execute("insert into x values ('2024-11-08T06:54:47.803364Z')");
+        execute("alter table x add column id int");
+        execute("insert into x values ('2025-11-08T06:54:47.803364Z', 42)");
+        execute("alter table x add column id2 int");
+        execute("insert into x values ('2026-11-08T06:54:47.803364Z', 42, 42)");
+    }
+
+    // Reports what the coordinator saw in each worker shard just before it merged them, so a test
+    // that needs a real fan-out can retry until it gets one instead of assuming it. getSize() is
+    // the facade call the build makes once per shard while picking the merge destination, and only
+    // the coordinator makes it, after every worker has finished writing. The first call for a
+    // given shard within a build is therefore that pass; the merge loop re-calls getSize() on the
+    // sources it visits, and this ignores those repeats.
     private static class ShardCountingRostiAllocFacade extends RostiAllocFacadeImpl {
-        private final LongHashSet currentBuild = new LongHashSet();
+        private final LongHashSet observed = new LongHashSet();
+        // Triples of (pRosti, size, 1 when the watched value column holds a non-zero compensation),
+        // in the order the build reads the shards.
+        private final LongList shards = new LongList();
+        private boolean hasCompensatedMergeSource;
         private int maxPopulatedShards;
+        private int watchedCompensationColumn = -1;
 
         @Override
         public void clear(long pRosti) {
             // getCursor() clears every shard before building, so this is the boundary between one
-            // build and the next. Counting across builds would let two runs that each stayed on a
+            // build and the next. Folding across builds would let two runs that each stayed on a
             // single shard -- of two different factories -- look like one run that fanned out.
             foldBuild();
             super.clear(pRosti);
@@ -4631,37 +4728,84 @@ public class GroupByTest extends AbstractCairoTest {
         @Override
         public long getSize(long pRosti) {
             final long size = super.getSize(pRosti);
-            if (size > 0) {
-                currentBuild.add(pRosti);
+            if (observed.add(pRosti)) {
+                shards.add(pRosti);
+                shards.add(size);
+                shards.add(size > 0 && hasNonZeroCompensation(pRosti) ? 1 : 0);
             }
             return size;
         }
 
         private void foldBuild() {
-            if (currentBuild.size() > maxPopulatedShards) {
-                maxPopulatedShards = currentBuild.size();
+            // The build starts at pRosti[0] and replaces the destination only on a strictly bigger
+            // shard, so the first shard of maximal size wins. Every other populated shard is a
+            // merge source.
+            long destination = 0;
+            long biggestSize = -1;
+            int populated = 0;
+            for (int i = 0, n = shards.size(); i < n; i += 3) {
+                final long size = shards.getQuick(i + 1);
+                if (size > 0) {
+                    populated++;
+                }
+                if (size > biggestSize) {
+                    biggestSize = size;
+                    destination = shards.getQuick(i);
+                }
             }
-            currentBuild.clear();
+            for (int i = 0, n = shards.size(); i < n; i += 3) {
+                if (shards.getQuick(i) != destination && shards.getQuick(i + 1) > 0 && shards.getQuick(i + 2) != 0) {
+                    hasCompensatedMergeSource = true;
+                }
+            }
+            if (populated > maxPopulatedShards) {
+                maxPopulatedShards = populated;
+            }
+            observed.clear();
+            shards.clear();
+        }
+
+        private boolean hasCompensatedMergeSource() {
+            foldBuild();
+            return hasCompensatedMergeSource;
+        }
+
+        private boolean hasNonZeroCompensation(long pRosti) {
+            if (watchedCompensationColumn < 0) {
+                return false;
+            }
+            final long ctrl = Rosti.getCtrl(pRosti);
+            final long slots = Rosti.getSlots(pRosti);
+            final long shift = Rosti.getSlotShift(pRosti);
+            final long capacity = Rosti.getCapacity(pRosti);
+            final int field = Unsafe.getInt(Rosti.getValueOffsets(pRosti) + watchedCompensationColumn * 4L);
+            for (long i = 0; i < capacity; i++) {
+                if (Unsafe.getByte(ctrl + i) > -1 && Unsafe.getDouble(slots + (i << shift) + field) != 0.0) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private int maxPopulatedShards() {
             foldBuild();
             return maxPopulatedShards;
         }
-    }
 
-    private void createColumnTopTable(boolean isWal, boolean isParquet) throws Exception {
-        execute("create table x (ts timestamp) timestamp(ts) partition by day" + (isWal ? " wal" : ""));
-        execute("insert into x values ('2024-11-08T06:54:47.803364Z')");
-        execute("alter table x add column id int");
-        execute("insert into x values ('2025-11-08T06:54:47.803364Z', 42)");
-        execute("alter table x add column id2 int");
-        execute("insert into x values ('2026-11-08T06:54:47.803364Z', 42, 42)");
-        if (isWal) {
-            drainWalQueue();
+        // Forgets what earlier queries observed, so the next loop measures its own fan-out rather
+        // than inheriting a verdict the previous one reached.
+        private void resetObservations() {
+            foldBuild();
+            hasCompensatedMergeSource = false;
+            maxPopulatedShards = 0;
         }
-        if (isParquet) {
-            execute("alter table x convert partition to parquet where ts >= 0");
+
+        private void stopWatchingCompensation() {
+            watchedCompensationColumn = -1;
+        }
+
+        private void watchCompensationAt(int valueColumnIndex) {
+            watchedCompensationColumn = valueColumnIndex;
         }
     }
 }

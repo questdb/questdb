@@ -42,6 +42,38 @@ public class RostiTest extends AbstractCairoTest {
     private static final int VALUE_OFFSET = 1;
 
     @Test
+    public void testEveryWrapUpSweepSurvivesNullKeyInsertResize() throws Exception {
+        // wrapUp() populates the null-key slot and then sweeps the map, NULLing every group whose
+        // count is still 0. The populate inserts, and an insert past the growth threshold resizes:
+        // that reallocates ctrl_ and slots_, frees the old block and grows capacity_. A sweep
+        // reading a snapshot taken before the populate walks freed memory and leaves the live
+        // count-0 groups behind.
+        //
+        // Each of the nine sweeping wrapUps seeds its own slot layout, so the assertion they all
+        // share is expressed in the one term they have in common: the sweep visits every live
+        // group, and an untouched group is one still holding the value initRosti() wrote. The
+        // sum(long) case additionally pins the swept sentinel and the null group's own value.
+        //
+        // Capacity is ceilPow2(16) - 1 = 15 and the threshold is capacity - capacity/8 = 14, so
+        // the liveKeys sweep below straddles the resize.
+        assertMemoryLeak(() -> {
+            final ObjList<WrapUpCase> cases = wrapUpCases();
+            for (int i = 0, n = cases.size(); i < n; i++) {
+                final WrapUpCase c = cases.getQuick(i);
+                boolean hasResizedInWrapUp = false;
+                for (int liveKeys = 8; liveKeys <= 20; liveKeys++) {
+                    hasResizedInWrapUp |= assertWrapUpSweepsEveryGroup(c, liveKeys, false);
+                }
+                // Only one point in the sweep puts the resize inside wrapUp(); above it the live
+                // keys resize first. Fail loudly rather than silently degenerate if the growth
+                // math moves.
+                Assert.assertTrue("no iteration resized inside wrapUp() [case=" + c.name
+                        + "] -- widen the liveKeys sweep", hasResizedInWrapUp);
+            }
+        });
+    }
+
+    @Test
     public void testFailedResetLeavesTheMapReportingItsEntries() throws Exception {
         // reset() shrinks a map by building a fresh arena, and that allocation can fail. It used to
         // empty the map before trying, so a failed reset left size_ at 0 while the old arena still
@@ -92,8 +124,9 @@ public class RostiTest extends AbstractCairoTest {
                     Assert.assertTrue(Rosti.keyedIntKSumDoubleMerge(pRostiA, pRostiB, VALUE_OFFSET));
 
                     Assert.assertEquals(9.25, readSingleSlotDouble(pRostiA, VALUE_OFFSET), 0.0);
+                    // A third shard merging into A reads this field, as does wrapUp()'s populate
+                    // branch, so the fresh correction has to replace the one merge just consumed.
                     Assert.assertEquals(0.0, readSingleSlotDouble(pRostiA, VALUE_OFFSET + 1), 0.0);
-                    Assert.assertEquals(3, readSingleSlotLong(pRostiA, VALUE_OFFSET + 2));
                 } finally {
                     Rosti.free(pRostiB);
                 }
@@ -105,18 +138,10 @@ public class RostiTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedIntKSumDoubleWrapUpKeepsTheSlotSelfConsistent() throws Exception {
-        // Pins two internal invariants of the ksum slot rather than a query result: ksum reports
-        // the running sum alone, and the sweep reads the count only to test it against zero, so
-        // neither field below reaches a user today.
-        //
-        // The compensation must be written back, or the slot is left claiming a correction for a
-        // value it no longer sits beside. Seeding a NON-ZERO c is what makes that visible: the
-        // Kahan step starts from y = valueAtNull - c, so a zero seed leaves that read dead.
-        //
-        // The count must gain the whole folded count. valueAtNullCount is the number of column-top
-        // page frames the non-keyed accumulator absorbed -- aggregate() bumps it once per frame,
-        // not once per row -- so it does not match the keyed path's per-row count either way;
-        // += 1 dropped all but the first frame, and this keeps it monotone in what was folded in.
+        // Pins an internal invariant of the ksum slot rather than a query result: the Kahan step
+        // writes the new compensation back beside the value it belongs to, so the pair keeps
+        // standing for sum - c. Seeding a NON-ZERO c is what makes that visible -- the step starts
+        // from y = valueAtNull - c, so a zero seed leaves the read dead.
         //
         // 2^53 has an ulp of 2, so adding y = 1.0 - 0.5 rounds straight back off and the residual
         // is exactly -0.5.
@@ -130,7 +155,6 @@ public class RostiTest extends AbstractCairoTest {
 
                 Assert.assertEquals(9_007_199_254_740_992.0, readSingleSlotDouble(pRosti, VALUE_OFFSET), 0.0);
                 Assert.assertEquals(-0.5, readSingleSlotDouble(pRosti, VALUE_OFFSET + 1), 0.0);
-                Assert.assertEquals(5, readSingleSlotLong(pRosti, VALUE_OFFSET + 2));
             } finally {
                 Rosti.free(pRosti);
             }
@@ -139,11 +163,8 @@ public class RostiTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedIntNSumDoubleMergeCarriesSourceCompensation() throws Exception {
-        // Each worker shard accumulates its own (sum, c) pair, and merge() folds shard B into
-        // shard A. B's total is its sum plus its compensation, so dropping the compensation
-        // loses real value. merge() is key-agnostic, so this needs no column top at all -- it
-        // is the ordinary multi-worker path taken whenever one group's rows span two shards.
-        // (The key here happens to be INT_NULL only because it is the convenient seed.)
+        // merge() is key-agnostic, so this needs no column top at all: the key is INT_NULL only
+        // because it is the convenient seed.
         assertMemoryLeak(() -> {
             // abs(sum) >= d: first arm of the Neumaier step.
             assertMergeCarriesCompensation(8.0, 0.25, 2.0, 0.5, 10.75);
@@ -198,10 +219,7 @@ public class RostiTest extends AbstractCairoTest {
     public void testKeyedIntSumIntMergeKeepsPartialsAboveIntRange() throws Exception {
         // sum(int) and avg(int) accumulate into a 64-bit slot, so a worker shard's partial can
         // exceed int range long before the total does. Driven through JNI because nothing pins a
-        // group's rows to a chosen shard: the slot comes from whichever pool thread dequeues the
-        // task, plus the inline work-stealing path. A SQL test could never fail spuriously -- a
-        // single-shard group skips the merge entirely -- but it would often pass without
-        // exercising the merge at all.
+        // group's rows to a chosen shard, so a SQL test would often skip the merge altogether.
         //
         // 3_000_000_000 sign-extends from its low 32 bits to -1_294_967_296, so both branches
         // below land far from the correct answer when the slot is read as jint.
@@ -215,51 +233,6 @@ public class RostiTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEveryWrapUpSweepSurvivesNullKeyInsertResize() throws Exception {
-        // Same property as testKeyedIntSumLongWrapUpSweepSurvivesNullKeyInsertResize, across all
-        // nine sweeping wrapUps rather than the one. Each seeds its own slot layout, so the
-        // assertion is expressed in the one term they share: the sweep visits every live group,
-        // and an empty group is one the sweep has not yet touched, still holding the value
-        // initRosti() wrote. A sweep walking a snapshot taken before the populate resized would
-        // leave the live ones behind.
-        assertMemoryLeak(() -> {
-            final ObjList<WrapUpCase> cases = wrapUpCases();
-            for (int i = 0, n = cases.size(); i < n; i++) {
-                final WrapUpCase c = cases.getQuick(i);
-                boolean hasResizedInWrapUp = false;
-                for (int liveKeys = 8; liveKeys <= 20; liveKeys++) {
-                    hasResizedInWrapUp |= assertWrapUpSweepsEveryGroup(c, liveKeys);
-                }
-                Assert.assertTrue("no iteration resized inside wrapUp() [case=" + c.name
-                        + "] -- widen the liveKeys sweep", hasResizedInWrapUp);
-            }
-        });
-    }
-
-    @Test
-    public void testKeyedIntSumLongWrapUpSweepSurvivesNullKeyInsertResize() throws Exception {
-        // wrapUp() populates the null-key slot and then sweeps the map, NULLing every group
-        // whose count is still 0. The populate inserts, and an insert past the growth threshold
-        // resizes: that reallocates ctrl_ and slots_, frees the old block and doubles capacity_.
-        // A sweep reading a snapshot taken before the populate walks freed memory and leaves the
-        // live count-0 groups un-NULLed.
-        //
-        // Capacity is ceilPow2(16) - 1 = 15 and the threshold is capacity - capacity/8 = 14, so
-        // the sweep below straddles the resize. This case also pins the swept value itself
-        // (LONG_NULL) and the null group's own value, which the all-wrapUps sweep above does not.
-        assertMemoryLeak(() -> {
-            boolean hasResizedInWrapUp = false;
-            for (int liveKeys = 8; liveKeys <= 20; liveKeys++) {
-                hasResizedInWrapUp |= assertSweepNullsEmptyGroupsAndReportResize(liveKeys);
-            }
-            // Only one point in the sweep puts the resize inside wrapUp(); above it the inserts
-            // resize first. Fail loudly rather than silently degenerate if the growth math moves.
-            Assert.assertTrue("no iteration resized inside wrapUp() -- widen the liveKeys sweep",
-                    hasResizedInWrapUp);
-        });
-    }
-
-    @Test
     public void testPrintRosti() {
         long pRosti = Rosti.alloc(new SingleColumnType(ColumnType.INT), 1024);
         try {
@@ -269,46 +242,89 @@ public class RostiTest extends AbstractCairoTest {
         }
     }
 
-    private static void initCompensatedSumSlot(long pRosti) {
-        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET), 0.0);
-        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 1), 0.0);
-        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 2), 0);
+    @Test
+    public void testResetRestoresTheGrowthThreshold() throws Exception {
+        // reset() shrinks the map by rebuilding its arena, and initialize_slots() recomputes
+        // growth_left_ as CapacityToGrowth(capacity) - size_ while size_ still holds the OLD entry
+        // count. reset() repairs that by recomputing growth_left_ once it has zeroed size_; drop
+        // the repair and the subtraction below is 14 - 20 on a uint64_t, which wraps to ~1.8e19.
+        // The map then never resizes and the second batch of inserts runs off the end of a
+        // 15-slot arena.
+        //
+        // Rosti.reset(pRosti, 16) shrinks capacity to ceilPow2(16) - 1 = 15, whose growth
+        // threshold is capacity - capacity/8 = 14. So the map has to hold more than 14 entries
+        // going in for the subtraction to wrap, and take more than 14 afterwards for the wrap to
+        // show. A reset of a map holding one entry computes 14 - 1 and stays harmless either way.
+        assertMemoryLeak(() -> {
+            final int keyCount = 20;
+            final long keysSize = 4L * keyCount;
+            final long pKeys = Unsafe.malloc(keysSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < keyCount; i++) {
+                    Unsafe.putInt(pKeys + 4L * i, i + 1);
+                }
+                final long pRosti = Rosti.alloc(types(ColumnType.LONG), 64);
+                Assert.assertNotEquals(0, pRosti);
+                long recordedSize = Rosti.getAllocMemory(pRosti);
+                try {
+                    Assert.assertTrue(Rosti.keyedIntDistinct(pRosti, pKeys, keyCount));
+                    Assert.assertEquals(keyCount, Rosti.getSize(pRosti));
+
+                    Assert.assertTrue(Rosti.reset(pRosti, 16));
+                    Assert.assertEquals(0, Rosti.getSize(pRosti));
+                    // reset() records its own shrink, so the baseline for the inserts below moves.
+                    recordedSize = Rosti.getAllocMemory(pRosti);
+                    final long capacityAfterReset = Rosti.getCapacity(pRosti);
+
+                    Assert.assertTrue(Rosti.keyedIntDistinct(pRosti, pKeys, keyCount));
+
+                    Assert.assertTrue("the map never resized [capacity=" + capacityAfterReset + ']',
+                            Rosti.getCapacity(pRosti) > capacityAfterReset);
+                    Assert.assertEquals(keyCount, Rosti.getSize(pRosti));
+                    assertHoldsEveryKey(pRosti, keyCount);
+                } finally {
+                    // Rosti.alloc() and Rosti.reset() each recorded the size current at the time,
+                    // and Rosti.free() subtracts the current one, so the growth these inserts
+                    // caused has to be recorded too. Production does this via the same helper,
+                    // through RostiAllocFacade.
+                    Rosti.updateMemoryUsage(pRosti, recordedSize);
+                    Rosti.free(pRosti);
+                }
+            } finally {
+                Unsafe.free(pKeys, keysSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
-    private static ArrayColumnTypes types(int... valueTypes) {
-        final ArrayColumnTypes types = new ArrayColumnTypes();
-        types.add(ColumnType.INT); // key
-        for (int valueType : valueTypes) {
-            types.add(valueType);
-        }
-        return types;
+    @Test
+    public void testWrapUpPopulatesAnExistingEmptyNullSlotBeforeSweepingIt() throws Exception {
+        // The null-key slot can already be present when wrapUp() runs -- the keyed aggregation
+        // creates it from a stored NULL int key -- and it then carries a count of 0, exactly what
+        // the sweep NULLs. wrapUp() populates first and sweeps second, so the slot gains its value
+        // and its count before the sweep tests that count. Sweeping first NULLs the value and the
+        // populate then adds into the sentinel, leaving the null group at LONG_NULL + 7.
+        //
+        // liveKeys stays below the growth threshold here: with the slot already present the
+        // populate finds it instead of inserting, so this case cannot resize inside wrapUp().
+        assertMemoryLeak(() -> assertWrapUpSweepsEveryGroup(sumLongWrapUpCase(), 8, true));
     }
 
     // ksum and nsum share this slot layout, so both drive the same helper.
     private static long allocCompensatedSumRosti() {
-        final ArrayColumnTypes types = new ArrayColumnTypes();
-        types.add(ColumnType.INT);      // key
-        types.add(ColumnType.DOUBLE);   // running sum
-        types.add(ColumnType.DOUBLE);   // Neumaier compensation
-        types.add(ColumnType.LONG);     // count
-        final long pRosti = Rosti.alloc(types, 64);
+        // Running sum, Neumaier compensation, count.
+        final long pRosti = Rosti.alloc(types(ColumnType.DOUBLE, ColumnType.DOUBLE, ColumnType.LONG), 64);
         Assert.assertNotEquals(0, pRosti);
         // Mirrors GroupByRecordCursorFactory's null-key setup and
         // NSumDoubleVectorAggregateFunction.initRosti().
         Unsafe.putInt(Rosti.getInitialValueSlot(pRosti, 0), Numbers.INT_NULL);
-        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET), 0.0);
-        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 1), 0.0);
-        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 2), 0);
+        initCompensatedSumSlot(pRosti);
         return pRosti;
     }
 
     // sum(int) and avg(int) share this slot layout and the same merge.
     private static long allocSumIntRosti() {
-        final ArrayColumnTypes types = new ArrayColumnTypes();
-        types.add(ColumnType.INT);      // key
-        types.add(ColumnType.LONG);     // running sum, 64-bit even though the column is INT
-        types.add(ColumnType.LONG);     // count
-        final long pRosti = Rosti.alloc(types, 64);
+        // Running sum -- 64-bit even though the column is INT -- and count.
+        final long pRosti = Rosti.alloc(types(ColumnType.LONG, ColumnType.LONG), 64);
         Assert.assertNotEquals(0, pRosti);
         // Mirrors GroupByRecordCursorFactory's null-key setup and
         // SumIntVectorAggregateFunction.initRosti().
@@ -316,6 +332,29 @@ public class RostiTest extends AbstractCairoTest {
         Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET), 0);
         Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 1), 0);
         return pRosti;
+    }
+
+    // Asserts the map holds keys 1..keyCount, each exactly once, and nothing else.
+    private static void assertHoldsEveryKey(long pRosti, int keyCount) {
+        final long ctrl = Rosti.getCtrl(pRosti);
+        final long slots = Rosti.getSlots(pRosti);
+        final long shift = Rosti.getSlotShift(pRosti);
+        final long capacity = Rosti.getCapacity(pRosti);
+        final boolean[] hasSeenKey = new boolean[keyCount + 1];
+        int liveSlots = 0;
+        for (long i = 0; i < capacity; i++) {
+            if (Unsafe.getByte(ctrl + i) > -1) {
+                final int key = Unsafe.getInt(slots + (i << shift));
+                liveSlots++;
+                Assert.assertTrue("unexpected key [key=" + key + ']', key >= 1 && key <= keyCount);
+                Assert.assertFalse("duplicate key [key=" + key + ']', hasSeenKey[key]);
+                hasSeenKey[key] = true;
+            }
+        }
+        Assert.assertEquals("live slot count", keyCount, liveSlots);
+        for (int key = 1; key <= keyCount; key++) {
+            Assert.assertTrue("key missing [key=" + key + ']', hasSeenKey[key]);
+        }
     }
 
     private static void assertMergeCarriesCompensation(
@@ -372,10 +411,34 @@ public class RostiTest extends AbstractCairoTest {
         }
     }
 
-    // Seeds liveKeys empty groups, wraps up with a null value that has to be inserted, and checks
-    // that the sweep reached every live group. Returns whether the populate resized the map, which
-    // is the arrangement the caller is really after.
-    private static boolean assertWrapUpSweepsEveryGroup(WrapUpCase c, int liveKeys) {
+    private static void assertWrapUpFoldsIntoSeededSlot(
+            double seedSum,
+            double seedCompensation,
+            double valueAtNull,
+            double valueAtNullC,
+            double expected
+    ) {
+        final long pRosti = allocCompensatedSumRosti();
+        try {
+            // The insert GroupByRecordCursorFactory performs once when a frame's key column is a column top.
+            // A stored NULL int key reaches the same slot through kIntNSumDouble, which is why
+            // wrapUp()'s merge branch was already reachable before that insert existed.
+            Assert.assertTrue(Rosti.keyedIntDistinct(pRosti, Rosti.getInitialValueSlot(pRosti, 0), 1));
+            seedSingleSlot(pRosti, VALUE_OFFSET, seedSum, seedCompensation, 2);
+
+            Assert.assertTrue(Rosti.keyedIntNSumDoubleWrapUp(pRosti, VALUE_OFFSET, valueAtNull, 3, valueAtNullC));
+
+            Assert.assertEquals(expected, readSingleSlotDouble(pRosti, VALUE_OFFSET), 0.0);
+        } finally {
+            Rosti.free(pRosti);
+        }
+    }
+
+    // Seeds liveKeys empty groups, wraps up with a null value the populate branch acts on, and
+    // checks that the sweep reached every live group. Returns whether the populate resized the
+    // map, which is the arrangement the caller is really after. hasPreSeededNullKey inserts the
+    // null key up front, so the populate finds an existing count-0 slot instead of inserting one.
+    private static boolean assertWrapUpSweepsEveryGroup(WrapUpCase c, int liveKeys, boolean hasPreSeededNullKey) {
         // The key buffer first: an allocation failure between the two would strand whichever came
         // before it, and the rosti is the one nothing else would free.
         final long keysSize = 4L * liveKeys;
@@ -397,6 +460,9 @@ public class RostiTest extends AbstractCairoTest {
             // overwrite. Read after the initializer, so each case supplies its own.
             final long emptyValue = Unsafe.getLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET));
 
+            if (hasPreSeededNullKey) {
+                Assert.assertTrue(c.name, Rosti.keyedIntDistinct(pRosti, Rosti.getInitialValueSlot(pRosti, 0), 1));
+            }
             for (int i = 0; i < liveKeys; i++) {
                 Unsafe.putInt(pKeys + 4L * i, i + 1);
             }
@@ -412,74 +478,7 @@ public class RostiTest extends AbstractCairoTest {
             final long capacity = Rosti.getCapacity(pRosti);
             final int valueField = slotFieldOffset(pRosti, VALUE_OFFSET);
             int liveSlots = 0;
-            boolean hasNullKey = false;
-            for (long i = 0; i < capacity; i++) {
-                if (Unsafe.getByte(ctrl + i) > -1) {
-                    final long slot = slots + (i << shift);
-                    liveSlots++;
-                    if (Unsafe.getInt(slot) == Numbers.INT_NULL) {
-                        hasNullKey = true;
-                    } else {
-                        Assert.assertNotEquals("group left un-swept [case=" + c.name
-                                        + ", liveKeys=" + liveKeys + ", key=" + Unsafe.getInt(slot) + ']',
-                                emptyValue, Unsafe.getLong(slot + valueField));
-                    }
-                }
-            }
-            Assert.assertTrue("null-key group missing [case=" + c.name + ", liveKeys=" + liveKeys + ']', hasNullKey);
-            Assert.assertEquals("live slot count [case=" + c.name + ", liveKeys=" + liveKeys + ']',
-                    liveKeys + 1, liveSlots);
-            return hasResizedInWrapUp;
-        } finally {
-            Unsafe.free(pKeys, keysSize, MemoryTag.NATIVE_DEFAULT);
-            Rosti.updateMemoryUsage(pRosti, sizeAtAlloc);
-            Rosti.free(pRosti);
-        }
-    }
-
-    private static boolean assertSweepNullsEmptyGroupsAndReportResize(int liveKeys) {
-        final ArrayColumnTypes types = new ArrayColumnTypes();
-        types.add(ColumnType.INT);      // key
-        types.add(ColumnType.LONG);     // sum
-        types.add(ColumnType.LONG);     // count
-        // The key buffer first: an allocation failure between the two would strand whichever came
-        // before it, and the rosti is the one nothing else would free.
-        final long keysSize = 4L * liveKeys;
-        final long pKeys = Unsafe.malloc(keysSize, MemoryTag.NATIVE_DEFAULT);
-        final long pRosti;
-        final long sizeAtAlloc;
-        try {
-            pRosti = Rosti.alloc(types, 16);
-            Assert.assertNotEquals(0, pRosti);
-            sizeAtAlloc = Rosti.getAllocMemory(pRosti);
-        } catch (Throwable th) {
-            Unsafe.free(pKeys, keysSize, MemoryTag.NATIVE_DEFAULT);
-            throw th;
-        }
-        try {
-            // Mirrors SumLongVectorAggregateFunction.initRosti() plus the factory's null key.
-            Unsafe.putInt(Rosti.getInitialValueSlot(pRosti, 0), Numbers.INT_NULL);
-            Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET), 0);
-            Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 1), 0);
-
-            for (int i = 0; i < liveKeys; i++) {
-                Unsafe.putInt(pKeys + 4L * i, i + 1);
-            }
-            Assert.assertTrue(Rosti.keyedIntDistinct(pRosti, pKeys, liveKeys));
-
-            // The null key is absent, so the populate must insert it -- resizing once the live
-            // keys have filled the map to its growth threshold.
-            final long sizeBeforeWrapUp = Rosti.getAllocMemory(pRosti);
-            Assert.assertTrue(Rosti.keyedIntSumLongWrapUp(pRosti, VALUE_OFFSET, 7, 1));
-            final boolean hasResizedInWrapUp = Rosti.getAllocMemory(pRosti) > sizeBeforeWrapUp;
-
-            final long ctrl = Rosti.getCtrl(pRosti);
-            final long slots = Rosti.getSlots(pRosti);
-            final long shift = Rosti.getSlotShift(pRosti);
-            final long capacity = Rosti.getCapacity(pRosti);
-            final int valueField = slotFieldOffset(pRosti, VALUE_OFFSET);
-            int liveSlots = 0;
-            int nulledGroups = 0;
+            int sweptGroups = 0;
             boolean hasNullKey = false;
             for (long i = 0; i < capacity; i++) {
                 if (Unsafe.getByte(ctrl + i) > -1) {
@@ -488,16 +487,28 @@ public class RostiTest extends AbstractCairoTest {
                     liveSlots++;
                     if (Unsafe.getInt(slot) == Numbers.INT_NULL) {
                         hasNullKey = true;
-                        Assert.assertEquals(7, value);
-                    } else if (value == Numbers.LONG_NULL) {
-                        nulledGroups++;
+                        if (c.hasPinnedValues) {
+                            Assert.assertEquals("null group value [case=" + c.name
+                                    + ", liveKeys=" + liveKeys + ']', c.nullGroupValue, value);
+                        }
+                    } else {
+                        Assert.assertNotEquals("group left un-swept [case=" + c.name
+                                        + ", liveKeys=" + liveKeys + ", key=" + Unsafe.getInt(slot) + ']',
+                                emptyValue, value);
+                        if (c.hasPinnedValues && value == c.sweptValue) {
+                            sweptGroups++;
+                        }
                     }
                 }
             }
-            Assert.assertTrue("null-key group missing [liveKeys=" + liveKeys + ']', hasNullKey);
-            Assert.assertEquals("live slot count [liveKeys=" + liveKeys + ']', liveKeys + 1, liveSlots);
-            // Every seeded key had count 0, so the sweep owed each one a NULL.
-            Assert.assertEquals("swept groups [liveKeys=" + liveKeys + ']', liveKeys, nulledGroups);
+            Assert.assertTrue("null-key group missing [case=" + c.name + ", liveKeys=" + liveKeys + ']', hasNullKey);
+            Assert.assertEquals("live slot count [case=" + c.name + ", liveKeys=" + liveKeys + ']',
+                    liveKeys + 1, liveSlots);
+            if (c.hasPinnedValues) {
+                // Every seeded key had count 0, so the sweep owed each one its NULL sentinel.
+                Assert.assertEquals("swept groups [case=" + c.name + ", liveKeys=" + liveKeys + ']',
+                        liveKeys, sweptGroups);
+            }
             return hasResizedInWrapUp;
         } finally {
             Unsafe.free(pKeys, keysSize, MemoryTag.NATIVE_DEFAULT);
@@ -505,32 +516,6 @@ public class RostiTest extends AbstractCairoTest {
             // one, so the growth these inserts caused has to be recorded too. Production does
             // this via the same helper, through RostiAllocFacade.
             Rosti.updateMemoryUsage(pRosti, sizeAtAlloc);
-            Rosti.free(pRosti);
-        }
-    }
-
-    private static void assertWrapUpFoldsIntoSeededSlot(
-            double seedSum,
-            double seedCompensation,
-            double valueAtNull,
-            double valueAtNullC,
-            double expected
-    ) {
-        final long pRosti = allocCompensatedSumRosti();
-        try {
-            // The insert GroupByRecordCursorFactory performs once when a frame's key column is a column top.
-            // A stored NULL int key reaches the same slot through kIntNSumDouble, which is why
-            // wrapUp()'s merge branch was already reachable before that insert existed.
-            Assert.assertTrue(Rosti.keyedIntDistinct(pRosti, Rosti.getInitialValueSlot(pRosti, 0), 1));
-            seedSingleSlot(pRosti, VALUE_OFFSET, seedSum, seedCompensation, 2);
-
-            // Folding three frames' worth, so the count is pinned the way ksum's is: the slot has
-            // to gain the whole valueAtNullCount, not one.
-            Assert.assertTrue(Rosti.keyedIntNSumDoubleWrapUp(pRosti, VALUE_OFFSET, valueAtNull, 3, valueAtNullC));
-
-            Assert.assertEquals(expected, readSingleSlotDouble(pRosti, VALUE_OFFSET), 0.0);
-            Assert.assertEquals(5, readSingleSlotLong(pRosti, VALUE_OFFSET + 2));
-        } finally {
             Rosti.free(pRosti);
         }
     }
@@ -550,6 +535,12 @@ public class RostiTest extends AbstractCairoTest {
         }
         Assert.assertEquals("expected exactly one live slot", 1, liveSlots);
         return slot;
+    }
+
+    private static void initCompensatedSumSlot(long pRosti) {
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET), 0.0);
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 1), 0.0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 2), 0);
     }
 
     private static double readSingleSlotDouble(long pRosti, int valueOffset) {
@@ -573,12 +564,14 @@ public class RostiTest extends AbstractCairoTest {
         Unsafe.putLong(slot + slotFieldOffset(pRosti, VALUE_OFFSET + 1), count);
     }
 
-    // One entry per sweeping wrapUp, each mirroring its aggregate's pushValueTypes() and
-    // initRosti(). The null value passed to each wrapUp is one its populate branch acts on, so
-    // every case inserts the null key and can resize while doing it.
-    private static ObjList<WrapUpCase> wrapUpCases() {
-        final ObjList<WrapUpCase> cases = new ObjList<>();
-        cases.add(new WrapUpCase(
+    private static int slotFieldOffset(long pRosti, int columnIndex) {
+        return Unsafe.getInt(Rosti.getValueOffsets(pRosti) + columnIndex * 4L);
+    }
+
+    // The one case whose whole slot reads back as a raw long, so it can pin the swept sentinel
+    // and the null group's own value on top of the property every case shares.
+    private static WrapUpCase sumLongWrapUpCase() {
+        return new WrapUpCase(
                 "sum(long)",
                 types(ColumnType.LONG, ColumnType.LONG),
                 pRosti -> {
@@ -586,7 +579,24 @@ public class RostiTest extends AbstractCairoTest {
                     Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, VALUE_OFFSET + 1), 0);
                 },
                 pRosti -> Rosti.keyedIntSumLongWrapUp(pRosti, VALUE_OFFSET, 7, 1)
-        ));
+        ).pinValues(7, Numbers.LONG_NULL);
+    }
+
+    private static ArrayColumnTypes types(int... valueTypes) {
+        final ArrayColumnTypes types = new ArrayColumnTypes();
+        types.add(ColumnType.INT); // key
+        for (int valueType : valueTypes) {
+            types.add(valueType);
+        }
+        return types;
+    }
+
+    // One entry per sweeping wrapUp, each mirroring its aggregate's pushValueTypes() and
+    // initRosti(). The null value passed to each wrapUp is one its populate branch acts on, so
+    // every case inserts the null key and can resize while doing it.
+    private static ObjList<WrapUpCase> wrapUpCases() {
+        final ObjList<WrapUpCase> cases = new ObjList<>();
+        cases.add(sumLongWrapUpCase());
         cases.add(new WrapUpCase(
                 "sum(long256)",
                 types(ColumnType.LONG256, ColumnType.LONG),
@@ -665,10 +675,6 @@ public class RostiTest extends AbstractCairoTest {
         return cases;
     }
 
-    private static int slotFieldOffset(long pRosti, int columnIndex) {
-        return Unsafe.getInt(Rosti.getValueOffsets(pRosti) + columnIndex * 4L);
-    }
-
     @FunctionalInterface
     private interface RostiInitializer {
         void init(long pRosti);
@@ -684,12 +690,24 @@ public class RostiTest extends AbstractCairoTest {
         private final WrapUpInvoker invoker;
         private final String name;
         private final ArrayColumnTypes types;
+        private boolean hasPinnedValues;
+        private long nullGroupValue;
+        private long sweptValue;
 
         private WrapUpCase(String name, ArrayColumnTypes types, RostiInitializer initializer, WrapUpInvoker invoker) {
             this.name = name;
             this.types = types;
             this.initializer = initializer;
             this.invoker = invoker;
+        }
+
+        // Pins what the null group and a swept group hold once wrapUp() returns, for the cases
+        // whose value field reads back as a raw long.
+        private WrapUpCase pinValues(long nullGroupValue, long sweptValue) {
+            this.hasPinnedValues = true;
+            this.nullGroupValue = nullGroupValue;
+            this.sweptValue = sweptValue;
+            return this;
         }
     }
 }
