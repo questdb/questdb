@@ -258,13 +258,17 @@ public interface WindowFunction extends Function {
         return null;
     }
 
-    /** Returns partition keys touched since the last durable cadence checkpoint. */
+    /**
+     * Returns partition keys touched since the last durable cadence checkpoint.
+     */
     @Nullable
     default Map getCheckpointDirtyPartitionMap() {
         return null;
     }
 
-    /** Restore, repair, and partition compaction force a complete map scan. */
+    /**
+     * Restore, repair, and partition compaction force a complete map scan.
+     */
     default boolean checkpointRequiresFullPartitionScan() {
         return true;
     }
@@ -273,7 +277,9 @@ public interface WindowFunction extends Function {
         return 0;
     }
 
-    /** Called only after the checkpoint superblock is durably published. */
+    /**
+     * Called only after the checkpoint superblock is durably published.
+     */
     default void onCheckpointPersisted(long logicalStateBytes) {
     }
 

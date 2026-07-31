@@ -3235,13 +3235,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 } else {
                     if (!frozen.incremental) {
                         removeMissingPartitions(
-                            checkpointsDir,
-                            oldFunctionRootRef,
-                            oldFunctionRoot,
-                            oldPartitionReader,
-                            frozen,
-                            outputKeys,
-                            functionRootBuilder
+                                checkpointsDir,
+                                oldFunctionRootRef,
+                                oldFunctionRoot,
+                                oldPartitionReader,
+                                frozen,
+                                outputKeys,
+                                functionRootBuilder
                         );
                     }
                     for (int p = 0, m = frozen.removedPartitions.size(); p < m; p++) {
