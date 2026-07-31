@@ -80,11 +80,12 @@ import io.questdb.std.QuietCloseable;
  * from the slot, never from a live {@link #newSymbolMaxIdExclusive} read.
  * <p>
  * {@link ConcurrentCharSequenceList} provides value safety for id-to-string
- * resolution. A later refresh cycle can reallocate a list after the reader's slot
- * published, so the list release-stores each new array and acquire-loads it on every read.
- * A reader that observes a new array thus also observes the element copies that
- * filled it, never a stale null at an in-bounds id (which a plain {@link ObjList},
- * storing the array with no fence, would expose as a transient spurious miss).
+ * resolution. A later refresh cycle can grow a store's page index after the reader's
+ * slot published, so the store release-stores each new index and acquire-loads it on
+ * every read. A reader that observes a new index thus also observes the page
+ * references copied into it, never a stale null at an in-bounds id (which a plain
+ * {@link ObjList}, storing the array with no fence, would expose as a transient
+ * spurious miss).
  * <p>
  * Memory: {@link #idToString} retains an immutable string per lead assignment and
  * the reverse map retains one key per distinct value. Neither is cleared before
@@ -93,6 +94,10 @@ import io.questdb.std.QuietCloseable;
  * through {@link #newSymbolValueOf} rather than from disk - the cache cannot tell
  * how far back the oldest such reader sits. The id space itself advances once per
  * assignment, so both grow with the number of assignments, not with cardinality.
+ * {@link #anchor} also re-bases it onto the committed symbol count on every drain, so
+ * the ids the cache holds are a sparse band of a much larger space;
+ * {@link ConcurrentCharSequenceList} pages the {@code id -> string} store so that gap
+ * costs one reference per page of ids, not a slot per committed symbol.
  * <p>
  * The reverse index, in contrast, IS pruned: {@link #pruneReverseIndex} drops chain
  * nodes a live slot can no longer reach, which bounds both the node count and the
@@ -111,8 +116,8 @@ public class LiveViewSymbolCache implements QuietCloseable {
     // keeps pruning O(1) amortized per assignment. Writer-side only.
     private final IntList assignmentsSincePrune;
     // Per output column, null for non-SYMBOL columns. Read by cursor overlays;
-    // append-only, indexed by absolute LV-table symbol id (null gaps for ids
-    // that only ever existed as committed values, which resolve via disk).
+    // append-only and sparse, indexed by absolute LV-table symbol id (null gaps for
+    // ids that only ever existed as committed values, which resolve via disk).
     private final ObjList<ConcurrentCharSequenceList> idToString;
     // Per output column, null for non-SYMBOL columns. Readers use this
     // append-only value -> assigned-id-history index. Lookup is expected O(1)

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import com.sun.management.ThreadMXBean;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.lv.LiveViewSymbolCache;
@@ -33,8 +34,10 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.IntList;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
+import java.lang.management.ManagementFactory;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -68,6 +71,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class LiveViewSymbolCacheConcurrencyTest {
 
     private static final int COL = 0;
+    // Allocation budget for a single intern that lands far past the ids already stored.
+    // A sparse store pays a page plus its index; a dense one pays four bytes per id in
+    // the gap, which is 16MB at the committed counts the sparsity tests use.
+    private static final long MAX_SPARSE_INTERN_BYTES = 1_048_576;
 
     // A committed reader that finds nothing, so every interned value is new to the
     // lead and grows the cache's id-to-string list. intern only ever calls keyOf.
@@ -556,6 +563,32 @@ public class LiveViewSymbolCacheConcurrencyTest {
         }
     }
 
+    // Turns on per-thread allocation accounting, or skips the calling test when the JVM
+    // does not offer it.
+    private static ThreadMXBean enableThreadAllocationProfiling() {
+        final java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
+        Assume.assumeTrue("thread allocation profiling unavailable", mxBean instanceof ThreadMXBean);
+        final ThreadMXBean threadMXBean = (ThreadMXBean) mxBean;
+        Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
+        if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
+            threadMXBean.setThreadAllocatedMemoryEnabled(true);
+        }
+        return threadMXBean;
+    }
+
+    // Loads the intern path's classes on a throwaway cache so a measured intern sees
+    // steady-state allocation behavior.
+    private static void warmUpInterning() {
+        final IntList columnTypes = new IntList();
+        columnTypes.add(ColumnType.SYMBOL);
+        try (LiveViewSymbolCache warmUp = new LiveViewSymbolCache(columnTypes)) {
+            for (int i = 0; i < 64; i++) {
+                warmUp.intern(COL, "warm-up-" + i, NOT_FOUND_READER);
+                warmUp.newSymbolValueOf(COL, i);
+            }
+        }
+    }
+
     @Test
     public void testInternWindowFirstMatchesCommittedFirstIds() {
         // Equivalence: for the same sequence of interns (new + repeated symbols), the
@@ -615,6 +648,126 @@ public class LiveViewSymbolCacheConcurrencyTest {
             Assert.assertEquals(0, cache.intern(COL, "new", reader, false));
             Assert.assertEquals(0, cache.intern(COL, "new", reader, false));
             Assert.assertEquals("committed-first probes committed on every occurrence", 3, reader.keyOfCalls);
+        }
+    }
+
+    @Test
+    public void testCloseDropsLeadMappingsAndTheStoreRebases() {
+        // close() is what releases the strings the cache retains for the view's whole
+        // life, so it must actually drop them. It also resets the id -> string store to
+        // empty, which is the one moment its index origin moves: a store that kept the
+        // old origin would resolve a later id against the wrong page rather than miss.
+        // Interning again after close is the vehicle for reaching that re-base - the
+        // store is package-private, so this is the only surface that drives it - not a
+        // claim that a closed cache is meant to be reused.
+        final IntList columnTypes = new IntList();
+        columnTypes.add(ColumnType.SYMBOL);
+        final int committedCount = 4_000_000;
+        final LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes);
+        try {
+            Assert.assertEquals(0, cache.intern(COL, "low", NOT_FOUND_READER));
+            cache.anchor(COL, committedCount);
+            Assert.assertEquals(committedCount, cache.intern(COL, "high", NOT_FOUND_READER));
+
+            cache.close();
+
+            Assert.assertNull(cache.newSymbolValueOf(COL, 0));
+            Assert.assertNull(cache.newSymbolValueOf(COL, committedCount));
+            Assert.assertEquals(0, cache.newSymbolMaxIdExclusive(COL));
+
+            // Whatever id the next assignment takes, the store re-bases onto it: the two
+            // ids it dropped must stay unresolvable. committedCount is the load-bearing
+            // one - it shares a page with the re-based id, so a store that kept the old
+            // page would answer it with the old string instead of missing.
+            final int id = cache.intern(COL, "after-close", NOT_FOUND_READER);
+            Assert.assertTrue("close must not rewind the id space [id=" + id + ']', id > committedCount);
+            Assert.assertEquals("after-close", cache.newSymbolValueOf(COL, id).toString());
+            Assert.assertNull(cache.newSymbolValueOf(COL, 0));
+            Assert.assertNull(cache.newSymbolValueOf(COL, committedCount));
+            Assert.assertEquals(id + 1, cache.newSymbolMaxIdExclusive(COL));
+        } finally {
+            cache.close();
+        }
+    }
+
+    @Test
+    public void testInterningAcrossLargeCommittedJumpStaysSparse() {
+        // The committed count can also leap mid-life: an O3 replay or an externally
+        // replicated flush grows the LV table's dictionary without a single intern,
+        // and the next drain's anchor re-bases the provisional ids past it. The store
+        // must stay sparse across that gap too, and both bands must still resolve -
+        // a cursor pinned before the jump reads the low ids, one pinned after reads
+        // the high ones.
+        final ThreadMXBean threadMXBean = enableThreadAllocationProfiling();
+        final IntList columnTypes = new IntList();
+        columnTypes.add(ColumnType.SYMBOL);
+        warmUpInterning();
+
+        final int committedCount = 4_000_000;
+        try (LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes)) {
+            Assert.assertEquals(0, cache.intern(COL, "before-0", NOT_FOUND_READER));
+            Assert.assertEquals(1, cache.intern(COL, "before-1", NOT_FOUND_READER));
+            cache.onO3();
+            cache.anchor(COL, committedCount);
+
+            final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+            final int id = cache.intern(COL, "after", NOT_FOUND_READER);
+            final long allocated = threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore;
+
+            Assert.assertEquals(committedCount, id);
+            Assert.assertTrue(
+                    "an id gap of " + committedCount + " must not be materialized as array slots"
+                            + " [allocated=" + allocated + " bytes]",
+                    allocated < MAX_SPARSE_INTERN_BYTES
+            );
+
+            // Both bands resolve, and the gap between them is empty.
+            Assert.assertEquals("before-0", cache.newSymbolValueOf(COL, 0).toString());
+            Assert.assertEquals("before-1", cache.newSymbolValueOf(COL, 1).toString());
+            Assert.assertEquals("after", cache.newSymbolValueOf(COL, id).toString());
+            Assert.assertNull(cache.newSymbolValueOf(COL, 2));
+            Assert.assertNull(cache.newSymbolValueOf(COL, committedCount / 2));
+            Assert.assertEquals(committedCount + 1, cache.newSymbolMaxIdExclusive(COL));
+        }
+    }
+
+    @Test
+    public void testInterningPastLargeCommittedCountStaysSparse() {
+        // A live view whose LV table already carries a large committed symbol
+        // dictionary anchors the next provisional id at the committed count, and the
+        // id -> string store is indexed by that ABSOLUTE id. A single value new to the
+        // un-flushed lead must not make the store materialize a slot per committed
+        // symbol - that is tens of megabytes of nulls for one string, retained until
+        // the view closes.
+        final ThreadMXBean threadMXBean = enableThreadAllocationProfiling();
+        final IntList columnTypes = new IntList();
+        columnTypes.add(ColumnType.SYMBOL);
+        warmUpInterning();
+
+        // A dense CharSequence[] over this id space costs 16MB (compressed oops).
+        final int committedCount = 4_000_000;
+        try (LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes)) {
+            cache.anchor(COL, committedCount);
+
+            final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+            final int id = cache.intern(COL, "lead-value", NOT_FOUND_READER);
+            final long allocated = threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore;
+
+            Assert.assertEquals(committedCount, id);
+            Assert.assertTrue(
+                    "one lead symbol past a " + committedCount + "-value committed dictionary must not"
+                            + " allocate a slot per committed symbol [allocated=" + allocated + " bytes]",
+                    allocated < MAX_SPARSE_INTERN_BYTES
+            );
+
+            // The assignment still resolves, and no committed-only id below it does -
+            // those fall back to the disk symbol table.
+            Assert.assertEquals("lead-value", cache.newSymbolValueOf(COL, id).toString());
+            Assert.assertEquals(id, cache.newSymbolKeyOf(COL, "lead-value", committedCount, id + 1));
+            Assert.assertNull(cache.newSymbolValueOf(COL, 0));
+            Assert.assertNull(cache.newSymbolValueOf(COL, id - 1));
+            Assert.assertNull(cache.newSymbolValueOf(COL, id + 1));
+            Assert.assertEquals(committedCount + 1, cache.newSymbolMaxIdExclusive(COL));
         }
     }
 
