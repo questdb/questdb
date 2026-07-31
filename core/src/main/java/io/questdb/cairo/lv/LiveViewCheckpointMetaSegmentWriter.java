@@ -183,6 +183,24 @@ public class LiveViewCheckpointMetaSegmentWriter implements Closeable {
     }
 
     /**
+     * Abandons the open segment, unlinking the {@code .tmp} file it was writing.
+     * A publication that turns out to write no page at all - a tree whose every
+     * key retired - takes this instead of {@link #commit()}, so it leaves no
+     * page-less segment behind for the catalogue to account for.
+     */
+    public void discard() {
+        if (!isOpen) {
+            return;
+        }
+        mem.close(false);
+        ff.removeQuiet(tmpPath.$());
+        isOpen = false;
+        pageHeaderOffset = -1;
+        pageCount = 0;
+        segmentId = -1;
+    }
+
+    /**
      * Closes the in-flight page: computes its payload length, patches the header
      * (length, kind, CRC32), and fills {@code out} with a reference locating the
      * page. The CRC covers the length and kind fields plus the payload, so a

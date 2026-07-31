@@ -251,6 +251,23 @@ final class LiveViewCheckpointSegmentDirectoryNode {
     }
 
     /**
+     * Removes the entry at leaf position {@code pos}, shifting later entries
+     * down. A leaf may go empty this way; its owner then writes no page for it
+     * and the parent keeps no child reference to it.
+     */
+    void removeEntryAt(int pos) {
+        assert leaf;
+        for (int i = pos; i < count - 1; i++) {
+            entrySegmentId[i] = entrySegmentId[i + 1];
+            entryFileLength[i] = entryFileLength[i + 1];
+            entryReferenceCount[i] = entryReferenceCount[i + 1];
+            entryRetireGeneration[i] = entryRetireGeneration[i + 1];
+            entryKind[i] = entryKind[i + 1];
+        }
+        count--;
+    }
+
+    /**
      * Replaces the mutable values of the entry at {@code pos}. The key and the
      * kind are preserved: a publication re-versions counts, never identities.
      */

@@ -63,6 +63,11 @@ import java.io.Closeable;
  * tree carrying it does not yet know - so the caller carries that registration to
  * the next publication.
  * <p>
+ * An entry leaves the catalogue only through {@link #removeSegment}, which the
+ * purge sweep drives once it has unlinked the file the entry names. Reaching
+ * zero retires a segment; unlinking its file retires its entry, one publication
+ * later.
+ * <p>
  * The instance is reusable across publications and is not thread safe.
  */
 public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
@@ -72,6 +77,7 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
     private static final int STAGED_FLAGS = 4;
     private static final long STAGED_FLAG_INSERT = 1;
     private static final long STAGED_FLAG_NONE = 0;
+    private static final long STAGED_FLAG_REMOVE = 2;
     private static final int STAGED_KIND = 5;
     private static final int STAGED_REFERENCE_COUNT = 2;
     private static final int STAGED_RETIRE_GENERATION = 3;
@@ -202,6 +208,7 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
         for (int i = 0, n = removedSegmentIds.size(); i < n; i++) {
             final long segmentId = removedSegmentIds.get(i);
             final int index = stageExisting(segmentId, false);
+            ensureNotRetiring(index, segmentId);
             ensureRootCounted(index, segmentId);
             if (staged.getQuick(index * STAGED_STRIDE + STAGED_REFERENCE_COUNT) <= 0) {
                 throw CairoException.critical(0)
@@ -212,6 +219,7 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
         for (int i = 0, n = addedSegmentIds.size(); i < n; i++) {
             final long segmentId = addedSegmentIds.get(i);
             final int index = stageExisting(segmentId, true);
+            ensureNotRetiring(index, segmentId);
             ensureRootCounted(index, segmentId);
             long count = staged.getQuick(index * STAGED_STRIDE + STAGED_REFERENCE_COUNT);
             if (removedSegmentIds.contains(segmentId)) {
@@ -344,9 +352,20 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
         assert isReleaseSetComplete()
                 : "the release pre-pass and the path copy visited different catalogue pages";
 
+        LongList level = outAt(0);
+        if (level.size() == 0) {
+            // Every catalogued entry retired, so the root emitted no page and the
+            // publication wrote none at all. The catalogue goes back to the empty
+            // shape begin() already accepts.
+            segmentWriter.discard();
+            newRootOut.clear();
+            lastSegmentBytes = 0;
+            lastSegmentPageCount = 0;
+            return;
+        }
+
         // Collapse the emitted level into one root, adding a level whenever the
         // pieces a split produced no longer fit one node.
-        LongList level = outAt(0);
         int depth = 0;
         while (level.size() > CHILD_STRIDE) {
             final LiveViewCheckpointSegmentDirectoryNode parent = builderAt(depth);
@@ -403,6 +422,7 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
             if (index < 0) {
                 continue;
             }
+            ensureNotRetiring(index, segmentId);
             if (staged.getQuick(index * STAGED_STRIDE + STAGED_KIND) != LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META) {
                 throw CairoException.critical(0)
                         .put("cannot release a page of a root-counted live view checkpoint segment, segmentId=")
@@ -426,6 +446,43 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
         for (int i = 0, n = releaseTally.size(); i < n; i += 2) {
             addReference(releaseTally.getQuick(i), -releaseTally.getQuick(i + 1), generation);
         }
+    }
+
+    /**
+     * Retires the catalogue entry of {@code segmentId}, whose file the purge
+     * sweep has already unlinked. Nothing else removes an entry, so without this
+     * the catalogue holds one per segment ever written and its own tree gains a
+     * leaf every {@code leafCapacity} of them - the last term that grows with a
+     * view's age rather than with what it currently holds.
+     * <p>
+     * An entry the catalogue does not hold is skipped rather than refused: the
+     * sweep re-proposes every retired entry whose file is gone, so a proposal
+     * that a publication has already applied comes back once more and must be a
+     * no-op. A still-referenced entry is refused, because its file cannot have
+     * been unlinked and removing it would strand one.
+     */
+    public void removeSegment(long segmentId) {
+        ensureBegun();
+        validateReferenceSegmentId(segmentId);
+        final int index = stageCatalogued(segmentId);
+        if (index < 0) {
+            return;
+        }
+        final int base = index * STAGED_STRIDE;
+        if (staged.getQuick(base + STAGED_FLAGS) == STAGED_FLAG_INSERT) {
+            throw CairoException.critical(0)
+                    .put("cannot retire the entry of a live view checkpoint segment this publication registers, segmentId=")
+                    .put(segmentId);
+        }
+        final long referenceCount = staged.getQuick(base + STAGED_REFERENCE_COUNT);
+        if (referenceCount != 0) {
+            throw CairoException.critical(0)
+                    .put("cannot retire the entry of a referenced live view checkpoint segment")
+                    .put(" [segmentId=").put(segmentId)
+                    .put(", referenceCount=").put(referenceCount)
+                    .put(']');
+        }
+        staged.setQuick(base + STAGED_FLAGS, STAGED_FLAG_REMOVE);
     }
 
     private static LiveViewCheckpointSegmentDirectoryNode[] growNodes(
@@ -486,12 +543,16 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
                 final long segmentId = staged.getQuick(base + STAGED_SEGMENT_ID);
                 final int pos = node.findEntry(segmentId);
                 if (pos >= 0) {
-                    node.replaceEntryPayloadAt(
-                            pos,
-                            staged.getQuick(base + STAGED_FILE_LENGTH),
-                            staged.getQuick(base + STAGED_REFERENCE_COUNT),
-                            staged.getQuick(base + STAGED_RETIRE_GENERATION)
-                    );
+                    if (staged.getQuick(base + STAGED_FLAGS) == STAGED_FLAG_REMOVE) {
+                        node.removeEntryAt(pos);
+                    } else {
+                        node.replaceEntryPayloadAt(
+                                pos,
+                                staged.getQuick(base + STAGED_FILE_LENGTH),
+                                staged.getQuick(base + STAGED_REFERENCE_COUNT),
+                                staged.getQuick(base + STAGED_RETIRE_GENERATION)
+                        );
+                    }
                 } else {
                     if (staged.getQuick(base + STAGED_FLAGS) != STAGED_FLAG_INSERT) {
                         // The record was staged from a lookup that found the
@@ -639,6 +700,11 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
      * Writes {@code node} as one page when it fits {@code capacity}, otherwise
      * breaks it into the fewest equal pieces that do, appending one
      * {@code (minKey, ref)} quadruple per written page to {@code out}.
+     * <p>
+     * A node whose every record retired writes no page and appends nothing, so
+     * its parent simply keeps no child reference to it - and a parent that loses
+     * every child empties in turn, which is how a retirement prunes a whole
+     * branch without a separate rebalancing pass.
      */
     private void emitNodes(
             LiveViewCheckpointSegmentDirectoryNode node,
@@ -647,7 +713,9 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
             int capacity
     ) {
         final int count = node.count();
-        assert count > 0;
+        if (count == 0) {
+            return;
+        }
         if (count <= capacity) {
             writePage(node, out);
             return;
@@ -664,6 +732,20 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
         if (!isBegun) {
             throw CairoException.critical(0)
                     .put("live view checkpoint segment directory publication has not begun");
+        }
+    }
+
+    /**
+     * Refuses any reference movement against an entry this publication retires.
+     * The sweep unlinked that segment's file before proposing the retirement, so
+     * a root or a page that still reaches it means the count the sweep acted on
+     * and the closure a root publishes disagree.
+     */
+    private void ensureNotRetiring(int stagedIndex, long segmentId) {
+        if (staged.getQuick(stagedIndex * STAGED_STRIDE + STAGED_FLAGS) == STAGED_FLAG_REMOVE) {
+            throw CairoException.critical(0)
+                    .put("cannot reference a live view checkpoint segment this publication retires, segmentId=")
+                    .put(segmentId);
         }
     }
 

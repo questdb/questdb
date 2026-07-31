@@ -32,6 +32,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.LongIntHashMap;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -120,7 +121,8 @@ public class LiveViewCheckpointDataStore implements Closeable {
                     sweep.failedSegments,
                     sweep.purgedBytes,
                     sweep.liveSegments,
-                    sweep.obsoleteBytes
+                    sweep.obsoleteBytes,
+                    sweep.retirableSegments
             );
         }
     }
@@ -485,19 +487,22 @@ public class LiveViewCheckpointDataStore implements Closeable {
         private final long obsoleteBytes;
         private final long purgedBytes;
         private final int purgedSegmentCount;
+        private final LongList retirableSegmentIds;
 
         private PurgeResult(
                 int purgedSegmentCount,
                 int failedSegmentCount,
                 long purgedBytes,
                 int liveSegmentCount,
-                long obsoleteBytes
+                long obsoleteBytes,
+                @NotNull LongList retirableSegmentIds
         ) {
             this.purgedSegmentCount = purgedSegmentCount;
             this.failedSegmentCount = failedSegmentCount;
             this.purgedBytes = purgedBytes;
             this.liveSegmentCount = liveSegmentCount;
             this.obsoleteBytes = obsoleteBytes;
+            this.retirableSegmentIds = new LongList(retirableSegmentIds);
         }
 
         public int getFailedSegmentCount() {
@@ -528,6 +533,17 @@ public class LiveViewCheckpointDataStore implements Closeable {
 
         public int getPurgedSegmentCount() {
             return purgedSegmentCount;
+        }
+
+        /**
+         * @return ascending ids of the catalogued segments this sweep left with no
+         * file - the ones it unlinked, plus the ones an earlier sweep unlinked and
+         * no publication has carried away yet. Their entries are dead weight the
+         * next publication removes; a sweep that runs first re-proposes whatever a
+         * skipped or crashed publication did not take
+         */
+        public LongList getRetirableSegmentIds() {
+            return retirableSegmentIds;
         }
     }
 
@@ -586,9 +602,17 @@ public class LiveViewCheckpointDataStore implements Closeable {
      * last root naming it goes, a metadata segment when the last of its pages is
      * path-copied away - but the rule that decides when zero is safe to act on is
      * the same, so the sweep needs only the path to differ.
+     * <p>
+     * An unlinked segment leaves its catalogue entry behind, because the sweep
+     * publishes no generation and only a publication may rewrite the catalogue.
+     * It collects those ids instead, and the next publication retires the
+     * entries. The collection is a proposal rather than a hand-off: a sweep
+     * re-proposes every entry whose file is already gone, so nothing is lost when
+     * the publication that would have taken them is skipped or crashes.
      */
     private final class PurgeSweep implements LiveViewCheckpointSegmentDirectoryReader.Visitor {
 
+        private final LongList retirableSegments = new LongList();
         private int failedSegments;
         private int liveSegments;
         private long minPinnedGeneration;
@@ -624,11 +648,17 @@ public class LiveViewCheckpointDataStore implements Closeable {
                     LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, segmentId);
                 }
                 if (!ff.exists(path.$())) {
+                    // An earlier sweep unlinked it and no publication has carried
+                    // the entry away yet. Propose it again: the entry now names
+                    // nothing, and re-proposing is what makes the hand-off survive
+                    // a crash or a skipped seal.
+                    retirableSegments.add(segmentId);
                     return;
                 }
                 if (ff.removeQuiet(path.$())) {
                     purgedSegments++;
                     purgedBytes = checkedAdd(purgedBytes, entry.fileLength);
+                    retirableSegments.add(segmentId);
                 } else {
                     failedSegments++;
                     obsoleteBytes = checkedAdd(obsoleteBytes, entry.fileLength);
@@ -648,6 +678,7 @@ public class LiveViewCheckpointDataStore implements Closeable {
             failedSegments = 0;
             liveSegments = 0;
             obsoleteBytes = 0;
+            retirableSegments.clear();
         }
     }
 }

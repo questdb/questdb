@@ -435,6 +435,66 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
         });
     }
 
+    @Test
+    public void testTheCatalogueRetiresTheEntriesOfSweptSegments() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seal = 1; seal <= SEALS_LATE; seal++) {
+                    commit(job, seal);
+                }
+                driveRefreshToQuiescence(job);
+            }
+            final LiveViewInstance swept = viewInstance();
+            purgeCycle(swept);
+
+            // The sweep unlinks a superseded segment and leaves its entry behind:
+            // the catalogue is copy-on-write and named by the superblock, so only a
+            // publication may rewrite it, and the sweep publishes none of its own.
+            // That is the last term that grew with the view's age rather than with
+            // what it holds - one entry per segment ever written, and a leaf of the
+            // catalogue's own tree per leafCapacity of them.
+            final Set<Long> deadEntries = deadCatalogueEntries(swept);
+            final int catalogueBefore = catalogue(swept).size();
+            Assert.assertTrue(
+                    "the sweep must leave entries naming unlinked files, dead=" + deadEntries.size()
+                            + " of " + catalogueBefore,
+                    deadEntries.size() > SEALS_LATE / 2
+            );
+
+            // A worker reconciles before its first seal of a directory, so it is
+            // that seal which carries the sweep's proposal into the tree.
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commit(job, SEALS_LATE + 1);
+                driveRefreshToQuiescence(job);
+            }
+
+            final LiveViewInstance instance = viewInstance();
+            final Set<Long> catalogueAfter = catalogue(instance);
+            for (long segmentId : deadEntries) {
+                Assert.assertFalse(
+                        "an entry naming an unlinked segment must be gone, segmentId=" + segmentId,
+                        catalogueAfter.contains(segmentId)
+                );
+            }
+            Assert.assertTrue(
+                    "the catalogue went " + catalogueBefore + " -> " + catalogueAfter.size()
+                            + " over the seal that follows a sweep, so it retired nothing",
+                    catalogueAfter.size() < catalogueBefore
+            );
+            Assert.assertEquals(
+                    "the seal itself unlinks nothing, so every surviving entry must name a file",
+                    0,
+                    deadCatalogueEntries(instance).size()
+            );
+
+            assertCatalogueMatchesDisk(instance);
+            restartCycle();
+            assertViewMatchesRecompute();
+        });
+    }
+
     private static Path checkpointsDir(LiveViewInstance instance) {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
@@ -645,6 +705,39 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
     private void createView(String sql) throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + sql);
+    }
+
+    /**
+     * Catalogued segments with no file on disk. Every one is dead weight: a sweep
+     * has already unlinked what the entry names, so nothing can ever read it and
+     * no count decides anything about it.
+     */
+    private Set<Long> deadCatalogueEntries(LiveViewInstance instance) {
+        final Set<Long> metaFiles = metaSegmentIds(instance);
+        final Set<Long> dead = new HashSet<>();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the generation must be readable", metaStore.isValid());
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader directory =
+                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                directory.of(dir, pin.getSegmentDirectoryRootRef());
+                directory.iterateAll(entry -> {
+                    final boolean exists = entry.isMetadata()
+                            ? metaFiles.contains(entry.segmentId)
+                            : dataSegmentFileExists(instance, entry.segmentId);
+                    if (!exists) {
+                        dead.add(entry.segmentId);
+                    }
+                });
+            }
+        }
+        return dead;
     }
 
     private boolean dataSegmentFileExists(LiveViewInstance instance, long segmentId) {

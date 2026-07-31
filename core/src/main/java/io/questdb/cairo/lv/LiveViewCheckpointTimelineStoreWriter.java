@@ -109,6 +109,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     // ever adds; kept per instance so the seal path allocates nothing for it.
     private final LongList emptySegmentIds = new LongList();
     private final MemoryCARW keyBuffer;
+    // Catalogue entries a reconciliation's sweep left naming an unlinked file,
+    // per checkpoint directory, waiting for the next seal of that view to carry
+    // them out of the tree. A view whose seal is skipped keeps its proposal.
+    private final HashMap<String, LongList> pendingEntryRetirements = new HashMap<>();
     private final LiveViewCheckpointRingSeal ringSeal;
     // One whole-state image at a time, encoded here before the freeze decides
     // whether it has to become a page at all.
@@ -185,6 +189,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     liveSegmentCount = reconciliation.getLiveSegmentCount();
                     obsoleteSegmentBytes = reconciliation.getObsoleteSegmentBytes();
                 }
+                // The sweep unlinked these files but could not rewrite the
+                // catalogue, because only a publication may. This seal is that
+                // publication.
+                final LongList retirable = reconciliation.getRetirableSegmentIds();
+                if (retirable.size() > 0) {
+                    pendingEntryRetirements.put(lifecycleKey, new LongList(retirable));
+                }
                 if (reconciliation.getFailedOrphanCount() == 0
                         && reconciliation.getFailedPurgeCount() == 0
                         && reconciliation.getFailedRepairCount() == 0) {
@@ -192,7 +203,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
             }
             try {
-                return append0(
+                final Result result = append0(
                         checkpointsDir,
                         functions,
                         anchorWindow,
@@ -207,20 +218,26 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         seedCursorOffset,
                         orphanUpperBound,
                         liveSegmentCount,
-                        obsoleteSegmentBytes
+                        obsoleteSegmentBytes,
+                        pendingEntryRetirements.get(lifecycleKey)
                 );
+                pendingEntryRetirements.remove(lifecycleKey);
+                return result;
             } catch (HistoryEpochChangedException e) {
                 lifecycleReconciledDirs.remove(lifecycleKey);
+                pendingEntryRetirements.remove(lifecycleKey);
                 if (epochRetry) {
                     throw CairoException.critical(0).put("could not replace live view checkpoint history epoch");
                 }
                 epochRetry = true;
             } catch (BoundaryNotAboveHeadException e) {
                 // The append refused before touching a file, and the reconciliation
-                // above still holds, so the key stays: this seal is skipped, not failed.
+                // above still holds, so the key stays: this seal is skipped, not
+                // failed, and the entries it would have retired wait for the next one.
                 throw e;
             } catch (RuntimeException | Error e) {
                 lifecycleReconciledDirs.remove(lifecycleKey);
+                pendingEntryRetirements.remove(lifecycleKey);
                 throw e;
             }
         }
@@ -262,6 +279,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         Misc.free(ringSeal);
         Misc.free(stateBuffer);
         lifecycleReconciledDirs.clear();
+        pendingEntryRetirements.clear();
     }
 
     /**
@@ -1090,7 +1108,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             long seedCursorOffset,
             long orphanUpperBound,
             long liveSegmentCount,
-            long obsoleteSegmentBytes
+            long obsoleteSegmentBytes,
+            @Nullable LongList retirableSegmentIds
     ) {
         if (definitionTxn < 0
                 || createdLvSeqTxn < 0
@@ -1175,6 +1194,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
             directoryWriter.begin(oldDirectoryRoot);
             registerPendingDirectorySegment(directoryWriter, superblock);
+            retireCatalogueEntries(directoryWriter, retirableSegmentIds);
 
             long nextSegmentId = metaStore.isValid() ? superblock.nextSegmentId : 0;
             nextSegmentId = Math.max(nextSegmentId, orphanUpperBound);
@@ -1509,6 +1529,26 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 builder.removePartition(entry.getKey());
             }
         });
+    }
+
+    /**
+     * Carries away the catalogue entries a reconciliation's purge sweep left
+     * naming an unlinked file. The sweep proves an entry dead - zero references,
+     * past both generation gates, file gone - but publishes no generation of its
+     * own, so this seal is what removes the entries; without it the catalogue
+     * holds one per segment ever written and its own tree grows with the view's
+     * age rather than with what the view currently holds.
+     */
+    private static void retireCatalogueEntries(
+            LiveViewCheckpointSegmentDirectoryWriter directoryWriter,
+            @Nullable LongList retirableSegmentIds
+    ) {
+        if (retirableSegmentIds == null) {
+            return;
+        }
+        for (int i = 0, n = retirableSegmentIds.size(); i < n; i++) {
+            directoryWriter.removeSegment(retirableSegmentIds.getQuick(i));
+        }
     }
 
     /**

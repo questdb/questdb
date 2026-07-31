@@ -30,6 +30,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
@@ -616,6 +617,7 @@ public final class LiveViewCheckpointLifecycle {
     }
 
     public static final class ReconcileResult {
+        private static final LongList EMPTY_SEGMENT_IDS = new LongList();
         private static final ReconcileResult FORMAT_RESET =
                 new ReconcileResult(false, true, -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0);
         private static final ReconcileResult NOT_OWNER =
@@ -632,6 +634,7 @@ public final class LiveViewCheckpointLifecycle {
         private final long obsoleteSegmentBytes;
         private final int purgedSegmentCount;
         private final int removedOrphanCount;
+        private final LongList retirableSegmentIds;
         private final LiveViewCheckpointTimelineStats stats;
         private final long walPurgeFloor;
 
@@ -659,6 +662,7 @@ public final class LiveViewCheckpointLifecycle {
             this.failedPurgeCount = purge == null ? 0 : purge.getFailedSegmentCount();
             this.liveSegmentCount = purge == null ? 0 : purge.getLiveSegmentCount();
             this.obsoleteSegmentBytes = purge == null ? 0 : purge.getObsoleteBytes();
+            this.retirableSegmentIds = purge == null ? EMPTY_SEGMENT_IDS : purge.getRetirableSegmentIds();
             this.stats = stats;
             this.discardedRepairCount = discardedRepairCount;
             this.failedRepairCount = failedRepairCount;
@@ -725,6 +729,16 @@ public final class LiveViewCheckpointLifecycle {
 
         public int getRemovedOrphanCount() {
             return removedOrphanCount;
+        }
+
+        /**
+         * @return catalogue entries whose segment file the sweep left unlinked, in
+         * ascending id order. Nothing else removes an entry, so a publication has
+         * to carry these away for the catalogue to stop growing with the view's
+         * age; empty when this reconciliation adopted no generation
+         */
+        public LongList getRetirableSegmentIds() {
+            return retirableSegmentIds;
         }
 
         /**

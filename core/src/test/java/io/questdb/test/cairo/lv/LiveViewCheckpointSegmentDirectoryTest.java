@@ -208,6 +208,139 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEntryRetirementPrunesEmptiedNodes() throws Exception {
+        assertMemoryLeak(() -> {
+            // Node capacity three, so thirty entries stand four levels tall and
+            // retiring most of them empties whole leaves and their parents. The
+            // structural claim is what the append cost measures: an entry removed
+            // in name only would leave the tree exactly as deep as it was.
+            final int segmentCount = 30;
+            final int retiredCount = 27;
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            final LongList removed = new LongList();
+            final LongList added = new LongList();
+            long metadataSegmentId = 1_000_000;
+
+            try (LiveViewCheckpointSegmentDirectoryWriter writer = openWriter(3, 3)) {
+                writer.begin(root);
+                for (int i = 0; i < segmentCount; i++) {
+                    writer.addSegment(i, 100 + i, 1);
+                }
+                writer.publish(metadataSegmentId++, 1, root);
+
+                writer.begin(root);
+                writer.addSegment(segmentCount, 100 + segmentCount, 1);
+                writer.publish(metadataSegmentId++, 2, root);
+                final int fullTreeAppendCost = writer.getLastSegmentPageCount();
+
+                // Drop the low run to a zero count, which is the state the purge
+                // sweep acts on before it unlinks the files.
+                writer.begin(root);
+                for (int i = 0; i < retiredCount; i++) {
+                    removed.add(i);
+                }
+                writer.applyRootReferenceChanges(removed, added, 3);
+                writer.publish(metadataSegmentId++, 3, root);
+
+                writer.begin(root);
+                for (int i = 0; i < retiredCount; i++) {
+                    writer.removeSegment(i);
+                }
+                // An id the catalogue no longer holds is a no-op: the sweep
+                // re-proposes what an earlier publication already took.
+                writer.removeSegment(0);
+                writer.removeSegment(9_999);
+                writer.publish(metadataSegmentId++, 4, root);
+
+                writer.begin(root);
+                writer.addSegment(segmentCount + 1, 100 + segmentCount + 1, 1);
+                writer.publish(metadataSegmentId, 5, root);
+                Assert.assertTrue(
+                        "a retirement that pruned no node leaves the tree as deep as it was"
+                                + " [full=" + fullTreeAppendCost
+                                + ", pruned=" + writer.getLastSegmentPageCount() + ']',
+                        writer.getLastSegmentPageCount() < fullTreeAppendCost
+                );
+            }
+
+            try (LiveViewCheckpointSegmentDirectoryReader reader = openReader(root)) {
+                final LiveViewCheckpointSegmentDirectoryEntry entry = new LiveViewCheckpointSegmentDirectoryEntry();
+                for (int i = 0; i < retiredCount; i++) {
+                    Assert.assertFalse("a retired entry must be gone", reader.find(i, entry));
+                }
+                final LongList seen = new LongList();
+                reader.iterateAll(e -> {
+                    seen.add(e.segmentId);
+                    Assert.assertEquals(100 + e.segmentId, e.fileLength);
+                    Assert.assertEquals(1, e.referenceCount);
+                });
+                Assert.assertEquals(segmentCount + 2 - retiredCount, seen.size());
+                Assert.assertEquals(segmentCount + 2 - retiredCount, reader.size());
+                for (int i = 1; i < seen.size(); i++) {
+                    Assert.assertTrue(
+                            "the scan must stay ordered",
+                            seen.getQuick(i - 1) < seen.getQuick(i)
+                    );
+                }
+                Assert.assertEquals(retiredCount, seen.getQuick(0));
+                Assert.assertEquals(segmentCount + 1, reader.lastSegmentId());
+            }
+        });
+    }
+
+    @Test
+    public void testEntryRetirementRefusesAReferencedSegment() throws Exception {
+        assertMemoryLeak(() -> {
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            final LongList removed = new LongList();
+            final LongList added = new LongList();
+            try (LiveViewCheckpointSegmentDirectoryWriter writer = openWriter()) {
+                writer.begin(root);
+                writer.addSegment(1, 10, 1);
+                writer.addSegment(2, 20, 1);
+                // A segment this publication registers has a file on disk, so it
+                // is not something a sweep can have unlinked.
+                try {
+                    writer.removeSegment(2);
+                    Assert.fail("expected a refusal to retire a just-registered entry");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "this publication registers");
+                }
+                writer.publish(1_000, 1, root);
+
+                writer.begin(root);
+                try {
+                    writer.removeSegment(1);
+                    Assert.fail("expected a refusal to retire a referenced entry");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "referenced live view checkpoint segment");
+                }
+
+                removed.add(1);
+                writer.applyRootReferenceChanges(removed, added, 2);
+                writer.removeSegment(1);
+                // The sweep unlinked that file, so nothing may name it again.
+                removed.clear();
+                added.add(1);
+                try {
+                    writer.applyRootReferenceChanges(removed, added, 2);
+                    Assert.fail("expected a refusal to reference a retiring entry");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "this publication retires");
+                }
+                writer.publish(1_001, 2, root);
+            }
+
+            try (LiveViewCheckpointSegmentDirectoryReader reader = openReader(root)) {
+                final LiveViewCheckpointSegmentDirectoryEntry entry = new LiveViewCheckpointSegmentDirectoryEntry();
+                Assert.assertFalse(reader.find(1, entry));
+                Assert.assertTrue(reader.find(2, entry));
+                Assert.assertEquals(1, reader.size());
+            }
+        });
+    }
+
+    @Test
     public void testExactSharedRootReferenceAccountingRoundTrip() throws Exception {
         assertMemoryLeak(() -> {
             final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
@@ -440,6 +573,97 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRandomizedRetirementAgainstAnOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            // Inserts, re-references, releases and retirements in one copy-on-write
+            // pass, so a retirement can empty a leaf its neighbour just split into
+            // and an insert can land in a subtree a retirement is pruning.
+            final Rnd rnd = new Rnd();
+            final TreeMap<Long, Long> oracle = new TreeMap<>();
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            final LongList removed = new LongList();
+            final LongList added = new LongList();
+            final TreeSet<Long> touched = new TreeSet<>();
+            final TreeSet<Long> unlinked = new TreeSet<>();
+            long metadataSegmentId = 1_000_000;
+            long publishGeneration = 1;
+            long nextSegmentId = 0;
+            int retired = 0;
+
+            try (LiveViewCheckpointSegmentDirectoryWriter writer = openWriter(3, 3)) {
+                for (int generation = 1; generation <= 120; generation++) {
+                    writer.begin(root);
+                    // Whatever the previous round released down to zero stands in
+                    // for a file the sweep has since unlinked.
+                    for (long segmentId : unlinked) {
+                        writer.removeSegment(segmentId);
+                        oracle.remove(segmentId);
+                        retired++;
+                    }
+                    unlinked.clear();
+
+                    final int inserts = 1 + rnd.nextPositiveInt() % 5;
+                    for (int i = 0; i < inserts; i++) {
+                        final long segmentId = nextSegmentId++;
+                        writer.addSegment(segmentId, 64 + segmentId, 1);
+                        oracle.put(segmentId, 1L);
+                    }
+
+                    removed.clear();
+                    added.clear();
+                    touched.clear();
+                    final int touches = rnd.nextPositiveInt() % 6;
+                    for (int i = 0; i < touches; i++) {
+                        final long segmentId = rnd.nextPositiveLong() % nextSegmentId;
+                        if (oracle.containsKey(segmentId)) {
+                            touched.add(segmentId);
+                        }
+                    }
+                    for (long segmentId : touched) {
+                        if (rnd.nextBoolean() && oracle.get(segmentId) > 0) {
+                            removed.add(segmentId);
+                            final long count = oracle.get(segmentId) - 1;
+                            oracle.put(segmentId, count);
+                            if (count == 0) {
+                                unlinked.add(segmentId);
+                            }
+                        } else {
+                            added.add(segmentId);
+                            oracle.put(segmentId, oracle.get(segmentId) + 1);
+                        }
+                    }
+                    if (removed.size() > 0 || added.size() > 0) {
+                        writer.applyRootReferenceChanges(removed, added, generation);
+                    }
+                    writer.publish(metadataSegmentId++, publishGeneration++, root);
+
+                    try (LiveViewCheckpointSegmentDirectoryReader reader = openReader(root)) {
+                        final LongList seen = new LongList();
+                        reader.iterateAll(entry -> {
+                            seen.add(entry.segmentId);
+                            Assert.assertEquals(64 + entry.segmentId, entry.fileLength);
+                            Assert.assertEquals(
+                                    (long) oracle.get(entry.segmentId),
+                                    entry.referenceCount
+                            );
+                        });
+                        Assert.assertEquals(oracle.size(), seen.size());
+                        Assert.assertEquals(oracle.size(), reader.size());
+                        for (int i = 1; i < seen.size(); i++) {
+                            Assert.assertTrue(
+                                    "the scan must stay ordered",
+                                    seen.getQuick(i - 1) < seen.getQuick(i)
+                            );
+                        }
+                        Assert.assertEquals((long) oracle.lastKey(), reader.lastSegmentId());
+                    }
+                }
+            }
+            Assert.assertTrue("the walk must actually retire entries, retired=" + retired, retired > 20);
+        });
+    }
+
+    @Test
     public void testRepeatedLookupsDoNotOutliveTheirRoot() throws Exception {
         assertMemoryLeak(() -> {
             // One restore resolves the same handful of segment ids over and over, so
@@ -484,6 +708,58 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
 
                 reader.clear();
                 Assert.assertFalse(reader.find(5, entry));
+            }
+        });
+    }
+
+    @Test
+    public void testRetiringEveryEntryEmptiesTheCatalogue() throws Exception {
+        assertMemoryLeak(() -> {
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            final LongList removed = new LongList();
+            final LongList added = new LongList();
+            try (LiveViewCheckpointSegmentDirectoryWriter writer = openWriter(2, 2)) {
+                writer.begin(root);
+                for (int i = 0; i < 5; i++) {
+                    writer.addSegment(i, 100 + i, 1);
+                    removed.add(i);
+                }
+                writer.publish(1_000, 1, root);
+
+                writer.begin(root);
+                writer.applyRootReferenceChanges(removed, added, 2);
+                writer.publish(1_001, 2, root);
+
+                writer.begin(root);
+                for (int i = 0; i < 5; i++) {
+                    writer.removeSegment(i);
+                }
+                writer.publish(1_002, 3, root);
+                // The root emitted no page, so the publication wrote no segment at
+                // all rather than an empty one for the catalogue to account for.
+                Assert.assertTrue(root.isNull());
+                Assert.assertEquals(0, writer.getLastSegmentBytes());
+                Assert.assertEquals(0, writer.getLastSegmentPageCount());
+
+                // The empty shape is the one begin() already accepts, so the next
+                // publication builds a fresh catalogue over it.
+                writer.begin(root);
+                writer.addSegment(7, 700, 1);
+                writer.publish(1_003, 4, root);
+            }
+
+            try (Path dir = new Path(); Path seg = new Path()) {
+                LiveViewCheckpointLayout.metaSegmentPath(seg, checkpointsDir(dir), 1_002);
+                Assert.assertFalse(
+                        "a publication that wrote no page must leave no segment behind",
+                        configuration.getFilesFacade().exists(seg.$())
+                );
+            }
+
+            try (LiveViewCheckpointSegmentDirectoryReader reader = openReader(root)) {
+                Assert.assertEquals(1, reader.size());
+                Assert.assertEquals(700, reader.getFileLength(7));
+                Assert.assertEquals(7, reader.lastSegmentId());
             }
         });
     }
