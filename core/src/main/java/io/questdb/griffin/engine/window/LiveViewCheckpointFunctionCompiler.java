@@ -51,6 +51,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.WindowExpression;
+import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -516,6 +517,12 @@ public final class LiveViewCheckpointFunctionCompiler {
         final IntList partitionByColumnIndexes = new IntList(partitionBy.size());
         final ListColumnFilter keyColumnFilter = new ListColumnFilter(partitionBy.size());
         final ArrayColumnTypes keyColumnTypes = new ArrayColumnTypes();
+        // The second projector's shape: what the view's window functions key their own
+        // maps by, which is this list with every SYMBOL resolved to a STRING. Left null
+        // while no key column is a SYMBOL, because the two projectors are then the same
+        // one and generating a second sink would buy nothing.
+        ArrayColumnTypes checkpointKeyColumnTypes = null;
+        BitSet writeSymbolAsString = null;
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
             final ExpressionNode node = partitionBy.getQuick(i);
             final int columnIndex = node.type == ExpressionNode.LITERAL
@@ -538,14 +545,35 @@ public final class LiveViewCheckpointFunctionCompiler {
                         executionContext
                 );
             }
+            final int columnType = baseMetadata.getColumnType(columnIndex);
             partitionByColumnIndexes.add(columnIndex);
             keyColumnFilter.add(columnIndex + 1);
-            keyColumnTypes.add(baseMetadata.getColumnType(columnIndex));
+            keyColumnTypes.add(columnType);
+            if (ColumnType.isSymbol(columnType)) {
+                if (checkpointKeyColumnTypes == null) {
+                    checkpointKeyColumnTypes = new ArrayColumnTypes();
+                    for (int j = 0; j < i; j++) {
+                        checkpointKeyColumnTypes.add(keyColumnTypes.getColumnType(j));
+                    }
+                    writeSymbolAsString = new BitSet();
+                }
+                writeSymbolAsString.set(columnIndex);
+                checkpointKeyColumnTypes.add(ColumnType.STRING);
+            } else if (checkpointKeyColumnTypes != null) {
+                checkpointKeyColumnTypes.add(columnType);
+            }
         }
         // No writeSymbolAsString is set, so a SYMBOL key column is projected as its
         // table-local integer. That is stable for one reader's lifetime, which is exactly
         // the scope one repair plans and replays in.
         final RecordSink keySink = RecordSinkFactory.getInstance(configuration, asm, baseMetadata, keyColumnFilter);
+        // The checkpoint projector does set it, because the key it writes has to compare
+        // equal to the one a window function's partition map already holds, and those
+        // maps key a SYMBOL partition column by its resolved string. A plan with no
+        // SYMBOL key column needs no second sink at all.
+        final RecordSink checkpointKeySink = writeSymbolAsString == null
+                ? keySink
+                : RecordSinkFactory.getInstance(configuration, asm, baseMetadata, keyColumnFilter, writeSymbolAsString);
         return new LiveViewCheckpointRowsPlan(
                 rowsFunctionCount,
                 maxPrecedingRows,
@@ -555,6 +583,8 @@ public final class LiveViewCheckpointFunctionCompiler {
                 null,
                 keyColumnTypes,
                 keySink,
+                checkpointKeyColumnTypes != null ? checkpointKeyColumnTypes : keyColumnTypes,
+                checkpointKeySink,
                 timestampIndex,
                 firstRows.getTimestampType()
         );
@@ -753,6 +783,11 @@ public final class LiveViewCheckpointFunctionCompiler {
                     firstRows.getOrderSignature(),
                     null,
                     keyFunctions,
+                    keyColumnTypes,
+                    keySink,
+                    // The expression projector already resolves a SYMBOL key function
+                    // through its string, which is what a window function's own map
+                    // holds, so the checkpoint form is the same projector.
                     keyColumnTypes,
                     keySink,
                     timestampIndex,

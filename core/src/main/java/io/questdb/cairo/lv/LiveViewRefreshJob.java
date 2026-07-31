@@ -809,7 +809,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-            capture = checkpointTimelineStoreWriter.beginRepair(checkpointsDir);
+            // Null for a replay that reconstructs every live key, and Q for one that
+            // describes only the keys the replacement re-emits - which is what lets a
+            // ROWS repair splice at all. The gate in o3HeadMissReplay has already
+            // refused a repair carrying neither.
+            capture = checkpointTimelineStoreWriter.beginRepair(
+                    checkpointsDir,
+                    plan.isReplayStateKeyComplete() ? null : plan.getOutputKeyDomain()
+            );
             // C, not R: a root in [R, C) keeps its state - nothing it holds
             // changed - and its output is re-emitted identically, so the splice
             // reuses it. Only [C, H) receives new payload versions.
@@ -4384,14 +4391,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final boolean finiteHighBound = localized && plan.isRuntimeStatePreserved();
         // Whether this repair may re-version the logical boundaries it crosses instead
         // of truncating the timeline at R. It needs the finite H every splice needs,
-        // and one thing more: the replay has to reconstruct every key's state, not only
-        // the state of the keys its bounds were derived for. A ROWS dependency does not
-        // - see LiveViewCheckpointRepairPlan.isReplayStateKeyComplete() - and a root
-        // frozen from such a replay describes a narrower key set than the boundary it
-        // replaces, which a later resume or restore then reads as the whole truth. The
-        // runtime survives that because the overlay puts it back; a published root has
-        // nothing to put it back from.
-        final boolean isTimelineSpliceable = finiteHighBound && plan.isReplayStateKeyComplete();
+        // and one thing more: the publication has to be able to describe every key the
+        // boundary held. Two ways to get there. A time-expiring dependency reconstructs
+        // every key outright, which is
+        // LiveViewCheckpointRepairPlan.isReplayStateKeyComplete(). A ROWS dependency
+        // does not - a root frozen from such a replay would describe a narrower key set
+        // than the boundary it replaces, which a later resume or restore then reads as
+        // the whole truth - so it instead names the keys it does describe, and the
+        // publication leaves every other key's entry exactly as the old root wrote it.
+        // With neither, the repair truncates at R: the runtime survives a narrowed
+        // state because the overlay puts it back, and a published root has nothing to
+        // put it back from.
+        final boolean isTimelineSpliceable = finiteHighBound
+                && (plan.isReplayStateKeyComplete() || plan.getOutputKeyDomain() != null);
         // The publication ordering this rebuild walks. It owns the two decisions the
         // rest of the method used to spread across local flags: what happens to the
         // runtime once the repair publishes, and whether the replacement is
@@ -6147,7 +6159,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-            capture = checkpointTimelineStoreWriter.beginRepair(checkpointsDir);
+            // The heal replays every base row above the predecessor it restored, so its
+            // state describes every live key and no key domain narrows it.
+            capture = checkpointTimelineStoreWriter.beginRepair(checkpointsDir, null);
             // (predecessorMaxTs, corruptCeilingMaxTs] in key space: the predecessor's
             // own boundary is kept, and every corrupt root above it up to and including
             // the ceiling is re-versioned. A non-corrupt boundary caught in the range
@@ -9119,6 +9133,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         private TableReader reader;
 
         @Override
+        public void collectRowsOutputKeys(@NotNull LiveViewCheckpointOutputKeyDomain out) {
+            rowsBounds.collectOutputKeys(out);
+        }
+
+        @Override
         public void discoverRowsBounds(
                 long viewLowerBoundTs,
                 long outputLowTs,
@@ -9158,6 +9177,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         @Override
         public long getRowsHighTsExclusive() {
             return rowsBounds.getHighTsExclusive();
+        }
+
+        @Override
+        public boolean isRowsOutputKeyDomainComplete() {
+            return rowsBounds.isOutputKeyDomainComplete();
         }
 
         @Override

@@ -25,8 +25,10 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
+import io.questdb.cairo.lv.LiveViewCheckpointOutputKeyDomain;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsBounds;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsBounds.ScanBudgetStatus;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
@@ -38,8 +40,12 @@ import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 
 /**
  * The {@code H -> Q -> L} discovery a bounded ROWS live view plans its localized
@@ -452,6 +458,78 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOutputKeyDomainLeavesInTheCheckpointKeyEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            createSteppedBase();
+            // Q leaves the discovery twice: counted, for the bounds, and keyed, for a
+            // repair that goes on to re-version logical boundaries. The second form has
+            // to encode the way a checkpoint partition map keys an entry, because that
+            // is what it is compared against at publication time - and for a SYMBOL
+            // partition column the two disagree unless the collection asks for the
+            // resolved string. The scans themselves keep the reader's table-local
+            // integer, which is why the plan carries two projectors rather than one.
+            try (View view = view(partitionedView(3));
+                 LiveViewCheckpointRowsBounds bounds = new LiveViewCheckpointRowsBounds(configuration)) {
+                final Bounds counted = view.discover(bounds, groupTs(20), groupTs(20), groupTs(20));
+                Assert.assertTrue(bounds.isOutputKeyDomainComplete());
+                Assert.assertEquals(2, counted.outputKeyCount);
+
+                final LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain();
+                bounds.collectOutputKeys(domain);
+                Assert.assertEquals(counted.outputKeyCount, domain.size());
+                Assert.assertTrue("key 'a' must encode as its resolved string", domain.contains(stringKey("a")));
+                Assert.assertTrue("key 'b' must encode as its resolved string", domain.contains(stringKey("b")));
+                Assert.assertFalse(domain.contains(stringKey("c")));
+                // The four-byte symbol id the scans key by, which is what a partition map
+                // never holds for a live view: it must not be what the domain carries.
+                Assert.assertFalse(domain.contains(new byte[]{0, 0, 0, 0}));
+                Assert.assertFalse(domain.contains(new byte[]{1, 0, 0, 0}));
+            }
+
+            // A non-SYMBOL key column encodes identically on both sides, and the plan
+            // reuses one projector for both. The domain still has to come back keyed.
+            try (View view = view(longKeyedView(2));
+                 LiveViewCheckpointRowsBounds bounds = new LiveViewCheckpointRowsBounds(configuration)) {
+                final Bounds counted = view.discover(bounds, groupTs(20), groupTs(20), groupTs(20));
+                Assert.assertTrue(bounds.isOutputKeyDomainComplete());
+
+                final LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain();
+                bounds.collectOutputKeys(domain);
+                Assert.assertEquals(counted.outputKeyCount, domain.size());
+                // The fixture writes x = group for key 'a' and x = group + 100 for 'b',
+                // so group 20's own two values are the domain's lowest members.
+                Assert.assertTrue(domain.contains(longKey(20)));
+                Assert.assertTrue(domain.contains(longKey(120)));
+                Assert.assertFalse(domain.contains(longKey(19)));
+            }
+        });
+    }
+
+    @Test
+    public void testOutputKeyDomainRefusesTheFragmentABudgetLeaves() throws Exception {
+        assertMemoryLeak(() -> {
+            createSteppedBase();
+            // A budget that stops the forward pass leaves Q a fragment of the interval,
+            // and a publication that keeps every key outside Q untouched must not be
+            // handed one - it would silently keep the entries of the keys the scan never
+            // reached. The refusal is the discovery's, not the caller's.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 1);
+            try (View view = view(partitionedView(3));
+                 LiveViewCheckpointRowsBounds bounds = new LiveViewCheckpointRowsBounds(configuration)) {
+                view.discover(bounds, groupTs(20), groupTs(20), groupTs(20));
+                Assert.assertEquals(ScanBudgetStatus.KEYS_EXCEEDED, bounds.getScanBudgetStatus());
+                Assert.assertFalse(bounds.isOutputKeyDomainComplete());
+                try {
+                    bounds.collectOutputKeys(new LiveViewCheckpointOutputKeyDomain());
+                    Assert.fail("an incomplete key domain must not be readable");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "output key domain is not available");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testOutputKeyBudgetLeavesNoBound() throws Exception {
         assertMemoryLeak(() -> {
             createSteppedBase();
@@ -657,6 +735,11 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
+    // One LONG partition-key column, as LiveViewSnapshotKeyCodec writes it.
+    private static byte[] longKey(long value) {
+        return ByteBuffer.allocate(Long.BYTES).order(ByteOrder.LITTLE_ENDIAN).putLong(value).array();
+    }
+
     private static String longKeyedView(int precedingRows) {
         return "SELECT ts, sym, sum(x) OVER (PARTITION BY x ORDER BY ts " + rowsFrame(precedingRows)
                 + ") AS s FROM base";
@@ -691,6 +774,27 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
     private static String sparseExpressionView(String tableName, int precedingRows) {
         return "SELECT ts, sym, sum(x) OVER (PARTITION BY upper(sym) ORDER BY ts " + rowsFrame(precedingRows)
                 + ") AS s FROM " + tableName;
+    }
+
+    /**
+     * One STRING partition-key column per value, as {@code LiveViewSnapshotKeyCodec}
+     * writes it: a four-byte character count then two bytes per character. A live view
+     * keys a SYMBOL partition column this way rather than by the symbol id, because the
+     * ids are segment-local and would collide across refresh cycles.
+     */
+    private static byte[] stringKey(String... values) {
+        int length = 0;
+        for (String value : values) {
+            length += Integer.BYTES + value.length() * Character.BYTES;
+        }
+        final ByteBuffer key = ByteBuffer.allocate(length).order(ByteOrder.LITTLE_ENDIAN);
+        for (String value : values) {
+            key.putInt(value.length());
+            for (int i = 0; i < value.length(); i++) {
+                key.putChar(value.charAt(i));
+            }
+        }
+        return key.array();
     }
 
     private static String sparseTagView(String tableName, int precedingRows) {

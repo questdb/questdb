@@ -265,8 +265,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * seal (or another repair) publishing in between invalidates every old root
      * reference the capture holds, so {@link #publishRepair} refuses rather than
      * splicing stale references into a newer tree.
+     *
+     * @param outputKeys {@code Q}, the keys this repair's replay describes, or null
+     *                   when it describes every live key. The capture takes its own
+     *                   copy: the plan it comes from is refilled by the next repair
+     *                   this worker runs, while a capture may be parked across turns
      */
-    public RepairCapture beginRepair(@Transient @NotNull Path checkpointsDir) {
+    public RepairCapture beginRepair(
+            @Transient @NotNull Path checkpointsDir,
+            @Transient @Nullable LiveViewCheckpointOutputKeyDomain outputKeys
+    ) {
         ensureDirectories(checkpointsDir);
         try (LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)) {
             metaStore.of(checkpointsDir);
@@ -279,7 +287,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     checkpointsDir,
                     skipPublishedSegmentIds(checkpointsDir, superblock.nextSegmentId),
                     superblock.generation,
-                    superblock.timelineRootRef
+                    superblock.timelineRootRef,
+                    outputKeys
             );
         }
     }
@@ -477,7 +486,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * {@code checkpointId}, {@code maxTimestamp} and {@code createdLvSeqTxn} and
      * receive a new root version plus the replay-derived position, while the
      * prefix and the converged suffix keep their existing payload roots by page
-     * reference. {@code suffixRowDelta} is the replacement's total output-row
+     * reference. It preserves every <i>partition</i> key too: a capture carrying an
+     * output key domain re-versions the entries of the keys its replay describes and
+     * leaves the rest of each root as it found them.
+     * <p>
+     * {@code suffixRowDelta} is the replacement's total output-row
      * count change; it lands as one difference-array point add at the first
      * logical key at or above {@code highTsExclusive}, so every suffix root
      * reports a corrected cumulative {@code lvRowPosition} without the splice
@@ -615,6 +628,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         boundary,
                         oldAnchorRootRef,
                         oldFunctionDirectory,
+                        capture.outputKeys,
                         oldEntry.checkpointId,
                         oldEntry.maxTimestamp,
                         definitionTxn,
@@ -647,16 +661,27 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 } catch (ArithmeticException e) {
                     throw CairoException.critical(0).put("live view checkpoint row position overflow");
                 }
+                // A key-domain splice images only the keys the replay describes and
+                // leaves every other one exactly as the old root wrote it, so what the
+                // freeze counted is a share of the boundary rather than the whole of
+                // it. Recomputing the whole would need the old root's per-key state
+                // sizes in the freeze's own units - a ring entry's logical size is the
+                // row stream it holds rather than the pages it stores - so the boundary
+                // keeps the total it already had instead of shedding every key the
+                // repair did not touch.
+                final long logicalStateBytes = capture.outputKeys != null
+                        ? oldEntry.logicalStateBytes
+                        : boundary.logicalStateBytes;
                 final LiveViewCheckpointTimelineEntry newEntry = new LiveViewCheckpointTimelineEntry().of(
                         oldEntry.maxTimestamp,
                         oldEntry.checkpointId,
                         oldEntry.createdLvSeqTxn,
                         baseLvRowPosition,
-                        boundary.logicalStateBytes
+                        logicalStateBytes
                 );
                 newEntry.rootRef.of(newRootRef.getSegmentId(), newRootRef.getOffset(), newRootRef.getLength());
                 newEntries[i] = newEntry;
-                logicalStateBytesDelta += boundary.logicalStateBytes - oldEntry.logicalStateBytes;
+                logicalStateBytesDelta += logicalStateBytes - oldEntry.logicalStateBytes;
             }
             nextSegmentId = roots.nextSegmentId;
             long metadataBytesAdded = roots.metadataBytesAdded;
@@ -1137,7 +1162,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     oldDirectoryRoot,
                     previousEntry.maxTimestamp
             ) : null) {
-                boundary = freezeBoundary(dataWriter, functions, anchorWindow, previousBoundary);
+                boundary = freezeBoundary(dataWriter, functions, anchorWindow, previousBoundary, null);
             }
             final boolean hasData = !dataWriter.isEmpty();
             final long dataSegmentBytes;
@@ -1160,6 +1185,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     boundary,
                     oldAnchorRootRef,
                     hasPrevious ? oldFunctionDirectory : null,
+                    null,
                     checkpointId,
                     maxTimestamp,
                     definitionTxn,
@@ -1439,6 +1465,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * replay carried, so the same rule reads as "the replay is the whole truth" -
      * see {@link RepairCapture} for what the caller must have proved before that
      * holds.
+     * <p>
+     * {@code outputKeys} narrows that rule to the keys a replay does describe. A key
+     * outside {@code Q} has no qualifying row in the interval the replacement re-emits,
+     * so the change did not touch it and the entry the old root wrote for it is still
+     * the truth: it is neither replaced nor removed. Null is the whole-truth freeze -
+     * every cadence seal, and every repair whose replay reconstructs every key.
      */
     private static void removeMissingPartitions(
             Path checkpointsDir,
@@ -1446,6 +1478,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             LiveViewCheckpointFunctionRoot oldFunctionRoot,
             LiveViewCheckpointPartitionMapReader oldPartitionReader,
             FrozenFunction frozen,
+            @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
             LiveViewCheckpointFunctionRootBuilder builder
     ) {
         if (oldFunctionRootRef.isNull()) {
@@ -1455,6 +1488,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         final LiveViewCheckpointPageRef oldPartitionRoot = new LiveViewCheckpointPageRef();
         oldFunctionRoot.getPartitionMapRootRef(oldPartitionRoot);
         oldPartitionReader.iterateAll(oldPartitionRoot, entry -> {
+            if (outputKeys != null && !outputKeys.contains(entry.getKey())) {
+                return;
+            }
             if (!frozen.partitionsByKey.containsKey(ByteBuffer.wrap(entry.getKey()))) {
                 builder.removePartition(entry.getKey());
             }
@@ -1525,13 +1561,23 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * <p>
      * Anchor entries are the exception: one is a key plus its last-seen anchor
      * value, so they are carried to publication as values and land in the
-     * anchor-map metadata pages rather than in the data segment.
+     * anchor-map metadata pages rather than in the data segment. They are also the
+     * exception to {@code outputKeys}: an anchor value is the anchor-period floor of
+     * a key's last row, so a key the replay carried out of a truncated history holds
+     * a strictly older floor there and its next row resets it, and a key the replay
+     * never carried is simply absent and keeps the entry the old anchor root wrote.
+     *
+     * @param outputKeys {@code Q}, when the replay describes those keys and no others,
+     *                   or null when it describes every live key. A key outside it is
+     *                   not imaged at all: the root it is being frozen for keeps the
+     *                   entry the old root already holds
      */
     private FrozenBoundary freezeBoundary(
             LiveViewCheckpointDataSegmentWriter dataWriter,
             @NotNull ObjList<WindowFunction> functions,
             @Nullable LiveViewWindow anchorWindow,
-            @Nullable PreviousBoundary previousBoundary
+            @Nullable PreviousBoundary previousBoundary,
+            @Nullable LiveViewCheckpointOutputKeyDomain outputKeys
     ) {
         final FrozenBoundary boundary = new FrozenBoundary();
         long logicalStateBytes = 0;
@@ -1565,7 +1611,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             );
             logicalStateBytes = checkedAdd(
                     logicalStateBytes,
-                    freezeFunction(dataWriter, function, frozen, previousBoundary)
+                    freezeFunction(dataWriter, function, frozen, previousBoundary, outputKeys)
             );
             boundary.functions.add(frozen);
         }
@@ -1586,7 +1632,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             LiveViewCheckpointDataSegmentWriter dataWriter,
             WindowFunction function,
             FrozenFunction frozen,
-            @Nullable PreviousBoundary previousBoundary
+            @Nullable PreviousBoundary previousBoundary,
+            @Nullable LiveViewCheckpointOutputKeyDomain outputKeys
     ) {
         final Map map = function.getPartitionMap();
         final boolean isRingShaped = function.supportsCheckpointRingState();
@@ -1625,6 +1672,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final byte[] key = new byte[keyLength];
             for (int i = 0; i < keyLength; i++) {
                 key[i] = keyBuffer.getByte(i);
+            }
+            if (outputKeys != null && !outputKeys.contains(key)) {
+                // Outside the replay's key domain: the state the runtime holds here was
+                // reconstructed from whatever rows happened to fall inside [L, H), so
+                // imaging it would publish a truncated history. The root keeps the entry
+                // the boundary already had, and no page is written for it at all.
+                continue;
             }
             logicalBytes = checkedAdd(logicalBytes, keyLength);
             if (isRingShaped) {
@@ -2403,6 +2457,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * because the scratch overlay puts the pre-repair state back over it; a
      * published root has nothing to put it back from, and a later resume or restart
      * reads it as the whole truth.
+     * <p>
+     * A ROWS repair meets that standard the other way round, by naming the keys its
+     * replay <b>does</b> describe. A capture opened with a
+     * {@link LiveViewCheckpointOutputKeyDomain} images only those keys and neither
+     * removes nor re-images any other, so the boundary keeps the entries the old root
+     * wrote for every key the change did not touch. Both halves are load-bearing: a
+     * key outside {@code Q} the replay never carried would otherwise be dropped, and
+     * one it did carry would otherwise be re-imaged from a truncated history.
      */
     public class RepairCapture implements Closeable {
         private final ObjList<FrozenBoundary> boundaries = new ObjList<>();
@@ -2411,6 +2473,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 new LiveViewCheckpointDataSegmentWriter(configuration);
         private final long dataSegmentId;
         private final long generation;
+        private final LiveViewCheckpointOutputKeyDomain outputKeys;
         private final LiveViewCheckpointPageRef timelineRootRef = new LiveViewCheckpointPageRef();
         private boolean isDataOpen;
         private boolean isDataPublished;
@@ -2419,12 +2482,19 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 Path checkpointsDir,
                 long dataSegmentId,
                 long generation,
-                LiveViewCheckpointPageRef timelineRootRef
+                LiveViewCheckpointPageRef timelineRootRef,
+                @Nullable LiveViewCheckpointOutputKeyDomain outputKeys
         ) {
             this.checkpointsDir.of(checkpointsDir);
             this.dataSegmentId = dataSegmentId;
             this.generation = generation;
             copy(timelineRootRef, this.timelineRootRef);
+            if (outputKeys != null) {
+                this.outputKeys = new LiveViewCheckpointOutputKeyDomain();
+                this.outputKeys.copyFrom(outputKeys);
+            } else {
+                this.outputKeys = null;
+            }
         }
 
         /**
@@ -2487,7 +2557,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     boundaries.getQuick(size - 1).oldEntry.maxTimestamp,
                     dataWriter
             );
-            final FrozenBoundary boundary = freezeBoundary(dataWriter, functions, anchorWindow, previousBoundary);
+            final FrozenBoundary boundary =
+                    freezeBoundary(dataWriter, functions, anchorWindow, previousBoundary, outputKeys);
             boundary.oldEntry.copyFrom(entry);
             boundary.effectiveLvRowPosition = effectiveLvRowPosition;
             boundaries.add(boundary);
@@ -2954,11 +3025,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * predecessor: the builders start from its anchor/function/partition-map
          * paths, so an unchanged entry is reused by reference rather than
          * rewritten. Both are empty for the first root of a timeline.
+         * <p>
+         * {@code outputKeys} is the repair capture's key domain, and it decides only
+         * which of the predecessor's entries this root may retire - the freeze already
+         * left every key outside it unimaged, so the put loop needs no filter of its
+         * own. Null is the whole-truth build every cadence seal makes.
          */
         private void buildRoot(
                 FrozenBoundary boundary,
                 LiveViewCheckpointPageRef oldAnchorRootRef,
                 @Nullable LiveViewCheckpointFunctionDirectory oldFunctionDirectory,
+                @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
                 long checkpointId,
                 long maxTimestamp,
                 long definitionTxn,
@@ -3018,6 +3095,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             oldFunctionRoot,
                             oldPartitionReader,
                             frozen,
+                            outputKeys,
                             functionRootBuilder
                     );
                     for (int p = 0, m = frozen.partitions.size(); p < m; p++) {

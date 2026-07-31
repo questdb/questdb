@@ -167,7 +167,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         Path checkpointsDir = checkpointsDir(instance)
                 ) {
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir)) {
+                                 writer.beginRepair(checkpointsDir, null)) {
                         Assert.assertTrue(
                                 "the capture must allocate above the orphan, not onto it",
                                 capture.getDataSegmentId() > orphanSegmentId
@@ -268,7 +268,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 ) {
                     final LiveViewCheckpointTimelineStoreWriter.RepairResult result;
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir)) {
+                                 writer.beginRepair(checkpointsDir, null)) {
                         Assert.assertEquals(0, capture.size());
                         result = publish(writer, capture, instance, ts(timestamp(31)), 3);
                     }
@@ -1345,7 +1345,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         Path checkpointsDir = checkpointsDir(instance)
                 ) {
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir)) {
+                                 writer.beginRepair(checkpointsDir, null)) {
                         captureRange(instance, capture, functions, ts(timestamp(30)), ts(timestamp(50)), new long[]{4, 6});
                         try {
                             // H below the boundaries the capture holds: the splice would
@@ -1360,7 +1360,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         }
                     }
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir)) {
+                                 writer.beginRepair(checkpointsDir, null)) {
                         try {
                             writer.publishRepair(
                                     capture,
@@ -1403,7 +1403,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         Path checkpointsDir = checkpointsDir(instance)
                 ) {
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir)) {
+                                 writer.beginRepair(checkpointsDir, null)) {
                         captureRange(instance, capture, functions, ts(timestamp(30)), ts(timestamp(50)), new long[]{4, 6});
                         appendAndRefresh(job, 130, 13);
                         try {
@@ -2005,7 +2005,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 ) {
                     writer.setTestFailureStage(failureStage);
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir)) {
+                                 writer.beginRepair(checkpointsDir, null)) {
                         captureRange(instance, capture, functions, ts(timestamp(30)), ts(timestamp(50)), new long[]{4, 6});
                         try {
                             publish(writer, capture, instance, ts(timestamp(50)), 2);
@@ -2034,56 +2034,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         });
     }
 
-    /**
-     * What a localized repair leaves behind when its replay cannot reconstruct every
-     * key, and so may not re-version the boundaries it crosses: the roots below the
-     * correction floor stand exactly as they were, everything at or above it goes
-     * rather than being frozen from a partial replay, and the post-replay seal puts
-     * one head back at the runtime frontier.
-     */
-    private void assertTruncatedAtTheCorrectionFloor(
-            LiveViewInstance instance,
-            LongList before,
-            long generationBefore
-    ) {
-        Assert.assertEquals(
-                "the roots below R survive and everything above them re-seals as one head",
-                3,
-                entryCount(instance)
-        );
-        Assert.assertTrue(
-                "the truncate and the head seal both publish",
-                generation(instance) > generationBefore
-        );
-        final LongList after = snapshotTimeline(instance);
-        // Prefix (10s, 20s): below the correction floor, so nothing about them changed -
-        // not their payload roots and not their positions.
-        assertSameRoot(before, after, 0);
-        assertSameRoot(before, after, 1);
-        Assert.assertEquals(1, after.getQuick(ENTRY_EFFECTIVE_POSITION));
-        Assert.assertEquals(2, after.getQuick(ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
-        Assert.assertEquals(
-                "the head stands at the runtime frontier",
-                ts(timestamp(HISTORY_COMMITS * 10)),
-                after.getQuick(2 * ENTRY_SIZE + ENTRY_MAX_TIMESTAMP)
-        );
-    }
-
     @Test
-    public void testRowsRepairLocalizesFromTheDiscoveredBounds() throws Exception {
-        // The ROWS shape reaches the same localization as RANGE, by discovery rather
-        // than by arithmetic. A ROWS 3 PRECEDING frame at the i-th row above the change
-        // holds the changed row exactly while i <= 3, so the row at 60s - the fourth
-        // above 25s - has converged and H is its timestamp. Everything in [25s, 60s) is
+    public void testRowsSpliceLocalizesFromTheDiscoveredBounds() throws Exception {
+        // The ROWS shape reaches the same splice as RANGE, by discovery rather than by
+        // arithmetic. A ROWS 3 PRECEDING frame at the i-th row above the change holds
+        // the changed row exactly while i <= 3, so the row at 60s - the fourth above
+        // 25s - has converged and H is its timestamp. Everything in [25s, 60s) is
         // re-emitted, the row at 60s is not, and neither are the two below the floor.
-        // <p>
-        // What it does not reach is the splice. A ROWS frame does not expire by time, so
-        // the replay's state at a boundary describes the keys the discovery warmed up
-        // rather than every live key - see
-        // LiveViewCheckpointRepairPlan.isReplayStateKeyComplete() - and a root frozen
-        // from it would name a narrower key set than the one it replaces. So the repair
-        // keeps the roots below R, drops the rest, and re-seals a head from the restored
-        // runtime.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute(
@@ -2105,7 +2062,32 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         4,
                         instance.getO3BoundaryReplayRows()
                 );
-                assertTruncatedAtTheCorrectionFloor(instance, before, generationBefore);
+                Assert.assertEquals(
+                        "a spliced timeline keeps every logical entry it had",
+                        HISTORY_COMMITS,
+                        entryCount(instance)
+                );
+                Assert.assertEquals(generationBefore + 1, generation(instance));
+
+                final LongList after = snapshotTimeline(instance);
+                // Prefix (10s, 20s): below the correction floor, so nothing about them
+                // changed - not their payload roots and not their positions.
+                assertSameRoot(before, after, 0);
+                assertSameRoot(before, after, 1);
+                Assert.assertEquals(1, after.getQuick(ENTRY_EFFECTIVE_POSITION));
+                Assert.assertEquals(2, after.getQuick(ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
+                // Repaired interval (30s, 40s, 50s): new root versions off the replay,
+                // and positions that count the row the replay inserted at 25s.
+                assertNewRoot(before, after, 2);
+                assertNewRoot(before, after, 3);
+                assertNewRoot(before, after, 4);
+                Assert.assertEquals(4, after.getQuick(2 * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
+                Assert.assertEquals(5, after.getQuick(3 * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
+                Assert.assertEquals(6, after.getQuick(4 * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
+                // Converged suffix (60s): its frame no longer reaches the change, so its
+                // payload root is reused and only its cumulative position moves.
+                assertSameRoot(before, after, 5);
+                Assert.assertEquals(6 + 1, after.getQuick(5 * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
             }
 
             assertQuery("select ts, sym, s from lv order by ts")
@@ -2129,7 +2111,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testLaggingRowsFrameLocalizesOnTheDiscoveredCount() throws Exception {
+    public void testLaggingRowsFrameSplicesOnTheDiscoveredCount() throws Exception {
         // The ROWS counterpart of testLaggingRangeFrameSplicesOnTheLookBehindAlone. The
         // discovery counts predecessors, not frame extent: the frame at the i-th row above
         // the change spans [i - 3, i - 1] rows back from itself, so it holds the changed row
@@ -2155,7 +2137,20 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         4,
                         instance.getO3BoundaryReplayRows()
                 );
-                assertTruncatedAtTheCorrectionFloor(instance, before, generationBefore);
+                Assert.assertEquals(
+                        "a spliced timeline keeps every logical entry it had",
+                        HISTORY_COMMITS,
+                        entryCount(instance)
+                );
+                Assert.assertEquals(generationBefore + 1, generation(instance));
+
+                final LongList after = snapshotTimeline(instance);
+                assertSameRoot(before, after, 0);
+                assertSameRoot(before, after, 1);
+                assertNewRoot(before, after, 2);
+                assertNewRoot(before, after, 3);
+                assertNewRoot(before, after, 4);
+                assertSameRoot(before, after, 5);
             }
             assertNoRefreshFaults("lv");
 
@@ -2183,7 +2178,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testUnboundedStartLastValueLocalizesOnTheHighBoundLag() throws Exception {
+    public void testUnboundedStartLastValueSplicesOnTheHighBoundLag() throws Exception {
         // The frame starts at UNBOUNDED PRECEDING, which is what the CREATE-time reject used
         // to turn away and what a whole-history rebuild is the fallback for. last_value
         // accumulates nothing: it emits the row 2 back, so its state is the 2 values behind
@@ -2211,10 +2206,23 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         3,
                         instance.getO3BoundaryReplayRows()
                 );
-                // The prefix keeps its payload roots by page identity, which is what
-                // separates a localized repair from the whole-history rebuild an unbounded
-                // frame start took before: that one versions every root and reads from S.
-                assertTruncatedAtTheCorrectionFloor(instance, before, generationBefore);
+                Assert.assertEquals(
+                        "a spliced timeline keeps every logical entry it had",
+                        HISTORY_COMMITS,
+                        entryCount(instance)
+                );
+                Assert.assertEquals(generationBefore + 1, generation(instance));
+
+                // The prefix and the converged suffix keep their payload roots by page
+                // identity, which is what separates a localized repair from the whole-history
+                // rebuild an unbounded frame start took before: that one versions every root.
+                final LongList after = snapshotTimeline(instance);
+                assertSameRoot(before, after, 0);
+                assertSameRoot(before, after, 1);
+                assertNewRoot(before, after, 2);
+                assertNewRoot(before, after, 3);
+                assertSameRoot(before, after, 4);
+                assertSameRoot(before, after, 5);
             }
             assertNoRefreshFaults("lv");
 
@@ -2463,7 +2471,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         new LiveViewCheckpointTimelineStoreWriter(configuration);
                 Path checkpointsDir = checkpointsDir(instance)
         ) {
-            try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = writer.beginRepair(checkpointsDir)) {
+            try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = writer.beginRepair(checkpointsDir, null)) {
                 captureRange(
                         instance,
                         capture,

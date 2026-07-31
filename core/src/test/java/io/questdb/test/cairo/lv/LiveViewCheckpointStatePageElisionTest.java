@@ -82,14 +82,15 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
     // Wide enough that a per-seal whole-map rewrite is unmistakable against a
     // single touched key.
     private static final int KEYS = 24;
-    // In-order seals the repair case folds its correction back into.
-    private static final int REPAIR_HISTORY_SEALS = 10;
-    // Seals above the corrected anchor segment. They are what a resume would have to
-    // replay, and so what makes the localized rebuild the cheaper disposition.
-    private static final int REPAIR_TAIL_SEALS = 20;
-    // The anchor period the repair case resets on, in seconds. Wide enough to hold that
-    // case's whole in-order history, so its correction lands inside one segment.
-    private static final int SEGMENT_SECONDS = 60;
+    // In-order seals the repair case folds its correction back into. Long enough for
+    // the hot key to reach its fourth row above the correction - which is where the
+    // ROWS frame converges and the replacement stops - and then to leave a tail above
+    // that, so the bounded rebuild prices cheaper than a resume off the boundary under
+    // the correction.
+    private static final int REPAIR_HISTORY_SEALS = 36;
+    // How many keys the repair case's trickle cycles through, and therefore the size
+    // of the output key domain the repair re-versions.
+    private static final int REPAIR_TRICKLE_KEYS = 4;
     private static final int TRICKLE_SEALS = 6;
     private static final String VIEW_SQL = "SELECT ts, sym, sum(x) OVER (" +
             "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW" +
@@ -229,57 +230,60 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
     @Test
     public void testRepairCaptureSharesColdPartitionsAcrossBoundaries() throws Exception {
         assertMemoryLeak(() -> {
-            // An anchored view rather than the ROWS one the other cases use, because a
-            // ROWS repair may not re-version the boundaries it crosses at all - see
-            // LiveViewCheckpointRepairPlan.isReplayStateKeyComplete() - and a repair that
-            // truncates the timeline freezes nothing. The anchor keeps the two properties
-            // this case needs: the state is whole-image per key, so the elision under test
-            // is the one that runs, and the segment is a wall in both directions, so a
-            // correction inside it converges at the segment end.
-            createAnchoredView();
+            createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // Two commits over the whole key set at the bottom of one anchor segment,
-                // then a trickle into one key above them, so the range a correction
-                // replays - the whole segment - holds rows for every key at its floor and
-                // rows for one key above it.
-                commitEveryKey(job, SEGMENT_SECONDS + 10);
-                commitEveryKey(job, SEGMENT_SECONDS + 20);
-                for (int seal = 1; seal <= REPAIR_HISTORY_SEALS; seal++) {
-                    commitHotKey(job, SEGMENT_SECONDS + 20 + seal * 3, seal);
+                // Four commits over the whole key set, then a round-robin trickle over
+                // the first REPAIR_TRICKLE_KEYS of them. The depth is what puts the
+                // repair's dependency floor above the view's own boundary, and the
+                // round robin is what leaves a key untouched between two boundaries
+                // the repair re-versions - which is the sharing this case measures.
+                for (int commit = 1; commit <= 4; commit++) {
+                    commitEveryKey(job, commit * 10);
                 }
-                // A tail in the segments above. It carries the runtime frontier past the
-                // convergence bound the correction below derives - without which the
-                // repair cannot prove the change sits outside the frame the runtime holds
-                // - and it is what makes the localized rebuild the cheaper disposition: a
-                // resume off the boundary under the correction would replay every row of
-                // it, while the rebuild stops at the end of the corrected segment.
-                for (int seal = 1; seal <= REPAIR_TAIL_SEALS; seal++) {
-                    commitHotKey(job, 2 * SEGMENT_SECONDS + seal * 10, REPAIR_HISTORY_SEALS + seal);
+                for (int seal = 1; seal <= REPAIR_HISTORY_SEALS; seal++) {
+                    commitKey(job, key((seal - 1) % REPAIR_TRICKLE_KEYS), 40 + seal * 10, seal);
                 }
                 driveRefreshToQuiescence(job);
-                assertAnchoredViewMatchesRecompute();
+                assertViewMatchesRecompute();
 
                 final LiveViewInstance instance = viewInstance();
                 final Set<Page> before = allPages(boundaryPages(instance));
                 final long repairedBefore = repairedRows(instance);
 
-                // One out-of-order row part-way up the first segment, so the repair
-                // replays that whole segment, crosses several boundaries above the
-                // correction and freezes each of them into one capture segment.
-                commitHotKey(job, SEGMENT_SECONDS + 25, 9_000);
+                // One out-of-order row inside the ROWS frame's look-behind, so the
+                // repair replays a range that crosses several boundaries and freezes
+                // each of them into one capture segment.
+                commitKey(job, HOT_KEY, 45, 9_000);
                 driveRefreshToQuiescence(job);
                 Assert.assertTrue(
                         "the correction must be repaired rather than appended",
                         repairedRows(instance) > repairedBefore
                 );
-                assertAnchoredViewMatchesRecompute();
+                assertViewMatchesRecompute();
 
                 // The capture shares against the boundary it froze immediately before,
-                // reading it out of its own still-unpublished segment. So a key the
-                // replay carried but did not touch again costs the capture one page
-                // however many boundaries it re-versions above it.
+                // reading it out of its own still-unpublished segment. So a key inside
+                // the repair's output key domain that the round robin did not come back
+                // to costs the capture one page however many boundaries it re-versions
+                // above it. Only that domain is imaged at all: every key with no row in
+                // the replacement interval keeps the entry the old root wrote, which is
+                // what stops the repair publishing a truncated history for it.
                 final Map<Page, Set<String>> boundariesByCapturedPage = new HashMap<>();
-                for (Boundary boundary : boundaryPages(instance)) {
+                final List<Boundary> boundaries = boundaryPages(instance);
+                // A splice creates no logical boundary of its own: it re-versions the
+                // ones its interval crosses and leaves the count exactly where the
+                // in-order history left it.
+                Assert.assertEquals(
+                        "the repair must splice rather than truncate",
+                        4 + REPAIR_HISTORY_SEALS,
+                        boundaries.size()
+                );
+                for (Boundary boundary : boundaries) {
+                    Assert.assertEquals(
+                            "boundary " + boundary.key() + " must still name every key",
+                            KEYS,
+                            boundary.pages.size()
+                    );
                     for (Page page : boundary.pages.values()) {
                         if (!before.contains(page)) {
                             boundariesByCapturedPage
@@ -293,8 +297,8 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
                         boundariesByCapturedPage.isEmpty()
                 );
                 int mostSharedBy = 0;
-                for (Set<String> boundaries : boundariesByCapturedPage.values()) {
-                    mostSharedBy = Math.max(mostSharedBy, boundaries.size());
+                for (Set<String> sharing : boundariesByCapturedPage.values()) {
+                    mostSharedBy = Math.max(mostSharedBy, sharing.size());
                 }
                 Assert.assertTrue(
                         "a captured page must be named by more than one re-versioned boundary, was " + mostSharedBy,
@@ -403,24 +407,6 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
         );
     }
 
-    /**
-     * The oracle for the anchored view: an anchor puts every function on the partition
-     * back to identity when its value changes, so a cumulative sum under a
-     * {@code timestamp_floor} anchor is the same sum partitioned by that floor.
-     */
-    private void assertAnchoredViewMatchesRecompute() throws Exception {
-        TestUtils.assertSqlCursors(
-                engine,
-                sqlExecutionContext,
-                "(SELECT ts, sym, sum(x) OVER (PARTITION BY sym, timestamp_floor('"
-                        + SEGMENT_SECONDS + "s', ts) ORDER BY ts) AS s FROM base) ORDER BY 2, 1",
-                "(lv) ORDER BY 2, 1",
-                LOG,
-                true
-        );
-        assertNoRefreshFaults("lv");
-    }
-
     private void assertRingViewMatchesRecompute(String ringWindow) throws Exception {
         TestUtils.assertSqlCursors(
                 engine,
@@ -513,19 +499,16 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
     // One row for the single hot key, plus a refresh turn. This is the trickle the
     // whole case is about: a seal the cadence owes to one key out of KEYS.
     private void commitHotKey(LiveViewRefreshJob job, int second, long x) throws Exception {
+        commitKey(job, HOT_KEY, second, x);
+    }
+
+    // One row for one key, plus a refresh turn.
+    private void commitKey(LiveViewRefreshJob job, String key, int second, long x) throws Exception {
         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-        execute("INSERT INTO base (ts, sym, x) VALUES ('" + timestamp(second) + "', '" + HOT_KEY + "', " + x + ")");
+        execute("INSERT INTO base (ts, sym, x) VALUES ('" + timestamp(second) + "', '" + key + "', " + x + ")");
         drainWalQueue();
         drainJob(job);
         drainWalQueue();
-    }
-
-    private void createAnchoredView() throws Exception {
-        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS "
-                + "SELECT ts, sym, sum(x) OVER w AS s FROM base "
-                + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('"
-                + SEGMENT_SECONDS + "s', ts))");
     }
 
     private void createView() throws Exception {

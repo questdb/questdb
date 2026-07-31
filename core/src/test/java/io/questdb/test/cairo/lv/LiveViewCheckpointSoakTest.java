@@ -117,7 +117,7 @@ public class LiveViewCheckpointSoakTest extends AbstractLiveViewTest {
         // current group and three predecessors. RANGE derives both ends of a repair by
         // timestamp arithmetic, which makes the historical correction's [L, H) independent
         // of how much history sits below it.
-        runSoak("PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW", true);
+        runSoak("PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW");
     }
 
     @Test
@@ -125,13 +125,7 @@ public class LiveViewCheckpointSoakTest extends AbstractLiveViewTest {
         // The same frame extent reached by counting rows instead. ROWS discovers its ends
         // by walking each affected key either side of the change, so the soak also prices
         // that discovery against a timeline that keeps growing under it.
-        //
-        // It fragments no segment, which is why this arm expects no compaction redirect:
-        // a ROWS repair may not re-version the boundaries it crosses - see
-        // LiveViewCheckpointRepairPlan.isReplayStateKeyComplete() - so it truncates the
-        // timeline at the correction floor instead, and a boundary that is dropped
-        // whole leaves no part-live segment behind. The RANGE arm covers the redirect.
-        runSoak("PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW", false);
+        runSoak("PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW");
     }
 
     // The live view must equal the same window recomputed directly over the base table.
@@ -259,7 +253,7 @@ public class LiveViewCheckpointSoakTest extends AbstractLiveViewTest {
         engine.buildViewGraphs();
     }
 
-    private void runSoak(String windowFrame, boolean expectsCompactionRedirect) throws Exception {
+    private void runSoak(String windowFrame) throws Exception {
         // One logical root per commit: the fastest cadence the view can seal, so the soak
         // accumulates the most boundaries and every repair has roots to splice.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
@@ -339,16 +333,10 @@ public class LiveViewCheckpointSoakTest extends AbstractLiveViewTest {
             Assert.assertEquals(ROUNDS / 4, purges);
             Assert.assertEquals(isCheckpointSupported ? ROUNDS / 4 : 0, restores);
             Assert.assertEquals(isCheckpointSupported ? ROUNDS / 4 : ROUNDS / 2, restarts);
-            // A splicing repair fragments the timeline, so at least one compaction cycle
+            // The soak's repairs fragment the timeline, so at least one compaction cycle
             // must find a sparse segment and publish a redirect - otherwise the whole
-            // compaction path went untested behind an always-empty plan. An arm whose
-            // repairs truncate instead drops boundaries whole and leaves nothing part
-            // live, and the assertion states that rather than tolerating either.
-            Assert.assertEquals(
-                    "compaction redirects published",
-                    expectsCompactionRedirect,
-                    compactionsPublished > 0
-            );
+            // compaction path went untested behind an always-empty plan.
+            Assert.assertTrue("at least one compaction cycle must publish a redirect", compactionsPublished > 0);
 
             execute("DROP LIVE VIEW lv");
         });

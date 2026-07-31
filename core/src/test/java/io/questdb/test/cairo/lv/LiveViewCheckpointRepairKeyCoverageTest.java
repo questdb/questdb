@@ -65,10 +65,15 @@ import java.util.Set;
  * rows however old they are, and the discovery walks back only far enough to warm up
  * the output key domain {@code Q}, the keys with a row in {@code [R, H)}. So a ROWS
  * repair used to publish roots naming a fraction of the view's keys, and a later
- * resume off one of them replayed forward from a state missing the rest. It now
- * truncates the timeline at {@code R} instead and re-seals a head from the restored
- * runtime, which is the same disposition a localized repair with no converged suffix
- * already took.
+ * resume off one of them replayed forward from a state missing the rest.
+ * <p>
+ * It splices again, on the set rather than on the shape: the publication takes the
+ * replay's entry for a key inside {@code Q} and leaves every key outside it exactly as
+ * the old root wrote it, which is correct because a key with no qualifying row in
+ * {@code [R, H)} is a key the change did not touch. Both halves are load-bearing, and
+ * the three ROWS cases below cover both: a key outside {@code Q} the replay never
+ * carried must not be dropped, and one it carried must not be re-imaged from the
+ * fragment of its history that happened to fall inside {@code [L, H)}.
  */
 public class LiveViewCheckpointRepairKeyCoverageTest extends AbstractLiveViewTest {
 
@@ -80,6 +85,8 @@ public class LiveViewCheckpointRepairKeyCoverageTest extends AbstractLiveViewTes
             + "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW)";
     private static final String ROWS_WINDOW = "sum(x) OVER (PARTITION BY sym ORDER BY ts "
             + "ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)";
+    // The one key whose own history the warm-up interval cuts in half.
+    private static final String WARM_KEY = "k01";
 
     @After
     public void resetClock() {
@@ -147,16 +154,58 @@ public class LiveViewCheckpointRepairKeyCoverageTest extends AbstractLiveViewTes
                 assertRepairOutcome("rows", "localized rebuild", null);
                 assertViewMatchesRecompute(ROWS_WINDOW);
 
-                // Stated as the whole timeline, because both halves matter and the
-                // first is what fails before the change: the roots at or below R
-                // survive untouched, everything above them goes rather than being
-                // re-versioned from a partial replay, and the post-replay seal puts a
-                // head back at the frontier. Before the change the boundaries at 60,
-                // 70 and 80 survived naming one key out of eight.
+                // Stated as the whole timeline, because both halves matter: every
+                // boundary the history sealed is still there - the repair spliced
+                // rather than truncating at R - and every one of them still names all
+                // eight keys, including the three the repair re-versioned off a replay
+                // that carried one. Red twice before the change: the boundaries above
+                // 55 were dropped outright, and before that they came back naming one
+                // key each.
+                final StringBuilder expected = new StringBuilder("[10=" + KEYS);
+                for (int second = 20; second <= 400; second += 10) {
+                    expected.append(", ").append(second).append('=').append(KEYS);
+                }
+                Assert.assertEquals(expected.append(']').toString(), boundaries(instance).toString());
+            }
+        });
+    }
+
+    @Test
+    public void testARowsRepairKeepsTheHistoryOfAKeyItsReplayOnlyPartlyCarried() throws Exception {
+        // The second half of the defect, and the one a fix that only stopped the
+        // removals would leave standing. WARM_KEY straddles L: two of its rows sit
+        // inside the warm-up interval and two sit below it, and none sits inside the
+        // interval the replacement re-emits. So the replay does carry it - it is not a
+        // missing key - and what it carries is a fragment of its history. Imaging that
+        // fragment would publish a frame two rows short, which the resume off one of
+        // those boundaries then reads as the whole of the key's past.
+        assertMemoryLeak(() -> {
+            createView(ROWS_WINDOW);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                buildStraddlingHistory(job);
+
+                // L lands at 340 - the hot key's third qualifying predecessor below the
+                // correction - so the replay carries WARM_KEY's rows at 345 and 355 and
+                // not the ones at 105 and 205.
+                commitHotKey(job, 365, 9_000);
+                driveRefreshToQuiescence(job);
+                assertRepairOutcome("rows", "localized rebuild", null);
+                assertViewMatchesRecompute(ROWS_WINDOW);
+                final LiveViewInstance instance = viewInstance();
                 Assert.assertEquals(
-                        "[10=8, 20=8, 30=8, 40=8, 50=8, 400=8]",
-                        boundaries(instance).toString()
+                        "a ROWS repair must re-version boundaries rather than truncate",
+                        0,
+                        narrowedBoundaryCount(instance)
                 );
+
+                // The resume restores one of the re-versioned boundaries and replays
+                // forward over WARM_KEY's row at 405. Its frame there spans its last
+                // four rows, so a boundary that recorded only the two the replay
+                // carried loses the one at 205.
+                commitHotKey(job, 395, 9_100);
+                driveRefreshToQuiescence(job);
+                assertRepairOutcome("rows", "resume from anchor", "resume cheaper");
+                assertViewMatchesRecompute(ROWS_WINDOW);
             }
         });
     }
@@ -300,6 +349,32 @@ public class LiveViewCheckpointRepairKeyCoverageTest extends AbstractLiveViewTes
         driveRefreshToQuiescence(job);
     }
 
+    /**
+     * The resume history with four extra rows for one key, placed so the correction's
+     * warm-up interval cuts that key's own history in half: two below {@code L} and two
+     * inside {@code [L, R)}. Every row still goes in ascending timestamp order, so
+     * building the history triggers no repair of its own.
+     */
+    private void buildStraddlingHistory(LiveViewRefreshJob job) throws Exception {
+        commitEveryKey(job, 10);
+        for (int second = 20; second <= 400; second += 10) {
+            commitHotKey(job, second, second);
+            switch (second) {
+                case 100 -> commitKey(job, WARM_KEY, 105, 1);
+                case 200 -> commitKey(job, WARM_KEY, 205, 2);
+                case 340 -> commitKey(job, WARM_KEY, 345, 3);
+                case 350 -> commitKey(job, WARM_KEY, 355, 4);
+                default -> {
+                }
+            }
+        }
+        commitEveryKey(job, 405);
+        for (int second = 410; second <= 450; second += 10) {
+            commitHotKey(job, second, second);
+        }
+        driveRefreshToQuiescence(job);
+    }
+
     // One row for every key, at one designated timestamp, plus a refresh turn.
     private void commitEveryKey(LiveViewRefreshJob job, int second) throws Exception {
         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
@@ -319,8 +394,13 @@ public class LiveViewCheckpointRepairKeyCoverageTest extends AbstractLiveViewTes
 
     // One row for the single hot key, plus a refresh turn.
     private void commitHotKey(LiveViewRefreshJob job, int second, long x) throws Exception {
+        commitKey(job, HOT_KEY, second, x);
+    }
+
+    // One row for one key, plus a refresh turn.
+    private void commitKey(LiveViewRefreshJob job, String key, int second, long x) throws Exception {
         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-        execute("INSERT INTO base (ts, sym, x) VALUES ('" + timestamp(second) + "', '" + HOT_KEY + "', " + x + ")");
+        execute("INSERT INTO base (ts, sym, x) VALUES ('" + timestamp(second) + "', '" + key + "', " + x + ")");
         drainWalQueue();
         drainJob(job);
         drainWalQueue();
