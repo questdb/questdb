@@ -1158,6 +1158,22 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTrailingTokenRejected() throws Exception {
+        // The edition grammar hook runs after the statement parses: the parser hands
+        // any trailing token to SqlParserCallback.parseCreateLiveViewExt, and the OSS
+        // default rejects it. Enterprise consumes OWNED BY '<principal>' through the
+        // same hook, so the reject's position marks the exact spot the extension
+        // grammar starts at.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS (" +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base" +
+                    ") foobar";
+            assertException(createSql, createSql.indexOf("foobar"), "unexpected token [foobar]");
+        });
+    }
+
     private void assertCreateLiveViewCollisionRejected(boolean ifNotExists) throws Exception {
         try {
             execute("CREATE LIVE VIEW " + (ifNotExists ? "IF NOT EXISTS " : "") +
