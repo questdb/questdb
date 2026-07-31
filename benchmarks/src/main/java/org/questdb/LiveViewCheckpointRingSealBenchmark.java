@@ -112,6 +112,9 @@ public class LiveViewCheckpointRingSealBenchmark {
     private static final long FIXTURE_SEGMENT_ID = 1;
     private static final byte[] KEY = new byte[]{1, 2, 3};
     private static final String LV_DIR = "lv_range_seal_bench";
+    // The fixture publishes the catalogue once, into an empty directory, so it
+    // retires nothing and carries the first generation.
+    private static final long META_GENERATION = 1;
     private static final long META_SEGMENT_ID = 1_000;
     private static final int ROWS = 4 * LiveViewCheckpointStateCodec.CHUNK_ROWS;
     private static final String ROOT =
@@ -209,7 +212,7 @@ public class LiveViewCheckpointRingSealBenchmark {
             directoryWriter.of(checkpointsDir);
             directoryWriter.begin(directoryRoot);
             directoryWriter.addSegment(FIXTURE_SEGMENT_ID, segmentBytes, 1);
-            directoryWriter.publish(META_SEGMENT_ID, directoryRoot);
+            directoryWriter.publish(META_SEGMENT_ID, META_GENERATION, directoryRoot);
             directory.of(checkpointsDir, directoryRoot);
         }
         printFixture(segmentBytes);
