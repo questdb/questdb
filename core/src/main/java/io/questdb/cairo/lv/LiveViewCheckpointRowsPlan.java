@@ -84,6 +84,8 @@ import org.jetbrains.annotations.Nullable;
  * different contract rather than a degenerate case of this one.
  */
 public final class LiveViewCheckpointRowsPlan implements QuietCloseable {
+    private final ColumnTypes checkpointKeyColumnTypes;
+    private final RecordSink checkpointKeySink;
     private final int functionCount;
     private final ColumnTypes keyColumnTypes;
     private final ObjList<Function> keyFunctions;
@@ -104,6 +106,8 @@ public final class LiveViewCheckpointRowsPlan implements QuietCloseable {
             @Nullable ObjList<Function> keyFunctions,
             @NotNull ColumnTypes keyColumnTypes,
             @NotNull RecordSink keySink,
+            @NotNull ColumnTypes checkpointKeyColumnTypes,
+            @NotNull RecordSink checkpointKeySink,
             int timestampIndex,
             int timestampType
     ) {
@@ -127,6 +131,8 @@ public final class LiveViewCheckpointRowsPlan implements QuietCloseable {
         this.keyFunctions = keyFunctions;
         this.keyColumnTypes = keyColumnTypes;
         this.keySink = keySink;
+        this.checkpointKeyColumnTypes = checkpointKeyColumnTypes;
+        this.checkpointKeySink = checkpointKeySink;
         this.timestampIndex = timestampIndex;
         this.timestampType = timestampType;
     }
@@ -137,6 +143,35 @@ public final class LiveViewCheckpointRowsPlan implements QuietCloseable {
     @Override
     public void close() {
         Misc.freeObjList(keyFunctions);
+    }
+
+    /**
+     * Returns the map key shape the {@link #getCheckpointKeySink() checkpoint projector}
+     * writes, which is the shape a window function's own partition map uses: this plan's
+     * key types with every SYMBOL rewritten to STRING.
+     */
+    public @NotNull ColumnTypes getCheckpointKeyColumnTypes() {
+        return checkpointKeyColumnTypes;
+    }
+
+    /**
+     * Returns the projector that writes one base record's partition key the way the
+     * view's window functions key their own maps, so a key the discovery collects and a
+     * key a checkpoint partition map holds encode to the same bytes.
+     * <p>
+     * It differs from {@link #getKeySink()} in one column shape and only on the
+     * column-keyed path: a SYMBOL partition column is written as its resolved string
+     * rather than as the reader's table-local integer, because that is what the
+     * live-view partition-by sinks write (see {@code LiveViewWindow.build} and the
+     * live-view arm of {@code SqlCodeGenerator.generateSelectWindow}). Everything else
+     * encodes identically, and an expression-keyed plan already writes a SYMBOL key
+     * function through its resolved string, so there the two projectors are one object.
+     * <p>
+     * The same binding rule applies: {@link #initKeyFunctions} must have bound the
+     * plan's key functions to the cursor the records come from.
+     */
+    public @NotNull RecordSink getCheckpointKeySink() {
+        return checkpointKeySink;
     }
 
     public int getFunctionCount() {

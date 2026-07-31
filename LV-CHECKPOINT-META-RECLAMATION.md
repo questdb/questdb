@@ -1,7 +1,7 @@
 # Live-view `_checkpoints/meta/` growth - design and implementation plan
 
 - **Context:** PR #6939 `feat(sql): add live views`, branch `puzpuzpuz_live_view`
-- **Verified against:** `5d1dd718b6`
+- **Verified against:** `7d6f5f4bc3`
 - **Date:** 2026-07-31
 - **Supersedes:** the "Critical 8" section of the review handoff, whose fix options
   (per-segment refcounting *or* metadata compaction) were framed against an
@@ -9,12 +9,14 @@
 - **Status:** **All four phases landed, plus the catalogue-entry retirement that
   decision 7 named, the purge cadence its leftover named, the
   uncatalogued-file collection the cadence's own leftover named, and the
-  rule unification that collection left over in turn.** Phase 1
+  rule unification that collection left over in turn - and then one of the four
+  came back out on a scope decision.** Phase 1
   (`a2712f7217`) - section 5.1. Phase 2a (`3175302fdc`) - section 5.2, where
   implementing it replaced the closure-summary mechanism this document originally
   specified with per-segment page counts. Phase 2b (`ab0bd57871`) - section 5.3,
   which took the closure-summary mechanism after all, for a reason the plan had
-  not stated. Phase 3 (`d7bf14f612`) - section 5.4. Phase 4 (`a8bc16da33`) -
+  not stated. Phase 3 (`d7bf14f612`) - section 5.4, removed again by `524a8e833b`.
+  Phase 4 (`a8bc16da33`) -
   section 5.5, the catalogue's own entry retirement, which was decision 7 rather
   than a planned phase. Phase 5 (`ec6493a268`) - section 5.6, the purge cadence,
   which was the "when the sweep runs" leftover decision 7 recorded. Phase 6
@@ -22,19 +24,28 @@
   count describes, which was the final-orphan leftover section 5.6 recorded and
   turned out to be a leak rather than a lag. Phase 7 (`5d1dd718b6`) - section 5.8,
   which gave reconciliation the catalogue rule too, closing the half of that leak
-  a process with no cadence sweep still carried. Class A and Class B are both
-  closed as mechanisms, so is the residual each of them left, so is the
-  restart-scoped lag in collecting it, and so is the one disposition that was
-  neither, under both collectors rather than one.
-  **Scope decision, 2026-07-31: the retention horizon is not shipping.** The brief
-  was metadata GC, section 1 widened it to bound retained state too, and that
-  widening is withdrawn - so Class A is the deliverable and Phase 3 comes back out.
-  What remains is the four follow-up tasks in section 12, of which task 1 is that
-  removal and task 2 is the regression guard it must not take with it. Class A
-  itself needs no further code. The consequence, stated because it is the point:
-  **nothing bounds a default install's retained checkpoint state**, and task 3
-  requires the PR body to say so; what the cadence and the reconciler bound is the
-  garbage beside it.
+  a process with no cadence sweep still carried. Then `524a8e833b` - section 5.9,
+  the removal of Phase 3 and the move of the non-seal failure injection that had
+  to go with it. Class A is closed as a mechanism, so is the residual it left, so
+  is the restart-scoped lag in collecting it, and so is the one disposition that
+  was neither, under both collectors rather than one. Class B is not closed and
+  no longer has a mechanism.
+  **Scope decision, 2026-07-31: the retention horizon is not shipping - and as of
+  `524a8e833b` it is out of the branch.** The brief was metadata GC, section 1
+  widened it to bound retained state too, and that widening is withdrawn - so Class
+  A is the deliverable and Phase 3 came back out. Tasks 1 and 2 in section 12
+  landed together in that commit and section 5.9 records them; task 3 followed on
+  2026-07-31 and section 5.10 records it, task 4 the same day - section 5.11 -
+  where the narrowed key set decision 5 had left open turned out to be a live wrong
+  answer for ROWS views and was fixed by refusing the splice, and task 5 the same
+  day again - section 5.12 - which gave the splice back keyed on the output key
+  domain, so a ROWS repair re-versions the keys its replay describes and leaves
+  every other key's entry as the old root wrote it. **Every task in section 12 is
+  done.** Neither task 4 nor task 5 is reclamation work. Class A itself
+  needs no further code. The consequence, stated
+  because it is the point: **nothing bounds a default install's retained checkpoint
+  state**; what the cadence and the reconciler bound is the garbage beside it. The
+  #6939 PR body now says both halves in two clauses rather than one.
   The original three semantic questions in section 6 were traced on 2026-07-30 and
   came back clear.
 
@@ -59,9 +70,11 @@ keeping live boundaries, which is a policy feature rather than a collector, and
 the scope decision of 2026-07-31 (section 11) takes it back out. So this plan
 reclaims garbage in both directories and bounds neither: what a generation cannot
 reach is collected, and what it can reach stays for as long as the boundary
-naming it does. Task 1 in section 12 removes Phase 3; sections 2 through 10 are
-left as written, because the growth model and the trade-offs they record are what
-a future retention proposal would start from.
+naming it does. Task 1 in section 12 removed Phase 3 (`524a8e833b`, section 5.9);
+sections 2 through 10 are left as written, because the growth model and the
+trade-offs they record are what a future retention proposal would start from.
+Where those sections say Phase 3 does something, read it as what the removed
+mechanism did, not as a description of the branch.
 
 The live view's own table (partitions) is explicitly out of scope - TTL support
 lands separately.
@@ -113,7 +126,8 @@ Order of magnitude for the steady-state part: single-digit MB/day per view.
 
 Class A is closed. Everything `meta/` and `data/` still hold belongs to a
 boundary the timeline names, so what remains is a retention question rather than
-a garbage-collection one - which is what Phase 3's horizon moves. The catalogue's
+a garbage-collection one - which is what Phase 3's horizon moved, and what
+nothing moves now that task 1 has taken it out. The catalogue's
 own entries were the one exception - reachable from the newest generation but
 naming nothing, once the sweep had unlinked their files - and Phase 4 retires
 them. Closing a row of this table means a collector *may* reclaim it, which is
@@ -127,8 +141,9 @@ their whole description is that the catalogue never held them. That put them
 outside both classes rather than inside Class A, which is why they survived every
 phase up to Phase 6, and outside the id-ceiling rule too once a later publication
 allocated past them. Volume is one publication's worth of segments per failure -
-two files in the measured case - and the population is every failed retention,
-compaction or repair, since a failed seal is the one shape the old rule did catch.
+two files in the measured case - and the population is every failed compaction or
+repair, since a failed seal is the one shape the old rule did catch. Retention was
+a third until task 1 removed the publication.
 Phase 6 collected them on the sweep cadence and Phase 7 at reconciliation, so
 both collectors now decide them; before Phase 7 a process that never swept - the
 cadence disabled, or a view that stopped sealing after the failure - still held
@@ -168,11 +183,12 @@ and map entry are both reused, so that trickle now costs one key per seal rather
 than the whole key set. The rest of the table stands - the retained closure of
 every surviving boundary is still Class B.
 
-*Phase 3 bounds the table as a whole,* but only where an operator sets a horizon.
-Every row above prices one boundary; the horizon fixes how many boundaries a
-generation holds, so the store's footprint becomes `retained_boundaries x
-per-boundary cost` instead of `seals x per-boundary cost`. At the default horizon
-of zero it fixes nothing, which is the state of open decisions 1 and 2.
+*Phase 3 bounded the table as a whole,* but only where an operator set a horizon,
+and task 1 removed it. Every row above prices one boundary; the horizon fixed how
+many boundaries a generation holds, so the store's footprint became
+`retained_boundaries x per-boundary cost` instead of `seals x per-boundary cost`.
+It shipped at a default horizon of zero, where it fixed nothing, and nothing
+replaces it: this table now stands unbounded as written.
 
 ---
 
@@ -244,11 +260,11 @@ closure accounting itself is new structure.
 | purge rule (`oldestValidSlotGeneration >= retireGeneration && minPinnedGeneration > retireGeneration`) | `LiveViewCheckpointDataStore.java:595-626` | unchanged, gained a metadata path probe - **done, Phase 2a**; Phase 2b needed no change to it at all; Phase 4 made it also the proof that an *entry* is dead; Phase 5 runs it on a cadence rather than once per process, and the rule is indifferent to how often it runs |
 | persisted data-segment use-count tally inside a function root | `LiveViewCheckpointFunctionRootBuilder.java:156-158`, `adjustSegment:193` | carries the metadata closure beside the data one - **done, Phase 2b** |
 | copy-on-write put elision | `LiveViewCheckpointPartitionMapWriter` (documented at `LiveViewCheckpointAnchorRootBuilder.java:42-47`) | Phase 1 |
-| high-side timeline truncate | `LiveViewCheckpointTimelineWriter.truncateAbove:205`, `publishTruncate:711` | template for the low-side mirror - **done, Phase 3** |
+| high-side timeline truncate | `LiveViewCheckpointTimelineWriter.truncateAbove`, `publishTruncate` | template for the low-side mirror Phase 3 built and task 1 removed; the high-side half is untouched, and it is the only publication left that drops a boundary |
 | generation pins, try-with-resources at all seven sites | `LiveViewCheckpointGenerationPin` | unchanged |
 | foreign-layout-version retire path | `LiveViewCheckpointLifecycle.java:54,84,403` | format migration |
 | final-orphan id-ceiling scan | `LiveViewCheckpointLifecycle.cleanupOrphans`, `purgeFinalOrphans:204` | the shape Phase 6's catalogue scan copied, and the rule it had to replace - the ceiling it compares against stops naming a file once a later publication has stepped over it. Phase 7 left it only the case the catalogue cannot answer: a directory with no valid generation, where the ceiling is zero |
-| deterministic publish-stage crash injection | `setTestFailureStage`, `TEST_FAIL_AFTER_{DATA,METADATA,SUPERBLOCK}_PUBLISH` | crash tests |
+| deterministic publish-stage crash injection | `setTestFailureStage`, `TEST_FAIL_AFTER_{DATA,METADATA,SUPERBLOCK}_PUBLISH` | crash tests; `TEST_FAIL_AFTER_COMPACTION_METADATA_PUBLISH` is the non-seal one Phases 6 and 7 need, moved there by task 2 |
 
 Phase 2a supplied the directory's deferred self-registration, per-segment page
 accounting for the three direct trees, and the metadata purge path; Phase 2b
@@ -258,7 +274,7 @@ already carried it once the roots stated the closure. Phase 3 added the low-side
 timeline truncate and the row-position-delta prune this table listed as absent,
 and needed no new reclamation machinery at all: retiring a boundary is the same
 reference transaction the truncate already ran, against the closure Phase 2b
-taught the roots to state. Phase 4 added one tree operation - an entry removal
+taught the roots to state - all of which task 1 has since removed. Phase 4 added one tree operation - an entry removal
 that prunes through the existing emit path - and one field on the writer to
 carry the sweep's proposal to the seal that applies it. Phase 5 added no
 machinery whatsoever: it calls the sweep more than once. Phase 6 added one
@@ -291,7 +307,10 @@ those files were not waiting for a restart, they were lost, because the rule
 naming them stops holding as soon as another publication allocates past them.
 Phase 7 is the leftover Phase 6 recorded, and it finished that correction: the
 cadence sweep collected them, the reconciler still could not, so a process that
-never swept lost them exactly as before.
+never swept lost them exactly as before. A ninth commit then took Phase 3 back
+out, on the scope decision of section 11 - section 5.9. Section 5.10 is not a
+commit at all: it is what the #6939 body now says about the whole of the above,
+which is the only place a reader outside this document meets it.
 
 ### Phase 1 - state-page elision in the non-ring freeze - LANDED
 
@@ -703,7 +722,12 @@ availability; this is the same point from the other end, and it means a Phase 3
 horizon test must assert which publication ran rather than infer it from how deep
 the correction was.
 
-### Phase 3 - retention horizon (closes Class B) - LANDED
+### Phase 3 - retention horizon (closes Class B) - LANDED, THEN REMOVED
+
+**Removed by task 1 in `524a8e833b` (section 5.9).** This subsection and section
+5.4 are kept as the record of what the mechanism was and what implementing it
+turned up, because a future retention proposal starts from here rather than from
+scratch. Nothing below describes the branch as it stands.
 
 The retention semantics are clear - see section 6 - but implementation depends on
 Phase 2b for metadata reclamation. `publishTruncate:711` is a close template for
@@ -742,7 +766,7 @@ which `truncateBelow` inherits by mirroring `truncateAbove`.
    `DISPOSITION_BOUNDARY_REBUILD`, an already-named and already-priced
    disposition. A cost dial, not a correctness change.
 
-### 5.4 What Phase 3 actually shipped (`d7bf14f612`)
+### 5.4 What Phase 3 actually shipped (`d7bf14f612`), before task 1 removed it
 
 Landed on `puzpuzpuz_live_view` as the five steps above, across nine production
 classes; ~450 lines of production code plus ~900 lines of test. One superblock
@@ -1026,8 +1050,8 @@ Not a planned phase either: this is the leftover section 5.6 names, and reading
 it against the code turned it from "collected late" into "not collected at all".
 
 Three publications can leave a final-name file behind - retention, compaction and
-repair - and none of them re-arms a reconciliation the way a failed `append`
-does. So nothing read the id ceiling that named their files, and the next seal's
+repair, two of them since task 1 removed retention - and none of them re-arms a
+reconciliation the way a failed `append` does. So nothing read the id ceiling that named their files, and the next seal's
 `skipPublishedSegmentIds` stepped over them and raised the ceiling past them. The
 id-ceiling rule then has no way to tell those files from live segments, at that
 seal or at any restart after it. `LiveViewCheckpointDataStore` already recorded
@@ -1082,7 +1106,8 @@ What the implementation turned up:
   re-arm the reconciliation, so it could not produce the shape this phase exists
   for. `TEST_FAIL_AFTER_RETENTION_METADATA_PUBLISH` fires only in
   `publishTruncateBelow`, so the seal gets through and the retention pass behind
-  it does not.
+  it does not. *Task 2 moved it to `publishCompaction` when task 1 removed the
+  retention publication under it - section 5.9.*
 
 Costs the change adds, stated because they are real:
 
@@ -1192,6 +1217,300 @@ reachability ones - a `.tmp` belongs to whichever writer holds it open, and a
 repair descriptor to a repair that may still be running. Reconciliation runs
 where no writer can own either, which is where those decisions belong. The
 catalogue rule has nothing to say about them.
+
+### 5.9 What tasks 1 and 2 actually shipped (`524a8e833b`)
+
+Not a phase: this is the scope decision of section 11 taken as code, plus the
+regression guard that had to move with it. Landed on `puzpuzpuz_live_view` across
+fourteen production classes; ~1,180 lines of production code and test removed
+against ~180 added, of which the additions are almost entirely the two orphan
+cases' new fixture. No on-disk format change and no `SLOT_FORMAT_VERSION` bump -
+deliberately, and that is the one non-obvious part.
+
+**What came out, and it is exactly what task 1 listed:** `truncateBelow` and its
+recursion and result pool, `pruneBelow` with its read-only probe and subtree
+release, the `retainSuffix` helper both leaned on in each of the two node classes,
+`publishTruncateBelow` and `RetentionResult`, `maybeTrimCheckpointTimeline` and its
+call in the refresh worker's post-seal maintenance block, and
+`cairo.live.view.checkpoint.retention.micros` end to end. The tests went with the
+code: `LiveViewCheckpointRetentionHorizonTest` whole, the retention cases in the
+timeline and delta tree suites, and the fuzz arm.
+
+**What stayed, for the reason task 1 gave:** `retiredCheckpointCount` and the
+format version carrying it. `checkpoint_timeline_entries` was already wrong before
+Phase 3 - `publishTruncate` has always dropped boundaries without adjusting
+`nextCheckpointId` - so the field is a correction to a pre-existing bug that
+happened to arrive with retention, and the high-side truncate maintains it. The
+javadoc on both now names only the high-side truncate, since it is the only
+publication left that retires a boundary at all.
+
+**Task 2 did not go where the plan sent it, and the reason is a property of the
+workload rather than of compaction.** The plan said to add the equivalent failure
+stage to `publishCompaction` and point the two orphan cases at it. The stage moved
+as planned - `TEST_FAIL_AFTER_COMPACTION_METADATA_PUBLISH` - but the cases could
+not simply keep their old fixture, because compaction refuses a segment whose live
+bytes equal its file length, and in the suite's `ROWS 3 PRECEDING` workload every
+data segment holds exactly one state page: the commit touches one key, Phase 1's
+elision writes only that key's page, and a one-page segment is either wholly live
+or wholly dead. No candidate ever qualifies, so `compact` returned
+`Result.NOTHING` and the injection never fired.
+
+The two cases therefore build the history compaction needs, which is the recipe
+`LiveViewCheckpointCompactionTest` already proved: a `RANGE 30 SECOND PRECEDING`
+view whose ring shares chunk pages across boundaries, forty in-order seals two
+keys wide, then three pairs of overlapping corrections deep in the history. Each
+repair re-versions some of the roots naming a shared chunk while their neighbours
+keep naming it, which is what leaves a segment part live and part dead. Measured:
+three candidate segments at 114 live bytes of 342, against none at all before the
+corrections.
+
+**Why not a repair, which is the other non-seal publication.** A failed
+`publishRepair` returns null and `LiveViewRefreshJob` answers by retiring the whole
+checkpoint timeline - the durable output has moved under every root it holds - so
+the orphans go with it and there is nothing left to collect. Compaction is the only
+non-seal publication whose failure the refresh worker absorbs and leaves the
+published generation byte-identical, which is what makes it the only usable
+injection point. Section 8's Phase 6 entry recorded a failed compaction as *not
+covered*; this converts that line, and leaves the repair half uncovered for that
+reason.
+
+Both cases were re-checked red-before/green-after against a build with
+`purgeUncataloguedSegments` stubbed out, which is the guard task 2 exists to
+preserve. The `io.questdb.test.cairo.lv` package is green at 1419 tests.
+
+### 5.10 What task 3 actually shipped (PR body, 2026-07-31)
+
+Not a commit: the deliverable is the #6939 body, which no branch state records.
+Four edits, all confined to what this plan owns.
+
+**The two clauses task 3 specifies became a Tradeoffs bullet** - "The checkpoint
+store collects its garbage by default, and bounds nothing" - carrying the garbage
+half (what is collected, on which cadence, under which key, and that
+`purge.interval=0` is the one configuration where a long-running process holds
+superseded segments for its whole life) and the retained half (every sealed
+boundary stays reachable, no live-view setting bounds it, no upstream setting
+sizes it). It prices the per-seal cost as what a seal actually wrote - Phase 1's
+elision for non-ring state, chunk sharing for ring state - and names the seal
+cadence the defaults imply, so "a large constant, not a bound" is a number a
+reader can check rather than a claim.
+
+**The old line was wrong in a second way this plan had not named.** Decision 4
+recorded that "operators size retention upstream" was false because no upstream
+setting bounds `_checkpoints/`. Writing the replacement turned up that it is also
+false for the live view's *own table*, which is the thing the bullet was actually
+about: a base-table TTL evicting partitions is freeze-and-continue for the view,
+so the derived rows stay. The out-of-scope entry now states both, and points at
+the Tradeoffs bullet for the checkpoint store rather than folding the two into one
+sentence.
+
+**The "In V1 scope" checkpoint-timeline bullet carries the mechanism,** because
+that is where a reader meets the store: the sweep's cadence and its second caller,
+the three populations it collects, and one sentence saying it bounds nothing that
+a generation can still reach. Stating collection where the timeline is described
+and the bound where the tradeoffs are is what keeps the two from reading as one
+claim.
+
+**The test plan gained the reclamation line it had none of.** The suite is
+`LiveViewCheckpointMetadataReclamationTest`, `LiveViewCheckpointSegmentDirectoryTest`
+and `LiveViewCheckpointStatePageElisionTest`; the entry names what each case
+measures, that every reclamation case is red before the change it guards - with
+the ring-function elision control the stated exception - and that each ends on a
+restart and a from-base recompute at a zero refresh-fault count. That last clause
+was checked against the code rather than copied from section 8: twelve cases, and
+`assertViewMatchesRecompute` is called thirteen times.
+
+**What did not change:** the CodeRabbit-generated summary at the foot of the body
+still lists "retention" among the configurable knobs. It is auto-generated and
+regenerates from the diff, so editing it by hand is noise.
+
+One operational note, because it cost a cycle: `gh pr edit --body-file` fails
+against this repository with the projects-classic GraphQL deprecation error and
+writes nothing. `gh api --method PATCH repos/questdb/questdb/pulls/6939 -F
+body=@<file>` applies the same edit and returns the stored length.
+
+### 5.11 What task 4 actually shipped
+
+Not reclamation work at all - task 4 is the narrowed key set a localized repair
+leaves behind, which Phase 1 only made visible. Its three steps were reproduce,
+classify, route, and the classification came back **bug**, so the routing
+decision had to be taken as code rather than as a note.
+
+**Step 1 reproduced it directly, and it is wider than decision 5 described.** A
+localized `ROWS 3 PRECEDING` rebuild over an eight-key view whose cold keys sit
+below the replay floor left three re-versioned boundaries naming **one** key
+each, against eight in the boundaries either side of them. That is the missing-key
+half decision 5 named. The other half only shows in the argument: `L` comes from
+a discovery that walks back far enough to warm up the **output key domain**
+`Q` - the keys with a row in `[R, H)` - so a key with a row in `[L, R)` and none
+above `R` is carried by the replay and re-imaged from the rows that happened to
+fall inside the interval. It survives in the root with a truncated history rather
+than disappearing from it, which no key-count assertion can see.
+
+**Step 2 classified it, and the classifying evidence is a wrong answer.** A
+second correction one boundary above the first takes `DISPOSITION_RESUME_FROM_ANCHOR`
+- the resume reads fewer rows than a rebuild would - and its anchor is one of the
+narrowed boundaries. The resume restores that state and replays forward, so every
+cold key's row above the anchor comes back summing its own value alone: the case
+measures `2.0` where the recompute says `4.0`. The live view's own rows, not a
+metric.
+
+**Only the ROWS shape is affected, and the control says so.** A RANGE frame and
+an anchor segment both expire by time: what a function holds at a row at or above
+`R` came from rows at or above `L`, so the replay reconstructs every key, and a
+key it never carried holds nothing there either - which is exactly what an absent
+key restores as. The RANGE control narrows the same three boundaries, takes the
+same resume off one of them, and lands on the recompute. Section 6.4's table said
+half of this already, from the runtime's side: a ROWS or anchored function "cannot
+be localized behind an EOF bound" because "a key with no row at or above `R` keeps
+state a replay from `L` never sees". The finite-`H` rule answers that for the
+runtime by restoring the scratch overlay over it. Nothing restores a published
+root, and that is the whole of the bug. The anchor is the arm that argument groups
+with ROWS and the data does not: the recognized anchor is a calendar-period floor
+of the designated timestamp, so a key that skipped the segment carries a
+strictly older anchor value and its next row resets it - which is also why the
+anchor root needs no key filter once task 5 gives the function roots one.
+
+**Step 3 routed it: the gate lands in #6939, the splice does not come back yet.**
+`LiveViewCheckpointRepairPlan.isReplayStateKeyComplete()` is false for any
+localization a ROWS arm took part in, and `LiveViewRefreshJob` reads it beside the
+finite `H` when it decides whether to open a `RepairCapture`. A ROWS repair
+therefore takes the disposition a localized repair with no converged suffix
+already took: `truncateOrRetireTimelineOnO3` keeps every root below `R`, drops the
+rest, and the post-replay seal puts a head back at the frontier. That combination
+- a session and an overlay with no capture - was already reachable (a capture that
+refuses, a durable-prefix measurement that fails), so no publication path is new.
+
+Costs the change adds, stated because they are real:
+
+- **A ROWS view loses its timeline above the correction on every out-of-order
+  row.** The roots below `R` stand, so a later resume can still anchor under the
+  correction, but the boundaries between `R` and the frontier go and one head
+  replaces them. That is a resume-reach and restart-recovery cost, and it is the
+  price of not publishing a root that describes a key set the view does not have.
+- **Five existing cases changed shape**, all of them asserting the splice rather
+  than an answer: three in `LiveViewCheckpointTimelineRepairTest` now assert the
+  truncate through one shared helper, `LiveViewCheckpointSoakTest`'s ROWS arm
+  expects no compaction redirect where the RANGE arm still requires one (a
+  boundary dropped whole fragments no segment), and Phase 1's repair-capture
+  elision case moved to an **anchored** view - the shape that is still both
+  whole-state and spliceable - so the capture-side comparison keeps its coverage.
+
+**The #6939 body carries it in three places**, on the same day and through the
+`gh api --method PATCH` route section 5.10 records. The checkpoint-timeline bullet
+now splits what a repair does with the timeline by the dependency that bounded it,
+where it used to say a repair "re-versions only the roots inside" its interval
+flatly; a Tradeoffs bullet states the cost, that a ROWS-framed view loses the
+boundaries between the correction floor and the frontier and so anchors lower on
+the next correction; and the test plan gains the suite, its red-before numbers and
+the RANGE control that makes the rule a dependency question rather than a blanket
+refusal. The localization claim itself did not move: a ROWS repair still reads and
+re-emits its interval and nothing else.
+
+**What the fix is not.** Task 4 said to size it "against `capture` and the scratch
+overlay". Neither is where it went. `RepairCapture` freezes what it is handed, and
+the overlay is the reason the runtime survives what the roots do not; the defect is
+that the caller handed a capture a replay that could not describe every key. The
+precise repair - keep the splice and re-version only the keys of `Q`, leaving every
+other key's entry as the old root wrote it - needs `Q` itself at publication time,
+and `LiveViewCheckpointRowsBounds` holds it only as a count on the walk path.
+That is task 5.
+
+### 5.12 What task 5 actually shipped (`7d6f5f4bc3`)
+
+Landed on `puzpuzpuz_live_view` across six production classes; ~150 lines of
+production code and about as much javadoc, plus ~250 lines of test. No on-disk
+format change and no `SLOT_FORMAT_VERSION` bump: which keys a root re-versions is
+a property of the publication rather than of the layout, and a root that keeps an
+old entry keeps it by the page reference the copy-on-write already used.
+
+**The rule landed at the freeze rather than at the build, which is not where task 5
+sent it.** The plan said `removeMissingPartitions` removes only keys in `Q` and a
+frozen key outside `Q` keeps the old entry - two filters. One suffices, because a
+key outside `Q` need not be *imaged* at all: `freezeFunction` skips it before it
+encodes a page, so the root's put loop never sees it and only the removal learns the
+domain. That is strictly better than the two-filter shape it replaced - a repair over
+a wide key set now writes pages for the keys of `Q` rather than for every live key,
+where before task 4 it wrote all of them and published a wrong answer for most.
+
+**The encoding is what the plan did not price, and it is most of the work.** The
+discovery keys its scans by the reader's table-local SYMBOL integer - deliberately,
+because the ids are stable for exactly the scope one repair plans in and an integer
+key is what the scans are fast on. A window function's partition map keys the same
+column by its *resolved string*, because a live view's partition-by sinks rewrite
+SYMBOL that way (segment-local ids would collide across refresh cycles). The two
+never had to agree before, and comparing them at publication time would have matched
+nothing at all - every key would have read as outside `Q`, leaving every re-versioned
+root byte-identical to the one it replaced. So:
+
+- `LiveViewCheckpointRowsPlan` carries a **second projector** - the same column
+  filter with `writeSymbolAsString` set, and STRING in place of SYMBOL in its key
+  types. A plan with no SYMBOL key column shares one sink, and an expression-keyed
+  plan always did: a SYMBOL key *function* is already written through its resolved
+  string, because the integers a function hands out index its own map rather than
+  the reader's.
+- `LiveViewCheckpointRowsBounds` fills a **second map** through it, once per distinct
+  key rather than once per row, so the forward and backward scans keep the encoding
+  they were built for and only a key joining `Q` pays for the string.
+- `collectOutputKeys` then writes each key with `LiveViewSnapshotKeyCodec` off that
+  map's record - the identical call `freezeFunction` makes off the window function's
+  own map record, at the same start index and over the same key types. The two sides
+  agree by construction rather than by inspection.
+
+**The gate has two ways to be satisfied now, and the first keeps its meaning.**
+`isReplayStateKeyComplete()` still means the replay reconstructs every live key, and
+a RANGE or anchored view still earns the splice with it alone.
+`LiveViewCheckpointRepairPlan.getOutputKeyDomain()` is the second way: a ROWS
+localization publishes the set instead of the guarantee, and `LiveViewRefreshJob`
+opens a capture on either.
+
+**One refinement to what task 5 asked for.** It said a discovery stopped by *either*
+scan budget knows an incomplete `Q`. Only the forward budgets do. `Q` is collected by
+the forward pass, and both of its stops - the row budget and the key budget - also
+leave `H` at end-of-frame, so a fragment cannot reach a publication under any
+configuration. A backward stop leaves `Q` whole and drops `L` to `S`, which is the
+floor a replay reconstructs *every* key from, so it costs the repair its localization
+below rather than its key domain. `isOutputKeyDomainComplete()` therefore reports the
+forward pass alone, and `collectOutputKeys` refuses rather than returning a fragment.
+
+Costs the change adds, stated because they are real:
+
+- One more generated `RecordSink` per compiled view, for a view whose ROWS plan has a
+  SYMBOL partition-key column. Views with none, and expression-keyed views, share the
+  one sink they already had.
+- One map insert per distinct key of `Q` during the discovery, and one set copy of
+  `Q` per repair capture. Both are bounded by
+  `cairo.live.view.checkpoint.repair.scan.max.keys` (default 100,000) and paid once
+  per repair rather than per row.
+- One membership probe per live key per re-versioned boundary at freeze time. It
+  replaces a state-page encode and write for every key it rejects, so a repair over a
+  key set wider than `Q` writes strictly less than it did before task 4.
+- **`logicalStateBytes` stops moving for a key-filtered splice.** The freeze counts
+  the keys it imaged, which is a share of the boundary rather than the whole of it,
+  and recomputing the whole would need the old root's per-key state sizes in the
+  freeze's own units - a ring entry's logical size is the row stream it holds rather
+  than the pages it stores. So a re-versioned boundary keeps the total it already had.
+  That is a stat rather than a reference count: nothing reads it to decide what a
+  generation reaches.
+
+Measured on the eight-key ROWS fixture task 4 built: the correction that used to
+re-version three boundaries down to one key each now leaves all forty boundaries
+standing and every one of them naming all eight keys, and the resume off one of them
+still lands on the recompute. On the twenty-four-key elision fixture, a repair
+crossing nine boundaries images the four keys of `Q` and shares a page across the
+boundaries none of them was touched at, where before task 4 it imaged all
+twenty-four.
+
+**The #6939 body carries it in the three places task 4 wrote into**, through the
+`gh api --method PATCH` route section 5.10 records. The checkpoint-timeline bullet
+now says what the ROWS arm does with the timeline rather than what it cannot do -
+the publication is handed the keys the replay describes and keeps every other key's
+entry - and names the one case that still rebuilds, a discovery a scan budget left
+short of the whole set. The Tradeoffs bullet task 4 added is gone, and the counter
+this change does move took its place: `checkpoint_timeline_logical_bytes` stops
+tracking what a ROWS repair re-images, stated as an observability figure rather than
+as a reference count, and stated beside the physical counters it does not affect. The
+test plan entry gains the carried-but-truncated case and the encoding cases, because
+the encoding is the part a reader cannot infer from the rule.
 
 ---
 
@@ -1527,7 +1846,9 @@ the format case, which went to `LiveViewCheckpointLifecycleTest`
 
 **Phase 3** - landed in `LiveViewCheckpointRetentionHorizonTest`, plus tree-level
 cases in `LiveViewCheckpointTimelineTest` / `LiveViewCheckpointRowPositionDeltaTest`
-and one arm in `LiveViewFuzzTest`
+and one arm in `LiveViewFuzzTest`. *All removed with the mechanism by task 1
+(`524a8e833b`); kept here as the record of what a retention proposal would have to
+cover again.*
 
 - Boundaries below the horizon retire; `data/` and `meta/` both shrink; the view
   still restores from the newest boundary after restart. **Done**, stated as
@@ -1639,9 +1960,11 @@ column-value update in `LiveViewSmokeTest`
 - The files a failed publication renamed into place are unlinked within the
   process, with no restart and no reconciliation. **Done** -
   `testTheCadenceSweepCollectsTheOrphansOfAFailedPublication`, which fails a
-  retention publication after its metadata publish, names the exact set it left
+  compaction after its metadata publish, names the exact set it left
   uncatalogued, seals past it, and requires every one of them to be gone and
   nothing uncatalogued to remain. Red before the change, on that set surviving.
+  *Task 2 (`524a8e833b`) moved it there from a failed retention publication and
+  gave it the fragmentable history compaction needs - see section 5.9.*
 - The paired control, and the one that states what was broken rather than merely
   late: at interval zero those same files survive the seals that follow, because
   the durable `nextSegmentId` ceiling has moved past every one of them. **Done** -
@@ -1652,14 +1975,18 @@ column-value update in `LiveViewSmokeTest`
   full reconciliation it ends with now collects them, so the case is
   `testAReconciliationCollectsTheOrphansTheIdCeilingRuleCannotReach` and states
   both halves - which rule cannot name them, and which one does.*
-- A failure shape only a non-seal publication produces. **Done** through a new
-  `TEST_FAIL_AFTER_RETENTION_METADATA_PUBLISH` stage: every existing injection
-  fires in a seal, and a failed seal re-arms the reconciliation, which is exactly
-  the case that was never broken.
-- Not covered: the same shape from a failed compaction or a failed repair. Both
-  reach the pass through the identical rule - the catalogue does not hold the id -
-  and neither has an injection point that leaves the seal intact, so the retention
-  case stands for all three. Nor does anything assert the fail-closed arms
+- A failure shape only a non-seal publication produces. **Done** through the
+  `TEST_FAIL_AFTER_COMPACTION_METADATA_PUBLISH` stage, which fires only in
+  `publishCompaction`: every other injection fires in a seal, and a failed seal
+  re-arms the reconciliation, which is exactly the case that was never broken.
+  Compaction is also the only non-seal publication whose failure the refresh
+  worker absorbs - a failed repair answers with a whole-timeline retire, which
+  takes the orphans with it - so it is the only usable injection point rather than
+  merely a convenient one.
+- Not covered: the same shape from a failed repair. It reaches the pass through
+  the identical rule - the catalogue does not hold the id - so the compaction case
+  stands for it, and the retire that follows a failed repair means it cannot have
+  an injection point of its own. Nor does anything assert the fail-closed arms
   directly; they are stated in code and exercised only where a catalogue read
   happens to succeed.
 
@@ -1691,11 +2018,77 @@ and two in `LiveViewCheckpointLifecycleTest`
   records as before; the refusal is stated in code and reached only through a
   bounded-validation failure this suite has no fixture for.
 
-Not covered, and worth naming: nothing asserts the *purge* half end to end for a
-retention pass under a concurrent reader pin - the generation gates are shared
-with the other publications and are covered there, but a case that pins a
-generation across a retention pass and proves nothing it reaches was unlinked
-would be the direct statement. Nor does anything drive a sweep concurrently with
+**Task 4** - three cases in `LiveViewCheckpointRepairKeyCoverageTest`, plus five
+existing cases reshaped (section 5.11)
+
+- A localized ROWS repair leaves every boundary it does not drop naming every key.
+  **Done** - `testARowsRepairLeavesEveryBoundaryNamingEveryKey`, stated as the whole
+  timeline in one string, because both halves matter: the roots at or below `R`
+  survive untouched, everything above them is dropped rather than re-versioned, and
+  one head stands at the frontier. Red before the change, on three boundaries
+  coming back naming one key of eight.
+- The wrong answer that classifies it as a bug. **Done** -
+  `testAResumeAfterARowsRepairKeepsEveryKeysHistory`, which corrects twice: the
+  first correction re-versions the boundaries under the second, and the second
+  resumes off one of them. Red before the change on the recompute oracle, at
+  `2.0` against `4.0`, which is the cold key's own row summing without its history.
+- The control that makes the gate a dependency question rather than a blanket
+  refusal. **Done** - `testARangeRepairStillReVersionsItsBoundaries`, the same
+  workload over a frame that expires by time: it still splices, its roots still
+  come back naming one key, and the resume off one of them still matches the
+  recompute. Passes before and after.
+- ~~Not covered: the second half of the defect, a key the replay *carried* whose
+  history the discovery never warmed up~~ - **covered by task 5**, which is what
+  made it reachable: see below.
+
+**Task 5** - one new case and one reshaped one in
+`LiveViewCheckpointRepairKeyCoverageTest`, two new ones in
+`LiveViewCheckpointRowsBoundsTest`, one in `LiveViewCheckpointRepairPlanTest`, and
+the five cases task 4 reshaped restored to asserting the splice
+
+- The splice comes back and every boundary still names every key. **Done** -
+  `testARowsRepairLeavesEveryBoundaryNamingEveryKey` now states the whole timeline as
+  forty boundaries at eight keys each, so it is red twice against the two earlier
+  states: the boundaries above `R` were dropped outright by task 4, and before that
+  they came back naming one key.
+- The second half of the defect, which task 4 could not reach. **Done** -
+  `testARowsRepairKeepsTheHistoryOfAKeyItsReplayOnlyPartlyCarried`, whose warm key
+  has two rows below `L` and two inside `[L, R)` and none inside the replacement
+  interval, so the replay carries a fragment of its history rather than none of it.
+  A fix that only stopped the removals would publish that fragment, and the resume
+  off one of the re-versioned boundaries then reads it as the whole of the key's past.
+- The encoding the two sides have to agree on. **Done** -
+  `testOutputKeyDomainLeavesInTheCheckpointKeyEncoding` asserts the collected keys of
+  a SYMBOL-partitioned view are the resolved strings a partition map holds and
+  explicitly not the four-byte symbol ids the scans key by, and that a LONG-keyed view
+  - where one projector serves both - still comes back keyed. This is the case that
+  fails if the second projector is ever dropped, and it fails loudly rather than as a
+  silently inert splice.
+- The fragment refusal. **Done** -
+  `testOutputKeyDomainRefusesTheFragmentABudgetLeaves`, which drives the key budget to
+  one and requires `collectOutputKeys` to refuse rather than answer.
+- The plan's half of the hand-off. **Done** -
+  `testRowsDependencyPublishesTheKeysItsReplayDescribes`, which pairs a ROWS
+  localization carrying a domain against a RANGE one that carries the guarantee
+  instead, and a budget-stopped one that carries neither.
+- The five task 4 reshaped, back to the splice. **Done** - the three in
+  `LiveViewCheckpointTimelineRepairTest` assert their per-entry root identities again
+  and the shared truncate helper is gone, `LiveViewCheckpointSoakTest`'s ROWS arm
+  requires the compaction redirect again, and the repair-capture elision case is back
+  on a ROWS view. That last one needed a new fixture: the sharing it measures is now
+  between two boundaries at which a key *inside* `Q` was untouched, so its trickle
+  round-robins over four keys instead of feeding one, and its history is deep enough
+  that the bounded rebuild prices cheaper than a resume.
+- Not covered: a repair whose `Q` and whose live key set coincide, which is the dense
+  workload the whole task exists for. Every case here deliberately has keys outside
+  `Q`, because that is where the rule is load-bearing; the coinciding case is the one
+  that behaves exactly as it did before task 4.
+
+Not covered, and worth naming: nothing asserts the *purge* half end to end under a
+concurrent reader pin - the generation gates are shared across the publications
+and are covered there, but a case that pins a generation across a publication and
+proves nothing it reaches was unlinked would be the direct statement. Nor does
+anything drive a sweep concurrently with
 the seal that consumes its proposal, because nothing can: both run on the refresh
 worker, under the same serialization the reconciliation sweep always had.
 
@@ -1708,11 +2101,15 @@ worker, under the same serialization the reconciliation sweep always had.
 | 1 | **landed**: 2 production classes, ~300 lines, plus a 560-line test | estimate held; no format change; both the published and the in-flight previous page are covered |
 | 2a | **landed**: 11 production classes, ~700 lines, plus a 400-line test | came in well under the "larger than 600 lines" estimate, because per-segment page counts removed the closure summaries that were supposed to dominate it; format cost is one leaf field and three superblock longs |
 | 2b | **landed**: 10 production classes, ~250 lines, plus ~200 lines of test | came in under the estimate because the release sites needed no code: once a root states its closure, `publishTruncate` and the repair splice reclaim it through the reference transaction they already ran. Format cost is one field on the anchor root and a third value for the catalogue's kind |
-| 3 | **landed**: 9 production classes, ~450 lines, plus ~900 lines of test | came in under the estimate for the same reason 2b did: retiring a boundary is the reference transaction `publishTruncate` already ran. Format cost is one superblock field, needed to keep the published entry count honest rather than by the plan's design |
+| 3 | **landed, then removed**: 9 production classes, ~450 lines, plus ~900 lines of test | came in under the estimate for the same reason 2b did: retiring a boundary is the reference transaction `publishTruncate` already ran. Format cost is one superblock field, needed to keep the published entry count honest rather than by the plan's design - which is why that field stays behind after task 1 took the rest out |
 | 4 | **landed**: 6 production classes, ~215 lines, plus ~370 lines of test | never estimated - it was decision 7 rather than a phase. Small because a B+ tree whose only deletion pattern is "the low ids die first" gets a correct shape out of the existing emit path, so there is no rebalancing rule and no format cost at all |
 | 5 | **landed**: 8 production classes, ~290 lines, plus ~190 lines of test | never estimated either - it was the leftover Phase 4 recorded. The reclamation logic is about forty lines; the rest is javadoc, a result class and the five files a new config key touches. No format cost, and no new rule: the purge rule is indifferent to how often it runs |
 | 6 | **landed**: 4 production classes, ~145 lines, plus ~165 lines of test | never estimated either - it was the leftover Phase 5 recorded. The pass is about eighty lines, and it is small because the catalogue already states what it needs: the reachability rule was written by Phase 2a/2b, and this only reads it from the other side. No format cost, and no new state - it decides and acts in one pass |
 | 7 | **landed**: 4 production classes, ~15 lines of code and ~50 of javadoc, plus ~150 lines of test | never estimated either - it was the leftover Phase 6 recorded. The smallest phase by a wide margin: the pass, the superblock it needs and the catalogue read all existed, and the two rules separate themselves by ordering rather than by a flag. Most of the work is in the test fixture, which had to learn to publish a real catalogue |
+| tasks 1+2 | **landed**: 14 production classes, ~1,180 lines of code and test removed against ~180 added | never estimated - it is the scope decision rather than a phase. Almost all of the addition is the fixture the two orphan cases needed once their injection point moved to compaction, which accepts only a part-dead segment and so needs ring sharing and overlapping corrections that the suite's other cases do not produce |
+| task 3 | **landed**: no code at all - four edits to the #6939 body | never estimated - it is the deliverable's description rather than the deliverable. Sized here only to record that the reclamation work now has a public statement, and that it needed a Tradeoffs bullet rather than a corrected sentence, because the garbage half and the retained half are two claims and the old line collapsed them into one |
+| task 4 | **landed**: 3 production classes, ~15 lines of code and ~45 of javadoc, plus ~250 lines of new test and five existing cases reshaped | never estimated - it is pre-existing repair behaviour rather than reclamation work. The code is one predicate on the plan and one term on the gate that opens a repair capture; the weight is in the tests, because proving the defect needs two corrections and a control, and because disabling the ROWS splice moved every case that asserted it |
+| task 5 | **landed**: 6 production classes, ~150 lines of code and about as much javadoc, plus ~250 lines of test and task 4's five cases restored | never estimated either. Larger than task 4 and for a reason the task statement did not name: the publication filter itself is one skip in the freeze and one guard in the removal, and the rest is getting `Q` into the encoding a partition map keys by - a second projector on the plan, a second map in the discovery, and the collection that writes one through `LiveViewSnapshotKeyCodec` off the other |
 
 ---
 
@@ -1769,9 +2166,10 @@ metadata GC - reclaiming the garbage in `_checkpoints/meta/` - and the plan
 widened it in section 1 to bound retained state as well, because Class A alone
 leaves the store growing. That widening is withdrawn: **the retention horizon is
 not shipping.** The deliverable is Class A, which Phases 2a, 2b, 4, 5, 6 and 7
-close and which is on by default. Task 1 in section 12 removes Phase 3, and
-decisions 1 and 2 below go with it. Section 1's correction to the scope stands as
-a record of why the horizon was proposed, not as something this plan does.
+close and which is on by default. Task 1 in section 12 removed Phase 3
+(`524a8e833b`, section 5.9), and decisions 1 and 2 below went with it. Section 1's
+correction to the scope stands as a record of why the horizon was proposed, not as
+something this plan does.
 
 1. ~~**Horizon policy.**~~ **Withdrawn** with Phase 3. Phase 3 took an
    event-time window, `cairo.live.view.checkpoint.retention.micros`, because the
@@ -1804,8 +2202,9 @@ a record of why the horizon was proposed, not as something this plan does.
    `a2712f7217` on `puzpuzpuz_live_view`, and Phases 2a, 2b and 3 followed it on
    the same branch. None of them needed data-page access outside the checkpoint
    storage layer.
-4. **What the PR body says.** *Now tracked as task 3, whose two clauses are the
-   conclusion; what follows is how the wording got there.* The old line -
+4. ~~**What the PR body says.**~~ **Settled:** task 3 rewrote it on 2026-07-31,
+   two clauses as below - section 5.10 records the four edits. *What follows is
+   how the wording got there.* The old line -
    "Live-view disk growth is unbounded
    in V1; operators size retention upstream" - was wrong on the second clause: no
    upstream retention setting bounds `_checkpoints/`. Phase 3 made the first
@@ -1822,7 +2221,7 @@ a record of why the horizon was proposed, not as something this plan does.
    horizon was set or not, and now it collects on a seal cadence
    (`cairo.live.view.checkpoint.purge.interval`, default one, zero to disable).
    Phase 6 closed the term that was not a qualifier at all: the files a failed
-   retention, compaction or repair publication renamed into place were never
+   compaction or repair publication renamed into place were never
    collected, in this process or any later one, because the rule naming them
    compares against a ceiling the next seal moves past. The same cadence sweep
    now removes them under the catalogue's own reachability rule, and Phase 7 gave
@@ -1856,25 +2255,37 @@ a record of why the horizon was proposed, not as something this plan does.
    the one a cadence sweep uses, and the purge rule that decides what may go is
    generation-scoped rather than sweep-scoped, so calling it more often collects
    sooner and nothing else.
-5. **The narrowed key set a repair leaves behind** (turned up while testing Phase
-   1, section 5.1). A localized repair re-versions a boundary from a replay of
-   `[L, H)` only, so the boundary it publishes images the keys that range
-   carried rather than the key set the boundary originally described. Whether a
-   restore from such a boundary is meant to come back with fewer keys is a
-   question for the repair design, not for this plan. **Tracked as task 4**, which
-   is where the concrete steps are; it stays listed here because the disposition -
-   bug, or intended semantics that want documenting - is still a human's call and
-   the task's first step is to establish which.
+5. ~~**The narrowed key set a repair leaves behind**~~ (turned up while testing
+   Phase 1, section 5.1). **Settled on 2026-07-31: it is a bug, and it is fixed** -
+   task 4, section 5.11. The disposition needed no human call in the end, because
+   the reproduction produced a wrong answer rather than an ambiguous shape: a
+   second correction resuming off a narrowed boundary re-emits every cold key's row
+   summing without its history. Only the ROWS shape is affected - a RANGE frame and
+   an anchor segment expire by time, so the replay reconstructs every key from
+   `[L, K]` - and a ROWS repair now truncates the timeline at `R` instead of
+   re-versioning boundaries it cannot describe. ~~What is left over is the splice
+   itself, which the gate takes away from every ROWS view rather than from the ones
+   that need it: **task 5**.~~ **Also settled** - task 5, section 5.12. The splice is
+   back, keyed on `Q`: a ROWS repair re-versions the entries of the keys its replay
+   describes and leaves every other key's entry as the old root wrote it, so the
+   blanket refusal is gone and the correctness it bought stands.
 
 ---
 
 ## 12. Follow-up tasks
 
-Open work, in the order it should be taken. Tasks 1 and 2 come from the scope
-decision at the head of section 11 and land together; tasks 3 and 4 are
-independent of each other.
+**All five are done.** Tasks 1 and 2 came from the scope decision at the head of
+section 11 and landed together in `524a8e833b`; task 3 followed it on 2026-07-31
+(section 5.10), task 4 on the same day (section 5.11) and task 5 the same day again
+(section 5.12) - and the last two are task 4's own lineage rather than anything the
+scope decision named. Neither is reclamation work: task 4 was pre-existing repair
+behaviour that Phase 1 made visible, and task 5 is the performance half of the fix
+task 4 landed for correctness.
 
-### Task 1 - remove the retention horizon (Phase 3)
+### Task 1 - remove the retention horizon (Phase 3) - DONE (`524a8e833b`)
+
+Landed as written; section 5.9 records what shipped. The list below is kept as the
+statement of scope it was checked against.
 
 **Why:** the deliverable is metadata GC. Retention is a policy mechanism that
 decides to stop keeping live boundaries, which is a different feature, and it
@@ -1918,12 +2329,15 @@ avoids a second bump.
 
 **Acceptance:** no `retention` symbol left in `core/src/main` outside the WAL and
 base-table senses of the word; `checkpoint_timeline_entries` still correct across
-a high-side truncate; the `io.questdb.test.cairo.lv` package green.
+a high-side truncate; the `io.questdb.test.cairo.lv` package green. **All three
+met** - the surviving `retention` mentions are the WAL floor and the base table,
+`publishTruncate` still maintains `retiredCheckpointCount`, and the package is
+green at 1419 tests.
 
-### Task 2 - re-point Phase 6 and 7's non-seal failure injection
+### Task 2 - re-point Phase 6 and 7's non-seal failure injection - DONE (`524a8e833b`)
 
-**Blocks task 1 from being complete.** Do not let it be dropped silently, because
-it is a regression guard on the GC work that is shipping.
+**Blocked task 1 from being complete.** It is a regression guard on the GC work
+that is shipping, so it landed in the same commit.
 
 Phase 6 exists for the files a publication renames into place and then fails to
 commit. Proving that needs a failure in a publication that is **not** a seal: a
@@ -1931,7 +2345,7 @@ failed seal re-arms the reconciliation that reads the id ceiling, which is
 exactly the case that was never broken. The only such injection point today is
 `TEST_FAIL_AFTER_RETENTION_METADATA_PUBLISH`
 (`LiveViewCheckpointTimelineStoreWriter.java:94`, fired at `:1068`), and it fires
-inside the retention publication task 1 removes.
+inside the retention publication task 1 removed.
 
 Two cases depend on it -
 `LiveViewCheckpointMetadataReclamationTest.testTheCadenceSweepCollectsTheOrphansOfAFailedPublication`
@@ -1945,15 +2359,31 @@ and `cairo.live.view.checkpoint.compaction.interval` already drives it from a
 test. Section 8's Phase 6 entry currently records "the same shape from a failed
 compaction" as *not covered*; this converts that line rather than adding to it.
 
+**What it took, beyond that.** The stage moved as written, but the compaction
+interval could not drive it and the cases could not keep their fixture:
+compaction refuses a segment whose live bytes equal its file length, and the
+suite's `ROWS 3 PRECEDING` workload writes exactly one state page per data
+segment, so no candidate ever qualified and the injection never fired. Both cases
+now build the ring-shared, correction-fragmented history compaction needs. The
+choice also turned out to be forced rather than natural: a failed repair makes
+`LiveViewRefreshJob` retire the whole timeline, taking the orphans with it, so
+compaction is the only non-seal publication whose failure leaves anything to
+collect. Section 5.9 carries both findings.
+
 **Acceptance:** both cases still fail against a build with Phase 6's pass disabled
 and pass with it, and section 8's Phase 6 and 7 entries are updated to name the
-new stage.
+new stage. **Both met**, the first re-checked directly by stubbing
+`purgeUncataloguedSegments` out.
 
-### Task 3 - rewrite the #6939 PR body
+### Task 3 - rewrite the #6939 PR body - DONE (2026-07-31)
 
-Decision 4 below carries the wording history. Task 1 makes the current draft wrong
-again: with retention removed there is no live-view config key that bounds the
-checkpoint store, so the accurate statement is two clauses rather than one.
+Landed as written; section 5.10 records what shipped and the one thing writing it
+turned up. The statement of scope below is what it was checked against.
+
+Decision 4 in section 11 carries the wording history. Task 1 has landed, which
+makes the current draft wrong again: with retention removed there is no live-view
+config key that bounds the checkpoint store, so the accurate statement is two
+clauses rather than one.
 
 - **Garbage is collected, by default.** Superseded metadata and data segments, the
   catalogue entries naming them, and the files a failed publication left are
@@ -1967,7 +2397,24 @@ checkpoint store, so the accurate statement is two clauses rather than one.
   is a large constant but not a bound. State it plainly; do not imply an upstream
   retention setting sizes it, which is the error the original line made.
 
-### Task 4 - the narrowed key set a localized repair leaves behind
+**Both clauses are in the body,** as a Tradeoffs bullet, with the mechanism half
+also stated where the checkpoint timeline is described and the reclamation suite
+added to the test plan. Section 5.10 has the detail.
+
+### Task 4 - the narrowed key set a localized repair leaves behind - DONE (2026-07-31)
+
+Landed as the three steps below; section 5.11 records what shipped and the two
+things the reproduction turned up that the steps did not anticipate - that the
+defect also reaches keys the replay *did* carry, and that it produces a wrong
+answer rather than a debatable shape. The statement of scope is kept as what it
+was checked against.
+
+**Acceptance, and where it came out:** step 1 reproduced the narrowing directly
+(three boundaries naming one key of eight); step 2 classified it as a bug, on a
+live view returning `2.0` where the recompute says `4.0`; step 3 routed the gate
+into #6939, because the wrong answer is reachable from code #6939 introduces, and
+routed the splice's return to task 5. The `io.questdb.test.cairo.lv` package is
+green.
 
 This is decision 5, tracked as work rather than as a question, per the scope
 discussion on 2026-07-31. It is **pre-existing repair behaviour, unrelated to
@@ -2003,6 +2450,60 @@ boundary it replaced.
 
 **What is already known, and bounds the urgency:** nothing in this plan reshapes a
 boundary. Phase 3 would have shrunk the set a restore could fall back to - fewer
-intact neighbours under a narrowed boundary - but task 1 removes it, so the
+intact neighbours under a narrowed boundary - but task 1 removed it, so the
 population that meets a narrowed boundary is whatever it was before this work
-started.
+started. *That reading of the urgency was wrong, and step 2 is what corrected it:
+the population is every ROWS view that takes two out-of-order corrections near
+each other, which needs no retention horizon and no restart.*
+
+### Task 5 - give the ROWS splice back, keyed on the output key domain - DONE (2026-07-31)
+
+Landed as the rule below; section 5.12 records what shipped and the two things
+implementing it turned up that the statement of scope did not anticipate - that the
+two sides encode a SYMBOL partition key differently and had to be made to agree
+before anything could be compared, and that filtering at the freeze rather than at
+the build makes one filter do the work of the two below. The statement of scope is
+kept as what it was checked against.
+
+Task 4's gate is correct and blunt: **no** ROWS view re-versions a boundary now,
+including the ones whose every key sits in `Q`, which is the common shape for a
+dense workload. The cost is a timeline truncated at `R` on every out-of-order row,
+so a later resume anchors lower and a restart recovers from a fresher but lonelier
+head.
+
+**The rule that would restore it,** derived in section 5.11 and stated here as the
+thing to implement: a re-versioned boundary must take the replay's entry for a key
+in `Q` and keep the old root's entry for every key outside it. Both halves are
+load-bearing. A key outside `Q` that the replay never carried is dropped today -
+that is the missing-key half - and a key outside `Q` that the replay *did* carry
+is re-imaged from a truncated history, so a fix that only stopped the removals
+would still publish a wrong page. `A`, the affected key set, is the tighter
+statement of the same rule - a key the change did not touch has the state the old
+root recorded, whatever the replay saw - and `A` is a subset of `Q`, so either
+answers.
+
+**What it needs:**
+
+- `Q` out of `LiveViewCheckpointRowsBounds`, as keys rather than as a count. The
+  discovery holds the key domain in its own `Map` keyed by the plan's partition-by
+  columns, and `outputKeys` exists only on the indexed-symbol path - "populated
+  only while the indexed seek is available". The walk path keeps the count alone.
+- Those keys encoded the way a partition map keys an entry
+  (`LiveViewSnapshotKeyCodec`, off the window function's own map record), so the
+  two sides are comparable at publication time.
+- The set threaded plan -> session -> capture -> `publishRepair`, and applied in
+  `LiveViewCheckpointTimelineStoreWriter.buildRoot`: `removeMissingPartitions`
+  removes only keys in `Q`, and a frozen key outside `Q` that the old root already
+  holds keeps the old entry rather than being put.
+- The gate kept for every case the set cannot cover: a discovery that stopped on
+  either scan budget knows an incomplete `Q`, and `isReplayStateKeyComplete()` must
+  stay false there.
+
+**Acceptance:** `LiveViewCheckpointRepairKeyCoverageTest`'s two ROWS cases stay
+green with the splice back on rather than with it refused - the boundaries the
+repair crosses survive naming all eight keys - plus a case for the carried-but-
+truncated key the current gate makes unreachable, and the five cases task 4
+reshaped go back to asserting the splice. **All four met**, and two cases were added
+beyond them: the encoding the two sides have to agree on is asserted directly rather
+than only through its consequences, and so is the refusal of a budget-truncated `Q`.
+The `io.questdb.test.cairo.lv` package is green.

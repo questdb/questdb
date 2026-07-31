@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorPlan;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
+import io.questdb.cairo.lv.LiveViewCheckpointOutputKeyDomain;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.griffin.SqlException;
@@ -1006,6 +1007,48 @@ public class LiveViewCheckpointRepairPlanTest {
     }
 
     @Test
+    public void testRowsDependencyPublishesTheKeysItsReplayDescribes() throws SqlException {
+        // The other half of what a ROWS localization carries. Its replay reconstructs
+        // the keys the discovery warmed up rather than every live key, so the plan
+        // hands the publication the set instead of the guarantee: a re-versioned root
+        // takes the replay's entry for a key inside it and keeps the old root's for
+        // every key outside it.
+        final TestRowsBounds rows = new TestRowsBounds(3_000, HighBoundTag.FINITE, 7_000);
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+
+        Assert.assertFalse(
+                "a ROWS replay does not reconstruct every key",
+                plan.isReplayStateKeyComplete()
+        );
+        Assert.assertNotNull(
+                "so it must say which keys it does describe",
+                plan.getOutputKeyDomain()
+        );
+        Assert.assertTrue(plan.getOutputKeyDomain().contains(new byte[]{1}));
+        Assert.assertFalse(plan.getOutputKeyDomain().contains(new byte[]{2}));
+
+        // A time-expiring dependency reconstructs every key outright, so the set is
+        // neither derived nor needed. The two are read together at the splice gate.
+        final LiveViewCheckpointRepairPlan rangePlan = new LiveViewCheckpointRepairPlan();
+        rangePlan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, 1_000, null, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+        Assert.assertTrue(rangePlan.isLocalized());
+        Assert.assertTrue(rangePlan.isReplayStateKeyComplete());
+        Assert.assertNull(rangePlan.getOutputKeyDomain());
+
+        // A budget that stopped the forward pass leaves a fragment of the domain, and
+        // a fragment would let the publication drop the keys it lost. It also loses
+        // the high bound, so this repair does not localize at all - the set is refused
+        // on its own terms rather than by that.
+        final TestRowsBounds budgeted =
+                new TestRowsBounds(3_000, HighBoundTag.EOF, Numbers.LONG_NULL, true);
+        final LiveViewCheckpointRepairPlan budgetedPlan = new LiveViewCheckpointRepairPlan();
+        budgetedPlan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, budgeted, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+        Assert.assertFalse(budgetedPlan.isReplayStateKeyComplete());
+        Assert.assertNull(budgetedPlan.getOutputKeyDomain());
+    }
+
+    @Test
     public void testRowsDiscoveryDeclinesWithoutAFiniteHighBound() throws SqlException {
         // A ROWS frame holds a key's last Nmax rows however old they are, so a key with
         // no row at or above R keeps state a replay from L never reconstructs. Only a
@@ -1249,6 +1292,14 @@ public class LiveViewCheckpointRepairPlanTest {
         }
 
         @Override
+        public void collectRowsOutputKeys(@NotNull LiveViewCheckpointOutputKeyDomain out) {
+            out.clear();
+            // One synthetic key: what these cases assert is whether a domain reached
+            // the plan at all, not which keys are in it.
+            out.add(new byte[]{1});
+        }
+
+        @Override
         public void discoverRowsBounds(long viewLowerBoundTs, long outputLowTs, long changeLowTs, long changeMaxTs) {
             discoveries++;
             this.viewLowerBoundTs = viewLowerBoundTs;
@@ -1270,6 +1321,13 @@ public class LiveViewCheckpointRepairPlanTest {
         @Override
         public long getRowsHighTsExclusive() {
             return highTsExclusive;
+        }
+
+        @Override
+        public boolean isRowsOutputKeyDomainComplete() {
+            // The real discovery only leaves Q short when a budget stopped its forward
+            // pass, and the cases that set the flag are exactly the budget ones.
+            return !scanBudgetExceeded;
         }
 
         @Override

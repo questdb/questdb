@@ -369,8 +369,8 @@ public interface CairoConfiguration {
      * more, unlinking them and staging their catalogue entries for the next seal
      * to remove. Without it a sweep runs only when a worker reconciles the
      * directory - once per process - so every segment a seal, a repair or a
-     * retention pass supersedes waits for a restart before its bytes come back.
-     * Zero disables the cadence, leaving that reconciliation the only sweep.
+     * compaction supersedes waits for a restart before its bytes come back. Zero
+     * disables the cadence, leaving that reconciliation the only sweep.
      */
     long getLiveViewCheckpointPurgeInterval();
 
@@ -416,24 +416,6 @@ public interface CairoConfiguration {
      * scan. A value {@code <= 0} disables the budget.
      */
     long getLiveViewCheckpointRepairScanMaxRows();
-
-    /**
-     * Event-time retention horizon for a live view's checkpoint timeline. The
-     * refresh worker retires every sealed boundary whose designated timestamp
-     * sits more than this far below the newest one, releasing the state pages and
-     * metadata the retired boundaries held for the purge job to reclaim. Zero
-     * (the default) disables retention, so the timeline keeps every boundary it
-     * ever sealed and the checkpoint store grows without bound.
-     * <p>
-     * The horizon costs reach rather than correctness: an out-of-order correction
-     * below it has no sealed anchor to resume from, so a view carrying a function
-     * whose dependency is not finite - an unbounded-preceding aggregate, or a
-     * {@code ROWS N PRECEDING} arm with no discoverable high bound - rebuilds from
-     * its {@code START FROM} instead. A view whose every function localizes pays
-     * nothing, because the dependency rather than the checkpoint supplies the
-     * repair floor.
-     */
-    long getLiveViewCheckpointRetentionMicros();
 
     /**
      * Row-count cadence trigger for head-checkpoint writes. The refresh

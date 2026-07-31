@@ -82,8 +82,15 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
     // Wide enough that a per-seal whole-map rewrite is unmistakable against a
     // single touched key.
     private static final int KEYS = 24;
-    // In-order seals the repair case folds its correction back into.
-    private static final int REPAIR_HISTORY_SEALS = 10;
+    // In-order seals the repair case folds its correction back into. Long enough for
+    // the hot key to reach its fourth row above the correction - which is where the
+    // ROWS frame converges and the replacement stops - and then to leave a tail above
+    // that, so the bounded rebuild prices cheaper than a resume off the boundary under
+    // the correction.
+    private static final int REPAIR_HISTORY_SEALS = 36;
+    // How many keys the repair case's trickle cycles through, and therefore the size
+    // of the output key domain the repair re-versions.
+    private static final int REPAIR_TRICKLE_KEYS = 4;
     private static final int TRICKLE_SEALS = 6;
     private static final String VIEW_SQL = "SELECT ts, sym, sum(x) OVER (" +
             "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW" +
@@ -225,13 +232,16 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // Two commits over the whole key set, then a trickle into one key, so
-                // the range a correction replays holds rows for every key at its floor
-                // and rows for one key above it.
-                commitEveryKey(job, 10);
-                commitEveryKey(job, 20);
+                // Four commits over the whole key set, then a round-robin trickle over
+                // the first REPAIR_TRICKLE_KEYS of them. The depth is what puts the
+                // repair's dependency floor above the view's own boundary, and the
+                // round robin is what leaves a key untouched between two boundaries
+                // the repair re-versions - which is the sharing this case measures.
+                for (int commit = 1; commit <= 4; commit++) {
+                    commitEveryKey(job, commit * 10);
+                }
                 for (int seal = 1; seal <= REPAIR_HISTORY_SEALS; seal++) {
-                    commitHotKey(job, 20 + seal * 10, seal);
+                    commitKey(job, key((seal - 1) % REPAIR_TRICKLE_KEYS), 40 + seal * 10, seal);
                 }
                 driveRefreshToQuiescence(job);
                 assertViewMatchesRecompute();
@@ -243,7 +253,7 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
                 // One out-of-order row inside the ROWS frame's look-behind, so the
                 // repair replays a range that crosses several boundaries and freezes
                 // each of them into one capture segment.
-                commitHotKey(job, 25, 9_000);
+                commitKey(job, HOT_KEY, 45, 9_000);
                 driveRefreshToQuiescence(job);
                 Assert.assertTrue(
                         "the correction must be repaired rather than appended",
@@ -252,11 +262,28 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
                 assertViewMatchesRecompute();
 
                 // The capture shares against the boundary it froze immediately before,
-                // reading it out of its own still-unpublished segment. So a key the
-                // replay carried but did not touch again costs the capture one page
-                // however many boundaries it re-versions above it.
+                // reading it out of its own still-unpublished segment. So a key inside
+                // the repair's output key domain that the round robin did not come back
+                // to costs the capture one page however many boundaries it re-versions
+                // above it. Only that domain is imaged at all: every key with no row in
+                // the replacement interval keeps the entry the old root wrote, which is
+                // what stops the repair publishing a truncated history for it.
                 final Map<Page, Set<String>> boundariesByCapturedPage = new HashMap<>();
-                for (Boundary boundary : boundaryPages(instance)) {
+                final List<Boundary> boundaries = boundaryPages(instance);
+                // A splice creates no logical boundary of its own: it re-versions the
+                // ones its interval crosses and leaves the count exactly where the
+                // in-order history left it.
+                Assert.assertEquals(
+                        "the repair must splice rather than truncate",
+                        4 + REPAIR_HISTORY_SEALS,
+                        boundaries.size()
+                );
+                for (Boundary boundary : boundaries) {
+                    Assert.assertEquals(
+                            "boundary " + boundary.key() + " must still name every key",
+                            KEYS,
+                            boundary.pages.size()
+                    );
                     for (Page page : boundary.pages.values()) {
                         if (!before.contains(page)) {
                             boundariesByCapturedPage
@@ -270,8 +297,8 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
                         boundariesByCapturedPage.isEmpty()
                 );
                 int mostSharedBy = 0;
-                for (Set<String> boundaries : boundariesByCapturedPage.values()) {
-                    mostSharedBy = Math.max(mostSharedBy, boundaries.size());
+                for (Set<String> sharing : boundariesByCapturedPage.values()) {
+                    mostSharedBy = Math.max(mostSharedBy, sharing.size());
                 }
                 Assert.assertTrue(
                         "a captured page must be named by more than one re-versioned boundary, was " + mostSharedBy,
@@ -560,8 +587,13 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
     // One row for the single hot key, plus a refresh turn. This is the trickle the
     // whole case is about: a seal the cadence owes to one key out of KEYS.
     private void commitHotKey(LiveViewRefreshJob job, int second, long x) throws Exception {
+        commitKey(job, HOT_KEY, second, x);
+    }
+
+    // One row for one key, plus a refresh turn.
+    private void commitKey(LiveViewRefreshJob job, String key, int second, long x) throws Exception {
         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-        execute("INSERT INTO base (ts, sym, x) VALUES ('" + timestamp(second) + "', '" + HOT_KEY + "', " + x + ")");
+        execute("INSERT INTO base (ts, sym, x) VALUES ('" + timestamp(second) + "', '" + key + "', " + x + ")");
         drainWalQueue();
         drainJob(job);
         drainWalQueue();

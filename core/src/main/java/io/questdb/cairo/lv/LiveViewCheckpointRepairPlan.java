@@ -305,9 +305,24 @@ public final class LiveViewCheckpointRepairPlan {
     // the one that fired - which the disposition alone does not say.
     private int denialReason;
     private int disposition;
+    private boolean hasOutputKeyDomain;
     private HighBoundTag highBoundTag = HighBoundTag.EOF;
     private long highTsExclusive;
+    // True when the state the replay stands on anywhere in [L, H) describes every
+    // live key rather than only the keys the bounds were derived for. A
+    // time-expiring dependency reconstructs all of them: nothing a RANGE frame or
+    // an anchor segment holds at a row above R sits below L, so a key the replay
+    // never saw holds nothing at that row either. A ROWS frame does not expire, and
+    // its L only covers the warm-up of the output key domain Q, so a key outside Q
+    // comes back holding the rows the replay happened to carry instead of its own
+    // last Nmax. False for any localization a ROWS arm took part in.
+    private boolean isReplayStateKeyComplete;
     private boolean localized;
+    // Q, when the replay's own state is not key-complete but the discovery proved which
+    // keys it does describe. Owned rather than referenced: the discovery's map is
+    // overwritten by the next repair this worker plans, while a parked repair still owes
+    // its publication.
+    private final LiveViewCheckpointOutputKeyDomain outputKeyDomain = new LiveViewCheckpointOutputKeyDomain();
     private long outputLowTs;
     private long pinnedSeqTxn;
     private long rebuildScanRows;
@@ -391,9 +406,12 @@ public final class LiveViewCheckpointRepairPlan {
         this.correctionTs = other.correctionTs;
         this.denialReason = other.denialReason;
         this.disposition = other.disposition;
+        this.hasOutputKeyDomain = other.hasOutputKeyDomain;
         this.highBoundTag = other.highBoundTag;
         this.highTsExclusive = other.highTsExclusive;
+        this.isReplayStateKeyComplete = other.isReplayStateKeyComplete;
         this.localized = other.localized;
+        this.outputKeyDomain.copyFrom(other.outputKeyDomain);
         this.outputLowTs = other.outputLowTs;
         this.pinnedSeqTxn = other.pinnedSeqTxn;
         this.rebuildScanRows = other.rebuildScanRows;
@@ -492,6 +510,18 @@ public final class LiveViewCheckpointRepairPlan {
      */
     public long getHighTsExclusive() {
         return highTsExclusive;
+    }
+
+    /**
+     * @return {@code Q}, the keys the replay's state describes, or null when it
+     * describes every live key ({@link #isReplayStateKeyComplete()}) or when nothing
+     * proved which keys it describes. A publication handed this set takes the replay's
+     * entry for a key inside it and leaves every key outside it exactly as the old root
+     * wrote it - see {@link LiveViewCheckpointOutputKeyDomain} for why that is the whole
+     * of the rule.
+     */
+    public @Nullable LiveViewCheckpointOutputKeyDomain getOutputKeyDomain() {
+        return hasOutputKeyDomain ? outputKeyDomain : null;
     }
 
     /**
@@ -596,6 +626,33 @@ public final class LiveViewCheckpointRepairPlan {
      */
     public boolean isLocalized() {
         return localized;
+    }
+
+    /**
+     * @return true when the window state the replay stands on at any timestamp in
+     * {@code [L, H)} is the state a whole-history replay would stand on there, for
+     * <b>every</b> live key rather than only for the keys the bounds were derived
+     * for.
+     * <p>
+     * A RANGE frame and an anchor segment both expire by time, so what a function
+     * holds at a row at or above {@code R} came from rows at or above {@code L} and
+     * the replay reconstructs it whatever the key: one the replay never saw holds
+     * nothing there either, which is exactly what an absent key restores as. A ROWS
+     * frame holds a key's last {@code Nmax} rows however old they are, and the
+     * discovery only walks back far enough to warm up the output key domain
+     * {@code Q} - the keys with a row in {@code [R, H)} - so a key outside {@code Q}
+     * ends the replay holding the rows that happened to fall inside {@code [L, H)}
+     * instead of the state it really has.
+     * <p>
+     * That is survivable for the runtime, which a finite {@code H} puts back from
+     * the scratch overlay (see {@link #isRuntimeStatePreserved()}), and not for a
+     * root a repair freezes: nothing puts those back. So a repair that re-versions
+     * logical boundaries from its replay either needs this to hold, or needs
+     * {@link #getOutputKeyDomain()} to say which keys the replay does describe - and a
+     * ROWS repair with neither truncates the timeline at {@code R} instead.
+     */
+    public boolean isReplayStateKeyComplete() {
+        return isReplayStateKeyComplete;
     }
 
     public boolean isResumeFromAnchor() {
@@ -803,6 +860,9 @@ public final class LiveViewCheckpointRepairPlan {
         outputLowTs = viewLowerBoundTimestamp;
         replayLowTs = viewLowerBoundTimestamp;
         localized = false;
+        isReplayStateKeyComplete = false;
+        hasOutputKeyDomain = false;
+        outputKeyDomain.clear();
         // Derive the rebuild bounds even with an anchor in hand: the two dispositions
         // are compared on price below, and an anchor the cadence left just under an old
         // correction buys a resume that replays the whole view above it. An unpriced
@@ -1108,6 +1168,20 @@ public final class LiveViewCheckpointRepairPlan {
         outputLowTs = outputFloor;
         replayLowTs = lowTs;
         localized = true;
+        // Only the ROWS arm leaves the replay's per-key state incomplete, and it does
+        // so whether or not another arm pushed L lower: a wider warm-up feeds more
+        // rows to the keys it covers, and says nothing about a key the discovery
+        // never counted predecessors for. See isReplayStateKeyComplete().
+        isReplayStateKeyComplete = !hasRows;
+        // What the ROWS arm can say instead: exactly which keys the replay does
+        // describe. A publication holding Q keeps every key outside it as the old root
+        // wrote it, which is what lets a ROWS repair splice the timeline rather than
+        // truncate it. The forward pass has to have collected the whole domain - a
+        // fragment would leave the publication silently dropping the keys it lost.
+        if (hasRows && rowsBoundSource.isRowsOutputKeyDomainComplete()) {
+            rowsBoundSource.collectRowsOutputKeys(outputKeyDomain);
+            hasOutputKeyDomain = true;
+        }
     }
 
     /**
@@ -1183,6 +1257,13 @@ public final class LiveViewCheckpointRepairPlan {
      */
     public interface RowsBoundSource {
         /**
+         * Copies {@code Q} into {@code out}, in the encoding a checkpoint partition map
+         * keys an entry by. Called only when {@link #isRowsOutputKeyDomainComplete()}
+         * holds.
+         */
+        void collectRowsOutputKeys(@NotNull LiveViewCheckpointOutputKeyDomain out);
+
+        /**
          * Runs the {@code H -> Q -> L} discovery for one repair. The caller has already
          * proven the change set insert-only and the floors worth discovering, so this
          * only ever runs for a repair that can use the answer.
@@ -1216,6 +1297,14 @@ public final class LiveViewCheckpointRepairPlan {
          * changed. Meaningful only under {@link HighBoundTag#FINITE}.
          */
         long getRowsHighTsExclusive();
+
+        /**
+         * @return whether the discovery collected the whole of {@code Q} rather than the
+         * fragment a budget stopped its forward pass on, and so whether
+         * {@link #collectRowsOutputKeys} may be read. Meaningful only after
+         * {@link #discoverRowsBounds}.
+         */
+        boolean isRowsOutputKeyDomainComplete();
 
         /**
          * @return whether a budget stopped the discovery, leaving the bound it was

@@ -167,7 +167,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         Path checkpointsDir = checkpointsDir(instance)
                 ) {
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir)) {
+                                 writer.beginRepair(checkpointsDir, null)) {
                         Assert.assertTrue(
                                 "the capture must allocate above the orphan, not onto it",
                                 capture.getDataSegmentId() > orphanSegmentId
@@ -268,7 +268,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 ) {
                     final LiveViewCheckpointTimelineStoreWriter.RepairResult result;
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir)) {
+                                 writer.beginRepair(checkpointsDir, null)) {
                         Assert.assertEquals(0, capture.size());
                         result = publish(writer, capture, instance, ts(timestamp(31)), 3);
                     }
@@ -1345,7 +1345,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         Path checkpointsDir = checkpointsDir(instance)
                 ) {
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir)) {
+                                 writer.beginRepair(checkpointsDir, null)) {
                         captureRange(instance, capture, functions, ts(timestamp(30)), ts(timestamp(50)), new long[]{4, 6});
                         try {
                             // H below the boundaries the capture holds: the splice would
@@ -1360,7 +1360,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         }
                     }
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir)) {
+                                 writer.beginRepair(checkpointsDir, null)) {
                         try {
                             writer.publishRepair(
                                     capture,
@@ -1403,7 +1403,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         Path checkpointsDir = checkpointsDir(instance)
                 ) {
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir)) {
+                                 writer.beginRepair(checkpointsDir, null)) {
                         captureRange(instance, capture, functions, ts(timestamp(30)), ts(timestamp(50)), new long[]{4, 6});
                         appendAndRefresh(job, 130, 13);
                         try {
@@ -2005,7 +2005,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 ) {
                     writer.setTestFailureStage(failureStage);
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir)) {
+                                 writer.beginRepair(checkpointsDir, null)) {
                         captureRange(instance, capture, functions, ts(timestamp(30)), ts(timestamp(50)), new long[]{4, 6});
                         try {
                             publish(writer, capture, instance, ts(timestamp(50)), 2);
@@ -2471,7 +2471,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         new LiveViewCheckpointTimelineStoreWriter(configuration);
                 Path checkpointsDir = checkpointsDir(instance)
         ) {
-            try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = writer.beginRepair(checkpointsDir)) {
+            try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = writer.beginRepair(checkpointsDir, null)) {
                 captureRange(
                         instance,
                         capture,

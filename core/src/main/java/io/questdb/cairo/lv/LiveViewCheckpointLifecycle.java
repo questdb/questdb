@@ -299,9 +299,9 @@ public final class LiveViewCheckpointLifecycle {
      * next publication's allocation over an orphan, the ceiling rises past it, and
      * no later reconciliation can tell it from a live segment again - while a
      * catalogue that never held the id keeps saying so. That is why a failed
-     * retention, compaction or repair publication used to leak its segments for
-     * the life of the directory: none of the three re-runs a reconciliation, so
-     * nothing read the ceiling before the next seal moved it.
+     * compaction or repair publication used to leak its segments for the life of
+     * the directory: neither re-runs a reconciliation, so nothing read the ceiling
+     * before the next seal moved it.
      * <p>
      * Both collectors apply it. The purge cadence runs it beside every sweep, so a
      * running process collects without waiting; {@link #reconcile} runs it over

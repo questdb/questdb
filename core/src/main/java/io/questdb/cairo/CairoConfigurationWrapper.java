@@ -515,11 +515,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getLiveViewCheckpointRetentionMicros() {
-        return getDelegate().getLiveViewCheckpointRetentionMicros();
-    }
-
-    @Override
     public long getLiveViewCheckpointRows() {
         return getDelegate().getLiveViewCheckpointRows();
     }

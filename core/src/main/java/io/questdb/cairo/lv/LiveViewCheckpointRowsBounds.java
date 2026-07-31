@@ -26,20 +26,27 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
@@ -97,6 +104,17 @@ import org.jetbrains.annotations.Nullable;
  * whole incorporated change set by construction, so the keys inside it are a superset
  * of the keys the change touched, and a superset only widens {@code H}.
  * <p>
+ * <b>{@code Q} leaves in two forms.</b> The bounds themselves only need it counted, and
+ * the scans key it however they read it cheapest - a SYMBOL column as the reader's
+ * table-local integer. A repair that goes on to re-version logical boundaries needs it
+ * as keys instead, and needs them encoded the way a checkpoint partition map keys an
+ * entry, so that a key it collected and a key a published root holds compare equal.
+ * {@link #collectOutputKeys} answers that second form, off a parallel map the forward
+ * scan fills once per distinct key through
+ * {@link LiveViewCheckpointRowsPlan#getCheckpointKeySink()}. It is readable only when
+ * {@link #isOutputKeyDomainComplete()} holds, because a publication that keeps every
+ * key outside {@code Q} untouched must not be handed a fragment of it.
+ * <p>
  * <b>Insert-only.</b> Reading {@code A} off the post-change snapshot assumes the
  * change added rows rather than removing them. A deletion that emptied a key's rows
  * out of {@code [changeLowTs, changeMaxTs]} leaves that key invisible to this scan
@@ -139,36 +157,83 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
     private static final int IDX_FOLLOWING = 0;
     private static final int IDX_PRECEDING = 1;
     private static final long NOT_AFFECTED = -1;
+    // One slot, because the checkpoint-form key map carries membership and nothing else.
+    // Its width is also what says where a map record's key columns start.
+    private static final ArrayColumnTypes OUTPUT_KEY_VALUE_TYPES = new ArrayColumnTypes()
+            .add(ColumnType.LONG);
     private static final ArrayColumnTypes VALUE_TYPES = new ArrayColumnTypes()
             .add(ColumnType.LONG)
             .add(ColumnType.LONG);
     private final CairoConfiguration configuration;
     private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
+    // Scratch the checkpoint-form encoding of one key is written through.
+    private final MemoryCARW keyBuffer;
     // Q in first-seen order, as table-local symbol keys. Populated only while the indexed
     // seek is available, which is the only path that iterates the key domain.
     private final IntList outputKeys = new IntList();
     private long affectedKeyCount;
     private long backwardScanRows;
+    private ColumnTypes checkpointKeyColumnTypes;
     private long dependencyLowTs;
     private long forwardScanRows;
     private HighBoundTag highBoundTag = HighBoundTag.EOF;
     private long highTsExclusive;
     private int indexedKeyColumnIndex = -1;
     private long indexedKeyLookups;
+    private boolean isOutputKeyDomainComplete;
     private Map keyMap;
     private long outputKeyBudget;
     private long outputKeyCount;
+    // Q again, in the encoding a checkpoint partition map keys an entry by. Separate
+    // from keyMap because that one is per row and this one is per distinct key: the
+    // scans keep their table-local SYMBOL integers and only a key joining Q pays for
+    // the resolved string the publication has to compare against.
+    private Map outputKeyMap;
     private ScanBudgetStatus scanBudgetStatus = ScanBudgetStatus.WITHIN;
     private long scanRowBudget;
     private long scanRows;
 
     public LiveViewCheckpointRowsBounds(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
+        this.keyBuffer = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Override
     public void close() {
         keyMap = Misc.free(keyMap);
+        outputKeyMap = Misc.free(outputKeyMap);
+        Misc.free(keyBuffer);
+    }
+
+    /**
+     * Copies {@code Q} into {@code out}, in the encoding a checkpoint partition map keys
+     * an entry by. Meaningful only while {@link #isOutputKeyDomainComplete()} holds: a
+     * discovery a budget cut short collected a fragment of the interval, and a fragment
+     * of {@code Q} would let the publication drop a key it cannot describe.
+     */
+    public void collectOutputKeys(@NotNull LiveViewCheckpointOutputKeyDomain out) {
+        out.clear();
+        if (!isOutputKeyDomainComplete || outputKeyMap == null) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint repair output key domain is not available");
+        }
+        final int keyStartIndex = OUTPUT_KEY_VALUE_TYPES.getColumnCount();
+        final MapRecordCursor cursor = outputKeyMap.getCursor();
+        final MapRecord record = outputKeyMap.getRecord();
+        while (cursor.hasNext()) {
+            keyBuffer.jumpTo(0);
+            LiveViewSnapshotKeyCodec.writeKey(keyBuffer, record, checkpointKeyColumnTypes, keyStartIndex);
+            final long length = keyBuffer.getAppendOffset();
+            if (length > Integer.MAX_VALUE) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint repair partition key is too long, length=").put(length);
+            }
+            final byte[] key = new byte[(int) length];
+            for (int i = 0; i < key.length; i++) {
+                key[i] = keyBuffer.getByte(i);
+            }
+            out.add(key);
+        }
     }
 
     /**
@@ -229,6 +294,7 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         }
         openKeyMap(plan);
         if (discoverHighBoundAndKeys(plan, pageFrameFactory, executionContext, filter, outputLowTs, changeLowTs, changeMaxTs)) {
+            isOutputKeyDomainComplete = true;
             discoverDependencyLowTs(plan, pageFrameFactory, executionContext, filter, viewLowerBoundTs, outputLowTs);
         }
     }
@@ -322,6 +388,22 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
     }
 
     /**
+     * @return whether the forward pass collected the whole of {@code Q} - every key with
+     * a qualifying row in {@code [R, H)} - rather than the fragment a budget stopped it
+     * on. Only then may {@link #collectOutputKeys} be read, because a publication that
+     * keeps the old root's entry for every key outside {@code Q} needs the complete set
+     * to know which keys those are.
+     * <p>
+     * The backward searches do not bear on it. Either proves {@code L} whole or leaves it
+     * at {@code S}, and {@code S} is where a replay reconstructs every key anyway, so a
+     * budget that stopped one of them costs the repair its floor rather than its key
+     * domain.
+     */
+    public boolean isOutputKeyDomainComplete() {
+        return isOutputKeyDomainComplete;
+    }
+
+    /**
      * @return whether a budget stopped this discovery, leaving at least one bound at its
      * conservative fallback rather than at what the data proves.
      */
@@ -359,6 +441,7 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         highTsExclusive = Numbers.LONG_NULL;
         indexedKeyColumnIndex = -1;
         indexedKeyLookups = 0;
+        isOutputKeyDomainComplete = false;
         outputKeys.clear();
         outputKeyCount = 0;
         scanBudgetStatus = ScanBudgetStatus.WITHIN;
@@ -379,6 +462,12 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             if (indexedKeyColumnIndex > -1) {
                 outputKeys.add(record.getInt(indexedKeyColumnIndex));
             }
+            // Once per distinct key rather than once per row: the checkpoint form is
+            // what the publication compares against, and nothing reads it until the
+            // repair decides to splice.
+            final MapKey checkpointKey = outputKeyMap.withKey();
+            checkpointKey.put(record, plan.getCheckpointKeySink());
+            checkpointKey.createValue().putLong(0, 0);
         }
         return value;
     }
@@ -540,13 +629,18 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
     }
 
     /**
-     * Builds the per-key counter map this plan's key shape needs. One refresh worker
-     * serves many views and a map's key layout is fixed at construction, so the map is
-     * rebuilt per discovery rather than reused across key shapes it was not built for.
+     * Builds the two maps this plan's key shape needs: the per-row counter map the scans
+     * read through, and the per-key checkpoint-form map {@code Q} is collected out of.
+     * One refresh worker serves many views and a map's key layout is fixed at
+     * construction, so both are rebuilt per discovery rather than reused across key
+     * shapes they were not built for.
      */
     private void openKeyMap(LiveViewCheckpointRowsPlan plan) {
         keyMap = Misc.free(keyMap);
+        outputKeyMap = Misc.free(outputKeyMap);
+        checkpointKeyColumnTypes = plan.getCheckpointKeyColumnTypes();
         keyMap = MapFactory.createUnorderedMap(configuration, plan.getKeyColumnTypes(), VALUE_TYPES);
+        outputKeyMap = MapFactory.createUnorderedMap(configuration, checkpointKeyColumnTypes, OUTPUT_KEY_VALUE_TYPES);
     }
 
     /**

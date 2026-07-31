@@ -710,11 +710,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * Without the cadence a sweep runs only where {@link LiveViewCheckpointLifecycle#reconcile}
      * does - once per worker per directory - so everything a seal, a repair, a
-     * compaction or a retention pass supersedes after that first seal waits for a
-     * restart before its bytes come back, and so do the files a failed one renamed
-     * into place. Both halves wait exactly that long, because reconciliation
-     * applies the same two rules; the cadence is what stops either of them from
-     * waiting. Best-effort, like the retention and compaction passes ahead of it:
+     * compaction supersedes after that first seal waits for a restart before its
+     * bytes come back, and so do the files a failed one renamed into place. Both
+     * halves wait exactly that long, because reconciliation applies the same two
+     * rules; the cadence is what stops either of them from waiting. Best-effort,
+     * like the compaction pass ahead of it:
      * the sweep publishes no generation, so a fault costs one deferred collection
      * and leaves the checkpoint store byte-identical.
      */
@@ -771,73 +771,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Retires every checkpoint boundary that has fallen below the
-     * {@code cairo.live.view.checkpoint.retention.micros} event-time horizon,
-     * measured back from the newest sealed boundary. Disabled by default (horizon
-     * zero); when set, this is the only thing that bounds what the checkpoint
-     * store retains, since nothing else ever removes a boundary from below.
-     * <p>
-     * Best-effort, like compaction: a fault abandons the pass and leaves the
-     * published generation byte-identical. It runs on every seal rather than on a
-     * cadence of its own, because the pass costs one {@code O(log N)} probe when
-     * the horizon has nothing to retire, and retiring one boundary per seal keeps
-     * the store's footprint flat instead of sawtoothing.
-     */
-    private void maybeTrimCheckpointTimeline(LiveViewInstance instance) {
-        final long retentionMicros = engine.getConfiguration().getLiveViewCheckpointRetentionMicros();
-        if (retentionMicros <= 0) {
-            return;
-        }
-        if (checkpointTimelineStoreWriter == null) {
-            return;
-        }
-        final long headMaxTs = instance.getHeadCheckpointMaxTs();
-        // A head this process has not sealed carries no timestamp, and a horizon
-        // wider than the timestamp domain has no floor to compute.
-        if (headMaxTs == Numbers.LONG_NULL || headMaxTs < Long.MIN_VALUE + retentionMicros) {
-            return;
-        }
-        final long floorTs = headMaxTs - retentionMicros;
-        try (Path checkpointsDir = new Path()) {
-            checkpointsDir.of(engine.getConfiguration().getDbRoot())
-                    .concat(instance.getLiveViewToken())
-                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-            // Retention retires boundaries of a timeline this node published, so it
-            // runs on whichever role that node currently holds - see
-            // appendCheckpointTimelineRoot for why the role read lock outlives the
-            // read-only refusal it used to carry.
-            final Lock roleLock = engine.getRoleSwitchReadLock();
-            roleLock.lock();
-            final LiveViewCheckpointTimelineStoreWriter.RetentionResult result;
-            try {
-                result = checkpointTimelineStoreWriter.publishTruncateBelow(
-                        checkpointsDir,
-                        instance.getLiveViewToken().getTableId(),
-                        0,
-                        floorTs,
-                        true
-                );
-            } finally {
-                roleLock.unlock();
-            }
-            if (result.isPublished()) {
-                instance.recordCheckpointTimelineWalPurgeFloor(result.getWalPurgeFloor());
-                instance.recordCheckpointTimelineStats(result.getStats());
-                LOG.debug().$("retired live view checkpoint boundaries below the retention horizon [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", floorTs=").$ts(floorTs)
-                        .$(", retired=").$(result.getRetiredBoundaryCount())
-                        .$(", generation=").$(result.getGeneration()).I$();
-            }
-        } catch (Throwable t) {
-            LOG.error().$("could not apply live view checkpoint retention horizon [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", floorTs=").$ts(floorTs)
-                    .$(", error=").$(t).I$();
-        }
-    }
-
-    /**
      * Opens the repair capture one localized, finitely converging rebuild publishes
      * its range splice through, and fills the session's boundary schedule with the
      * logical boundaries in {@code [C, H)} that rebuild has to re-version.
@@ -876,7 +809,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-            capture = checkpointTimelineStoreWriter.beginRepair(checkpointsDir);
+            // Null for a replay that reconstructs every live key, and Q for one that
+            // describes only the keys the replacement re-emits - which is what lets a
+            // ROWS repair splice at all. The gate in o3HeadMissReplay has already
+            // refused a repair carrying neither.
+            capture = checkpointTimelineStoreWriter.beginRepair(
+                    checkpointsDir,
+                    plan.isReplayStateKeyComplete() ? null : plan.getOutputKeyDomain()
+            );
             // C, not R: a root in [R, C) keeps its state - nothing it holds
             // changed - and its output is re-emitted identically, so the splice
             // reuses it. Only [C, H) receives new payload versions.
@@ -4449,6 +4389,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // fullRebuild veto as the floors: a rebuild that must recompute the whole view
         // may not stop early, whatever the plan derived.
         final boolean finiteHighBound = localized && plan.isRuntimeStatePreserved();
+        // Whether this repair may re-version the logical boundaries it crosses instead
+        // of truncating the timeline at R. It needs the finite H every splice needs,
+        // and one thing more: the publication has to be able to describe every key the
+        // boundary held. Two ways to get there. A time-expiring dependency reconstructs
+        // every key outright, which is
+        // LiveViewCheckpointRepairPlan.isReplayStateKeyComplete(). A ROWS dependency
+        // does not - a root frozen from such a replay would describe a narrower key set
+        // than the boundary it replaces, which a later resume or restore then reads as
+        // the whole truth - so it instead names the keys it does describe, and the
+        // publication leaves every other key's entry exactly as the old root wrote it.
+        // With neither, the repair truncates at R: the runtime survives a narrowed
+        // state because the overlay puts it back, and a published root has nothing to
+        // put it back from.
+        final boolean isTimelineSpliceable = finiteHighBound
+                && (plan.isReplayStateKeyComplete() || plan.getOutputKeyDomain() != null);
         // The publication ordering this rebuild walks. It owns the two decisions the
         // rest of the method used to spread across local flags: what happens to the
         // runtime once the repair publishes, and whether the replacement is
@@ -4484,14 +4439,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long scannedRows = 0;
         // The timeline range splice this repair publishes instead of retiring
         // the whole timeline. Taken only by a repair that stopped at a finite
-        // H: that is exactly the case with a converged suffix to keep, and the
-        // case whose runtime is restored rather than promoted, so it creates no
-        // new logical boundary either. Null leaves the retire in place, and the
-        // boundary list stays empty so the replay's segmentation is a dead
+        // H whose replay reconstructs every key: that is the case with a converged
+        // suffix to keep, and the case whose runtime is restored rather than
+        // promoted, so it creates no new logical boundary either. Null leaves the
+        // retire - or, for a localized repair, the prefix truncate - in place, and
+        // the boundary list stays empty so the replay's segmentation is a dead
         // branch.
         LiveViewCheckpointTimelineStoreWriter.RepairCapture timelineCapture = resuming
                 ? resumed.takeCapture()
-                : finiteHighBound ? beginCheckpointTimelineRepair(instance, plan, session) : null;
+                : isTimelineSpliceable ? beginCheckpointTimelineRepair(instance, plan, session) : null;
         if (session != null) {
             // The publication mirrors every stage it records into the descriptor, and
             // a resumed turn walks the stages from PLAN again over the same record.
@@ -6144,10 +6100,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // generation untouched. Gated on an actual seal because its cadence is configured in
         // seals: a skipped boundary or a failed write added no roots and left nothing to repack.
         if (sealed) {
-            // Retention runs first so compaction walks the roots that survive it
-            // rather than the ones about to retire, and the sweep runs last so it
-            // walks a catalogue both of them have finished writing.
-            maybeTrimCheckpointTimeline(instance);
+            // The sweep runs last so it walks a catalogue compaction has finished
+            // writing, and collects whatever that pass superseded in the same turn.
             maybeCompactCheckpointTimeline(instance);
             maybeSweepCheckpointSegments(instance);
         }
@@ -6205,7 +6159,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-            capture = checkpointTimelineStoreWriter.beginRepair(checkpointsDir);
+            // The heal replays every base row above the predecessor it restored, so its
+            // state describes every live key and no key domain narrows it.
+            capture = checkpointTimelineStoreWriter.beginRepair(checkpointsDir, null);
             // (predecessorMaxTs, corruptCeilingMaxTs] in key space: the predecessor's
             // own boundary is kept, and every corrupt root above it up to and including
             // the ceiling is re-versioned. A non-corrupt boundary caught in the range
@@ -9177,6 +9133,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         private TableReader reader;
 
         @Override
+        public void collectRowsOutputKeys(@NotNull LiveViewCheckpointOutputKeyDomain out) {
+            rowsBounds.collectOutputKeys(out);
+        }
+
+        @Override
         public void discoverRowsBounds(
                 long viewLowerBoundTs,
                 long outputLowTs,
@@ -9216,6 +9177,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         @Override
         public long getRowsHighTsExclusive() {
             return rowsBounds.getHighTsExclusive();
+        }
+
+        @Override
+        public boolean isRowsOutputKeyDomainComplete() {
+            return rowsBounds.isOutputKeyDomainComplete();
         }
 
         @Override
