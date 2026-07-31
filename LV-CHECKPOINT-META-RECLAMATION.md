@@ -1,7 +1,7 @@
 # Live-view `_checkpoints/meta/` growth - design and implementation plan
 
 - **Context:** PR #6939 `feat(sql): add live views`, branch `puzpuzpuz_live_view`
-- **Verified against:** `e528fad374`
+- **Verified against:** `e221ed7614`
 - **Date:** 2026-07-31
 - **Supersedes:** the "Critical 8" section of the review handoff, whose fix options
   (per-segment refcounting *or* metadata compaction) were framed against an
@@ -35,8 +35,12 @@
   widened it to bound retained state too, and that widening is withdrawn - so Class
   A is the deliverable and Phase 3 came back out. Tasks 1 and 2 in section 12
   landed together in that commit and section 5.9 records them; task 3 followed on
-  2026-07-31 and section 5.10 records it, so **task 4 is the only open item**, and
-  it is pre-existing repair behaviour rather than reclamation work. Class A itself
+  2026-07-31 and section 5.10 records it, and task 4 the same day - section 5.11 -
+  where the narrowed key set decision 5 had left open turned out to be a live wrong
+  answer for ROWS views and is now fixed. So **task 5 is the only open item**, and
+  it is task 4's own leftover: the ROWS timeline splice, which the correctness gate
+  takes from every ROWS view rather than from the ones that need it. Neither task 4
+  nor task 5 is reclamation work. Class A itself
   needs no further code. The consequence, stated
   because it is the point: **nothing bounds a default install's retained checkpoint
   state**; what the cadence and the reconciler bound is the garbage beside it. The
@@ -1323,6 +1327,81 @@ against this repository with the projects-classic GraphQL deprecation error and
 writes nothing. `gh api --method PATCH repos/questdb/questdb/pulls/6939 -F
 body=@<file>` applies the same edit and returns the stored length.
 
+### 5.11 What task 4 actually shipped
+
+Not reclamation work at all - task 4 is the narrowed key set a localized repair
+leaves behind, which Phase 1 only made visible. Its three steps were reproduce,
+classify, route, and the classification came back **bug**, so the routing
+decision had to be taken as code rather than as a note.
+
+**Step 1 reproduced it directly, and it is wider than decision 5 described.** A
+localized `ROWS 3 PRECEDING` rebuild over an eight-key view whose cold keys sit
+below the replay floor left three re-versioned boundaries naming **one** key
+each, against eight in the boundaries either side of them. That is the missing-key
+half decision 5 named. The other half only shows in the argument: `L` comes from
+a discovery that walks back far enough to warm up the **output key domain**
+`Q` - the keys with a row in `[R, H)` - so a key with a row in `[L, R)` and none
+above `R` is carried by the replay and re-imaged from the rows that happened to
+fall inside the interval. It survives in the root with a truncated history rather
+than disappearing from it, which no key-count assertion can see.
+
+**Step 2 classified it, and the classifying evidence is a wrong answer.** A
+second correction one boundary above the first takes `DISPOSITION_RESUME_FROM_ANCHOR`
+- the resume reads fewer rows than a rebuild would - and its anchor is one of the
+narrowed boundaries. The resume restores that state and replays forward, so every
+cold key's row above the anchor comes back summing its own value alone: the case
+measures `2.0` where the recompute says `4.0`. The live view's own rows, not a
+metric.
+
+**Only the ROWS shape is affected, and the control says so.** A RANGE frame and
+an anchor segment both expire by time: what a function holds at a row at or above
+`R` came from rows at or above `L`, so the replay reconstructs every key, and a
+key it never carried holds nothing there either - which is exactly what an absent
+key restores as. The RANGE control narrows the same three boundaries, takes the
+same resume off one of them, and lands on the recompute. Section 6.4's table said
+half of this already, from the runtime's side: a ROWS or anchored function "cannot
+be localized behind an EOF bound" because "a key with no row at or above `R` keeps
+state a replay from `L` never sees". The finite-`H` rule answers that for the
+runtime by restoring the scratch overlay over it. Nothing restores a published
+root, and that is the whole of the bug. The anchor is the arm that argument groups
+with ROWS and the data does not: the recognized anchor is a calendar-period floor
+of the designated timestamp, so a key that skipped the segment carries a
+strictly older anchor value and its next row resets it.
+
+**Step 3 routed it: the gate lands in #6939, the splice does not come back yet.**
+`LiveViewCheckpointRepairPlan.isReplayStateKeyComplete()` is false for any
+localization a ROWS arm took part in, and `LiveViewRefreshJob` reads it beside the
+finite `H` when it decides whether to open a `RepairCapture`. A ROWS repair
+therefore takes the disposition a localized repair with no converged suffix
+already took: `truncateOrRetireTimelineOnO3` keeps every root below `R`, drops the
+rest, and the post-replay seal puts a head back at the frontier. That combination
+- a session and an overlay with no capture - was already reachable (a capture that
+refuses, a durable-prefix measurement that fails), so no publication path is new.
+
+Costs the change adds, stated because they are real:
+
+- **A ROWS view loses its timeline above the correction on every out-of-order
+  row.** The roots below `R` stand, so a later resume can still anchor under the
+  correction, but the boundaries between `R` and the frontier go and one head
+  replaces them. That is a resume-reach and restart-recovery cost, and it is the
+  price of not publishing a root that describes a key set the view does not have.
+- **Five existing cases changed shape**, all of them asserting the splice rather
+  than an answer: three in `LiveViewCheckpointTimelineRepairTest` now assert the
+  truncate through one shared helper, `LiveViewCheckpointSoakTest`'s ROWS arm
+  expects no compaction redirect where the RANGE arm still requires one (a
+  boundary dropped whole fragments no segment), and Phase 1's repair-capture
+  elision case moved to an **anchored** view - the shape that is still both
+  whole-state and spliceable - so the capture-side comparison keeps its coverage.
+
+**What the fix is not.** Task 4 said to size it "against `capture` and the scratch
+overlay". Neither is where it went. `RepairCapture` freezes what it is handed, and
+the overlay is the reason the runtime survives what the roots do not; the defect is
+that the caller handed a capture a replay that could not describe every key. The
+precise repair - keep the splice and re-version only the keys of `Q`, leaving every
+other key's entry as the old root wrote it - needs `Q` itself at publication time,
+and `LiveViewCheckpointRowsBounds` holds it only as a count on the walk path.
+That is task 5.
+
 ---
 
 ## 6. Verification results (traced 2026-07-30)
@@ -1829,6 +1908,31 @@ and two in `LiveViewCheckpointLifecycleTest`
   records as before; the refusal is stated in code and reached only through a
   bounded-validation failure this suite has no fixture for.
 
+**Task 4** - three cases in `LiveViewCheckpointRepairKeyCoverageTest`, plus five
+existing cases reshaped (section 5.11)
+
+- A localized ROWS repair leaves every boundary it does not drop naming every key.
+  **Done** - `testARowsRepairLeavesEveryBoundaryNamingEveryKey`, stated as the whole
+  timeline in one string, because both halves matter: the roots at or below `R`
+  survive untouched, everything above them is dropped rather than re-versioned, and
+  one head stands at the frontier. Red before the change, on three boundaries
+  coming back naming one key of eight.
+- The wrong answer that classifies it as a bug. **Done** -
+  `testAResumeAfterARowsRepairKeepsEveryKeysHistory`, which corrects twice: the
+  first correction re-versions the boundaries under the second, and the second
+  resumes off one of them. Red before the change on the recompute oracle, at
+  `2.0` against `4.0`, which is the cold key's own row summing without its history.
+- The control that makes the gate a dependency question rather than a blanket
+  refusal. **Done** - `testARangeRepairStillReVersionsItsBoundaries`, the same
+  workload over a frame that expires by time: it still splices, its roots still
+  come back naming one key, and the resume off one of them still matches the
+  recompute. Passes before and after.
+- Not covered: the second half of the defect, a key the replay *carried* whose
+  history the discovery never warmed up (rows in `[L, R)` and none above `R`). It
+  is unreachable in a fixture the gate now refuses outright, and it is what task 5
+  has to keep in view - a fix that only preserved the keys the replay missed would
+  leave it standing.
+
 Not covered, and worth naming: nothing asserts the *purge* half end to end under a
 concurrent reader pin - the generation gates are shared across the publications
 and are covered there, but a case that pins a generation across a publication and
@@ -1853,6 +1957,7 @@ worker, under the same serialization the reconciliation sweep always had.
 | 7 | **landed**: 4 production classes, ~15 lines of code and ~50 of javadoc, plus ~150 lines of test | never estimated either - it was the leftover Phase 6 recorded. The smallest phase by a wide margin: the pass, the superblock it needs and the catalogue read all existed, and the two rules separate themselves by ordering rather than by a flag. Most of the work is in the test fixture, which had to learn to publish a real catalogue |
 | tasks 1+2 | **landed**: 14 production classes, ~1,180 lines of code and test removed against ~180 added | never estimated - it is the scope decision rather than a phase. Almost all of the addition is the fixture the two orphan cases needed once their injection point moved to compaction, which accepts only a part-dead segment and so needs ring sharing and overlapping corrections that the suite's other cases do not produce |
 | task 3 | **landed**: no code at all - four edits to the #6939 body | never estimated - it is the deliverable's description rather than the deliverable. Sized here only to record that the reclamation work now has a public statement, and that it needed a Tradeoffs bullet rather than a corrected sentence, because the garbage half and the retained half are two claims and the old line collapsed them into one |
+| task 4 | **landed**: 3 production classes, ~15 lines of code and ~45 of javadoc, plus ~250 lines of new test and five existing cases reshaped | never estimated - it is pre-existing repair behaviour rather than reclamation work. The code is one predicate on the plan and one term on the gate that opens a repair capture; the weight is in the tests, because proving the defect needs two corrections and a control, and because disabling the ROWS splice moved every case that asserted it |
 
 ---
 
@@ -1998,15 +2103,17 @@ something this plan does.
    the one a cadence sweep uses, and the purge rule that decides what may go is
    generation-scoped rather than sweep-scoped, so calling it more often collects
    sooner and nothing else.
-5. **The narrowed key set a repair leaves behind** (turned up while testing Phase
-   1, section 5.1). A localized repair re-versions a boundary from a replay of
-   `[L, H)` only, so the boundary it publishes images the keys that range
-   carried rather than the key set the boundary originally described. Whether a
-   restore from such a boundary is meant to come back with fewer keys is a
-   question for the repair design, not for this plan. **Tracked as task 4**, which
-   is where the concrete steps are; it stays listed here because the disposition -
-   bug, or intended semantics that want documenting - is still a human's call and
-   the task's first step is to establish which.
+5. ~~**The narrowed key set a repair leaves behind**~~ (turned up while testing
+   Phase 1, section 5.1). **Settled on 2026-07-31: it is a bug, and it is fixed** -
+   task 4, section 5.11. The disposition needed no human call in the end, because
+   the reproduction produced a wrong answer rather than an ambiguous shape: a
+   second correction resuming off a narrowed boundary re-emits every cold key's row
+   summing without its history. Only the ROWS shape is affected - a RANGE frame and
+   an anchor segment expire by time, so the replay reconstructs every key from
+   `[L, K]` - and a ROWS repair now truncates the timeline at `R` instead of
+   re-versioning boundaries it cannot describe. What is left over is the splice
+   itself, which the gate takes away from every ROWS view rather than from the ones
+   that need it: **task 5**.
 
 ---
 
@@ -2014,9 +2121,11 @@ something this plan does.
 
 Open work, in the order it should be taken. Tasks 1 and 2 came from the scope
 decision at the head of section 11 and landed together in `524a8e833b`; task 3
-followed it on 2026-07-31 (section 5.10), so **task 4 is what is left**. It never
-depended on the other three: it is pre-existing repair behaviour that Phase 1 only
-made visible, and it may well belong outside #6939 entirely.
+followed it on 2026-07-31 (section 5.10) and task 4 on the same day (section
+5.11), so **task 5 is what is left** - and it is task 4's own leftover rather than
+anything the scope decision named. None of these is reclamation work: task 4 was
+pre-existing repair behaviour that Phase 1 made visible, and task 5 is the
+performance half of the fix task 4 landed for correctness.
 
 ### Task 1 - remove the retention horizon (Phase 3) - DONE (`524a8e833b`)
 
@@ -2137,7 +2246,20 @@ clauses rather than one.
 also stated where the checkpoint timeline is described and the reclamation suite
 added to the test plan. Section 5.10 has the detail.
 
-### Task 4 - the narrowed key set a localized repair leaves behind
+### Task 4 - the narrowed key set a localized repair leaves behind - DONE (2026-07-31)
+
+Landed as the three steps below; section 5.11 records what shipped and the two
+things the reproduction turned up that the steps did not anticipate - that the
+defect also reaches keys the replay *did* carry, and that it produces a wrong
+answer rather than a debatable shape. The statement of scope is kept as what it
+was checked against.
+
+**Acceptance, and where it came out:** step 1 reproduced the narrowing directly
+(three boundaries naming one key of eight); step 2 classified it as a bug, on a
+live view returning `2.0` where the recompute says `4.0`; step 3 routed the gate
+into #6939, because the wrong answer is reachable from code #6939 introduces, and
+routed the splice's return to task 5. The `io.questdb.test.cairo.lv` package is
+green.
 
 This is decision 5, tracked as work rather than as a question, per the scope
 discussion on 2026-07-31. It is **pre-existing repair behaviour, unrelated to
@@ -2175,4 +2297,48 @@ boundary it replaced.
 boundary. Phase 3 would have shrunk the set a restore could fall back to - fewer
 intact neighbours under a narrowed boundary - but task 1 removed it, so the
 population that meets a narrowed boundary is whatever it was before this work
-started.
+started. *That reading of the urgency was wrong, and step 2 is what corrected it:
+the population is every ROWS view that takes two out-of-order corrections near
+each other, which needs no retention horizon and no restart.*
+
+### Task 5 - give the ROWS splice back, keyed on the output key domain
+
+Task 4's gate is correct and blunt: **no** ROWS view re-versions a boundary now,
+including the ones whose every key sits in `Q`, which is the common shape for a
+dense workload. The cost is a timeline truncated at `R` on every out-of-order row,
+so a later resume anchors lower and a restart recovers from a fresher but lonelier
+head.
+
+**The rule that would restore it,** derived in section 5.11 and stated here as the
+thing to implement: a re-versioned boundary must take the replay's entry for a key
+in `Q` and keep the old root's entry for every key outside it. Both halves are
+load-bearing. A key outside `Q` that the replay never carried is dropped today -
+that is the missing-key half - and a key outside `Q` that the replay *did* carry
+is re-imaged from a truncated history, so a fix that only stopped the removals
+would still publish a wrong page. `A`, the affected key set, is the tighter
+statement of the same rule - a key the change did not touch has the state the old
+root recorded, whatever the replay saw - and `A` is a subset of `Q`, so either
+answers.
+
+**What it needs:**
+
+- `Q` out of `LiveViewCheckpointRowsBounds`, as keys rather than as a count. The
+  discovery holds the key domain in its own `Map` keyed by the plan's partition-by
+  columns, and `outputKeys` exists only on the indexed-symbol path - "populated
+  only while the indexed seek is available". The walk path keeps the count alone.
+- Those keys encoded the way a partition map keys an entry
+  (`LiveViewSnapshotKeyCodec`, off the window function's own map record), so the
+  two sides are comparable at publication time.
+- The set threaded plan -> session -> capture -> `publishRepair`, and applied in
+  `LiveViewCheckpointTimelineStoreWriter.buildRoot`: `removeMissingPartitions`
+  removes only keys in `Q`, and a frozen key outside `Q` that the old root already
+  holds keeps the old entry rather than being put.
+- The gate kept for every case the set cannot cover: a discovery that stopped on
+  either scan budget knows an incomplete `Q`, and `isReplayStateKeyComplete()` must
+  stay false there.
+
+**Acceptance:** `LiveViewCheckpointRepairKeyCoverageTest`'s two ROWS cases stay
+green with the splice back on rather than with it refused - the boundaries the
+repair crosses survive naming all eight keys - plus a case for the carried-but-
+truncated key the current gate makes unreachable, and the five cases task 4
+reshaped go back to asserting the splice.
