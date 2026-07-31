@@ -1,7 +1,7 @@
 # Live-view `_checkpoints/meta/` growth - design and implementation plan
 
 - **Context:** PR #6939 `feat(sql): add live views`, branch `puzpuzpuz_live_view`
-- **Verified against:** `524a8e833b`
+- **Verified against:** `e528fad374`
 - **Date:** 2026-07-31
 - **Supersedes:** the "Critical 8" section of the review handoff, whose fix options
   (per-segment refcounting *or* metadata compaction) were framed against an
@@ -34,11 +34,13 @@
   `524a8e833b` it is out of the branch.** The brief was metadata GC, section 1
   widened it to bound retained state too, and that widening is withdrawn - so Class
   A is the deliverable and Phase 3 came back out. Tasks 1 and 2 in section 12
-  landed together in that commit and section 5.9 records them; tasks 3 and 4 are
-  what remains open. Class A itself needs no further code. The consequence, stated
+  landed together in that commit and section 5.9 records them; task 3 followed on
+  2026-07-31 and section 5.10 records it, so **task 4 is the only open item**, and
+  it is pre-existing repair behaviour rather than reclamation work. Class A itself
+  needs no further code. The consequence, stated
   because it is the point: **nothing bounds a default install's retained checkpoint
-  state**, and task 3 requires the PR body to say so; what the cadence and the
-  reconciler bound is the garbage beside it.
+  state**; what the cadence and the reconciler bound is the garbage beside it. The
+  #6939 PR body now says both halves in two clauses rather than one.
   The original three semantic questions in section 6 were traced on 2026-07-30 and
   came back clear.
 
@@ -301,7 +303,9 @@ naming them stops holding as soon as another publication allocates past them.
 Phase 7 is the leftover Phase 6 recorded, and it finished that correction: the
 cadence sweep collected them, the reconciler still could not, so a process that
 never swept lost them exactly as before. A ninth commit then took Phase 3 back
-out, on the scope decision of section 11 - section 5.9.
+out, on the scope decision of section 11 - section 5.9. Section 5.10 is not a
+commit at all: it is what the #6939 body now says about the whole of the above,
+which is the only place a reader outside this document meets it.
 
 ### Phase 1 - state-page elision in the non-ring freeze - LANDED
 
@@ -1269,6 +1273,56 @@ Both cases were re-checked red-before/green-after against a build with
 `purgeUncataloguedSegments` stubbed out, which is the guard task 2 exists to
 preserve. The `io.questdb.test.cairo.lv` package is green at 1419 tests.
 
+### 5.10 What task 3 actually shipped (PR body, 2026-07-31)
+
+Not a commit: the deliverable is the #6939 body, which no branch state records.
+Four edits, all confined to what this plan owns.
+
+**The two clauses task 3 specifies became a Tradeoffs bullet** - "The checkpoint
+store collects its garbage by default, and bounds nothing" - carrying the garbage
+half (what is collected, on which cadence, under which key, and that
+`purge.interval=0` is the one configuration where a long-running process holds
+superseded segments for its whole life) and the retained half (every sealed
+boundary stays reachable, no live-view setting bounds it, no upstream setting
+sizes it). It prices the per-seal cost as what a seal actually wrote - Phase 1's
+elision for non-ring state, chunk sharing for ring state - and names the seal
+cadence the defaults imply, so "a large constant, not a bound" is a number a
+reader can check rather than a claim.
+
+**The old line was wrong in a second way this plan had not named.** Decision 4
+recorded that "operators size retention upstream" was false because no upstream
+setting bounds `_checkpoints/`. Writing the replacement turned up that it is also
+false for the live view's *own table*, which is the thing the bullet was actually
+about: a base-table TTL evicting partitions is freeze-and-continue for the view,
+so the derived rows stay. The out-of-scope entry now states both, and points at
+the Tradeoffs bullet for the checkpoint store rather than folding the two into one
+sentence.
+
+**The "In V1 scope" checkpoint-timeline bullet carries the mechanism,** because
+that is where a reader meets the store: the sweep's cadence and its second caller,
+the three populations it collects, and one sentence saying it bounds nothing that
+a generation can still reach. Stating collection where the timeline is described
+and the bound where the tradeoffs are is what keeps the two from reading as one
+claim.
+
+**The test plan gained the reclamation line it had none of.** The suite is
+`LiveViewCheckpointMetadataReclamationTest`, `LiveViewCheckpointSegmentDirectoryTest`
+and `LiveViewCheckpointStatePageElisionTest`; the entry names what each case
+measures, that every reclamation case is red before the change it guards - with
+the ring-function elision control the stated exception - and that each ends on a
+restart and a from-base recompute at a zero refresh-fault count. That last clause
+was checked against the code rather than copied from section 8: twelve cases, and
+`assertViewMatchesRecompute` is called thirteen times.
+
+**What did not change:** the CodeRabbit-generated summary at the foot of the body
+still lists "retention" among the configurable knobs. It is auto-generated and
+regenerates from the diff, so editing it by hand is noise.
+
+One operational note, because it cost a cycle: `gh pr edit --body-file` fails
+against this repository with the projects-classic GraphQL deprecation error and
+writes nothing. `gh api --method PATCH repos/questdb/questdb/pulls/6939 -F
+body=@<file>` applies the same edit and returns the stored length.
+
 ---
 
 ## 6. Verification results (traced 2026-07-30)
@@ -1798,6 +1852,7 @@ worker, under the same serialization the reconciliation sweep always had.
 | 6 | **landed**: 4 production classes, ~145 lines, plus ~165 lines of test | never estimated either - it was the leftover Phase 5 recorded. The pass is about eighty lines, and it is small because the catalogue already states what it needs: the reachability rule was written by Phase 2a/2b, and this only reads it from the other side. No format cost, and no new state - it decides and acts in one pass |
 | 7 | **landed**: 4 production classes, ~15 lines of code and ~50 of javadoc, plus ~150 lines of test | never estimated either - it was the leftover Phase 6 recorded. The smallest phase by a wide margin: the pass, the superblock it needs and the catalogue read all existed, and the two rules separate themselves by ordering rather than by a flag. Most of the work is in the test fixture, which had to learn to publish a real catalogue |
 | tasks 1+2 | **landed**: 14 production classes, ~1,180 lines of code and test removed against ~180 added | never estimated - it is the scope decision rather than a phase. Almost all of the addition is the fixture the two orphan cases needed once their injection point moved to compaction, which accepts only a part-dead segment and so needs ring sharing and overlapping corrections that the suite's other cases do not produce |
+| task 3 | **landed**: no code at all - four edits to the #6939 body | never estimated - it is the deliverable's description rather than the deliverable. Sized here only to record that the reclamation work now has a public statement, and that it needed a Tradeoffs bullet rather than a corrected sentence, because the garbage half and the retained half are two claims and the old line collapsed them into one |
 
 ---
 
@@ -1890,8 +1945,9 @@ something this plan does.
    `a2712f7217` on `puzpuzpuz_live_view`, and Phases 2a, 2b and 3 followed it on
    the same branch. None of them needed data-page access outside the checkpoint
    storage layer.
-4. **What the PR body says.** *Now tracked as task 3, whose two clauses are the
-   conclusion; what follows is how the wording got there.* The old line -
+4. ~~**What the PR body says.**~~ **Settled:** task 3 rewrote it on 2026-07-31,
+   two clauses as below - section 5.10 records the four edits. *What follows is
+   how the wording got there.* The old line -
    "Live-view disk growth is unbounded
    in V1; operators size retention upstream" - was wrong on the second clause: no
    upstream retention setting bounds `_checkpoints/`. Phase 3 made the first
@@ -1957,8 +2013,10 @@ something this plan does.
 ## 12. Follow-up tasks
 
 Open work, in the order it should be taken. Tasks 1 and 2 came from the scope
-decision at the head of section 11 and landed together in `524a8e833b`; **tasks 3
-and 4 are what is left**, and they are independent of each other.
+decision at the head of section 11 and landed together in `524a8e833b`; task 3
+followed it on 2026-07-31 (section 5.10), so **task 4 is what is left**. It never
+depended on the other three: it is pre-existing repair behaviour that Phase 1 only
+made visible, and it may well belong outside #6939 entirely.
 
 ### Task 1 - remove the retention horizon (Phase 3) - DONE (`524a8e833b`)
 
@@ -2053,7 +2111,10 @@ and pass with it, and section 8's Phase 6 and 7 entries are updated to name the
 new stage. **Both met**, the first re-checked directly by stubbing
 `purgeUncataloguedSegments` out.
 
-### Task 3 - rewrite the #6939 PR body
+### Task 3 - rewrite the #6939 PR body - DONE (2026-07-31)
+
+Landed as written; section 5.10 records what shipped and the one thing writing it
+turned up. The statement of scope below is what it was checked against.
 
 Decision 4 in section 11 carries the wording history. Task 1 has landed, which
 makes the current draft wrong again: with retention removed there is no live-view
@@ -2071,6 +2132,10 @@ clauses rather than one.
   to the keys that actually change per seal rather than to the whole key set, which
   is a large constant but not a bound. State it plainly; do not imply an upstream
   retention setting sizes it, which is the error the original line made.
+
+**Both clauses are in the body,** as a Tradeoffs bullet, with the mechanism half
+also stated where the checkpoint timeline is described and the reclamation suite
+added to the test plan. Section 5.10 has the detail.
 
 ### Task 4 - the narrowed key set a localized repair leaves behind
 
