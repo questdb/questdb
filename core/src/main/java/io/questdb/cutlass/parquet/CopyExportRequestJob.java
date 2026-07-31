@@ -33,12 +33,6 @@ import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.mp.Worker;
-import io.questdb.mp.continuation.Fiber;
-import io.questdb.mp.continuation.FiberRuntime;
-import io.questdb.mp.continuation.FiberRuntimeState;
-import io.questdb.mp.continuation.FiberTask;
-import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
@@ -60,8 +54,6 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     private final @Nullable Callable<Exception> callback;
     private final CopyExportContext copyContext;
     private final CairoEngine engine;
-    private final @Nullable FiberRuntime fiberRuntime;
-    private final @Nullable FiberExportTask fiberTask;
     private final StringSink fileName = new StringSink();
     private boolean isRequestLoaded;
     private CopyExportRequestTask localTaskCopy;
@@ -69,29 +61,15 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     private SQLSerialParquetExporter serialExporter;
 
     public CopyExportRequestJob(final CairoEngine engine) {
-        this(engine, null, null);
-    }
-
-    public CopyExportRequestJob(final CairoEngine engine, final FiberRuntime fiberRuntime) {
-        this(engine, fiberRuntime, null);
+        this(engine, null);
     }
 
     @TestOnly
     public CopyExportRequestJob(final CairoEngine engine, @Nullable Callable<Exception> callback) {
-        this(engine, null, callback);
-    }
-
-    private CopyExportRequestJob(
-            final CairoEngine engine,
-            @Nullable FiberRuntime fiberRuntime,
-            @Nullable Callable<Exception> callback
-    ) {
         super(engine.getMessageBus().getCopyExportRequestQueue(), engine.getMessageBus().getCopyExportRequestSubSeq());
         this.callback = callback;
         this.copyContext = engine.getCopyExportContext();
         this.engine = engine;
-        this.fiberRuntime = fiberRuntime;
-        this.fiberTask = fiberRuntime != null ? new FiberExportTask(fiberRuntime) : null;
         microsecondClock = engine.getConfiguration().getMicrosecondClock();
         localTaskCopy = new CopyExportRequestTask();
         try {
@@ -104,9 +82,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
 
     @Override
     public io.questdb.mp.Job cloneInstance() {
-        return fiberRuntime != null
-                ? new CopyExportRequestJob(engine, fiberRuntime)
-                : new CopyExportRequestJob(engine);
+        return new CopyExportRequestJob(engine);
     }
 
     @Override
@@ -121,7 +97,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
         }
         while (true) {
             try {
-                if (!rejectQueuedRequest(LaunchResult.QUIESCING)) {
+                if (!cancelQueuedRequest("copy export job closed")) {
                     break;
                 }
             } catch (Throwable th) {
@@ -157,51 +133,6 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
 
         processRequest(workerContext.carrierId());
         return true;
-    }
-
-    @Override
-    public boolean run(@NotNull WorkerContext workerContext) {
-        final FiberRuntime runtime = fiberRuntime;
-        final FiberExportTask task = fiberTask;
-        if (runtime == null || task == null) {
-            return super.run(workerContext);
-        }
-        if (!task.isAvailable()) {
-            return false;
-        }
-        if (!hasPendingRequests()) {
-            return false;
-        }
-        final Fiber fiber = runtime.tryReserveFiber();
-        if (fiber == null) {
-            return runtime.state() == FiberRuntimeState.OPEN
-                    ? false
-                    : rejectQueuedRequest(LaunchResult.QUIESCING);
-        }
-        final long fiberReservationEpoch = fiber.getReservationEpoch();
-        try {
-            while (true) {
-                final long cursor = subSeq.next();
-                if (cursor == -1) {
-                    return false;
-                }
-                if (cursor > -1) {
-                    try {
-                        task.prepare(queue.get(cursor));
-                    } finally {
-                        subSeq.done(cursor);
-                    }
-                    final LaunchResult result = task.launch(fiber, fiberReservationEpoch);
-                    if (result != LaunchResult.LAUNCHED) {
-                        task.releaseAfterLaunchFailure(result);
-                    }
-                    return true;
-                }
-                Os.pause();
-            }
-        } finally {
-            runtime.releaseReservedFiber(fiber, fiberReservationEpoch);
-        }
     }
 
     private static Throwable addCleanupFailure(@Nullable Throwable primary, Throwable failure) {
@@ -255,21 +186,11 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     }
 
     private CopyExportRequestTask.Status failureStatus(SqlExecutionCircuitBreaker circuitBreaker) {
-        if (fiberRuntime != null && fiberRuntime.state() != FiberRuntimeState.OPEN) {
-            return CopyExportRequestTask.Status.CANCELLED;
-        }
         return CopyExportRequestTask.classifyFailureStatus(circuitBreaker);
     }
 
-    private boolean hasPendingRequests() {
-        final long next = subSeq.current() + 1;
-        return subSeq.getBarrier().availableIndex(next) >= next;
-    }
-
     private void processRequest(int carrierId) {
-        final SuspensionScope.Mode previousMode = fiberRuntime == null
-                ? SuspensionScope.enter(SuspensionScope.Mode.BLOCKING)
-                : null;
+        final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
         final CopyExportContext.ExportTaskEntry entry = localTaskCopy.getEntry();
         final SqlExecutionCircuitBreaker circuitBreaker = localTaskCopy.getCircuitBreaker();
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.WAITING;
@@ -337,44 +258,12 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             try {
                 releaseRequest();
             } finally {
-                if (fiberRuntime == null) {
-                    SuspensionScope.restore(previousMode);
-                }
+                SuspensionScope.restore(previousMode);
             }
         }
     }
 
-    private void rejectLoadedRequest(LaunchResult result) {
-        if (!isRequestLoaded) {
-            return;
-        }
-        final CopyExportRequestTask.Status status = result == LaunchResult.QUIESCING
-                ? CopyExportRequestTask.Status.CANCELLED
-                : CopyExportRequestTask.Status.FAILED;
-        final String message = switch (result) {
-            case QUIESCING -> "copy export fiber runtime is quiescing";
-            case RESOURCE_FAILURE -> "copy export fiber allocation failed";
-            case STALE_INCARNATION -> "copy export fiber task incarnation is stale";
-            case TERMINAL -> "copy export fiber task is terminal";
-            default -> "copy export fiber launch failed";
-        };
-        try {
-            copyContext.updateStatus(
-                    CopyExportRequestTask.Phase.WAITING,
-                    status,
-                    null,
-                    Numbers.INT_NULL,
-                    message,
-                    -1,
-                    localTaskCopy.getTableName(),
-                    localTaskCopy.getCopyID()
-            );
-        } finally {
-            releaseRequest();
-        }
-    }
-
-    private boolean rejectQueuedRequest(LaunchResult result) {
+    private boolean cancelQueuedRequest(CharSequence message) {
         while (true) {
             final long cursor = subSeq.next();
             if (cursor == -1) {
@@ -386,7 +275,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                 } finally {
                     subSeq.done(cursor);
                 }
-                rejectLoadedRequest(result);
+                cancelLoadedRequest(message);
                 return true;
             }
             Os.pause();
@@ -507,79 +396,6 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                 }
             }
             CairoException.rethrowCleanupFailure(transferFailure);
-        }
-    }
-
-    private class FiberExportTask extends FiberTask {
-        private volatile boolean isAvailable = true;
-        private final FiberRuntime runtime;
-
-        private FiberExportTask(FiberRuntime runtime) {
-            this.runtime = runtime;
-        }
-
-        @Override
-        protected void onAbandoned() {
-            cancelLoadedRequest("copy export fiber runtime stopped");
-        }
-
-        @Override
-        protected void onDone() {
-            try {
-                if (isRequestLoaded) {
-                    failLoadedRequest("copy export fiber task completed without releasing its request");
-                }
-            } finally {
-                isAvailable = true;
-            }
-        }
-
-        @Override
-        protected void onError(Throwable th) {
-            LOG.critical().$("copy export failed on fiber [error=").$(th).I$();
-            failLoadedRequest(th.getMessage());
-        }
-
-        @Override
-        protected boolean runStep() {
-            final Worker worker = Worker.current();
-            processRequest(worker != null ? worker.getWorkerId() : -1);
-            return true;
-        }
-
-        private boolean isAvailable() {
-            return isAvailable;
-        }
-
-        private LaunchResult launch(Fiber fiber, long reservationEpoch) {
-            return runtime.launchReserved(fiber, reservationEpoch, this, getIncarnation());
-        }
-
-        private void prepare(CopyExportRequestTask task) {
-            if (!isAvailable) {
-                throw new IllegalStateException("copy export fiber task is busy");
-            }
-            if (isDone() && !tryReopen()) {
-                throw new IllegalStateException("copy export fiber task cannot be reopened");
-            }
-            if (!isIdle(getIncarnation())) {
-                throw new IllegalStateException("copy export fiber task is not idle");
-            }
-            isAvailable = false;
-            try {
-                transferRequest(task);
-            } catch (Throwable th) {
-                isAvailable = true;
-                throw th;
-            }
-        }
-
-        private void releaseAfterLaunchFailure(LaunchResult result) {
-            try {
-                rejectLoadedRequest(result);
-            } finally {
-                isAvailable = true;
-            }
         }
     }
 }

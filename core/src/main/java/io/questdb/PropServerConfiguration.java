@@ -243,7 +243,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int exportWorkerCount;
     private final boolean exportWorkerHaltOnError;
     private final long exportWorkerNapThreshold;
-    private final WorkerPoolMode exportWorkerPoolMode;
     private final long exportWorkerSleepThreshold;
     private final long exportWorkerSleepTimeout;
     private final long exportWorkerYieldThreshold;
@@ -1567,12 +1566,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.exportWorkerAffinity = getAffinity(properties, env, PropertyKey.EXPORT_WORKER_AFFINITY, exportWorkerCount);
             this.exportWorkerHaltOnError = getBoolean(properties, env, PropertyKey.EXPORT_WORKER_HALT_ON_ERROR, false);
             this.exportWorkerNapThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_NAP_THRESHOLD, 7_000);
-            this.exportWorkerPoolMode = readWorkerPoolMode(
-                    properties,
-                    env,
-                    PropertyKey.EXPORT_WORKER_FIBER_ENABLED,
-                    false
-            );
             this.exportWorkerSleepThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_THRESHOLD, 10_000);
             this.exportWorkerSleepTimeout = getMillis(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_TIMEOUT, 10);
             this.exportWorkerYieldThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_YIELD_THRESHOLD, 1000);
@@ -2628,7 +2621,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
         }
 
-        configureFiberPool(exportPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
         configureFiberPool(
                 (PropFiberWorkerPoolConfiguration) httpMinServerConfiguration,
                 maxLiveCount,
@@ -5649,7 +5641,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropExportPoolConfiguration extends PropFiberWorkerPoolConfiguration {
+    private class PropExportPoolConfiguration implements WorkerPoolConfiguration {
         @Override
         public Metrics getMetrics() {
             return metrics;
@@ -5683,11 +5675,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWorkerCount() {
             return exportWorkerCount;
-        }
-
-        @Override
-        public WorkerPoolMode getWorkerPoolMode() {
-            return exportWorkerPoolMode;
         }
 
         @Override

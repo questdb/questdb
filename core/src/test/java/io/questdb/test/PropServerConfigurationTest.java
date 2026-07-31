@@ -2652,10 +2652,6 @@ public class PropServerConfigurationTest {
                 PropertyKey.VIEW_COMPILER_WORKER_FIBER_ENABLED,
                 PropServerConfiguration::getViewCompilerPoolConfiguration
         );
-        assertWorkerPoolModeProperty(
-                PropertyKey.EXPORT_WORKER_FIBER_ENABLED,
-                PropServerConfiguration::getExportPoolConfiguration
-        );
     }
 
     @Test

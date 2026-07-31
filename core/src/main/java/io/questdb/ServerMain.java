@@ -664,11 +664,7 @@ public class ServerMain implements Closeable {
                                     sharedPoolQuery
                             );
 
-                            exportWorkerPool.assign(
-                                    exportWorkerPool.isFiberHost()
-                                            ? new CopyExportRequestJob(engine, exportWorkerPool.getFiberRuntime())
-                                            : new CopyExportRequestJob(engine)
-                            );
+                            exportWorkerPool.assign(new CopyExportRequestJob(engine));
                         } else {
                             log.advisory().$("export is disabled; set ")
                                     .$(EXPORT_WORKER_COUNT.getPropertyPath())

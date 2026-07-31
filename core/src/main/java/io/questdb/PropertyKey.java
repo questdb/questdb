@@ -700,7 +700,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     VIEW_COMPILER_WORKER_YIELD_THRESHOLD("view.compiler.worker.yield.threshold"),
     EXPORT_WORKER_COUNT("export.worker.count"),
     EXPORT_WORKER_AFFINITY("export.worker.affinity"),
-    EXPORT_WORKER_FIBER_ENABLED("export.worker.fiber.enabled"),
     EXPORT_WORKER_HALT_ON_ERROR("export.worker.haltOnError"),
     EXPORT_WORKER_NAP_THRESHOLD("export.worker.nap.threshold"),
     EXPORT_WORKER_SLEEP_THRESHOLD("export.worker.sleep.threshold"),

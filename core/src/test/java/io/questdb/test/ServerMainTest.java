@@ -924,7 +924,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.tcp.writer.queue.capacity\tQDB_LINE_TCP_WRITER_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.affinity\tQDB_LINE_TCP_WRITER_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.count\tQDB_LINE_TCP_WRITER_WORKER_COUNT\t0\tdefault\tfalse\tfalse\n" +
-                                    "line.tcp.writer.worker.fiber.enabled\tQDB_LINE_TCP_WRITER_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.writer.worker.fiber.enabled\tQDB_LINE_TCP_WRITER_WORKER_FIBER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.sleep.threshold\tQDB_LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.nap.threshold\tQDB_LINE_TCP_WRITER_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.yield.threshold\tQDB_LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
@@ -966,13 +966,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "mat.view.refresh.worker.sleep.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "export.worker.nap.threshold\tQDB_EXPORT_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "export.worker.affinity\tQDB_EXPORT_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
-                                    "export.worker.fiber.enabled\tQDB_EXPORT_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "export.worker.sleep.timeout\tQDB_EXPORT_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "export.worker.haltOnError\tQDB_EXPORT_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "export.worker.yield.threshold\tQDB_EXPORT_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
                                     "export.worker.sleep.threshold\tQDB_EXPORT_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "view.compiler.worker.yield.threshold\tQDB_VIEW_COMPILER_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
-                                    "view.compiler.worker.fiber.enabled\tQDB_VIEW_COMPILER_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "view.compiler.worker.fiber.enabled\tQDB_VIEW_COMPILER_WORKER_FIBER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "view.compiler.worker.haltOnError\tQDB_VIEW_COMPILER_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "view.compiler.worker.sleep.threshold\tQDB_VIEW_COMPILER_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "view.compiler.worker.sleep.timeout\tQDB_VIEW_COMPILER_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
@@ -1058,7 +1057,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "shared.query.worker.fiber.enabled\tQDB_SHARED_QUERY_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "shared.write.worker.affinity\tQDB_SHARED_WRITE_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "shared.write.worker.count\tQDB_SHARED_WRITE_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
-                                    "shared.write.worker.fiber.enabled\tQDB_SHARED_WRITE_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "shared.write.worker.fiber.enabled\tQDB_SHARED_WRITE_WORKER_FIBER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "worker.fiber.max.live\tQDB_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\tfalse\n" +
                                     "worker.fiber.max.retained\tQDB_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\tfalse\n" +
                                     "worker.fiber.mount.budget\tQDB_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\tfalse\n" +
@@ -1070,7 +1069,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "telemetry.table.ttl.weeks\tQDB_TELEMETRY_TABLE_TTL_WEEKS\t4\tdefault\tfalse\tfalse\n" +
                                     "telemetry.event.throttle.interval\tQDB_TELEMETRY_EVENT_THROTTLE_INTERVAL\t60000000\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.affinity\tQDB_WAL_APPLY_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
-                                    "wal.apply.worker.fiber.enabled\tQDB_WAL_APPLY_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "wal.apply.worker.fiber.enabled\tQDB_WAL_APPLY_WORKER_FIBER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.haltOnError\tQDB_WAL_APPLY_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.sleep.threshold\tQDB_WAL_APPLY_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.sleep.timeout\tQDB_WAL_APPLY_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
