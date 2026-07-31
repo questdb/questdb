@@ -10387,6 +10387,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     perWorkerKeyFunctions = null;
                     sharedOuterProjectionFunctions = null;
 
+                    // An order-sensitive aggregate (first/last) is only correct over a
+                    // base that delivers designated-timestamp order. A base advertising
+                    // SCAN_DIRECTION_OTHER -- e.g. a multi-key covering scan emitting one
+                    // frame per key -- would silently return "whichever key was scanned
+                    // first" instead of the earliest row. Fail closed, matching how
+                    // SAMPLE BY ALIGN TO FIRST OBSERVATION already rejects such a base.
+                    validateOrderSensitiveAggregates(factory, groupByFunctions0);
                     return generateFill(
                             model,
                             new AsyncGroupByRecordCursorFactory(
@@ -11864,6 +11871,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return result;
+    }
+
+    /**
+     * Reject a parallel GROUP BY / SAMPLE BY whose aggregate depends on row order
+     * when the base cursor does not guarantee designated-timestamp order.
+     * <p>
+     * {@code getScanDirection()} is the existing declaration of that guarantee; the
+     * group-by path simply did not consult it, so an unordered base produced silently
+     * wrong {@code first()}/{@code last()} values rather than an error.
+     */
+    private static void validateOrderSensitiveAggregates(
+            RecordCursorFactory base,
+            ObjList<GroupByFunction> groupByFunctions
+    ) throws SqlException {
+        if (base == null || groupByFunctions == null
+                || base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER) {
+            return;
+        }
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            final GroupByFunction f = groupByFunctions.getQuick(i);
+            if (f != null && f.isOrderSensitive()) {
+                throw SqlException.$(0, "base query does not provide ASC order over designated TIMESTAMP column, "
+                        + "required by an order-sensitive aggregate");
+            }
+        }
     }
 
     private RecordCursorFactory generateTableQuery0(

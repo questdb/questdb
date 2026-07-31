@@ -37,6 +37,15 @@ public class LastNotNullVarcharGroupByFunction extends FirstVarcharGroupByFuncti
     }
 
     @Override
+
+    public boolean isOrderSensitive() {
+
+        return true;
+
+    }
+
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final Utf8Sequence val = arg.getVarcharA(record);
         if (val != null) {

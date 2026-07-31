@@ -37,6 +37,15 @@ public class LastVarcharGroupByFunction extends FirstVarcharGroupByFunction {
     }
 
     @Override
+
+    public boolean isOrderSensitive() {
+
+        return true;
+
+    }
+
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (rowId > mapValue.getLong(valueIndex)) {
             mapValue.putLong(valueIndex, rowId);

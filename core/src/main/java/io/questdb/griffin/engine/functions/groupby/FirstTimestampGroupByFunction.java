@@ -52,6 +52,15 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     }
 
     @Override
+
+    public boolean isOrderSensitive() {
+
+        return true;
+
+    }
+
+
+    @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
             long existingRowId = mapValue.getLong(valueIndex);

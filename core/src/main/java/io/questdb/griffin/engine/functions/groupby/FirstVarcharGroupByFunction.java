@@ -49,6 +49,15 @@ public class FirstVarcharGroupByFunction extends VarcharFunction implements Grou
     }
 
     @Override
+
+    public boolean isOrderSensitive() {
+
+        return true;
+
+    }
+
+
+    @Override
     public void clear() {
         sink.of(0);
     }

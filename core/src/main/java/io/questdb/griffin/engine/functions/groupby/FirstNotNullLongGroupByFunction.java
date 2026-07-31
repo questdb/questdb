@@ -41,6 +41,15 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
     }
 
     @Override
+
+    public boolean isOrderSensitive() {
+
+        return true;
+
+    }
+
+
+    @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
             final long hi = dataAddr + rowCount * 8L;

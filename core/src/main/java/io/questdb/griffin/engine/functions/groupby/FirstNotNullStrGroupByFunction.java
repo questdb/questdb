@@ -37,6 +37,15 @@ public class FirstNotNullStrGroupByFunction extends FirstStrGroupByFunction {
     }
 
     @Override
+
+    public boolean isOrderSensitive() {
+
+        return true;
+
+    }
+
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final CharSequence val = arg.getStrA(record);
         if (val != null) {

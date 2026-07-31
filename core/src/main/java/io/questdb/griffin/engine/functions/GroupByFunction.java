@@ -439,6 +439,22 @@ public interface GroupByFunction extends Function, Mutable {
         return false;
     }
 
+    /**
+     * True when this aggregate's RESULT depends on the order rows arrive in --
+     * {@code first()}, {@code last()} and friends -- as opposed to aggregates like
+     * {@code max()} or {@code count()} that are order-invariant.
+     * <p>
+     * Such an aggregate is only correct over a base cursor that delivers rows in
+     * designated-timestamp order. A base that advertises
+     * {@link io.questdb.cairo.sql.RecordCursorFactory#SCAN_DIRECTION_OTHER} -- e.g.
+     * a multi-key covering scan emitting one frame per key -- silently produces the
+     * wrong value otherwise, because "first" becomes "whichever key was scanned
+     * first" rather than the earliest row.
+     */
+    default boolean isOrderSensitive() {
+        return false;
+    }
+
     @Override
     default boolean supportsParallelism() {
         return false;

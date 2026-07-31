@@ -41,6 +41,15 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
     }
 
     @Override
+
+    public boolean isOrderSensitive() {
+
+        return true;
+
+    }
+
+
+    @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
             long hi = dataAddr + (rowCount - 1) * 4L;
