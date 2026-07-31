@@ -54,6 +54,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -128,6 +129,71 @@ public interface WindowFunction extends Function {
     @Override
     default char getChar(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @return the checkpoint generation the incremental baseline this function holds
+     * was recorded against, or {@link Numbers#LONG_NULL} when it holds none. A seal
+     * may only freeze incrementally on top of the root that generation named: every
+     * other publication - a repair, a truncate, a compaction - moves the generation
+     * on without this function's state having produced the new root, which makes
+     * both the untouched-key assumption and the logical-bytes baseline stale.
+     */
+    default long getCheckpointBaselineGeneration() {
+        return Numbers.LONG_NULL;
+    }
+
+    /**
+     * @return the partition keys this function has touched since the last durable
+     * cadence checkpoint, or {@code null} when it does not track them. A non-null
+     * map lets a seal freeze only those keys instead of the whole live domain.
+     * <p>
+     * A function opts in by calling
+     * {@link io.questdb.griffin.engine.functions.window.BasePartitionedWindowFunction#markCheckpointPartitionDirty}
+     * from {@link #markPartitionAlive(Record)}. That call must be unconditional or
+     * absent altogether: a partial mark leaves a changed key out of the map, and the
+     * seal then publishes a root that still names the key's stale state. Opting out
+     * is fail-safe - the map stays null, the seal full-scans, and correctness does
+     * not depend on the function at all.
+     */
+    @Nullable
+    default Map getCheckpointDirtyPartitionMap() {
+        return null;
+    }
+
+    /**
+     * @return the partition-key {@link ColumnTypes} the live-view checkpoint framework
+     * writes into the state payload's key-shape header and validates on restore.
+     * Returns {@code null} for scalar (no-map) functions, which the framework treats
+     * as a single keyless partition. Partitioned functions override to return their
+     * own partition-key types.
+     */
+    @Nullable
+    default ColumnTypes getCheckpointKeyColumnTypes() {
+        return null;
+    }
+
+    /**
+     * @return the index of the first partition-key column inside the partition-state
+     * {@link Map} record's column layout ({@code [value0..valueN, key0..keyM]}), i.e.
+     * the value-slot count. The framework passes this to
+     * {@link io.questdb.cairo.lv.LiveViewSnapshotKeyCodec#writeKey} when emitting a
+     * partition's key. Default {@code 0}; partitioned functions override.
+     */
+    default int getCheckpointKeyStartIndex() {
+        return 0;
+    }
+
+    /**
+     * @return the logical bytes the last durably published root charges for this
+     * function's state. An incremental seal starts from this figure and adjusts it by
+     * the keys it froze, so the total it reports still means "this boundary's whole
+     * live state" rather than a delta. Meaningful only while
+     * {@link #getCheckpointBaselineGeneration()} names the generation being sealed on
+     * top of.
+     */
+    default long getCheckpointLogicalStateBytes() {
+        return 0;
     }
 
     @Override
@@ -259,31 +325,6 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * Returns partition keys touched since the last durable cadence checkpoint.
-     */
-    @Nullable
-    default Map getCheckpointDirtyPartitionMap() {
-        return null;
-    }
-
-    /**
-     * Restore, repair, and partition compaction force a complete map scan.
-     */
-    default boolean checkpointRequiresFullPartitionScan() {
-        return true;
-    }
-
-    default long getCheckpointLogicalStateBytes() {
-        return 0;
-    }
-
-    /**
-     * Called only after the checkpoint superblock is durably published.
-     */
-    default void onCheckpointPersisted(long logicalStateBytes) {
-    }
-
-    /**
      * @return pass1 scan direction.
      * Some {@link #ONE_PASS} and {@link #TWO_PASS} window functions may be more efficient when using a backward scan.
      */
@@ -319,29 +360,6 @@ public interface WindowFunction extends Function {
     @Override
     default short getShort(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    /**
-     * @return the partition-key {@link ColumnTypes} the live-view checkpoint framework
-     * writes into the state payload's key-shape header and validates on restore.
-     * Returns {@code null} for scalar (no-map) functions, which the framework treats
-     * as a single keyless partition. Partitioned functions override to return their
-     * own partition-key types.
-     */
-    @Nullable
-    default ColumnTypes getCheckpointKeyColumnTypes() {
-        return null;
-    }
-
-    /**
-     * @return the index of the first partition-key column inside the partition-state
-     * {@link Map} record's column layout ({@code [value0..valueN, key0..keyM]}), i.e.
-     * the value-slot count. The framework passes this to
-     * {@link io.questdb.cairo.lv.LiveViewSnapshotKeyCodec#writeKey} when emitting a
-     * partition's key. Default {@code 0}; partitioned functions override.
-     */
-    default int getCheckpointKeyStartIndex() {
-        return 0;
     }
 
     @Override
@@ -473,6 +491,16 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * @return true when the next seal must walk this function's whole partition map
+     * rather than the keys {@link #getCheckpointDirtyPartitionMap()} names. A restore,
+     * a repair and a frontier compaction all remove keys, and only a full scan detects
+     * a key the root still holds but the runtime no longer does.
+     */
+    default boolean isCheckpointFullScanRequired() {
+        return true;
+    }
+
+    /**
      * Reports whether this function holds no checkpoint state at all: the value it emits at a
      * row is that row's alone, so a freeze has nothing to write and a restore nothing to put
      * back. {@code last_value} over a frame ending at the current row is the family that
@@ -523,6 +551,20 @@ public interface WindowFunction extends Function {
      * Map lookup.
      */
     default void markPartitionAlive(Record record) {
+    }
+
+    /**
+     * Adopts the state the seal just published as this function's incremental
+     * baseline. Called only after the checkpoint superblock is durably published, so
+     * a seal that fails anywhere before that leaves the dirty set and the previous
+     * baseline intact and the next seal repeats the work.
+     *
+     * @param logicalStateBytes what the published root charges for this function
+     * @param generation        the generation the publication produced. The next seal
+     *                          freezes incrementally only when it is sealing on top of
+     *                          exactly this generation
+     */
+    default void onCheckpointPersisted(long logicalStateBytes, long generation) {
     }
 
     /**

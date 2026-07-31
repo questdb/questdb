@@ -1193,7 +1193,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     oldDirectoryRoot,
                     previousEntry.maxTimestamp
             ) : null) {
-                boundary = freezeBoundary(dataWriter, functions, anchorWindow, previousBoundary, null);
+                // The generation the seal is building on top of. onCheckpointPersisted
+                // hands the runtime the generation this seal publishes, so the two match
+                // only when no other publication slipped in between.
+                boundary = freezeBoundary(
+                        dataWriter,
+                        functions,
+                        anchorWindow,
+                        previousBoundary,
+                        null,
+                        metaStore.isValid() ? superblock.generation : Numbers.LONG_NULL
+                );
             }
             final boolean hasData = !dataWriter.isEmpty();
             final long dataSegmentBytes;
@@ -1293,11 +1303,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
             metaStore.publish();
             if (boundary.anchor != null) {
-                boundary.anchor.window.onCheckpointPersisted(boundary.anchor.logicalStateBytes);
+                boundary.anchor.window.onCheckpointPersisted(boundary.anchor.logicalStateBytes, generation);
             }
             for (int i = 0, n = boundary.functions.size(); i < n; i++) {
                 final FrozenFunction frozen = boundary.functions.getQuick(i);
-                frozen.function.onCheckpointPersisted(frozen.logicalStateBytes);
+                frozen.function.onCheckpointPersisted(frozen.logicalStateBytes, generation);
             }
 
             LiveViewCheckpointLifecycle.purgeFinalOrphans(
@@ -1386,6 +1396,23 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
         }
         return false;
+    }
+
+    /**
+     * @return the logical bytes a predecessor root charges for one partition: its
+     * key plus every byte of state the entry names. An incremental seal subtracts
+     * this and adds the fresh figure, so the running total stays "this boundary's
+     * whole live state" rather than a delta.
+     */
+    private static long logicalPartitionBytes(@Nullable LiveViewCheckpointPartitionMapEntry entry) {
+        if (entry == null) {
+            return 0;
+        }
+        long bytes = checkedAdd(entry.getKey().length, entry.getScalarState().length);
+        for (int i = 0, n = entry.getStatePageCount(); i < n; i++) {
+            bytes = checkedAdd(bytes, entry.getStatePageRef(i).getDecodedLength());
+        }
+        return bytes;
     }
 
     private static CairoException missingRedirect(LiveViewCheckpointStatePageRef ref) {
@@ -1581,6 +1608,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         stateBuffer.setMemoryTracker(memoryTracker);
     }
 
+    /**
+     * Images one partition key into {@link #keyBuffer} and returns its length. The
+     * buffer is rewound first, so the image starts at offset 0 and the caller may
+     * read it back through {@link LiveViewSnapshotKeyCodec#readKey} or copy it out.
+     */
+    private int encodeCheckpointKey(MapRecord record, ColumnTypes keyTypes, int keyStartIndex) {
+        keyBuffer.jumpTo(0);
+        LiveViewSnapshotKeyCodec.writeKey(keyBuffer, record, keyTypes, keyStartIndex);
+        return checkedIntLength(keyBuffer.getAppendOffset(), "partition key");
+    }
+
     private void ensureDirectories(Path checkpointsDir) {
         try (Path path = new Path()) {
             LiveViewCheckpointLayout.metaDirPath(path, checkpointsDir).slash();
@@ -1617,17 +1655,26 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * a strictly older floor there and its next row resets it, and a key the replay
      * never carried is simply absent and keeps the entry the old anchor root wrote.
      *
-     * @param outputKeys {@code Q}, when the replay describes those keys and no others,
-     *                   or null when it describes every live key. A key outside it is
-     *                   not imaged at all: the root it is being frozen for keeps the
-     *                   entry the old root already holds
+     * @param outputKeys         {@code Q}, when the replay describes those keys and no
+     *                           others, or null when it describes every live key. A key
+     *                           outside it is not imaged at all: the root it is being
+     *                           frozen for keeps the entry the old root already holds
+     * @param baselineGeneration the generation of the root this freeze sits on top of,
+     *                           or {@link Numbers#LONG_NULL} when the freeze is not a
+     *                           cadence seal. An incremental freeze is valid only against
+     *                           the root the runtime's own last publication produced, and
+     *                           this is what the runtime compares its baseline to: a
+     *                           repair, truncate or compaction publishing in between
+     *                           moves the generation on and demotes the freeze to a full
+     *                           scan
      */
     private FrozenBoundary freezeBoundary(
             LiveViewCheckpointDataSegmentWriter dataWriter,
             @NotNull ObjList<WindowFunction> functions,
             @Nullable LiveViewWindow anchorWindow,
             @Nullable PreviousBoundary previousBoundary,
-            @Nullable LiveViewCheckpointOutputKeyDomain outputKeys
+            @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
+            long baselineGeneration
     ) {
         final FrozenBoundary boundary = new FrozenBoundary();
         long logicalStateBytes = 0;
@@ -1638,13 +1685,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     anchorWindow.getAnchorValueType(),
                     LiveViewCheckpointMetadata.encodeKeySchema(anchorWindow.getPartitionKeyTypes())
             );
-            anchor.incremental = previousBoundary instanceof RootPreviousBoundary
-                    && anchorWindow.canFreezeCheckpointIncrementally();
+            anchor.isIncremental = previousBoundary instanceof RootPreviousBoundary
+                    && anchorWindow.canFreezeCheckpointIncrementally(baselineGeneration);
             anchor.logicalStateBytes = anchorWindow.freezeCheckpointEntries(
                     keyBuffer,
                     anchor.keys,
                     anchor.anchorValues,
-                    anchor.incremental
+                    anchor.isIncremental
             );
             logicalStateBytes = checkedAdd(logicalStateBytes, anchor.logicalStateBytes);
             boundary.anchor = anchor;
@@ -1666,7 +1713,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     LiveViewCheckpointMetadata.encodeKeySchema(function.getCheckpointKeyColumnTypes())
             );
             final long functionLogicalStateBytes =
-                    freezeFunction(dataWriter, function, frozen, previousBoundary, outputKeys);
+                    freezeFunction(dataWriter, function, frozen, previousBoundary, outputKeys, baselineGeneration);
             frozen.logicalStateBytes = functionLogicalStateBytes;
             logicalStateBytes = checkedAdd(logicalStateBytes, functionLogicalStateBytes);
             boundary.functions.add(frozen);
@@ -1689,7 +1736,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             WindowFunction function,
             FrozenFunction frozen,
             @Nullable PreviousBoundary previousBoundary,
-            @Nullable LiveViewCheckpointOutputKeyDomain outputKeys
+            @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
+            long baselineGeneration
     ) {
         final Map map = function.getPartitionMap();
         final boolean isRingShaped = function.supportsCheckpointRingState();
@@ -1709,13 +1757,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return ref.getDecodedLength();
         }
 
+        // Incremental only against the root this function's own last publication
+        // produced: a repair, truncate or compaction publishing in between moves the
+        // generation on, and the untouched keys the seal would leave alone belong to
+        // a root the function never saw.
         final Map dirtyMap = previousBoundary instanceof RootPreviousBoundary
                 && !isRingShaped
-                && !function.checkpointRequiresFullPartitionScan()
+                && !function.isCheckpointFullScanRequired()
+                && function.getCheckpointBaselineGeneration() == baselineGeneration
                 ? function.getCheckpointDirtyPartitionMap()
                 : null;
         final boolean incremental = dirtyMap != null;
-        frozen.incremental = incremental;
+        frozen.isIncremental = incremental;
         long logicalBytes = incremental ? function.getCheckpointLogicalStateBytes() : 0;
         final ColumnTypes keyTypes = function.getCheckpointKeyColumnTypes();
         final int keyStartIndex = function.getCheckpointKeyStartIndex();
@@ -1726,29 +1779,54 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         final LiveViewCheckpointPartitionMapEntry ringEntry =
                 isRingShaped ? new LiveViewCheckpointPartitionMapEntry() : null;
         while (cursor.hasNext()) {
-            keyBuffer.jumpTo(0);
-            LiveViewSnapshotKeyCodec.writeKey(keyBuffer, record, keyTypes, keyStartIndex);
-            final int keyLength = checkedIntLength(keyBuffer.getAppendOffset(), "partition key");
-            final byte[] key = new byte[keyLength];
-            for (int i = 0; i < keyLength; i++) {
-                key[i] = keyBuffer.getByte(i);
-            }
-            if (outputKeys != null && !outputKeys.contains(key)) {
-                continue;
-            }
-            final LiveViewCheckpointPartitionMapEntry previous = previousBoundary == null
-                    ? null
-                    : previousBoundary.find(frozen.identity, frozen.stateFormatVersion, key);
+            // The dirty map carries keys and nothing else, so an incremental scan has
+            // to image the key before it can read the state the key names. A full scan
+            // walks the state map itself and gets the value for free, which is what
+            // lets it skip a tombstone before paying for the key image, the domain
+            // test and the predecessor probe below.
+            int keyLength = incremental ? encodeCheckpointKey(record, keyTypes, keyStartIndex) : 0;
             final MapValue value;
             if (incremental) {
                 final MapKey liveKey = map.withKey();
                 LiveViewSnapshotKeyCodec.readKey(liveKey, keyBuffer, 0, keyTypes);
                 value = liveKey.findValue();
+                if (value == null) {
+                    // Nothing removes a key from a function's state map without first
+                    // forcing a full scan, so a dirty key the live map does not hold is
+                    // a broken invariant rather than a removal. Reading it as one would
+                    // delete live window state from the root, and the wrong result would
+                    // only surface after a restart.
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint dirty partition key is missing from function state");
+                }
             } else {
                 value = record.getValue();
             }
-            if (value == null || tombstoneIndex >= 0 && value.getByte(tombstoneIndex) == 1) {
-                if (incremental && previous != null) {
+            final boolean isTombstoned = tombstoneIndex >= 0 && value.getByte(tombstoneIndex) == 1;
+            if (isTombstoned && !incremental) {
+                continue;
+            }
+            if (!incremental) {
+                keyLength = encodeCheckpointKey(record, keyTypes, keyStartIndex);
+            }
+            final byte[] key = new byte[keyLength];
+            for (int i = 0; i < keyLength; i++) {
+                key[i] = keyBuffer.getByte(i);
+            }
+            if (outputKeys != null && !outputKeys.contains(key)) {
+                // Outside the replay's key domain: the state the runtime holds here was
+                // reconstructed from whatever rows happened to fall inside [L, H), so
+                // imaging it would publish a truncated history. The root keeps the entry
+                // the boundary already had, and no page is written for it at all.
+                continue;
+            }
+            final LiveViewCheckpointPartitionMapEntry previous = previousBoundary == null
+                    ? null
+                    : previousBoundary.find(frozen.identity, frozen.stateFormatVersion, key);
+            if (isTombstoned) {
+                // Incremental only: the key died since the predecessor root, so the
+                // root has to drop the entry it still holds for it.
+                if (previous != null) {
                     frozen.removedPartitions.add(key);
                     logicalBytes = checkedAdd(logicalBytes, -logicalPartitionBytes(previous));
                 }
@@ -1775,10 +1853,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         previousBoundary,
                         previousRef
                 );
-                final boolean unchanged = previousBoundary instanceof RootPreviousBoundary && previousRef != null
+                final boolean isUnchanged = previousBoundary instanceof RootPreviousBoundary && previousRef != null
                         && previousRef.getSegmentId() == stateRef.getSegmentId()
                         && previousRef.getOffset() == stateRef.getOffset();
-                frozen.addPartition(key, stateRef, unchanged);
+                frozen.addPartition(key, stateRef, isUnchanged);
                 if (incremental) {
                     final long newLogicalBytes = checkedAdd(keyLength, stateRef.getDecodedLength());
                     logicalBytes = checkedAdd(
@@ -1792,17 +1870,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
         }
         return logicalBytes;
-    }
-
-    private static long logicalPartitionBytes(@Nullable LiveViewCheckpointPartitionMapEntry entry) {
-        if (entry == null) {
-            return 0;
-        }
-        long bytes = checkedAdd(entry.getKey().length, entry.getScalarState().length);
-        for (int i = 0, n = entry.getStatePageCount(); i < n; i++) {
-            bytes = checkedAdd(bytes, entry.getStatePageRef(i).getDecodedLength());
-        }
-        return bytes;
     }
 
     /**
@@ -1890,14 +1957,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * live {@code (key, last-seen anchor value)} pairs, index-aligned.
      */
     private static final class FrozenAnchor {
-        private final LiveViewWindow window;
-        private boolean incremental;
-        private long logicalStateBytes;
         private final int anchorValueType;
         private final LongList anchorValues = new LongList();
         private final byte[] keySchema;
         private final ObjList<byte[]> keys = new ObjList<>();
+        private final LiveViewWindow window;
         private final byte[] windowName;
+        private boolean isIncremental;
+        private long logicalStateBytes;
 
         private FrozenAnchor(
                 LiveViewWindow window,
@@ -1930,13 +1997,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final WindowFunction function;
         private final byte[] identity;
         private final byte[] keySchema;
-        private final HashMap<ByteBuffer, FrozenPartition> partitionsByKey = new HashMap<>();
         private final ObjList<FrozenPartition> partitions = new ObjList<>();
+        private final HashMap<ByteBuffer, FrozenPartition> partitionsByKey = new HashMap<>();
         private final ObjList<byte[]> removedPartitions = new ObjList<>();
-        private boolean incremental;
+        private final int stateFormatVersion;
+        private boolean isIncremental;
         private long logicalStateBytes;
         private LiveViewCheckpointStatePageRef scalarStateRef;
-        private final int stateFormatVersion;
 
         private FrozenFunction(
                 WindowFunction function,
@@ -1950,12 +2017,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             this.keySchema = keySchema;
         }
 
-        private void addPartition(byte[] key, LiveViewCheckpointStatePageRef stateRef, boolean unchanged) {
+        private void addPartition(byte[] key, LiveViewCheckpointStatePageRef stateRef, boolean isUnchanged) {
             addPartition(new FrozenPartition(
                     key,
                     new byte[0],
                     new LiveViewCheckpointStatePageRef[]{stateRef},
-                    unchanged
+                    isUnchanged
             ));
         }
 
@@ -1978,30 +2045,37 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         private void addPartition(FrozenPartition partition) {
-            partitionsByKey.put(ByteBuffer.wrap(partition.key), partition);
+            // partitionsByKey serves two readers, and an incremental freeze has
+            // neither: removeMissingPartitions, which only a full scan runs, and
+            // CapturedPreviousBoundary, which only a repair capture builds - and a
+            // capture always freezes completely. Skipping the insert keeps a
+            // touched-key seal off one hash entry per key.
+            if (!isIncremental) {
+                partitionsByKey.put(ByteBuffer.wrap(partition.key), partition);
+            }
             partitions.add(partition);
         }
     }
 
     private static final class FrozenPartition {
+        // The predecessor already names these exact bytes. A full scan still keeps
+        // the partition in partitionsByKey so missing-key detection sees the
+        // complete live domain, but no no-op put reaches the persistent map builder.
+        private final boolean isUnchanged;
         private final byte[] key;
         private final byte[] scalarState;
         private final LiveViewCheckpointStatePageRef[] statePageRefs;
-        // The predecessor already names these exact bytes. Keep the partition in
-        // partitionsByKey so missing-key detection sees the complete live domain,
-        // but do not feed a no-op put through the persistent map builder.
-        private final boolean unchanged;
 
         private FrozenPartition(
                 byte[] key,
                 byte[] scalarState,
                 LiveViewCheckpointStatePageRef[] statePageRefs,
-                boolean unchanged
+                boolean isUnchanged
         ) {
             this.key = key;
             this.scalarState = scalarState;
             this.statePageRefs = statePageRefs;
-            this.unchanged = unchanged;
+            this.isUnchanged = isUnchanged;
         }
 
         private void copyTo(LiveViewCheckpointPartitionMapEntry out) {
@@ -2697,8 +2771,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     boundaries.getQuick(size - 1).oldEntry.maxTimestamp,
                     dataWriter
             );
-            final FrozenBoundary boundary =
-                    freezeBoundary(dataWriter, functions, anchorWindow, previousBoundary, outputKeys);
+            // A capture never freezes incrementally: it hands a
+            // CapturedPreviousBoundary rather than a RootPreviousBoundary, and it
+            // re-versions boundaries a whole replay produced rather than appending
+            // above the runtime's own last publication. LONG_NULL states that.
+            final FrozenBoundary boundary = freezeBoundary(
+                    dataWriter,
+                    functions,
+                    anchorWindow,
+                    previousBoundary,
+                    outputKeys,
+                    Numbers.LONG_NULL
+            );
             boundary.oldEntry.copyFrom(entry);
             boundary.effectiveLvRowPosition = effectiveLvRowPosition;
             boundaries.add(boundary);
@@ -3195,7 +3279,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         anchor.windowName,
                         anchor.anchorValueType,
                         anchor.keySchema,
-                        !anchor.incremental
+                        !anchor.isIncremental
                 );
                 for (int i = 0, n = anchor.keys.size(); i < n; i++) {
                     anchorRootBuilder.putPartition(anchor.keys.getQuick(i), anchor.anchorValues.getQuick(i));
@@ -3233,7 +3317,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 if (frozen.scalarStateRef != null) {
                     functionRootBuilder.setScalarStateRef(frozen.scalarStateRef);
                 } else {
-                    if (!frozen.incremental) {
+                    if (!frozen.isIncremental) {
                         removeMissingPartitions(
                                 checkpointsDir,
                                 oldFunctionRootRef,
@@ -3249,7 +3333,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     }
                     for (int p = 0, m = frozen.partitions.size(); p < m; p++) {
                         final FrozenPartition partition = frozen.partitions.getQuick(p);
-                        if (!partition.unchanged) {
+                        if (!partition.isUnchanged) {
                             functionRootBuilder.putPartition(
                                     partition.key,
                                     partition.scalarState,

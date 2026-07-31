@@ -67,13 +67,12 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
     private final LongList segmentUseCounts = new LongList();
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
     private int anchorValueType;
-    private boolean initialized;
-    private boolean completeSnapshot;
+    private boolean isCompleteSnapshot;
+    private boolean isInitialized;
     private byte[] keySchema = new byte[0];
     private long lastSegmentBytes;
     private int mutationCount;
     private LiveViewCheckpointPartitionMapWriter.Mutation[] mutations = new LiveViewCheckpointPartitionMapWriter.Mutation[8];
-
     /**
      * Metadata segment holding the anchor-root page this build supersedes, or
      * {@link #NO_SEGMENT} for the first anchor root of a timeline.
@@ -91,7 +90,7 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
 
     public void build(long metadataSegmentId, @NotNull LiveViewCheckpointPageRef out) {
         ensureInitialized();
-        if (completeSnapshot) {
+        if (isCompleteSnapshot) {
             partitionMapReader.iterateAll(oldPartitionMapRoot, entry -> {
                 if (!putKeys.contains(ByteBuffer.wrap(entry.getKey()))) {
                     mutationAt(mutationCount++).remove(entry.getKey());
@@ -159,9 +158,9 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
             @NotNull byte[] windowName,
             int anchorValueType,
             @NotNull byte[] keySchema,
-            boolean completeSnapshot
+            boolean isCompleteSnapshot
     ) {
-        initialized = false;
+        isInitialized = false;
         if (windowName.length == 0 || keySchema.length < Integer.BYTES) {
             throw CairoException.critical(0).put("live view checkpoint anchor window name or key schema invalid");
         }
@@ -173,7 +172,7 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
         this.windowName = Arrays.copyOf(windowName, windowName.length);
         this.anchorValueType = anchorValueType;
         this.keySchema = Arrays.copyOf(keySchema, keySchema.length);
-        this.completeSnapshot = completeSnapshot;
+        this.isCompleteSnapshot = isCompleteSnapshot;
         mutationCount = 0;
         putKeys.clear();
         segmentUseCounts.clear();
@@ -192,13 +191,18 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
                 segmentUseCounts.add(oldAnchorRoot.getSegmentId(i), oldAnchorRoot.getSegmentUseCount(i));
             }
         }
-        initialized = true;
+        isInitialized = true;
     }
 
     public void putPartition(@NotNull byte[] key, long anchorValue) {
         ensureInitialized();
-        if (!putKeys.add(ByteBuffer.wrap(Arrays.copyOf(key, key.length)))) {
-            throw CairoException.critical(0).put("duplicate live view checkpoint anchor partition key");
+        if (isCompleteSnapshot) {
+            // Only a complete snapshot needs the put domain, and only to name the
+            // entries it must remove. A forward freeze pays neither the key copy nor
+            // the set insert: duplicates still raise, one layer down, where
+            // LiveViewCheckpointPartitionMapWriter sorts the mutations and rejects
+            // two that name the same key.
+            putKeys.add(ByteBuffer.wrap(Arrays.copyOf(key, key.length)));
         }
         mutationAt(mutationCount++).put(
                 key,
@@ -208,7 +212,7 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
     }
 
     private void ensureInitialized() {
-        if (!initialized) {
+        if (!isInitialized) {
             throw CairoException.critical(0).put("live view checkpoint anchor root builder is not initialized");
         }
     }

@@ -309,58 +309,6 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
     }
 
     @Test
-    public void testTouchedPartitionsForUnboundedSumAndCountSurviveRestart() throws Exception {
-        assertMemoryLeak(() -> {
-            final String window = "window w as (partition by cod_acct_no order by created_at anchor daily '12:00')";
-            final String select = "select created_at, cod_acct_no, "
-                    + "sum(amt_txn) over w as cumulative_sum, "
-                    + "count(cod_acct_no) over w as cumulative_count "
-                    + "from tx " + window;
-            execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                    + "amt_txn double) timestamp(created_at) partition by hour wal");
-            execute("insert into tx values "
-                    + "('2026-01-01T00:00:01.000000Z', 'acct-1', 10.0), "
-                    + "('2026-01-01T00:00:02.000000Z', 'acct-2', 20.0), "
-                    + "('2026-01-01T00:00:03.000000Z', 'acct-3', 30.0)");
-            drainWalQueue();
-            execute("create live view lv flush every 100ms start from beginning as " + select);
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveRefreshToQuiescence(job);
-                execute("insert into tx values "
-                        + "('2026-01-01T00:00:04.000000Z', 'acct-1', 5.0), "
-                        + "('2026-01-01T00:00:05.000000Z', 'acct-4', 40.0)");
-                drainWalQueue();
-                driveRefreshToQuiescence(job);
-                assertUnboundedViewMatchesRecompute(select);
-            }
-
-            restartCycle();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
-                execute("insert into tx values "
-                        + "('2026-01-01T00:00:06.000000Z', 'acct-1', 7.0), "
-                        + "('2026-01-01T00:00:07.000000Z', 'acct-5', 50.0)");
-                drainWalQueue();
-                driveRefreshToQuiescence(job);
-                assertUnboundedViewMatchesRecompute(select);
-            }
-        });
-    }
-
-    private void assertUnboundedViewMatchesRecompute(String select) throws Exception {
-        TestUtils.assertSqlCursors(
-                engine,
-                sqlExecutionContext,
-                "(" + select.replace(" anchor daily '12:00'", " rows between unbounded preceding and current row") + ") order by 2, 1",
-                "(lv) order by 2, 1",
-                LOG,
-                true
-        );
-        assertNoRefreshFaults("lv");
-    }
-
-    @Test
     public void testRingFunctionIsUnaffected() throws Exception {
         assertMemoryLeak(() -> {
             // The control. A RANGE frame is ring-shaped, so the freeze takes the

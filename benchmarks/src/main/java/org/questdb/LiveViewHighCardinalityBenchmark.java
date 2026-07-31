@@ -1,7 +1,7 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
- *   | | | | | | |/ _ \/ __| __| | |  _ \
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
@@ -19,6 +19,7 @@
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
+ *
  ******************************************************************************/
 
 package org.questdb;
@@ -60,9 +61,14 @@ import java.util.Locale;
  * sparse events, and averaging the two together would hide the stalls we need to
  * expose.</p>
  *
+ * <p>Both JVM flags are required. Without the export, every worker thread fails to
+ * initialize {@code WorkerContinuation} and the run reports numbers taken with the
+ * continuation path dead.</p>
+ *
  * <pre>
  * mvn -pl benchmarks -am package -o -DskipTests
  * java --enable-native-access=ALL-UNNAMED \
+ *      --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED \
  *      -cp benchmarks/target/benchmarks.jar \
  *      org.questdb.LiveViewHighCardinalityBenchmark \
  *      --cardinalities=10000,100000,1000000 --batch=100000

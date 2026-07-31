@@ -38,21 +38,34 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class BasePartitionedWindowFunction extends BaseWindowFunction implements Reopenable {
     protected final VirtualRecord partitionByRecord;
     protected final RecordSink partitionBySink;
+    // Generation of the checkpoint root checkpointLogicalStateBytes and
+    // checkpointDirtyPartitions are relative to. LONG_NULL until the first seal
+    // publishes; a repair, truncate or compaction moves the timeline's generation
+    // past it without this function having produced the new root, and the mismatch
+    // is what keeps the next seal off the incremental path.
+    protected long checkpointBaselineGeneration = Numbers.LONG_NULL;
+    // Deduplicated partition keys touched since the last durable checkpoint. One
+    // entry per distinct key, so the footprint scales with the checkpoint cadence
+    // rather than with the batch: raising
+    // cairo.live.view.checkpoint.max.duration.micros trades seal cost for both
+    // latency and memory, charged to cairo.live.view.refresh.memory.limit.bytes. A
+    // view whose max timestamp stops advancing never publishes and grows the map
+    // until the tracker trips.
+    protected Map checkpointDirtyPartitions;
+    protected long checkpointLogicalStateBytes;
     // Reusable second partition-state Map for the frontier sweep. Allocated once
     // (lazily, via newCompactionScratch) the first time retainPartitions runs, then
     // cleared and reused on every subsequent sweep -- the two maps ping-pong so a
     // sweep never allocates. Null until the first sweep, or for functions that opt
     // out (newCompactionScratch returns null).
     protected Map compactionScratch;
-    // Deduplicated partition keys touched since the last durable checkpoint.
-    protected Map checkpointDirtyPartitions;
-    protected boolean checkpointFullScanRequired = true;
-    protected long checkpointLogicalStateBytes;
+    protected boolean isCheckpointFullScanRequired = true;
     // Non-final so retainPartitions can swap the partition state Map during
     // the anchor-driven frontier sweep.
     protected Map map;
@@ -68,8 +81,8 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     // tombstoned entries in this function's map. markPartitionAlive reads it
     // for its hot-path early-exit; retainPartitions resets it after a sweep.
     // Single-writer (refresh worker), not volatile.
-    protected int tombstoneValueIndex = -1;
     protected long tombstoneCount;
+    protected int tombstoneValueIndex = -1;
 
     public BasePartitionedWindowFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
         super(arg);
@@ -96,6 +109,11 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     }
 
     @Override
+    public long getCheckpointBaselineGeneration() {
+        return checkpointBaselineGeneration;
+    }
+
+    @Override
     public Map getCheckpointDirtyPartitionMap() {
         return checkpointDirtyPartitions;
     }
@@ -103,20 +121,6 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     @Override
     public long getCheckpointLogicalStateBytes() {
         return checkpointLogicalStateBytes;
-    }
-
-    @Override
-    public boolean checkpointRequiresFullPartitionScan() {
-        return checkpointFullScanRequired;
-    }
-
-    @Override
-    public void onCheckpointPersisted(long logicalStateBytes) {
-        checkpointLogicalStateBytes = logicalStateBytes;
-        checkpointFullScanRequired = false;
-        if (checkpointDirtyPartitions != null) {
-            checkpointDirtyPartitions.clear();
-        }
     }
 
     @Override
@@ -141,6 +145,11 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
     }
 
+    @Override
+    public boolean isCheckpointFullScanRequired() {
+        return isCheckpointFullScanRequired;
+    }
+
     /**
      * Generic markPartitionAlive impl shared across every partitioned window
      * function that carries a tombstone bit. The hot-path early-exit
@@ -150,7 +159,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
      * processRow saw an anchor cross on some partition in the recent past.
      * <p>
      * Subclasses that need to clear additional per-partition scratch state
-     * may override; most do not.
+     * may override; most do not. An override that keeps the checkpoint dirty
+     * tracking must call {@link #markCheckpointPartitionDirty(Record)} on every
+     * path through the method - see that method's contract.
      */
     @Override
     public void markPartitionAlive(Record record) {
@@ -165,6 +176,16 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         if (value != null && value.getByte(tombstoneValueIndex) == 1) {
             value.putByte(tombstoneValueIndex, (byte) 0);
             tombstoneCount--;
+        }
+    }
+
+    @Override
+    public void onCheckpointPersisted(long logicalStateBytes, long generation) {
+        checkpointBaselineGeneration = generation;
+        checkpointLogicalStateBytes = logicalStateBytes;
+        isCheckpointFullScanRequired = false;
+        if (checkpointDirtyPartitions != null) {
+            checkpointDirtyPartitions.clear();
         }
     }
 
@@ -187,8 +208,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
             map.clear();
         }
         tombstoneCount = 0;
+        checkpointBaselineGeneration = Numbers.LONG_NULL;
         checkpointLogicalStateBytes = 0;
-        checkpointFullScanRequired = true;
+        isCheckpointFullScanRequired = true;
         if (checkpointDirtyPartitions != null) {
             checkpointDirtyPartitions.clear();
         }
@@ -204,7 +226,8 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
 
     @Override
     public void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
-        checkpointFullScanRequired = true;
+        checkpointBaselineGeneration = Numbers.LONG_NULL;
+        isCheckpointFullScanRequired = true;
         if (compactionScratch == null) {
             // First sweep: allocate the reusable second map once. A null factory
             // result means the function opts out of frontier compaction; its map
@@ -236,8 +259,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         compactionScratch = Misc.free(compactionScratch);
         checkpointDirtyPartitions = Misc.free(checkpointDirtyPartitions);
         tombstoneCount = 0;
+        checkpointBaselineGeneration = Numbers.LONG_NULL;
         checkpointLogicalStateBytes = 0;
-        checkpointFullScanRequired = true;
+        isCheckpointFullScanRequired = true;
     }
 
     @Override
@@ -279,17 +303,34 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
             checkpointDirtyPartitions.clear();
         }
         tombstoneCount = 0;
+        checkpointBaselineGeneration = Numbers.LONG_NULL;
         checkpointLogicalStateBytes = 0;
-        checkpointFullScanRequired = true;
+        isCheckpointFullScanRequired = true;
     }
 
     /**
-     * Adds the current row partition to the checkpoint dirty set. The scratch map
+     * Adds the current row's partition to the checkpoint dirty set. The scratch map
      * has the same key layout as the state map, so the existing partition sink can
      * populate it without allocating or serialising a key on every input row.
+     * <p>
+     * <b>Call this on every path through {@link #markPartitionAlive(Record)} or on
+     * none at all.</b> A seal that finds a dirty map freezes exactly the keys it
+     * names and leaves every other entry of the persistent root alone, so a key
+     * whose state moved without being marked keeps the root's stale image - a wrong
+     * result that only surfaces on a restart. Opting out is fail-safe by
+     * construction: the map is created here, so a function that never calls this
+     * leaves it null, {@link #getCheckpointDirtyPartitionMap()} returns null, and
+     * every seal full-scans. There is no correct middle ground, and a partial mark
+     * is indistinguishable from a complete one at the seal.
      */
     protected void markCheckpointPartitionDirty(Record record) {
         if (checkpointDirtyPartitions == null) {
+            // The value slots this borrows from the state layout are padding - the
+            // seal reads only the key back. Reusing newCompactionScratch() is what
+            // puts those keys at getCheckpointKeyStartIndex(), which is the index the
+            // seal encodes them from; a narrower layout would have to carry that
+            // index too, through every one of the subclasses that override the
+            // factory.
             checkpointDirtyPartitions = newCompactionScratch();
             if (checkpointDirtyPartitions == null) {
                 return;

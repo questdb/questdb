@@ -90,6 +90,11 @@ import org.jetbrains.annotations.TestOnly;
  * </ul>
  */
 public class LiveViewWindow implements QuietCloseable {
+    // The dirty anchor map's only slot: a byte flagging the key as absent from the
+    // durable predecessor. Nothing reads an anchor value or a tombstone off that map
+    // - freezeCheckpointEntries goes to the live anchor map for both - so carrying
+    // the three slots below would be padding on every key the cadence touches.
+    private static final int DIRTY_SLOT_NEW_SINCE_CHECKPOINT = 0;
     // Slot 0: last-seen anchor value (LONG / TIMESTAMP).
     // Slot 1: byte flag — 0 means "uninitialized", 1 means "set". The MapValue's
     // intrinsic isNew() flips to false on first access; we use this explicit flag
@@ -138,9 +143,23 @@ public class LiveViewWindow implements QuietCloseable {
     private final RecordSink partitionKeySink;
     private final String windowName;
     private Map anchorMap;
+    // Generation of the checkpoint root checkpointLogicalStateBytes and
+    // checkpointDirtyAnchorMap are relative to. LONG_NULL until the first seal
+    // publishes; a repair, truncate or compaction moves the timeline's generation
+    // past it without this window having produced the new root, and the mismatch is
+    // what keeps the next seal off the incremental path.
+    private long checkpointBaselineGeneration = Numbers.LONG_NULL;
+    // Deduplicated anchor keys touched since the last durable checkpoint, with the
+    // per-key marker that says whether the key is new relative to that checkpoint.
+    // One entry per distinct key, so the footprint scales with the checkpoint
+    // cadence rather than with the batch: raising
+    // cairo.live.view.checkpoint.max.duration.micros trades seal cost for both
+    // latency and memory, charged to cairo.live.view.refresh.memory.limit.bytes. A
+    // view whose max timestamp stops advancing never publishes and grows the map
+    // until the tracker trips.
     private Map checkpointDirtyAnchorMap;
-    private boolean checkpointFullScanRequired = true;
     private long checkpointLogicalStateBytes;
+    private boolean isCheckpointFullScanRequired = true;
     // Frontier-gated compaction state. All mutated only on the refresh-worker
     // thread (processRow / compact / restore / toTop); not volatile.
     //
@@ -276,6 +295,29 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * Creates the checkpoint dirty-key map: anchor keys under the one-byte value
+     * layout {@link DirtyAnchorMapValueTypes} rather than the anchor map's own.
+     * Charged to the per-view tracker on the same lazy terms as
+     * {@link #createTrackedAnchorMap}.
+     */
+    private static Map createTrackedDirtyAnchorMap(
+            @NotNull CairoConfiguration configuration,
+            @NotNull ColumnTypes keyTypes,
+            @Nullable MemoryTracker memoryTracker
+    ) {
+        Map map = MapFactory.createUnorderedMap(
+                configuration,
+                keyTypes,
+                DirtyAnchorMapValueTypes.INSTANCE,
+                false,
+                false
+        );
+        map.setMemoryTracker(memoryTracker);
+        map.reopen();
+        return map;
+    }
+
+    /**
      * Constructs a {@code LiveViewWindow} bound to {@code projectedMetadata} —
      * the record shape produced by the live view's source-side cursor (the leaf
      * page-frame factory in the compiled SELECT). The {@code partitionColumnNames}
@@ -388,7 +430,8 @@ public class LiveViewWindow implements QuietCloseable {
      * leave the window with a half-restored map.
      */
     public void beginCheckpointRestore() {
-        checkpointFullScanRequired = true;
+        checkpointBaselineGeneration = Numbers.LONG_NULL;
+        isCheckpointFullScanRequired = true;
         checkpointLogicalStateBytes = 0;
         if (checkpointDirtyAnchorMap != null) {
             checkpointDirtyAnchorMap.clear();
@@ -396,6 +439,21 @@ public class LiveViewWindow implements QuietCloseable {
         anchorMap.clear();
         tombstoneCount = 0;
         resetFrontier();
+    }
+
+    /**
+     * @param generation the checkpoint generation the seal is freezing on top of
+     * @return true when the seal may freeze only the keys
+     * {@link #freezeCheckpointEntries} would name from the dirty map. False forces a
+     * complete freeze: either something removed anchor keys since the last
+     * publication, or {@code generation} is not the one this window's baseline was
+     * recorded against - a repair, truncate or compaction published in between, and
+     * the root the seal would build on top of is not the one this window produced
+     */
+    public boolean canFreezeCheckpointIncrementally(long generation) {
+        return !isCheckpointFullScanRequired
+                && checkpointDirtyAnchorMap != null
+                && checkpointBaselineGeneration == generation;
     }
 
     @Override
@@ -426,14 +484,19 @@ public class LiveViewWindow implements QuietCloseable {
         keysOut.clear();
         valuesOut.clear();
         long logicalBytes = incremental ? checkpointLogicalStateBytes : 0;
-        final int keyStartIndex = AnchorMapValueTypes.INSTANCE.getColumnCount();
         final Map scanMap = incremental ? checkpointDirtyAnchorMap : anchorMap;
+        // A map record lays its value columns out ahead of its key columns, and the
+        // two maps carry different value layouts, so the key tail starts at a
+        // different index in each.
+        final int keyStartIndex = incremental
+                ? DirtyAnchorMapValueTypes.INSTANCE.getColumnCount()
+                : AnchorMapValueTypes.INSTANCE.getColumnCount();
         final MapRecordCursor cursor = scanMap.getCursor();
         final MapRecord record = scanMap.getRecord();
         while (cursor.hasNext()) {
             final MapValue dirtyOrAnchorValue = record.getValue();
-            final boolean newSinceCheckpoint = incremental
-                    && dirtyOrAnchorValue.getByte(SLOT_INITIALIZED) == 1;
+            final boolean isNewSinceCheckpoint = incremental
+                    && dirtyOrAnchorValue.getByte(DIRTY_SLOT_NEW_SINCE_CHECKPOINT) == 1;
             keyBuffer.jumpTo(0);
             LiveViewSnapshotKeyCodec.writeKey(keyBuffer, record, partitionKeyTypes, keyStartIndex);
             final long length = keyBuffer.getAppendOffset();
@@ -446,10 +509,20 @@ public class LiveViewWindow implements QuietCloseable {
                 final MapKey liveKey = anchorMap.withKey();
                 LiveViewSnapshotKeyCodec.readKey(liveKey, keyBuffer, 0, partitionKeyTypes);
                 anchorValue = liveKey.findValue();
+                if (anchorValue == null) {
+                    // Only compact() and the clear() sites remove an anchor key, and
+                    // every one of them forces a full scan first, so a dirty key the
+                    // anchor map does not hold is a broken invariant rather than a
+                    // removal. Dropping it here would leave the incremental root
+                    // holding a stale anchor value for a key the live map has moved on
+                    // from: an incremental build removes nothing it was not handed.
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint dirty anchor key is missing from the anchor map");
+                }
             } else {
                 anchorValue = dirtyOrAnchorValue;
             }
-            if (anchorValue == null || anchorValue.getByte(SLOT_TOMBSTONE) == 1) {
+            if (anchorValue.getByte(SLOT_TOMBSTONE) == 1) {
                 continue;
             }
             final byte[] key = new byte[(int) length];
@@ -458,23 +531,11 @@ public class LiveViewWindow implements QuietCloseable {
             }
             keysOut.add(key);
             valuesOut.add(anchorValue.getLong(SLOT_ANCHOR_VALUE));
-            if (!incremental || newSinceCheckpoint) {
+            if (!incremental || isNewSinceCheckpoint) {
                 logicalBytes += key.length + LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE;
             }
         }
         return logicalBytes;
-    }
-
-    public boolean canFreezeCheckpointIncrementally() {
-        return !checkpointFullScanRequired && checkpointDirtyAnchorMap != null;
-    }
-
-    public void onCheckpointPersisted(long logicalStateBytes) {
-        checkpointLogicalStateBytes = logicalStateBytes;
-        checkpointFullScanRequired = false;
-        if (checkpointDirtyAnchorMap != null) {
-            checkpointDirtyAnchorMap.clear();
-        }
     }
 
     /**
@@ -502,6 +563,24 @@ public class LiveViewWindow implements QuietCloseable {
      */
     public @Nullable LiveViewCheckpointAnchorPlan getCheckpointAnchorPlan() {
         return checkpointAnchorPlan;
+    }
+
+    /**
+     * @return the checkpoint generation this window's incremental baseline was
+     * recorded against, or {@link Numbers#LONG_NULL} when it holds none
+     */
+    @TestOnly
+    public long getCheckpointBaselineGeneration() {
+        return checkpointBaselineGeneration;
+    }
+
+    /**
+     * @return anchor keys touched since the last durable checkpoint. Zero before the
+     * window has processed a row, and zero again immediately after a publication
+     */
+    @TestOnly
+    public long getCheckpointDirtyAnchorMapSize() {
+        return checkpointDirtyAnchorMap == null ? 0 : checkpointDirtyAnchorMap.size();
     }
 
     @TestOnly
@@ -547,6 +626,26 @@ public class LiveViewWindow implements QuietCloseable {
      */
     public void init(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         anchorExpression.init(baseCursor, executionContext);
+    }
+
+    /**
+     * Adopts the state the seal just published as this window's incremental
+     * baseline. Called only after the checkpoint superblock is durably published, so
+     * a seal that fails anywhere before that leaves the dirty map and the previous
+     * baseline intact and the next seal repeats the work.
+     *
+     * @param logicalStateBytes what the published root charges for the anchor map
+     * @param generation        the generation the publication produced. The next seal
+     *                          freezes incrementally only when it is sealing on top of
+     *                          exactly this generation
+     */
+    public void onCheckpointPersisted(long logicalStateBytes, long generation) {
+        checkpointBaselineGeneration = generation;
+        checkpointLogicalStateBytes = logicalStateBytes;
+        isCheckpointFullScanRequired = false;
+        if (checkpointDirtyAnchorMap != null) {
+            checkpointDirtyAnchorMap.clear();
+        }
     }
 
     /**
@@ -647,7 +746,8 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     public void restore(MemoryR source, long offset, long payloadLength) {
-        checkpointFullScanRequired = true;
+        checkpointBaselineGeneration = Numbers.LONG_NULL;
+        isCheckpointFullScanRequired = true;
         checkpointLogicalStateBytes = 0;
         if (checkpointDirtyAnchorMap != null) {
             checkpointDirtyAnchorMap.clear();
@@ -856,7 +956,8 @@ public class LiveViewWindow implements QuietCloseable {
      * checkpoint) preserve the recorded partition-anchor state.
      */
     public void toTop() {
-        checkpointFullScanRequired = true;
+        checkpointBaselineGeneration = Numbers.LONG_NULL;
+        isCheckpointFullScanRequired = true;
         checkpointLogicalStateBytes = 0;
         if (checkpointDirtyAnchorMap != null) {
             checkpointDirtyAnchorMap.clear();
@@ -912,7 +1013,8 @@ public class LiveViewWindow implements QuietCloseable {
             // Non-monotone/NULL anchor, or no frontier advance yet -> no safe cutoff.
             return;
         }
-        checkpointFullScanRequired = true;
+        checkpointBaselineGeneration = Numbers.LONG_NULL;
+        isCheckpointFullScanRequired = true;
         final long cutoff = prevFrontier;
         if (scratchAnchorMap == null) {
             // Allocate the reusable second anchor map once; subsequent sweeps reuse it. The
@@ -962,7 +1064,7 @@ public class LiveViewWindow implements QuietCloseable {
      */
     private void markCheckpointPartitionDirty(Record record, boolean isNewPartition) {
         if (checkpointDirtyAnchorMap == null) {
-            checkpointDirtyAnchorMap = createTrackedAnchorMap(
+            checkpointDirtyAnchorMap = createTrackedDirtyAnchorMap(
                     cairoConfiguration,
                     partitionKeyTypes,
                     memoryTracker
@@ -972,7 +1074,7 @@ public class LiveViewWindow implements QuietCloseable {
         key.put(record, partitionKeySink);
         final MapValue value = key.createValue();
         if (value.isNew()) {
-            value.putByte(SLOT_INITIALIZED, isNewPartition ? (byte) 1 : (byte) 0);
+            value.putByte(DIRTY_SLOT_NEW_SINCE_CHECKPOINT, isNewPartition ? (byte) 1 : (byte) 0);
         }
     }
 
@@ -1116,6 +1218,29 @@ public class LiveViewWindow implements QuietCloseable {
                 default:
                     throw new IndexOutOfBoundsException();
             }
+        }
+    }
+
+    /**
+     * Value layout of the checkpoint dirty-key map: one byte, the
+     * {@link #DIRTY_SLOT_NEW_SINCE_CHECKPOINT} marker. The map's whole job is to
+     * name keys, and {@link #freezeCheckpointEntries} reads every anchor value it
+     * publishes out of the live anchor map, so nothing else belongs here.
+     */
+    private static final class DirtyAnchorMapValueTypes implements ColumnTypes {
+        static final DirtyAnchorMapValueTypes INSTANCE = new DirtyAnchorMapValueTypes();
+
+        @Override
+        public int getColumnCount() {
+            return 1;
+        }
+
+        @Override
+        public int getColumnType(int columnIndex) {
+            if (columnIndex == DIRTY_SLOT_NEW_SINCE_CHECKPOINT) {
+                return ColumnType.BYTE;
+            }
+            throw new IndexOutOfBoundsException();
         }
     }
 }
