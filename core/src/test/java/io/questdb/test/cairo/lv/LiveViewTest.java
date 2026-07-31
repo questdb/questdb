@@ -1767,6 +1767,71 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRefreshWithSymbolBindingInLagDefault() throws Exception {
+        // The third lag argument can hold symbol bindings: sym = 'ccc' compiles to a
+        // function that resolves the literal to a symbol key when it binds and then
+        // compares raw keys per row. The first refresh cycle is a bootstrap that fully
+        // initializes every function; each later cycle re-binds the window function's
+        // expressions through initPartitionBy(), and the partitioned lag function
+        // forwards that rebind to its default. 'ccc' is absent from the dictionary the
+        // bootstrap binds against, so the equality caches a not-found verdict for the
+        // literal; the second cycle introduces 'ccc', and only the per-cycle rebind
+        // lets its first row resolve sym = 'ccc' to true and pick the matching CASE
+        // arm.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, price DECIMAL(18,2), ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT sym, price, ts, " +
+                    "lag(price, 1, CASE WHEN sym = 'ccc' THEN 111.11::decimal(18, 2) ELSE 222.22::decimal(18, 2) END) " +
+                    "OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) AS lg FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1 (bootstrap): 'ccc' is not in the dictionary yet, so the
+                // equality binds a not-found verdict for the literal. Both rows open
+                // new lag partitions and take the ELSE arm.
+                execute("INSERT INTO base (sym, price, ts) VALUES " +
+                        "('aaa', 1.00m, '2026-01-01T00:00:00.000000Z'), " +
+                        "('bbb', 2.00m, '2026-01-01T00:01:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Advance past FLUSH EVERY so cycle 2 is not rate-limited.
+                setCurrentMicros(2_000_000L);
+
+                // Cycle 2: 'ccc' first appears here and opens a new lag partition, so
+                // the refresh evaluates the CASE default for it against this cycle's
+                // symbol view.
+                execute("INSERT INTO base (sym, price, ts) VALUES " +
+                        "('ccc', 3.00m, '2026-01-01T00:02:00.000000Z'), " +
+                        "('bbb', 4.00m, '2026-01-01T00:03:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // A refresh fault would self-heal into a full recompute whose complete
+            // re-init resolves 'ccc' regardless of the per-cycle rebind; a clean run
+            // pins the incremental path as the one that produced these rows.
+            assertNoRefreshFaults("lv");
+
+            // Each partition's first row takes the CASE default resolved for its own
+            // row; every later row takes the previous value of the same partition.
+            assertQuery("SELECT sym, price, lg FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("""
+                    sym\tprice\tlg
+                    aaa\t1.00\t222.22
+                    bbb\t2.00\t222.22
+                    ccc\t3.00\t111.11
+                    bbb\t4.00\t2.00
+                    """);
+            assertQuery("SELECT count() FROM live_views() WHERE view_status <> 'active'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRejectWhereOnDesignatedTimestamp() throws Exception {
         // C1 regression (interval half). A WHERE on the designated timestamp compiles into an
         // interval scan whose predicate lives in the frame cursor, not a residual filter Function,
