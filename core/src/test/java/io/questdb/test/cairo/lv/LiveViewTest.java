@@ -40,6 +40,7 @@ import io.questdb.cairo.lv.LiveViewRegistry;
 import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.lv.WalSegmentPageFrameCursor;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -47,6 +48,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntHashSet;
@@ -60,6 +62,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Lifecycle and catalogue tests for live views. Complements
@@ -811,6 +814,100 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testIdleScanRefreshesOnlyTheOwnedShard() throws Exception {
+        // The two sibling tests above pin ownsViewShard() and getShardedViews() in ISOLATION,
+        // which is not the same as pinning what production does with them: swap
+        // scanForLaggingViews back to registry.getViews() and both stay green, because
+        // neither ever runs the job's own scan. This one does - it drives the real
+        // LiveViewRefreshJob.run() on ONE worker of a two-worker pool and requires the idle
+        // fallback scan to advance that worker's shard and NOTHING else.
+        assertMemoryLeak(() -> {
+            final int viewCount = 6;
+            for (int i = 0; i < viewCount; i++) {
+                execute("CREATE TABLE base" + i + " (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE LIVE VIEW lv" + i + " FLUSH EVERY 1s START FROM NOW AS "
+                        + "SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base" + i);
+            }
+
+            // Seed every view with a single-worker pool, which owns all of them, so the
+            // shard assertion below measures the idle scan rather than leftover seeding.
+            try (LiveViewRefreshJob solo = new LiveViewRefreshJob(0, 1, engine, 1)) {
+                for (int i = 0; i < viewCount; i++) {
+                    driveSeedToCompletion(solo, "lv" + i);
+                }
+            }
+
+            final LiveViewRegistry registry = engine.getLiveViewRegistry();
+            // 3, not 2: the loop above creates a base table and a live view alternately, so
+            // every live view gets an EVEN table id and a two-worker split would hand the
+            // whole registry to worker 0 - a vacuous test. Consecutive even ids cover all
+            // three residues mod 3, so both shards are non-empty whatever the ids start at.
+            final int workerCount = 3;
+            final int workerId = 0;
+
+            for (int i = 0; i < viewCount; i++) {
+                execute("INSERT INTO base" + i + " (ts, x) VALUES ('2026-05-01T00:00:00.000000Z', 1)");
+            }
+            drainWalQueue();
+            // Empty the notification queue AFTER the commits: the queue-driven path is not
+            // sharded (any worker serves any base-table task), so leaving a notification
+            // behind would refresh a view this worker does not own and mask the difference.
+            // processNotifications() only reaches scanForLaggingViews when the queue is dry.
+            engine.getLiveViewStateStore().clear();
+
+            final ObjList<LiveViewInstance> all = new ObjList<>();
+            registry.getViews(all);
+            final IntHashSet ownedIds = new IntHashSet();
+            final IntHashSet foreignIds = new IntHashSet();
+            for (int i = 0, n = all.size(); i < n; i++) {
+                final int tableId = all.getQuick(i).getLiveViewToken().getTableId();
+                if (Math.floorMod(tableId, workerCount) == workerId) {
+                    ownedIds.add(tableId);
+                } else {
+                    foreignIds.add(tableId);
+                }
+            }
+            // Both sides must be non-empty or the assertion proves nothing.
+            Assert.assertTrue("the fixture must produce at least one owned view", ownedIds.size() > 0);
+            Assert.assertTrue("the fixture must produce at least one foreign view", foreignIds.size() > 0);
+
+            final CharSequenceLongHashMap before = new CharSequenceLongHashMap();
+            for (int i = 0; i < viewCount; i++) {
+                before.put("lv" + i, registry.getViewInstance("lv" + i).getLastProcessedSeqTxn());
+            }
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(workerId, workerCount, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+
+            for (int i = 0; i < viewCount; i++) {
+                final String viewName = "lv" + i;
+                final LiveViewInstance instance = registry.getViewInstance(viewName);
+                final int tableId = instance.getLiveViewToken().getTableId();
+                final long advanced = instance.getLastProcessedSeqTxn();
+                if (ownedIds.contains(tableId)) {
+                    Assert.assertTrue(
+                            viewName + " is in worker " + workerId + "'s shard, so the idle scan must advance it",
+                            advanced > before.get(viewName)
+                    );
+                } else {
+                    Assert.assertEquals(
+                            viewName + " is not in worker " + workerId + "'s shard, so this worker must leave it alone"
+                                    + " - an unsharded scan would advance it too",
+                            before.get(viewName),
+                            advanced
+                    );
+                }
+            }
+
+            for (int i = 0; i < viewCount; i++) {
+                execute("DROP LIVE VIEW lv" + i);
+            }
+        });
+    }
+
+    @Test
     public void testNotificationDrainIsBoundedPerRun() throws Exception {
         // A base table under sustained ingestion re-enqueues its refresh task as soon as it is
         // processed, so an unbounded notification drain would let one base table monopolize the
@@ -884,6 +981,65 @@ public class LiveViewTest extends AbstractLiveViewTest {
                 );
                 Assert.assertTrue("the scratch must actually shrink after the outlier", afterSmall < afterLarge);
             }
+        });
+    }
+
+    @Test
+    public void testWalCursorColumnMappingReflectsProjection() throws Exception {
+        // WalSegmentPageFrameCursor publishes a ColumnMapping alongside each frame, and for a
+        // live view it is NOT the identity: the view's SELECT both reorders and prunes base
+        // columns, so SQL output position i names some other base writer index. Nothing on the
+        // NATIVE WAL path would notice it going wrong - values resolve through pageAddresses
+        // and never consult the mapping; the parquet path is what reads it - so the triples
+        // need pinning directly or a wrong mapping ships silently.
+        assertMemoryLeak(() -> {
+            // Base writer indexes: ts=0, a=1, b=2, c=3.
+            execute("CREATE TABLE base (ts TIMESTAMP, a INT, b INT, c INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            // Projects c, a, ts: reordered against the base, with b pruned entirely.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT c, a, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final WalSegmentPageFrameCursor cursor = job.walFrameCursorForTest();
+                // Seed first, so the mapping below is the one the incremental raw-WAL drain
+                // built rather than anything left over from the seed's own scan.
+                driveSeedToCompletion(job, "lv");
+
+                execute("INSERT INTO base (ts, a, b, c) VALUES ('2026-05-12T00:00:00.000000Z', 10, 20, 30)");
+                drainWalQueue();
+                drainJob(job);
+
+                final ColumnMapping mapping = cursor.getColumnMapping();
+                Assert.assertEquals("the mapping covers exactly the projected columns", 3, mapping.getColumnCount());
+                Assert.assertEquals("output position 0 reads base column c", 3, mapping.getWriterIndex(0));
+                Assert.assertEquals("output position 1 reads base column a", 1, mapping.getWriterIndex(1));
+                Assert.assertEquals("output position 2 reads base column ts", 0, mapping.getWriterIndex(2));
+                for (int i = 0, n = mapping.getColumnCount(); i < n; i++) {
+                    Assert.assertEquals("column index is the SQL output position", i, mapping.getColumnIndex(i));
+                    // A WAL segment carries no replacingIndex chain, so the original writer
+                    // index is the writer index. Asserting it keeps the third element of the
+                    // triple pinned rather than merely present.
+                    Assert.assertEquals(
+                            "writer and original writer index must agree for a WAL segment",
+                            mapping.getWriterIndex(i),
+                            mapping.getOriginalWriterIndex(i)
+                    );
+                }
+                // A refresh fault self-heals into a from-base recompute, which never binds
+                // this cursor - so without this the drain could have faulted and the query
+                // below would still read right off the recompute.
+                assertNoRefreshFaults("lv");
+            }
+            drainWalQueue();
+
+            // Cross-check on the shared columnIndexes: computeFrame derives BOTH the page
+            // addresses and the mapping triples from that one list, so wrong values here
+            // would indict the projection the mapping is built from. (Not a check on the
+            // mapping itself - as noted above, the NATIVE path never reads it.)
+            assertQuery("SELECT c, a FROM lv").noLeakCheck().expectSize().returns("c\ta\n" +
+                    "30\t10\n");
+
+            execute("DROP LIVE VIEW lv");
         });
     }
 
@@ -1633,6 +1789,73 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRefreshWithSymbolInConstantSetHandlesNulls() throws Exception {
+        // Regression for the raw-WAL live view symbol table's keyOf(null). A residual filter of the
+        // form "sym IN ('A', NULL)" runs through InSymbolFunctionFactory.Func.init(), which resolves
+        // every constant in the set - the NULL literal included - to an int key once per transaction
+        // and then matches rows with IntHashSet.contains(record.getInt(...)). WalSegmentPageFrameCursor's
+        // WalSymbolTable used to answer keyOf(null) with VALUE_NOT_FOUND rather than the VALUE_IS_NULL
+        // that SymbolMapReaderImpl and EmptySymbolMapReader return, so the key set never held the null
+        // key while WalWriter stores exactly VALUE_IS_NULL for a null symbol. Every NULL row seen
+        // through incremental refresh therefore failed the filter and the view diverged permanently
+        // from the equivalent base query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            // Applied before the view exists, seeding the clean dictionary with 'A' and 'B'.
+            execute("INSERT INTO base (sym, val, ts) VALUES " +
+                    "('A', 1, '2026-01-01T00:00:00.000000Z'), " +
+                    "('B', 2, '2026-01-01T00:01:00.000000Z')");
+            drainWalQueue();
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE sym IN ('A', NULL)");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Finish seeding from the applied base FIRST, so the rows below reach the view only
+                // through incremental refresh. Otherwise the seed resolves the constants against the
+                // base table's real symbol reader and never exercises WalSymbolTable.
+                driveSeedToCompletion(job, "lv");
+
+                // Two commits, so the constants are re-resolved per transaction. 'C' is new to the
+                // dictionary and lands in this txn's diff band above the clean symbol count, which
+                // keeps the overlay probe in play alongside the null key.
+                execute("INSERT INTO base (sym, val, ts) VALUES " +
+                        "(NULL, 3, '2026-01-01T00:02:00.000000Z'), " +
+                        "('B', 4, '2026-01-01T00:03:00.000000Z')");
+                execute("INSERT INTO base (sym, val, ts) VALUES " +
+                        "('A', 5, '2026-01-01T00:04:00.000000Z'), " +
+                        "('C', 6, '2026-01-01T00:05:00.000000Z'), " +
+                        "(NULL, 7, '2026-01-01T00:06:00.000000Z')");
+                drainWalQueue();
+
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+
+            // Ground truth: the base SELECT itself. QuestDB resolves the NULL literal to the null
+            // symbol key, so IN ('A', NULL) keeps the NULL rows and drops 'B' and 'C'.
+            assertQuery("SELECT sym, val FROM base WHERE sym IN ('A', NULL) ORDER BY ts").noLeakCheck().returns("sym\tval\n" +
+                    "A\t1\n" +
+                    "\t3\n" +
+                    "A\t5\n" +
+                    "\t7\n");
+            // The live view refreshed off the raw WAL must agree with it, row for row.
+            assertQuery("SELECT sym, val FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("sym\tval\n" +
+                    "A\t1\n" +
+                    "\t3\n" +
+                    "A\t5\n" +
+                    "\t7\n");
+
+            // The incremental raw-WAL path, not a recompute, must have produced these rows: a refresh
+            // fault self-heals into a full recompute from the applied base (correct symbol tables),
+            // which would mask a WalSymbolTable defect.
+            assertNoRefreshFaults("lv");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRefreshWithWhereClauseOnIndexedSymbol() throws Exception {
         // C1 regression. An equality filter on an INDEXED symbol used to be pushed into a
         // DeferredSingleSymbolFilterPageFrameRecordCursorFactory whose predicate lives in the
@@ -1986,6 +2209,104 @@ public class LiveViewTest extends AbstractLiveViewTest {
                     "20\t2026-01-01T00:02:00.000000Z\t3\n" +
                     "30\t2026-01-01T00:03:00.000000Z\t4\n" +
                     "40\t2026-01-01T00:04:00.000000Z\t5\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRefreshMapsOnlyProjectedWalColumns() throws Exception {
+        // The incremental raw-WAL drain rebinds WalSegmentPageFrameCursor once per base
+        // commit, and every rebind runs WalReader.loadColumnAt for the columns it maps.
+        // That is not cheap: MemoryCMRImpl.of() munmaps, closes the fd, re-opens and
+        // re-mmaps rather than remapping in place. Mapping the whole base schema therefore
+        // charged a narrow view four syscalls per BASE column per commit - doubled for
+        // variable-width ones - so a wide base table made every dependent view pay for
+        // columns it never reads. The reader now takes the cursor's projection and leaves
+        // the rest on NullMemoryCMR.
+        //
+        // Counting opens rather than timing anything keeps this deterministic. The counter
+        // is armed only around the refresh drive: ApplyWal2TableJob legitimately reads every
+        // column of the segment, so an always-on counter would measure the WAL apply too.
+        final AtomicBoolean counting = new AtomicBoolean();
+        final AtomicInteger unprojectedOpens = new AtomicInteger();
+        final AtomicInteger projectedOpens = new AtomicInteger();
+        // Filled in after CREATE TABLE. Both counters key on it because the view's OWN
+        // output table also has a "val" column, and driveRefreshToQuiescence drains the WAL
+        // queue inside the counting window - so applying the view's WAL would otherwise
+        // satisfy the projected-column sanity check without the base segment being read
+        // at all, leaving the whole assertion vacuous.
+        final String[] baseDir = new String[1];
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                // "wal" in the path restricts this to WAL segment column files: the same
+                // column names also exist under the applied table directory, which a
+                // from-base recompute would read.
+                if (counting.get()
+                        && baseDir[0] != null
+                        && Utf8s.containsAscii(name, baseDir[0])
+                        && Utf8s.containsAscii(name, "wal")) {
+                    if (Utf8s.endsWithAscii(name, "pad9.d")) {
+                        unprojectedOpens.incrementAndGet();
+                    } else if (Utf8s.endsWithAscii(name, "val.d")) {
+                        projectedOpens.incrementAndGet();
+                    }
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (" +
+                    "val INT, pad1 INT, pad2 INT, pad3 INT, pad4 INT, pad5 INT, " +
+                    "pad6 INT, pad7 INT, pad8 INT, pad9 INT, ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            baseDir[0] = engine.verifyTableName("base").getDirName();
+            // The view projects val and ts only; pad1..pad9 exist solely to be skipped.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+
+                // Several commits into one segment: the per-commit rebind is exactly what
+                // used to remap every base column, so more than one commit is the point.
+                for (int i = 0; i < 4; i++) {
+                    execute("INSERT INTO base (val, pad9, ts) VALUES " +
+                            "(" + i + ", " + i + ", '2026-01-01T00:0" + i + ":00.000000Z')");
+                }
+                drainWalQueue();
+
+                counting.set(true);
+                try {
+                    driveRefreshToQuiescence(job);
+                } finally {
+                    counting.set(false);
+                }
+            }
+            drainWalQueue();
+
+            // The drain must have read the segment through the projected column, otherwise
+            // the zero below would be vacuous.
+            Assert.assertTrue(
+                    "the refresh must have mapped the projected column",
+                    projectedOpens.get() > 0
+            );
+            Assert.assertEquals(
+                    "an unprojected base column must never be mapped by the incremental refresh",
+                    0,
+                    unprojectedOpens.get()
+            );
+            // A refresh fault self-heals into a from-base recompute, which reads the applied
+            // table rather than the segment and would hide a per-commit remap.
+            assertNoRefreshFaults("lv");
+
+            assertQuery("SELECT val, rn FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("val\trn\n" +
+                    "0\t1\n" +
+                    "1\t2\n" +
+                    "2\t3\n" +
+                    "3\t4\n");
+
             execute("DROP LIVE VIEW lv");
         });
     }

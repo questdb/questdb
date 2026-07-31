@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
@@ -269,7 +270,14 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         if (reader == null) {
             reader = new WalReader(configuration);
         }
-        reader.of(tableToken, walName, segmentId, segmentRowCount);
+        // Pass the projection: this cursor reads the segment only through reader.getColumn()
+        // on projected indexes (computeFrame below), never through getDataCursor(), so the
+        // reader can leave every other column on the null sentinel instead of munmap/mmap-ing
+        // it once per base commit. The reader deep-copies the projection and compares the
+        // previous copy against the incoming list, so passing this cursor's own (rewritten
+        // every of() call) IntList is safe: a rebind whose projection is unchanged still
+        // matches, and a changed one forces the mappings to be rebuilt.
+        reader.of(tableToken, walName, segmentId, segmentRowCount, this.columnIndexes);
         this.rowLo = rowLo;
         this.rowHi = rowHi;
         // Guard against a base-schema drift before mapping the frame. columnIndexes /
@@ -417,6 +425,13 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             // for the implicit (row-id, timestamp) sentinel pair at the start.
             final int dataIdx = walColumnIndex * 2 + 2;
             final MemoryCR colMem = reader.getColumn(dataIdx);
+            // The reader maps exactly the columns this projection names, so a sentinel here
+            // means the projection and the mapped set disagreed. Catch it under -ea rather
+            // than publishing a frame whose page address is 0 with a non-zero page size,
+            // which reads as a wild pointer instead of failing. The drift guard in of()
+            // already rejects a projection this segment cannot satisfy.
+            assert colMem != NullMemoryCMR.INSTANCE
+                    : "projected column " + walColumnIndex + " was not mapped by the reader";
 
             if (walColumnIndex == reader.getTimestampIndex()) {
                 final long dst = extractTimestamps(colMem);
@@ -571,7 +586,20 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         @Override
         public int keyOf(CharSequence value) {
             if (value == null) {
-                return SymbolTable.VALUE_NOT_FOUND;
+                // The null key, not "not found" - the same answer SymbolMapReaderImpl and
+                // EmptySymbolMapReader give, and the only one that round-trips: WalWriter
+                // stores exactly SymbolTable.VALUE_IS_NULL in the segment's symbol column
+                // for a null value, so the key a filter resolves for the NULL literal has
+                // to be that sentinel. VALUE_NOT_FOUND made every constant-set filter that
+                // carries a NULL cache a key no row can ever hold - InSymbolFunctionFactory
+                // ("sym IN ('A', NULL)") and InSymbolVarcharArrayFunctionFactory, which both
+                // pre-resolve the whole set once per transaction - silently dropping NULL rows
+                // from the incremental refresh while the equivalent base SELECT kept them.
+                // ("sym = NULL" is unaffected: EqSymStrFunctionFactory sees a null constant
+                // and builds NullCheckFunc, which never asks for a key.) Answering unconditionally
+                // (rather than gating on containsNull) also mirrors the readers: when the
+                // slice holds no null, no row carries the key and nothing matches anyway.
+                return SymbolTable.VALUE_IS_NULL;
             }
             if (txnDiff != null) {
                 // The overlay's keys are this txn's global symbol keys: the contiguous

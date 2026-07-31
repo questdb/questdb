@@ -459,7 +459,21 @@ public class QwpTudCache implements QuietCloseable {
             tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
         }
         if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE) {
-            throw CairoException.nonCritical()
+            // schemaMismatch(), not a bare nonCritical(): the target's kind is a property of
+            // the name the frame carries, so byte-identical replay hits the same refusal
+            // forever. QwpIngressProcessorState.cairoExceptionStatus maps an unmarked
+            // non-critical CairoException to NOT_ACCEPTING_WRITES, which the upgrade
+            // processor encodes as STATUS_WRITE_ERROR and a store-and-forward sender treats
+            // as RETRIABLE - so a view named where a table was expected made the client
+            // reconnect and replay the doomed frame from its SF log up to
+            // max_frame_rejections times (default 4, over at least a 5s dwell window),
+            // stalling every frame queued behind it, before its poison-frame detector gave
+            // up and halted with a PROTOCOL_VIOLATION that named the wrong cause. The
+            // marker instead selects SCHEMA_MISMATCH, which the client halts on at the
+            // first strike with the accurate category. The other protocol front-ends raise this same
+            // refusal without the marker because they have no retriable/terminal NACK to
+            // choose between: ILP/TCP disconnects and ILP/HTTP answers in the response body.
+            throw CairoException.schemaMismatch()
                     .put("cannot modify ").put(tableToken.getType().keyword()).put(" [view=")
                     .put(tableToken.getTableName())
                     .put(']');

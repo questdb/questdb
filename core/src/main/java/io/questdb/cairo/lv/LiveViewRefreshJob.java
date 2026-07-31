@@ -516,8 +516,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test-only: the worker's WAL page-frame cursor, so a test can assert its extracted-timestamp
-     * scratch releases an outlier transaction's peak rather than retaining it for the worker's life.
+     * Test-only: the worker's WAL page-frame cursor, for assertions on state the cursor keeps
+     * across a drain - that its extracted-timestamp scratch releases an outlier transaction's
+     * peak rather than retaining it for the worker's life, and that the ColumnMapping it
+     * publishes matches the view's projection.
      */
     @TestOnly
     public WalSegmentPageFrameCursor walFrameCursorForTest() {

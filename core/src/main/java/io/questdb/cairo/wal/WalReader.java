@@ -43,12 +43,15 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -61,11 +64,20 @@ public class WalReader implements Closeable {
     private final CairoConfiguration configuration;
     private final WalDataCursor dataCursor = new WalDataCursor();
     private final FilesFacade ff;
+    // The deduped, in-range column set openSegmentColumns() actually maps when a projection
+    // is active: the caller's projection minus out-of-range entries, plus the designated
+    // timestamp. Recomputed per bind (O(projection^2) over a handful of entries) rather than
+    // cached, so it can never go stale against a changed column count or timestamp index.
+    private final IntList mappedColumns = new IntList();
     private final SequencerMetadata metadata;
     private final Path path = new Path();
+    // The projection as the caller supplied it, kept verbatim so the next bind can tell a
+    // same-projection rebind (reuse the mappings) from a changed one (rebuild them).
+    private final IntList projectedColumns = new IntList();
     private final ObjList<DirectSymbolMap> symbolMaps = new ObjList<>();
     private final WalEventReader walEventReader;
     private int columnCount;
+    private boolean hasProjection;
     private int rootLen;
     private long rowCount;
     private int segmentId = -1;
@@ -142,6 +154,11 @@ public class WalReader implements Closeable {
     }
 
     public WalDataCursor getDataCursor() {
+        // A projected bind maps only part of the schema, and WalDataRecord can be asked for
+        // ANY column - it would read the null sentinel and report empty values rather than
+        // failing. Enforce the contract the projected of() overload documents instead of
+        // leaving it to the caller.
+        assert !hasProjection : "the data cursor cannot read a projected reader; bind without a projection";
         dataCursor.toTop();
         return dataCursor;
     }
@@ -242,14 +259,57 @@ public class WalReader implements Closeable {
      * view, or column pointer is still in use.
      */
     public WalReader of(TableToken tableToken, CharSequence walName, int segmentId, long rowCount) {
+        return of(tableToken, walName, segmentId, rowCount, null);
+    }
+
+    /**
+     * Rebinds this reader, mapping only the column FILES that {@code projection} names
+     * (base-table writer indexes) plus the designated timestamp. Every other column's slot
+     * holds {@link NullMemoryCMR#INSTANCE}, so {@link #getColumn} stays non-null but reads no
+     * bytes - a projected reader is therefore usable ONLY through {@link #getColumn} on
+     * projected indexes, never through {@link #getDataCursor()}, whose record can be asked
+     * for any column.
+     * <p>
+     * The projection narrows the column mmaps only. Symbol maps are still built for every
+     * column carrying a diff, because {@link #openSymbolMaps} folds the segment's whole
+     * {@code _event} stream; that cost is bounded per segment rather than per commit, so it
+     * is not what this projection exists to cut.
+     * <p>
+     * This matters because a rebind is not cheap: {@code MemoryCMRImpl.of()} munmaps, closes
+     * the fd, re-opens and re-mmaps (it does not remap in place), and the live-view drain
+     * rebinds once per base commit. Mapping the whole schema made that cost scale with the
+     * base table's width rather than the view's, so a narrow view over a wide table paid
+     * four syscalls per base column - doubled for variable-width ones - on every commit.
+     * <p>
+     * Pass {@code null} to map every column, which is what {@link #getDataCursor()} callers
+     * need.
+     */
+    public WalReader of(
+            TableToken tableToken,
+            CharSequence walName,
+            int segmentId,
+            long rowCount,
+            @Transient @Nullable IntList projection
+    ) {
+        // A changed projection invalidates the retained column mappings the same way a
+        // different segment does: slots outside the new projection must fall back to the
+        // null sentinel, and slots newly inside it must be mapped rather than left on it.
+        final boolean sameProjection = projection == null
+                ? !hasProjection
+                : hasProjection && projectedColumns.equals(projection);
         // Detect a rebind to the exact same (table, wal, segment) - only rowCount
         // grew. The live view drain re-opens the same segment once per base commit,
-        // and many commits share a segment; keeping the column list lets the
-        // loadColumnAt() reload below remap each mmap in place (openOrCreateMemory
-        // reuses mem.of at the new size) instead of munmap+mmap-ing every column
-        // per commit. Computed before the fields are reassigned; columnCount is
-        // cross-checked after metadata.open in case the on-disk schema differs.
-        final boolean sameTableWalSegment = this.walName != null
+        // and many commits share a segment; keeping the column list lets
+        // openOrCreateMemory reuse the MemoryCMR instances (and the incremental symbol
+        // fold below resume instead of rescanning the event history) rather than
+        // reallocating them per commit. Note this does NOT avoid the munmap/mmap
+        // itself - MemoryCMRImpl.of() closes and re-maps unconditionally - which is
+        // why narrowing the mapped set via `projection` is what actually bounds the
+        // per-commit syscall cost. Computed before the fields are reassigned;
+        // columnCount is cross-checked after metadata.open in case the on-disk schema
+        // differs.
+        final boolean sameTableWalSegment = sameProjection
+                && this.walName != null
                 && this.tableDirName != null
                 && this.segmentId == segmentId
                 && Chars.equals(this.tableDirName, tableToken.getDirName())
@@ -268,6 +328,11 @@ public class WalReader implements Closeable {
 
         boolean bound = false;
         try {
+            this.hasProjection = projection != null;
+            this.projectedColumns.clear();
+            if (projection != null) {
+                this.projectedColumns.addAll(projection);
+            }
             this.tableName = tableToken.getTableName();
             this.tableDirName = tableToken.getDirName();
             if (!sameTableWalSegment) {
@@ -316,7 +381,20 @@ public class WalReader implements Closeable {
                 columns.setPos(capacity + 2);
                 columns.setQuick(0, NullMemoryCMR.INSTANCE);
                 columns.setQuick(1, NullMemoryCMR.INSTANCE);
+                if (hasProjection) {
+                    // Under a projection loadColumnAt() visits only the mapped set, so every
+                    // other slot keeps whatever setPos() left there - null. getColumn() does
+                    // no null check, so seed the sentinel instead: an unprojected column then
+                    // reads as empty rather than throwing. openOrCreateMemory treats the
+                    // sentinel as "not mapped yet" and allocates a real instance for the
+                    // slots the mapped set does cover.
+                    for (int i = 2, n = columns.size(); i < n; i++) {
+                        columns.setQuick(i, NullMemoryCMR.INSTANCE);
+                    }
+                }
             }
+            // After metadata.open: columnCount and the timestamp index are the segment's own.
+            buildMappedColumns();
             // Same segment: keep the column list intact. dataCursor.of() below runs
             // openSegment() -> loadColumnAt() for every column, and openOrCreateMemory
             // remaps each retained mmap in place at the current rowCount.
@@ -357,6 +435,33 @@ public class WalReader implements Closeable {
 
     public long size() {
         return rowCount;
+    }
+
+    // Rebuilds the effective mapped set: the caller's projection, minus entries this segment
+    // does not have, plus the designated timestamp. Out-of-range entries are dropped rather
+    // than rejected - WalSegmentPageFrameCursor binds first and reconciles the projection
+    // against the segment's own metadata immediately afterwards, throwing
+    // TableReferenceOutOfDateException when a referenced base column has drifted - so a
+    // stale index must simply not be mapped here. Duplicates are folded, so a projection
+    // naming one column twice (SELECT a, a) does not map and remap it twice per commit.
+    private void buildMappedColumns() {
+        mappedColumns.clear();
+        if (!hasProjection) {
+            return;
+        }
+        for (int i = 0, n = projectedColumns.size(); i < n; i++) {
+            final int columnIndex = projectedColumns.getQuick(i);
+            if (columnIndex >= 0 && columnIndex < columnCount && !mappedColumns.contains(columnIndex)) {
+                mappedColumns.add(columnIndex);
+            }
+        }
+        // The designated timestamp joins the set whether or not the projection names it:
+        // loadColumnAt sizes it at double width and consumers reach for it by identity
+        // rather than by projected position, so a bound reader must never lack it.
+        final int timestampIndex = getTimestampIndex();
+        if (timestampIndex >= 0 && timestampIndex < columnCount && !mappedColumns.contains(timestampIndex)) {
+            mappedColumns.add(timestampIndex);
+        }
     }
 
     private void loadColumnAt(int columnIndex) {
@@ -415,8 +520,14 @@ public class WalReader implements Closeable {
     }
 
     private void openSegmentColumns() {
-        for (int i = 0; i < columnCount; i++) {
-            loadColumnAt(i);
+        if (!hasProjection) {
+            for (int i = 0; i < columnCount; i++) {
+                loadColumnAt(i);
+            }
+            return;
+        }
+        for (int i = 0, n = mappedColumns.size(); i < n; i++) {
+            loadColumnAt(mappedColumns.getQuick(i));
         }
     }
 

@@ -269,9 +269,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     /**
-     * A non-critical error raised BECAUSE the wire value's type, shape or
-     * precision is fundamentally incompatible with the target column (e.g.
-     * an unsupported type coercion or a geohash precision mismatch). The
+     * A non-critical error raised BECAUSE the frame's own content is
+     * fundamentally incompatible with what it names: the wire value's type,
+     * shape or precision does not fit the target column (an unsupported type
+     * coercion, a geohash precision mismatch), or the named target is not a
+     * writable table at all (a view, materialized view or live view, or a
+     * non-WAL table on a WAL-only ingestion path). The
      * refusal is DETERMINISTIC under byte-identical replay -- the same bytes
      * produce the same rejection every time -- so protocol layers that must
      * tell a permanent data error apart from a transient write refusal (the
@@ -428,9 +431,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     /**
-     * Whether this refusal is a deterministic wire-value/column-type mismatch
-     * (set only by {@link #schemaMismatch()}). Implies the error is
-     * non-critical and permanent -- replay of the same bytes cannot succeed.
+     * Whether this refusal is a deterministic wire-value/column-type mismatch,
+     * or names a target that is not a writable table (set only by
+     * {@link #schemaMismatch()}). Implies the error is non-critical and
+     * permanent -- replay of the same bytes cannot succeed.
      */
     public boolean isSchemaMismatch() {
         return (flags & FLAG_SCHEMA_MISMATCH) != 0;

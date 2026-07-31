@@ -85,6 +85,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
@@ -8947,7 +8948,10 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            new Thread(
+            // Retained so the teardown below can join it. An unretained thread parked in
+            // sleep(120000) cannot be waited on deterministically, and a bare stopped.await()
+            // would block forever if the cancel never lands.
+            final Thread refreshThread = new Thread(
                     () -> {
                         started.countDown();
                         try {
@@ -8959,17 +8963,21 @@ public class MatViewTest extends AbstractCairoTest {
                             stopped.countDown();
                         }
                     }, "mat_view_refresh_thread"
-            ).start();
+            );
+            refreshThread.start();
 
             started.await();
 
             // wait until the refresh query is registered (parked in sleep()); once it appears
-            // in query_activity() the refresh is genuinely in flight
+            // in query_activity() the refresh is genuinely in flight. Bounded: if the query
+            // never registers AND the worker never stops, this used to spin forever; failing
+            // at the deadline reports the real problem instead of hanging the suite.
             long queryId = -1;
+            final long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 String activityQuery = "select query_id, query from query_activity() where query ='" + viewSql + "'";
                 try (final RecordCursorFactory factory = CairoEngine.select(compiler, activityQuery, sqlExecutionContext)) {
-                    while (stopped.getCount() != 0) {
+                    while (stopped.getCount() != 0 && System.nanoTime() < deadlineNanos) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             if (cursor.hasNext()) {
                                 queryId = cursor.getRecord().getLong(0);
@@ -8986,7 +8994,11 @@ public class MatViewTest extends AbstractCairoTest {
             // in sleep(120000) - that would stall assertMemoryLeak teardown for up to two
             // minutes and mask the real assertion failure with a secondary leak/close error.
             try {
-                Assert.assertTrue(queryId > 0);
+                Assert.assertTrue(
+                        "the refresh query never registered in query_activity() within 60s, so the"
+                                + " refresh was never observed in flight [query=" + viewSql + ']',
+                        queryId > 0
+                );
                 assertQuery("select view_name, view_status from materialized_views")
                         .noRandomAccess()
                         .noLeakCheck()
@@ -8995,10 +9007,31 @@ public class MatViewTest extends AbstractCairoTest {
                                 price_1h\trefreshing
                                 """);
             } finally {
-                // unblock the parked refresh so the worker thread can finish
-                execute("cancel query " + queryId);
-                stopped.await();
+                // Unblock the parked refresh so the worker thread can finish. Guarded on a
+                // real id, and swallowing the throw: "cancel query -1" fails, and so does a
+                // query that deregistered between the poll and here. Either throw would
+                // replace whichever assertion sent us into this block with a misleading
+                // secondary failure, and losing the cancel costs no coverage - the bounded
+                // await and join below already handle a cancel that does not land.
+                if (queryId > 0) {
+                    try {
+                        execute("cancel query " + queryId);
+                    } catch (Throwable ignore) {
+                        // the refresh is either already finishing or will time out of sleep()
+                    }
+                }
+                // Bounded: an uncancelled refresh stays parked for the full sleep(120000),
+                // and an untimed await would hand the suite a two-minute stall rather than a
+                // verdict. 150s leaves room for the sleep to expire on its own.
+                stopped.await(TimeUnit.SECONDS.toNanos(150));
+                // Join on top of the latch: it fires in the worker's finally, so it can be
+                // lit while the thread is still unwinding. Leaving the thread running into
+                // assertMemoryLeak's teardown reports a leak instead of the real fault.
+                refreshThread.join(TimeUnit.SECONDS.toMillis(30));
             }
+            // Outside the finally, so a failure in the try above is what surfaces rather than
+            // being replaced by this secondary check.
+            Assert.assertFalse("mat view refresh thread must terminate", refreshThread.isAlive());
             Assert.assertFalse(refreshed.get());
         });
     }

@@ -238,40 +238,64 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
             final int trials = 100;
             for (int t = 0; t < trials; t++) {
                 final LiveViewInMemoryTier tier = new LiveViewInMemoryTier(strBinSchema(), 0, PAGE_SIZE);
-                int writeIdx = 1 - tier.getPublishedIdx();
-                LiveViewInMemoryBuffer slot = tier.tryAcquireWrite(writeIdx);
-                Assert.assertNotNull(slot);
-                VarSizeRecord rec = new VarSizeRecord();
-                final int rows = 16;
-                for (int r = 0; r < rows; r++) {
-                    rec.of((r + 1) * 1_000_000L, "row-" + r, new TestBinarySequence().of(bytesOf(r + 1, 8)));
-                    slot.copyRowFromRecord(rec, r);
-                }
-                slot.setRowCount(rows);
-                tier.publishSwap(writeIdx);
-
                 final CountDownLatch start = new CountDownLatch(1);
+                // Counted down by the reader only after it has completed a full read pair
+                // inside the loop. Without this fence close() can finish before the reader
+                // leaves start.await(), and the trial exercises no race at all - the test
+                // would stay green even if every null guard were removed.
+                final CountDownLatch reading = new CountDownLatch(1);
                 final AtomicReference<Throwable> error = new AtomicReference<>();
                 final AtomicBoolean closed = new AtomicBoolean();
-                Thread reader = new Thread(() -> {
-                    try {
-                        start.await();
-                        while (!closed.get()) {
+                Thread reader = null;
+                try {
+                    int writeIdx = 1 - tier.getPublishedIdx();
+                    LiveViewInMemoryBuffer slot = tier.tryAcquireWrite(writeIdx);
+                    Assert.assertNotNull(slot);
+                    VarSizeRecord rec = new VarSizeRecord();
+                    final int rows = 16;
+                    for (int r = 0; r < rows; r++) {
+                        rec.of((r + 1) * 1_000_000L, "row-" + r, new TestBinarySequence().of(bytesOf(r + 1, 8)));
+                        slot.copyRowFromRecord(rec, r);
+                    }
+                    slot.setRowCount(rows);
+                    tier.publishSwap(writeIdx);
+
+                    reader = new Thread(() -> {
+                        try {
+                            start.await();
+                            while (!closed.get()) {
+                                tier.footprintBytes();
+                                tier.publishedRowCount();
+                                reading.countDown();
+                            }
+                            // One more read after teardown, covering the fully-nulled slots.
                             tier.footprintBytes();
                             tier.publishedRowCount();
+                        } catch (Throwable th) {
+                            error.set(th);
+                        } finally {
+                            // A reader that died before its first read must not strand the
+                            // main thread on the fence below.
+                            reading.countDown();
                         }
-                        // One more read after teardown, covering the fully-nulled slots.
-                        tier.footprintBytes();
-                        tier.publishedRowCount();
-                    } catch (Throwable th) {
-                        error.set(th);
+                    });
+                    reader.start();
+                    start.countDown();
+                    Assert.assertTrue(
+                            "reader did not reach the read loop within 10s",
+                            reading.await(10, TimeUnit.SECONDS)
+                    );
+                } finally {
+                    // close() is both the operation under test and this trial's cleanup, so
+                    // it lives here: a failure in the setup above then cannot leak the tier's
+                    // native buffers and turn a real assertion failure into a leak report.
+                    // The reader is already looping by now, so the race is still exercised.
+                    tier.close();
+                    closed.set(true);
+                    if (reader != null) {
+                        reader.join(TimeUnit.SECONDS.toMillis(10));
                     }
-                });
-                reader.start();
-                start.countDown();
-                tier.close();
-                closed.set(true);
-                reader.join(TimeUnit.SECONDS.toMillis(10));
+                }
                 Assert.assertFalse("reader thread must terminate", reader.isAlive());
                 if (error.get() != null) {
                     throw new AssertionError(

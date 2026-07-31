@@ -85,6 +85,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -16101,11 +16102,37 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             writer.start();
             reader.start();
-            ready.await();
-            start.countDown();
-            done.await();
-            writer.join();
-            reader.join();
+            try {
+                // Bounded waits. Both workers release every latch from their own finally
+                // blocks, so a THROWN failure already unwinds; what an untimed await cannot
+                // survive is a worker that WEDGES - it hands the suite a hang with no
+                // diagnostic instead of a verdict. The timeouts are far above the observed
+                // runtime of this stress loop, so they only fire on a genuine stall.
+                Assert.assertTrue(
+                        "both head-checkpoint workers must reach the stress barrier within 60s",
+                        ready.await(60, TimeUnit.SECONDS)
+                );
+                start.countDown();
+                Assert.assertTrue(
+                        "both head-checkpoint workers must finish the stress run within 120s",
+                        done.await(120, TimeUnit.SECONDS)
+                );
+            } finally {
+                // Release anything still parked before joining: a timeout above must unwind
+                // the workers rather than leave them running into assertMemoryLeak teardown,
+                // where a live thread reports a leak in place of the real fault.
+                // isStopped first, so a worker released below sees it at its post-await guard
+                // and exits instead of crossing a barrier it should not. Only the latches the
+                // WORKERS await are counted down; `ready` and `done` are awaited by this
+                // thread alone, so releasing them here would unwedge nothing.
+                isStopped.set(true);
+                observedSeedA.countDown();
+                observedSeedB.countDown();
+                start.countDown();
+                stressReadStarted.countDown();
+                writer.join(TimeUnit.SECONDS.toMillis(30));
+                reader.join(TimeUnit.SECONDS.toMillis(30));
+            }
             Assert.assertFalse("writer thread must have stopped", writer.isAlive());
             Assert.assertFalse("reader thread must have stopped", reader.isAlive());
             if (failure.get() != null) {

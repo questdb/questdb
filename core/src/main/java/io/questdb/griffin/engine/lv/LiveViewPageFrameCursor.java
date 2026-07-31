@@ -164,7 +164,9 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     // The slot's LEAD rows - the un-flushed ones, held nowhere on disk - cut by the base
     // scan's interval filter, as flat half-open (lo, hi) row pairs. Same shape and same cut
     // as slotBands, and identical to it under either lead-only mode; they part company under
-    // the seam, whose band is the whole slot. Built in of() regardless of the mode, because
+    // the seam, whose band is the whole slot - though only when the slot carries a flushed
+    // prefix, since a seam with leadStart == 0 leaves the two bands identical again. Built
+    // in of() regardless of the mode, because
     // the consumer that walks these does not take its disk side from this cursor's stream at
     // all - see toLeadFrames().
     private final LongList leadBands = new LongList();
@@ -475,10 +477,21 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         LiveViewIntervalBands.cut(slot, slot.getTimestampColumnIndex(), slotBandLo, slotRowCount, intervals, slotBands);
         // The lead band, cut by the same intervals, for the lead-scoped walk toLeadFrames()
         // hands out. It is the mode's own band again under either lead-only mode, and a
-        // suffix of it under the seam; cutting it separately keeps this independent of the
-        // mode rather than resting on which one of()'s fork picked.
+        // suffix of it under the seam.
+        //
+        // Keyed on the bounds, not on the mode flag: that keeps this independent of which
+        // fork of() picked - the reason the two cuts were kept separate - while dropping the
+        // redundant pass. Under lead-only slotBandLo IS leadStart, so the second cut walks
+        // the same interval list over the same rows and lands on the same bands. That is
+        // precisely the case worth skipping: the seam shape only exists when intervals ==
+        // null, where cut() returns in O(1), whereas lead-only is the mode an
+        // interval-filtered scan falls back to - the one where cut() actually binary-searches.
         leadBands.clear();
-        LiveViewIntervalBands.cut(slot, slot.getTimestampColumnIndex(), leadStart, slotRowCount, intervals, leadBands);
+        if (slotBandLo == leadStart) {
+            leadBands.addAll(slotBands);
+        } else {
+            LiveViewIntervalBands.cut(slot, slot.getTimestampColumnIndex(), leadStart, slotRowCount, intervals, leadBands);
+        }
         // The slot band is this scan's last partition, so it splits into frames the same
         // way a disk partition of the same row count does - same helper, same bounds, same
         // trailing-frame rounding. Sharing it is not just tidiness: those bounds carry the

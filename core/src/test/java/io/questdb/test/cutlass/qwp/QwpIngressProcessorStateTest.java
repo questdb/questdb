@@ -763,7 +763,60 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     Assert.fail("expected the live view to reject the QWP write");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify live view [view=lv]");
+                    // The target's kind cannot change under byte-identical replay, so the
+                    // refusal must carry the permanent marker rather than read as a
+                    // transient write refusal. testQwpCannotIngestIntoLiveViewNacksSchemaMismatch
+                    // pins the NACK status this marker selects.
+                    Assert.assertTrue("a live view target is a permanent rejection", e.isSchemaMismatch());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testQwpCannotIngestIntoLiveViewNacksSchemaMismatch() throws Exception {
+        // The sibling test above calls QwpTudCache directly and only inspects the exception
+        // text, so it cannot see how the rejection is classified on the wire. This one drives
+        // a real QWP payload naming the live view through processMessage() with the REAL
+        // tudCache and asserts the resulting NACK status.
+        //
+        // The status is the whole point: QwpIngressUpgradeProcessor encodes SCHEMA_MISMATCH as
+        // STATUS_SCHEMA_MISMATCH and every unmapped status as STATUS_WRITE_ERROR, and the
+        // store-and-forward client maps those to TERMINAL and RETRIABLE respectively
+        // (CursorWebSocketSendLoop.defaultPolicyFor). An unwritable live-view target answered
+        // with NOT_ACCEPTING_WRITES is therefore reconnect-replayed up to max_frame_rejections
+        // times (default 4, over at least a 5s dwell) with every queued frame stalled behind it,
+        // and only then halts - as a PROTOCOL_VIOLATION from the poison-frame detector, which
+        // names the wrong cause. QwpSenderE2ETest#testLiveViewTargetIsRejectedTerminally
+        // pins the same contract end to end through the socket.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT val, ts, count(*) OVER (PARTITION BY val ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Table name "lv", rowCount=0, columnCount=0: the target-kind guard fires
+                // before any row or column is consumed, so an empty block is enough.
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        2, 'l', 'v',
+                        0,    // rowCount=0
+                        0     // columnCount=0
+                }));
+                state.processMessage();
+                Assert.assertEquals(
+                        "a live view target is permanent; NOT_ACCEPTING_WRITES would make the sender replay it",
+                        QwpIngressProcessorState.Status.SCHEMA_MISMATCH,
+                        state.getStatus()
+                );
+                Assert.assertTrue(state.getErrorText().contains("cannot modify live view [view=lv]"));
+            } finally {
+                state.onDisconnected();
+                state.close();
             }
         });
     }
@@ -1966,6 +2019,10 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     Assert.fail("expected the materialized view to reject the QWP write");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify materialized view [view=mv_target]");
+                    // Same target-kind guard, same permanence: replaying the identical bytes
+                    // cannot turn a materialized view into a writable table, so the NACK must
+                    // be terminal rather than a retriable write refusal.
+                    Assert.assertTrue("a materialized view target is a permanent rejection", e.isSchemaMismatch());
                 }
             }
         });
