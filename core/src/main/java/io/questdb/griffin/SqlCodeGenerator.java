@@ -7621,7 +7621,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 null,
                                                 backup,
                                                 backupOwnsKeyFunc,
-                                                backup == null && canKeyBeNull(symbol, sharedKeyFunc)
+                                                backup == null && canKeyBeNull(symbol, sharedKeyFunc),
+                                                true
                                         );
                                         symbolValueFunc = null;
                                         partitionFrameCursorFactory = null;
@@ -7735,7 +7736,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         null,
                                         backup,
                                         true,
-                                        backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs, symbolMapReader)
+                                        backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs, symbolMapReader),
+                                        true
                                 );
                                 partitionFrameCursorFactory = null;
                                 filter = null;
@@ -12271,7 +12273,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     null,
                                                     backup,
                                                     true,
-                                                    backup == null && canKeyBeNull(symbolKey, sharedKeyFunc)
+                                                    backup == null && canKeyBeNull(symbolKey, sharedKeyFunc),
+                                                    true
                                             );
                                         } catch (Throwable th) {
                                             Misc.free(backup);
@@ -12412,7 +12415,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             null,
                                             backup,
                                             true,
-                                            backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs, reader.getSymbolMapReader(keyReaderColIdx))
+                                            backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs, reader.getSymbolMapReader(keyReaderColIdx)),
+                                            !SqlHints.hasCoveringUnorderedHint(model)
                                     );
                                 } catch (Throwable th) {
                                     Misc.free(backup);
@@ -13540,7 +13544,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             effectiveKeys,
                             null,
                             false,
-                            false
+                            false,
+                            true
                     );
                 }
             }

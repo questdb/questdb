@@ -145,6 +145,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final SingleKeyCoveringPageFrameCursor singleKeyPageFrameCursor;
     private final Function symbolFunction;
     private final boolean symbolFunctionRuntimeConstant;
+    // False when the consumer does not require designated-timestamp order, which
+    // lets the multi-key path emit one frame per key instead of merging. Always
+    // true for single-key and latestBy, which never merge in the first place.
+    private final boolean tsOrderedFrames;
 
     public CoveringIndexRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -161,7 +165,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             @Nullable IntList patternKeys,
             @Nullable RecordCursorFactory backup,
             boolean backupOwnsKeyFunctions,
-            boolean isBackupSuppressedByHint
+            boolean isBackupSuppressedByHint,
+            boolean tsOrderedFrames
     ) {
         // keyValueFuncs (IN/= key list) and patternKeys (positive pattern's matched key set) are two
         // mutually exclusive ways to drive the multi-key merge; never both.
@@ -179,6 +184,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.latestBy = latestBy;
         this.latestByFilter = latestByFilter;
         this.patternKeys = patternKeys;
+        this.tsOrderedFrames = tsOrderedFrames;
         this.queryColToIncludeIdx = queryColToIncludeIdx;
         // Defensive copy. The caller passes intrinsicModel.keyValueFuncs, which is a
         // POOLED ObjList owned by the compiler's WhereClauseParser (ObjectPool<IntrinsicModel>).
@@ -223,7 +229,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.multiKeyCursor = new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata, mergeObserver);
             this.singleKeyCursor = null;
             this.multiKeyPageFrameCursor = !latestBy
-                    ? new MultiKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes, mergeObserver)
+                    ? new MultiKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes, mergeObserver, tsOrderedFrames)
                     : null;
             this.singleKeyPageFrameCursor = null;
         } else {
@@ -590,7 +596,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // resolved key), so it is trivially ts-ordered. Only multi-key
         // latestBy breaks the order: it emits one row per key in key order,
         // not ts order, so it alone advertises no ordering.
-        final int own = latestBy && multiKeyCursor != null ? SCAN_DIRECTION_OTHER : SCAN_DIRECTION_FORWARD;
+        // Unordered multi-key emits one key's posting list per frame, so the
+        // stream is NOT ts-ascending and must not be advertised as such -- the
+        // same reason multi-key latestBy advertises no ordering.
+        final int own = (!tsOrderedFrames && multiKeyPageFrameCursor != null) || (latestBy && multiKeyCursor != null)
+                ? SCAN_DIRECTION_OTHER
+                : SCAN_DIRECTION_FORWARD;
         if (backup == null || backup.getScanDirection() == own) {
             return own;
         }
@@ -1595,6 +1606,45 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * per-frame value buffers are allocated. (The multi-key merge still
          * materializes eagerly -- see {@code fillMergedFrame}.)
          */
+        /**
+         * True while a (key, partition) is mid-drain. This is ONE logical state with
+         * TWO representations -- the cheap O(genCount) path records a chunk to resume
+         * ({@link #cheapChunkActive}), the MIXED/fallback traverse parks a cursor
+         * ({@link #pendingRowCursor}) -- and every caller must test both. The test
+         * lives here so no call site can test half of it.
+         * <p>
+         * <b>This is also the only valid "is this key finished in this partition?"
+         * test after a fill.</b> A null return means finished, but a NON-null return
+         * can equally mean finished: {@link #fillFrameForKeyCheap} clears the resume
+         * state when the frame it is returning was the key's last chunk. A caller
+         * that advances its key only on null therefore re-opens any key that fits in
+         * a single frame, and emits it forever. {@link SingleKeyCoveringPageFrameCursor}
+         * is immune only because its progress counter is the partition iterator
+         * rather than a key index.
+         */
+        protected final boolean isKeyMidDrain() {
+            return cheapChunkActive || pendingRowCursor != null;
+        }
+
+        /**
+         * Continue the parked (key, partition) drain. Callers must check
+         * {@link #isKeyMidDrain()} first; the parked state names its own key and
+         * partition, so a caller's current key is deliberately NOT consulted.
+         * <p>
+         * Two resume shapes: for the parked-cursor shape the row range is unused (the
+         * cursor owns it); for the cheap shape the cursor opened here is reader prep
+         * only and the stored rowLo/clamp drive selectKthMatch -- so pass cheapRowLo,
+         * making the prep cursor's minValue match and a defensive re-open use the
+         * correct range.
+         */
+        protected final @Nullable PageFrame resumeKeyDrain() {
+            assert isKeyMidDrain();
+            final long resumeRowLo = cheapChunkActive ? cheapRowLo : 0L;
+            return fillFrameForKey(
+                    pendingSymbolKey, pendingPartitionIndex,
+                    resumeRowLo, resumeRowLo, maxRowsPerFrame, true);
+        }
+
         protected @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap, boolean cheapEligible) {
             // Open (or continue) the covering cursor. KEEPING this is load-bearing
             // even on the cheap path: getCursor -> reloadConditionally pre-extends
@@ -2779,6 +2829,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private boolean isHeapMerge;
         private boolean isMergeObserved;
         private final MergeObserver mergeObserver;
+        // Per-key (unordered) iteration state, used only when tsOrderedFrames is
+        // false. Outer loop is partitions -- the partition frame cursor is single
+        // pass -- inner loop is keys, so each frame carries ONE resolved symbol
+        // key and the partitions themselves still arrive in ascending order.
+        private int perKeyIdx;
+        private int perKeyPartitionIndex = -1;
+        private long perKeyRowHi;
+        private long perKeyRowLo;
+        private final boolean tsOrderedFrames;
 
         MultiKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -2786,10 +2845,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 int[] requiredIncludeIndices,
                 RecordMetadata metadata,
                 IntList columnIndexes,
-                MergeObserver mergeObserver
+                MergeObserver mergeObserver,
+                boolean tsOrderedFrames
         ) {
             super(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes);
             this.mergeObserver = mergeObserver;
+            this.tsOrderedFrames = tsOrderedFrames;
         }
 
         @Override
@@ -2804,6 +2865,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (multiKeys.size() == 0) {
                 isExhausted = true;
                 return null;
+            }
+            if (!tsOrderedFrames) {
+                return nextImplPerKey();
             }
             while (true) {
                 if (mergePartitionIndex >= 0) {
@@ -2828,6 +2892,58 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         void resetIterationState() {
             closeMergeCursors();
+            perKeyPartitionIndex = -1;
+            perKeyIdx = 0;
+        }
+
+        /**
+         * Unordered multi-key iteration: drain one key at a time within each
+         * partition, reusing the SINGLE-key fill. Every frame therefore carries a
+         * real resolved symbol key, so it stays metadata-only and the async worker
+         * arm decodes the covered values -- unlike {@link #fillMergedFrame}, whose
+         * key-interleaved frames report VALUE_NOT_FOUND, are skipped by the worker
+         * arm, and are consequently materialized on this thread.
+         * <p>
+         * Rows are ascending WITHIN a frame (a key's posting list is ascending),
+         * but frames are not globally timestamp-ordered, so this mode is legal only
+         * where the consumer does not require designated-timestamp order. The
+         * factory advertises that via {@code getScanDirection()}.
+         */
+        @Nullable
+        private PageFrame nextImplPerKey() {
+            final int n = multiKeys.size();
+            while (true) {
+                if (perKeyPartitionIndex >= 0) {
+                    while (perKeyIdx < n) {
+                        // Resume a parked drain before starting the next key: the
+                        // parked state owns the cursor and names its own key.
+                        final PageFrame result = isKeyMidDrain()
+                                ? resumeKeyDrain()
+                                : fillFrameForKey(
+                                        multiKeys.getQuick(perKeyIdx), perKeyPartitionIndex,
+                                        perKeyRowLo, perKeyRowHi, maxRowsPerFrame, true);
+                        // See isKeyMidDrain(): this -- NOT a null return -- is what
+                        // says the key is finished in this partition.
+                        if (!isKeyMidDrain()) {
+                            perKeyIdx++;
+                        }
+                        if (result != null) {
+                            return result;
+                        }
+                    }
+                    perKeyPartitionIndex = -1;
+                }
+                PartitionFrame partFrame = frameCursor.next();
+                if (partFrame == null) {
+                    isExhausted = true;
+                    return null;
+                }
+                framePartitionFormat = partFrame.getPartitionFormat();
+                perKeyPartitionIndex = partFrame.getPartitionIndex();
+                perKeyRowLo = partFrame.getRowLo();
+                perKeyRowHi = partFrame.getRowHi();
+                perKeyIdx = 0;
+            }
         }
 
         private void closeMergeCursors() {
@@ -3167,20 +3283,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (descending) {
                 return nextImplDescending();
             }
-            // If a previous fillFrameForKey left this (key, partition) mid-drain,
-            // resume it before advancing the partition iterator. Two resume shapes:
-            // the cheap O(genCount) path (cheapChunkActive, no parked cursor) and the
-            // MIXED/fallback traverse (pendingRowCursor parked). For the parked-cursor
-            // shape the row range is unused (the cursor owns it); for the cheap shape
-            // the cursor opened here is for reader prep only and the stored rowLo/clamp
-            // drive selectKthMatch -- pass cheapRowLo so the prep cursor's minValue
-            // matches and a defensive re-open would use the correct range.
-            if (cheapChunkActive || pendingRowCursor != null) {
-                final long resumeRowLo = cheapChunkActive ? cheapRowLo : 0L;
-                PageFrame result = fillFrameForKey(
-                        pendingSymbolKey,
-                        pendingPartitionIndex,
-                        resumeRowLo, resumeRowLo, maxRowsPerFrame, true);
+            // If a previous fill left this (key, partition) mid-drain, resume it
+            // before advancing the partition iterator.
+            if (isKeyMidDrain()) {
+                PageFrame result = resumeKeyDrain();
                 if (result != null) {
                     return result;
                 }

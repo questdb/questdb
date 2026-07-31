@@ -36,6 +36,14 @@ public final class SqlHints {
     public static final String ASOF_LINEAR_HINT = "asof_linear";
     public static final String ASOF_MEMOIZED_DRIVEBY_HINT = "asof_memoized_driveby";
     public static final String ASOF_MEMOIZED_HINT = "asof_memoized";
+    // Lets a multi-key covering scan emit one frame per key instead of k-way
+    // merging the per-key cursors into designated-timestamp order. Only valid
+    // when the consumer does not depend on that order: the merge is what makes
+    // the stream ts-ascending, and dropping it also drops the resolved-symbol-key
+    // frame metadata the parallel worker arm needs, which is where the cost is.
+    // Experimental opt-in while the planner-side predicate is settled -- see
+    // CoveringIndexRecordCursorFactory#getScanDirection.
+    public static final String COVERING_UNORDERED_HINT = "covering_unordered";
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
     public static final String FORCE_USE_COVERING_HINT = "force_use_covering";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
@@ -123,6 +131,10 @@ public final class SqlHints {
             @Nullable CharSequence tableNameB
     ) {
         return hasHintWithParams(queryModel, MARKOUT_HORIZON_HINT, tableNameA, tableNameB);
+    }
+
+    public static boolean hasCoveringUnorderedHint(@NotNull IQueryModel queryModel) {
+        return queryModel.getHints().keyIndex(COVERING_UNORDERED_HINT) < 0;
     }
 
     public static boolean hasNoCoveringHint(@NotNull IQueryModel queryModel) {
