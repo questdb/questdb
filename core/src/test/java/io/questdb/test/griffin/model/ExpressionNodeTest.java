@@ -73,6 +73,19 @@ public class ExpressionNodeTest {
     }
 
     @Test
+    public void testClearResetsScalarBoundHolder() {
+        // ExpressionNode instances are pooled and recycled across compiles. A holder surviving
+        // clear() would let a later, unrelated query resolve its sub-query node to a stale
+        // ScalarSubQueryBoundRefFunction and read a bound frozen by a previous execution.
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
+        final ExpressionNode node = pool.next().of(ExpressionNode.QUERY, "query", 0, 0);
+        node.scalarBoundHolder = new ScalarTimestampBoundHolder(ColumnType.TIMESTAMP, false);
+
+        node.clear();
+        Assert.assertNull(node.scalarBoundHolder);
+    }
+
+    @Test
     public void testDeepHashCodeConsistentWithCompareNodesExact() {
         // AsciiCharSequence does not override hashCode(), so it uses identity-based Object.hashCode().
         // This test verifies that deepHashCode uses content-based hashing for tokens,
