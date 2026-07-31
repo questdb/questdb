@@ -520,6 +520,13 @@ public class LiveViewInstance implements QuietCloseable {
     // Mutated only on the refresh-worker thread under the refresh latch; not volatile
     // because no other thread reads it.
     private long sealsSinceCompaction;
+    // Checkpoint seals completed since the last purge sweep, i.e. the cadence
+    // cairo.live.view.checkpoint.purge.interval is expressed in. Counted separately from
+    // sealsSinceCompaction because the two cadences are configured independently, and for
+    // the same reason that one counts seals rather than testing a base seqTxn modulo.
+    // Mutated only on the refresh-worker thread under the refresh latch; not volatile
+    // because no other thread reads it.
+    private long sealsSincePurge;
     // Base-table reader pinned across the whole multi-turn seed sweep so every
     // turn reads one stable MVCC snapshot. Without it, re-opening the base at the
     // latest applied seqTxn each turn makes the positional skipRows() resume
@@ -1339,6 +1346,16 @@ public class LiveViewInstance implements QuietCloseable {
         return ++sealsSinceCompaction;
     }
 
+    /**
+     * Records one completed checkpoint seal against the purge cadence and returns the
+     * running count. The caller compares it against
+     * {@code cairo.live.view.checkpoint.purge.interval} and calls
+     * {@link #resetSealsSincePurge()} once it fires.
+     */
+    public long incrementAndGetSealsSincePurge() {
+        return ++sealsSincePurge;
+    }
+
     public boolean isDropped() {
         return dropped;
     }
@@ -1798,6 +1815,14 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void resetSealsSinceCompaction() {
         sealsSinceCompaction = 0;
+    }
+
+    /**
+     * Restarts the purge cadence window after a sweep has been attempted.
+     * See {@link #incrementAndGetSealsSincePurge()}.
+     */
+    public void resetSealsSincePurge() {
+        sealsSincePurge = 0;
     }
 
     /**

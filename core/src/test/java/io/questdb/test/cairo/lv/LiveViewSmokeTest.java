@@ -20361,9 +20361,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 // timeline holds. The A/B pair has only one valid slot yet, so
                 // the collection floor is the current generation and the lag is
                 // zero; it becomes 1 once a second publication leaves the first
-                // slot behind as the fallback. The collection columns stay NULL:
-                // this view's only reconciliation ran against a directory that
-                // held no generation to sweep.
+                // slot behind as the fallback. The collection columns are filled
+                // by the purge cadence's sweep, which runs after this seal against
+                // the generation it just published: one live data segment, and
+                // nothing retired yet for the fallback slot to hold back.
                 assertQuery("SELECT checkpoint_timeline_generation, checkpoint_timeline_entries, " +
                         "checkpoint_timeline_normalized_base_seqtxn, " +
                         "checkpoint_timeline_physical_bytes = checkpoint_last_write_new_bytes AS first_write_is_all, " +
@@ -20377,7 +20378,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                                 "has_logical_bytes\tcheckpoint_timeline_row_position_delta_bytes\t" +
                                 "checkpoint_oldest_pinned_generation\tcheckpoint_gc_lag_generations\t" +
                                 "checkpoint_data_segment_count\tcheckpoint_obsolete_segment_bytes\n" +
-                                "1\t1\t1\ttrue\ttrue\t0\t1\t0\tnull\tnull\n");
+                                "1\t1\t1\ttrue\ttrue\t0\t1\t0\t1\t0\n");
 
                 // A second cadence seal leaves the first generation in the
                 // other slot, which is the fallback the WAL floor and the purge
@@ -20400,10 +20401,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
 
             try {
-                // Startup reconciliation is the seam that sweeps the catalogue,
-                // so a restart is what fills the collection columns in - off the
-                // durable superblock and the sweep beside it, with no seal of its
-                // own, which is why the marginal write cost reads NULL again.
+                // Startup reconciliation sweeps the catalogue too, so the
+                // collection columns come back off the durable superblock and
+                // that sweep, with no seal of its own - which is why the marginal
+                // write cost reads zero.
                 engine.getLiveViewRegistry().clear();
                 engine.buildViewGraphs();
 

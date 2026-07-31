@@ -495,6 +495,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointPurgeInterval() {
+        return getDelegate().getLiveViewCheckpointPurgeInterval();
+    }
+
+    @Override
     public long getLiveViewCheckpointRepairReplayMaxRows() {
         return getDelegate().getLiveViewCheckpointRepairReplayMaxRows();
     }

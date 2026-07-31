@@ -372,6 +372,10 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
     @Test
     public void testSupersededTimelineAndCatalogueSegmentsAreReclaimed() throws Exception {
         assertMemoryLeak(() -> {
+            // Reconciliation is the sweep this case measures, so the cadence sweep
+            // beside it is off: with both running, purgeCycle finds the files
+            // already gone and the case would read as reclaiming nothing.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 0);
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 for (int seal = 1; seal <= SEALS_EARLY; seal++) {
@@ -438,6 +442,11 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
     @Test
     public void testTheCatalogueRetiresTheEntriesOfSweptSegments() throws Exception {
         assertMemoryLeak(() -> {
+            // The hand-off this case measures is the one a restart's reconciliation
+            // makes, so the cadence sweep is off: with it on, the seal after each
+            // sweep carries the proposal away and no run of seals ever accumulates
+            // the dead entries the case needs to see retired in one publication.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 0);
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 for (int seal = 1; seal <= SEALS_LATE; seal++) {
@@ -492,6 +501,133 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
             assertCatalogueMatchesDisk(instance);
             restartCycle();
             assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testTheCadenceSweepCollectsWithoutARestart() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seal = 1; seal <= SEALS_EARLY; seal++) {
+                    commit(job, seal);
+                }
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+                final Set<Long> earlyMetaFiles = metaSegmentIds(instance);
+
+                // No purgeCycle and no restart from here on. A worker reconciles a
+                // directory once, at its first seal of it, so before the purge
+                // cadence existed every segment these seals superseded stayed on
+                // disk until the process ended - whatever this run reclaims, the
+                // cadence sweep reclaimed.
+                for (int seal = SEALS_EARLY + 1; seal <= SEALS_LATE; seal++) {
+                    commit(job, seal);
+                }
+                driveRefreshToQuiescence(job);
+
+                final Set<Long> lateMetaFiles = metaSegmentIds(instance);
+                int reclaimed = 0;
+                for (long segmentId : earlyMetaFiles) {
+                    if (!lateMetaFiles.contains(segmentId)) {
+                        reclaimed++;
+                    }
+                }
+                Assert.assertTrue(
+                        "not one of the " + earlyMetaFiles.size() + " files present at seal " + SEALS_EARLY
+                                + " was unlinked over the seals that followed, so nothing swept inside"
+                                + " the process",
+                        reclaimed > 0
+                );
+
+                // The headline, and what a growing view actually feels: a segment
+                // whose reference count reached zero and whose file is still there
+                // is garbage waiting for a sweep. Each seal supersedes its
+                // predecessor's timeline and catalogue segments, so without the
+                // cadence that queue grows by about two per seal and only a restart
+                // ever drains it. With it, the queue holds no more than what the
+                // fallback slot still protects.
+                final int extraSeals = SEALS_LATE - SEALS_EARLY;
+                final int uncollected = uncollectedSegmentCount(instance);
+                Assert.assertTrue(
+                        "the catalogue holds " + uncollected + " zero-reference segments whose files are"
+                                + " still on disk after " + SEALS_LATE + " seals",
+                        uncollected <= extraSeals / 4
+                );
+
+                // The other half of the cadence: the entries those sweeps left
+                // naming nothing ride the next seal out of the tree, so the
+                // catalogue no longer waits for a restart either.
+                final Set<Long> pending = deadCatalogueEntries(instance);
+                Assert.assertFalse(
+                        "the last sweep left no entry naming an unlinked file, so the hand-off"
+                                + " below proves nothing",
+                        pending.isEmpty()
+                );
+                commit(job, SEALS_LATE + 1);
+                driveRefreshToQuiescence(job);
+                final Set<Long> catalogueAfter = catalogue(instance);
+                for (long segmentId : pending) {
+                    Assert.assertFalse(
+                            "an entry the cadence sweep proposed must be gone after the next seal,"
+                                    + " segmentId=" + segmentId,
+                            catalogueAfter.contains(segmentId)
+                    );
+                }
+
+                assertCatalogueMatchesDisk(instance);
+                restartCycle();
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testTheCadenceSweepStaysOffAtIntervalZero() throws Exception {
+        assertMemoryLeak(() -> {
+            // The control that gives the case above its meaning, and the statement
+            // of what the interval buys: at zero, reclamation is exactly what it
+            // was before the cadence existed - a reconciliation and nothing else.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 0);
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seal = 1; seal <= SEALS_EARLY; seal++) {
+                    commit(job, seal);
+                }
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+                final Set<Long> earlyMetaFiles = metaSegmentIds(instance);
+
+                for (int seal = SEALS_EARLY + 1; seal <= SEALS_LATE; seal++) {
+                    commit(job, seal);
+                }
+                driveRefreshToQuiescence(job);
+
+                final Set<Long> lateMetaFiles = metaSegmentIds(instance);
+                for (long segmentId : earlyMetaFiles) {
+                    Assert.assertTrue(
+                            "a segment was unlinked with the purge cadence disabled, segmentId=" + segmentId,
+                            lateMetaFiles.contains(segmentId)
+                    );
+                }
+                // And every segment those seals superseded is still queued, which is
+                // the growth the cadence exists to stop: the reconciliation sweep
+                // finds the lot of it in one pass.
+                final int extraSeals = SEALS_LATE - SEALS_EARLY;
+                Assert.assertTrue(
+                        "only " + uncollectedSegmentCount(instance) + " zero-reference segments were"
+                                + " waiting after " + SEALS_LATE + " seals with no cadence sweep",
+                        uncollectedSegmentCount(instance) >= extraSeals
+                );
+                Assert.assertTrue(
+                        "reconciliation reclaimed nothing, so the run left no garbage behind at all",
+                        purgeCycle(instance) >= extraSeals
+                );
+
+                assertCatalogueMatchesDisk(instance);
+                restartCycle();
+                assertViewMatchesRecompute();
+            }
         });
     }
 
@@ -879,6 +1015,43 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
             }
         }
         return keys;
+    }
+
+    /**
+     * Catalogued segments no root of the selected generation references any more,
+     * whose file is nevertheless still on disk. Each one is collectable garbage
+     * waiting for a sweep - modulo the handful the fallback slot or a reader pin
+     * still protects, which is what keeps the bound above zero rather than at it.
+     */
+    private int uncollectedSegmentCount(LiveViewInstance instance) {
+        final Set<Long> metaFiles = metaSegmentIds(instance);
+        final int[] count = {0};
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the generation must be readable", metaStore.isValid());
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader directory =
+                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                directory.of(dir, pin.getSegmentDirectoryRootRef());
+                directory.iterateAll(entry -> {
+                    if (entry.referenceCount != 0) {
+                        return;
+                    }
+                    final boolean exists = entry.isMetadata()
+                            ? metaFiles.contains(entry.segmentId)
+                            : dataSegmentFileExists(instance, entry.segmentId);
+                    if (exists) {
+                        count[0]++;
+                    }
+                });
+            }
+        }
+        return count[0];
     }
 
     private LiveViewInstance viewInstance() {

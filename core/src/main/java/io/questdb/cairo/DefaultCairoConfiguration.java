@@ -517,6 +517,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointPurgeInterval() {
+        return 1;
+    }
+
+    @Override
     public long getLiveViewCheckpointRepairReplayMaxRows() {
         return 1_000_000L;
     }

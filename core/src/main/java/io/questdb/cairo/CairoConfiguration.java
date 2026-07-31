@@ -364,6 +364,17 @@ public interface CairoConfiguration {
     long getLiveViewCheckpointMaxDurationMicros();
 
     /**
+     * Cadence, in live-view checkpoint seals, at which the refresh worker sweeps
+     * the view's checkpoint directory for segments no generation references any
+     * more, unlinking them and staging their catalogue entries for the next seal
+     * to remove. Without it a sweep runs only when a worker reconciles the
+     * directory - once per process - so every segment a seal, a repair or a
+     * retention pass supersedes waits for a restart before its bytes come back.
+     * Zero disables the cadence, leaving that reconciliation the only sweep.
+     */
+    long getLiveViewCheckpointPurgeInterval();
+
+    /**
      * Per-turn budget on the base rows one localized out-of-order repair may
      * replay. The repair's convergence boundary makes its work finite, but a
      * dense interval can still hold more rows than one refresh turn should

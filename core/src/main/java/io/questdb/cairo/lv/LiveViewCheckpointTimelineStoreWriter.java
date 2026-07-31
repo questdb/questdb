@@ -1093,6 +1093,77 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         this.testFailureStage = testFailureStage;
     }
 
+    /**
+     * Unlinks every catalogued segment the current generation no longer reaches,
+     * and stages the catalogue entries the pass leaves naming nothing for the next
+     * seal of this directory to remove.
+     * <p>
+     * This is the reclamation half of {@link LiveViewCheckpointLifecycle#reconcile}
+     * on its own, without the epoch, repair-descriptor and orphan rules that only a
+     * directory nobody has published under yet needs. A worker reconciles a
+     * directory once - at its first seal of it - so without this pass the segments
+     * every later seal, repair, compaction and retention publication supersedes
+     * wait for a restart before their bytes come back, and so do their catalogue
+     * entries.
+     * <p>
+     * The pass publishes no generation of its own, which is exactly why the entry
+     * removals cannot travel with it: the catalogue is copy-on-write and named by
+     * the superblock, so only a publication may rewrite it. The proposal is held
+     * per checkpoint directory and re-derived by the next sweep, so a seal that is
+     * skipped, refused or crashes loses nothing.
+     * <p>
+     * The caller must serialize this with publication and pin acquisition exactly
+     * as it serializes reconciliation - the live-view integration runs it on the
+     * refresh worker, after the seal whose cadence fired it.
+     */
+    public SweepResult sweep(
+            @Transient @NotNull Path checkpointsDir,
+            long definitionTxn,
+            long historyEpoch,
+            boolean primaryOwner
+    ) {
+        if (!primaryOwner) {
+            return SweepResult.NOT_SWEPT;
+        }
+        try (LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)) {
+            metaStore.of(checkpointsDir);
+            if (!metaStore.isValid()) {
+                return SweepResult.NOT_SWEPT;
+            }
+            final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
+            if (superblock.definitionTxn != definitionTxn || superblock.historyEpoch != historyEpoch) {
+                // A generation of some other history epoch owns this directory.
+                // Reconciliation retires it whole rather than collecting under it,
+                // so this pass leaves every file where it is.
+                return SweepResult.NOT_SWEPT;
+            }
+            final LiveViewCheckpointDataStore.PurgeResult purge;
+            try (LiveViewCheckpointDataStore dataStore = new LiveViewCheckpointDataStore(configuration, metaStore)) {
+                dataStore.of(checkpointsDir);
+                purge = dataStore.purge();
+            }
+            // The sweep re-proposes every entry whose file is already gone, so this
+            // list supersedes whatever an earlier sweep left pending rather than
+            // adding to it: an entry missing from it is one a publication has
+            // already carried out of the tree.
+            final LongList retirable = purge.getRetirableSegmentIds();
+            final String lifecycleKey = checkpointsDir.toString();
+            if (retirable.size() > 0) {
+                pendingEntryRetirements.put(lifecycleKey, new LongList(retirable));
+            } else {
+                pendingEntryRetirements.remove(lifecycleKey);
+            }
+            return new SweepResult(
+                    purge.getPurgedSegmentCount(),
+                    purge.getPurgedBytes(),
+                    purge.getFailedSegmentCount(),
+                    retirable.size(),
+                    purge.getLiveSegmentCount(),
+                    purge.getObsoleteBytes()
+            );
+        }
+    }
+
     private Result append0(
             @Transient @NotNull Path checkpointsDir,
             @NotNull ObjList<WindowFunction> functions,
@@ -2394,6 +2465,103 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         public long getWalPurgeFloor() {
             return walPurgeFloor;
+        }
+    }
+
+    /**
+     * Result of one cadence purge sweep. When {@link #isSwept()} is false the
+     * directory held no generation this caller owns and nothing was walked; every
+     * other field is zero.
+     */
+    public static final class SweepResult {
+        static final SweepResult NOT_SWEPT = new SweepResult(0, 0, 0, 0, 0, 0, false);
+        private final int failedSegmentCount;
+        private final int liveSegmentCount;
+        private final long obsoleteBytes;
+        private final long purgedBytes;
+        private final int purgedSegmentCount;
+        private final int retirableEntryCount;
+        private final boolean swept;
+
+        private SweepResult(
+                int purgedSegmentCount,
+                long purgedBytes,
+                int failedSegmentCount,
+                int retirableEntryCount,
+                int liveSegmentCount,
+                long obsoleteBytes,
+                boolean swept
+        ) {
+            this.purgedSegmentCount = purgedSegmentCount;
+            this.purgedBytes = purgedBytes;
+            this.failedSegmentCount = failedSegmentCount;
+            this.retirableEntryCount = retirableEntryCount;
+            this.liveSegmentCount = liveSegmentCount;
+            this.obsoleteBytes = obsoleteBytes;
+            this.swept = swept;
+        }
+
+        private SweepResult(
+                int purgedSegmentCount,
+                long purgedBytes,
+                int failedSegmentCount,
+                int retirableEntryCount,
+                int liveSegmentCount,
+                long obsoleteBytes
+        ) {
+            this(
+                    purgedSegmentCount,
+                    purgedBytes,
+                    failedSegmentCount,
+                    retirableEntryCount,
+                    liveSegmentCount,
+                    obsoleteBytes,
+                    true
+            );
+        }
+
+        /**
+         * @return segments this sweep could not unlink, which stay queued for the
+         * next one
+         */
+        public int getFailedSegmentCount() {
+            return failedSegmentCount;
+        }
+
+        /**
+         * @return data segments a current logical root still names
+         */
+        public int getLiveSegmentCount() {
+            return liveSegmentCount;
+        }
+
+        /**
+         * @return bytes held by retired segments this sweep may not collect yet -
+         * still protected by the fallback slot or a reader pin - over data and
+         * metadata segments alike
+         */
+        public long getObsoleteBytes() {
+            return obsoleteBytes;
+        }
+
+        public long getPurgedBytes() {
+            return purgedBytes;
+        }
+
+        public int getPurgedSegmentCount() {
+            return purgedSegmentCount;
+        }
+
+        /**
+         * @return catalogue entries this sweep left naming no file, staged for the
+         * next seal of this directory to remove from the tree
+         */
+        public int getRetirableEntryCount() {
+            return retirableEntryCount;
+        }
+
+        public boolean isSwept() {
+            return swept;
         }
     }
 

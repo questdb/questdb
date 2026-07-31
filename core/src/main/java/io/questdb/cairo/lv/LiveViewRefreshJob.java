@@ -702,6 +702,69 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Runs one purge sweep over the instance's checkpoint directory when the
+     * {@code cairo.live.view.checkpoint.purge.interval} cadence is reached. The
+     * sweep unlinks every segment no generation reaches any more and stages the
+     * catalogue entries it leaves naming nothing, which the next seal removes.
+     * <p>
+     * Without the cadence a sweep runs only where {@link LiveViewCheckpointLifecycle#reconcile}
+     * does - once per worker per directory - so everything a seal, a repair, a
+     * compaction or a retention pass supersedes after that first seal waits for a
+     * restart before its bytes come back. Best-effort, like the two passes beside
+     * it: the sweep publishes no generation, so a fault costs one deferred
+     * collection and leaves the checkpoint store byte-identical.
+     */
+    private void maybeSweepCheckpointSegments(LiveViewInstance instance) {
+        final long interval = engine.getConfiguration().getLiveViewCheckpointPurgeInterval();
+        if (interval <= 0) {
+            return;
+        }
+        if (checkpointTimelineStoreWriter == null) {
+            // Nothing to sweep through, and nothing to hand a retirement proposal to.
+            // Return before the cadence counter advances, as compaction does.
+            return;
+        }
+        if (instance.incrementAndGetSealsSincePurge() < interval) {
+            return;
+        }
+        instance.resetSealsSincePurge();
+        try (Path checkpointsDir = new Path()) {
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            // The sweep collects under a timeline this node published, so it runs on
+            // whichever role that node currently holds - see appendCheckpointTimelineRoot
+            // for why the role read lock outlives the read-only refusal it used to carry.
+            final Lock roleLock = engine.getRoleSwitchReadLock();
+            roleLock.lock();
+            final LiveViewCheckpointTimelineStoreWriter.SweepResult result;
+            try {
+                result = checkpointTimelineStoreWriter.sweep(
+                        checkpointsDir,
+                        instance.getLiveViewToken().getTableId(),
+                        0,
+                        true
+                );
+            } finally {
+                roleLock.unlock();
+            }
+            if (result.isSwept()) {
+                instance.recordCheckpointGcSweep(result.getLiveSegmentCount(), result.getObsoleteBytes());
+                LOG.debug().$("swept live view checkpoint segments [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", purged=").$(result.getPurgedSegmentCount())
+                        .$(", purgedBytes=").$(result.getPurgedBytes())
+                        .$(", failed=").$(result.getFailedSegmentCount())
+                        .$(", retirableEntries=").$(result.getRetirableEntryCount()).I$();
+            }
+        } catch (Throwable t) {
+            LOG.error().$("could not sweep live view checkpoint segments [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+        }
+    }
+
+    /**
      * Retires every checkpoint boundary that has fallen below the
      * {@code cairo.live.view.checkpoint.retention.micros} event-time horizon,
      * measured back from the newest sealed boundary. Disabled by default (horizon
@@ -6076,9 +6139,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // seals: a skipped boundary or a failed write added no roots and left nothing to repack.
         if (sealed) {
             // Retention runs first so compaction walks the roots that survive it
-            // rather than the ones about to retire.
+            // rather than the ones about to retire, and the sweep runs last so it
+            // walks a catalogue both of them have finished writing.
             maybeTrimCheckpointTimeline(instance);
             maybeCompactCheckpointTimeline(instance);
+            maybeSweepCheckpointSegments(instance);
         }
         return sealed;
     }
