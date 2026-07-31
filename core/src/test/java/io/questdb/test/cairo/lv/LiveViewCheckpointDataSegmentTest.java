@@ -38,8 +38,10 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -294,6 +296,77 @@ public class LiveViewCheckpointDataSegmentTest extends AbstractCairoTest {
                 reader.of(checkpointsDir(dir), 10, page.fileLength);
                 reader.openPage(page.ref, PAGE_KIND, CODEC, FLAGS, 1, Long.BYTES);
                 Assert.assertNotEquals(0x0102_0304_0506_0708L, reader.getLong(0));
+            }
+        });
+    }
+
+    @Test
+    public void testStatFailureIsIoErrorNotCorruption() throws Exception {
+        // A negative stat result covers two different worlds. A MISSING segment is
+        // structural invalidity - the directory references a file that is not there -
+        // and raises the timeline-invalid errno the restore fallback keys on. Any
+        // other stat failure (EACCES, EIO, a transient NFS blip) is an IO error:
+        // condemning the root on one blip would make restore skip an intact root, so
+        // the reader surfaces the raw errno instead and stays reusable once the blip
+        // clears.
+        final boolean[] failNextLength = {false};
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return failNextLength[0] ? CairoException.ERRNO_EACCES_LINUX : super.errno();
+            }
+
+            @Override
+            public long length(LPSZ name) {
+                if (failNextLength[0]) {
+                    return -1;
+                }
+                return super.length(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            final WrittenPage page = writeLongPage(9, 42);
+            try (LiveViewCheckpointDataSegmentReader reader = new LiveViewCheckpointDataSegmentReader(configuration);
+                 Path dir = new Path()) {
+                failNextLength[0] = true;
+                try {
+                    reader.of(checkpointsDir(dir), 9, page.fileLength);
+                    Assert.fail("expected the injected stat failure to surface as an IO error");
+                } catch (CairoException e) {
+                    Assert.assertEquals(CairoException.ERRNO_EACCES_LINUX, e.getErrno());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not read live view checkpoint data segment length");
+                } finally {
+                    failNextLength[0] = false;
+                }
+
+                // The failed open left no stale mapping behind: the reader refuses
+                // reads instead of serving whatever it held before.
+                try {
+                    reader.getFileLength();
+                    Assert.fail("expected the failed open to leave the reader closed");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "data segment reader is not open");
+                }
+
+                // Once the blip clears, the same reader serves the same, un-condemned
+                // segment.
+                reader.of(checkpointsDir(dir), 9, page.fileLength);
+                reader.openPage(page.ref, PAGE_KIND, CODEC, FLAGS, 1, Long.BYTES);
+                Assert.assertEquals(42, reader.getLong(0));
+            }
+
+            // A segment the directory references but that does not exist on disk is
+            // corruption, not an IO error: the stat's ENOENT falls through to the
+            // length mismatch and raises the timeline-invalid errno.
+            try (LiveViewCheckpointDataSegmentReader reader = new LiveViewCheckpointDataSegmentReader(configuration);
+                 Path dir = new Path()) {
+                try {
+                    reader.of(checkpointsDir(dir), 10, page.fileLength);
+                    Assert.fail("expected the missing segment to surface as corruption");
+                } catch (CairoException e) {
+                    Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "data segment file length mismatch");
+                }
             }
         });
     }
