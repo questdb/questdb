@@ -1393,6 +1393,17 @@ Costs the change adds, stated because they are real:
   elision case moved to an **anchored** view - the shape that is still both
   whole-state and spliceable - so the capture-side comparison keeps its coverage.
 
+**The #6939 body carries it in three places**, on the same day and through the
+`gh api --method PATCH` route section 5.10 records. The checkpoint-timeline bullet
+now splits what a repair does with the timeline by the dependency that bounded it,
+where it used to say a repair "re-versions only the roots inside" its interval
+flatly; a Tradeoffs bullet states the cost, that a ROWS-framed view loses the
+boundaries between the correction floor and the frontier and so anchors lower on
+the next correction; and the test plan gains the suite, its red-before numbers and
+the RANGE control that makes the rule a dependency question rather than a blanket
+refusal. The localization claim itself did not move: a ROWS repair still reads and
+re-emits its interval and nothing else.
+
 **What the fix is not.** Task 4 said to size it "against `capture` and the scratch
 overlay". Neither is where it went. `RepairCapture` freezes what it is handed, and
 the overlay is the reason the runtime survives what the roots do not; the defect is
