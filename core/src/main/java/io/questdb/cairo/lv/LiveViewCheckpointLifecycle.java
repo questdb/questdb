@@ -45,19 +45,23 @@ import org.jetbrains.annotations.Nullable;
  * <p>Startup reconciliation is bounded by physical segment count. It discards
  * the candidate of every crashed repair through
  * {@link LiveViewCheckpointRepairState#sweep}, removes recognized temporary
- * files, and records final-name files above both valid A/B slot id ceilings.
- * Final names are removed only after a new slot advances past them, preserving
- * monotonic allocation. Reconciliation never walks logical checkpoint leaves.
+ * files, removes every final name the generation it adopts does not catalogue,
+ * and records the final-name files above both valid A/B slot id ceilings that it
+ * had no catalogue to ask about. Those last are removed only after a new slot
+ * advances past them, preserving monotonic allocation. Reconciliation walks the
+ * segment catalogue but never the logical checkpoint leaves below it.
  * Zero-reference deletion delegates to {@link LiveViewCheckpointDataStore},
  * retaining its old-slot, reader-pin, candidate-ownership, and retry guards.</p>
  *
  * <p>That id-ceiling rule needs a reconciliation to read the ceiling before the
  * next publication moves it, which only a restart and a failed {@code append}
  * give it. {@link #purgeUncataloguedSegments} states the same disposition
- * against the catalogue instead, so it holds whatever the ceiling has since done,
- * and the purge cadence runs it on every sweep - that is what collects the
- * segments a failed retention, compaction or repair publication renamed into
- * place.</p>
+ * against the catalogue instead, so it holds whatever the ceiling has since done.
+ * Reconciliation applies it to every generation it adopts and the purge cadence
+ * applies it on every sweep, so the two rules no longer overlap: the ceiling
+ * decides only what no catalogue can speak for, which is a directory carrying no
+ * valid generation at all. There every final name is an orphan by definition, and
+ * no publication is there to have moved the ceiling off it.</p>
  *
  * <p>Ahead of all of that, reconciliation classifies the directory as a whole.
  * A {@code _timeline} carrying a foreign layout version, or a top-level entry
@@ -94,6 +98,14 @@ public final class LiveViewCheckpointLifecycle {
      * rule: it is removed whole and the result reports
      * {@link ReconcileResult#isFormatReset()}, leaving the caller with the same
      * disposition a live view that never checkpointed has.
+     * <p>
+     * A reconciliation that adopts a generation reclaims under both halves of the
+     * catalogue's reachability rule, exactly as a cadence sweep does: the segments
+     * the adopted generation no longer reaches through
+     * {@link LiveViewCheckpointDataStore#purge}, and the final-name files it never
+     * catalogued at all through {@link #purgeUncataloguedSegments}. Only where no
+     * generation is adopted does the deferred id-ceiling rule decide anything, and
+     * there the ceiling is zero, so it names every final-name file on disk.
      */
     public static ReconcileResult reconcile(
             @NotNull CairoConfiguration configuration,
@@ -142,6 +154,7 @@ public final class LiveViewCheckpointLifecycle {
         long normalizedBaseSeqTxn = Numbers.LONG_NULL;
         LiveViewCheckpointDataStore.PurgeResult purgeResult = null;
         LiveViewCheckpointTimelineStats stats = null;
+        CleanupStats uncatalogued = CleanupStats.NONE;
         try (LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)) {
             metaStore.of(checkpointsDir);
             if (metaStore.isValid()) {
@@ -165,6 +178,14 @@ public final class LiveViewCheckpointLifecycle {
                         dataStore.of(checkpointsDir);
                         purgeResult = dataStore.purge();
                     }
+                    // The sweep above decides the fate of every segment this
+                    // generation ever named; this decides the fate of the files it
+                    // never named at all. Deciding here rather than recording an id
+                    // range for the next publication to act on is what makes the
+                    // rule survive: a ceiling stops naming a file as soon as any
+                    // publication steps over its id, and a catalogue that never held
+                    // the id keeps saying so.
+                    uncatalogued = purgeUncataloguedSegments(configuration, checkpointsDir, superblock, true);
                 }
             }
         }
@@ -202,7 +223,13 @@ public final class LiveViewCheckpointLifecycle {
             );
         }
 
+        // Whatever the pass above removed is gone before this one looks, so the
+        // upper bound it records covers only the names the catalogue could not
+        // speak for. When a generation was adopted that is nothing at all: every
+        // catalogued id sits below the ceiling by construction, so the bound stays
+        // at the ceiling and the deferred rule has no range left to apply.
         final CleanupResult cleanup = cleanupOrphans(configuration, checkpointsDir, nextSegmentIdCeiling);
+        cleanup.add(uncatalogued);
         return result(false, walPurgeFloor, normalizedBaseSeqTxn, cleanup, purgeResult, stats, repairSweep);
     }
 
@@ -214,6 +241,13 @@ public final class LiveViewCheckpointLifecycle {
      * any later publication has stepped its own allocation over one of those ids,
      * the file drops below the ceiling and this rule can no longer name it -
      * {@link #purgeUncataloguedSegments} is the one that still can.
+     * <p>
+     * What is left to it is the case that rule cannot reach from the other side: a
+     * directory carrying no valid generation, and therefore no catalogue to ask.
+     * A reconciliation there reads a ceiling of zero, so every final name is an
+     * orphan, and the deferral costs one publication rather than a restart. Where
+     * a generation was adopted, reconciliation has already removed every
+     * uncatalogued final name and the range this receives is empty.
      */
     public static CleanupStats purgeFinalOrphans(
             @NotNull CairoConfiguration configuration,
@@ -268,6 +302,12 @@ public final class LiveViewCheckpointLifecycle {
      * retention, compaction or repair publication used to leak its segments for
      * the life of the directory: none of the three re-runs a reconciliation, so
      * nothing read the ceiling before the next seal moved it.
+     * <p>
+     * Both collectors apply it. The purge cadence runs it beside every sweep, so a
+     * running process collects without waiting; {@link #reconcile} runs it over
+     * every generation it adopts, so a process that swept nothing - the cadence
+     * disabled, or a view that never sealed again after the failure - collects at
+     * its next restart rather than never.
      * <p>
      * Nothing has to advance past these ids first, because the monotonic
      * {@code nextSegmentId} is what preserves allocation order on its own -
@@ -759,6 +799,16 @@ public final class LiveViewCheckpointLifecycle {
         private CleanupResult(long finalOrphanUpperBound) {
             this.finalOrphanUpperBound = finalOrphanUpperBound;
         }
+
+        /**
+         * Folds in what a pass that removed files under its own rule accounted for,
+         * so one reconciliation reports one removal count however many rules
+         * produced it.
+         */
+        private void add(CleanupStats stats) {
+            removed += stats.removedCount;
+            failed += stats.failedCount;
+        }
     }
 
     public static final class ReconcileResult {
@@ -836,6 +886,14 @@ public final class LiveViewCheckpointLifecycle {
             return failedRepairCount;
         }
 
+        /**
+         * @return the exclusive id bound the deferred orphan rule applies over,
+         * for the next publication to hand back to
+         * {@link #purgeFinalOrphans}. It exceeds the ceiling only where this
+         * reconciliation adopted no generation and so had no catalogue to ask;
+         * where it adopted one, it has already removed every uncatalogued final
+         * name outright and this equals the ceiling
+         */
         public long getFinalOrphanUpperBound() {
             return finalOrphanUpperBound;
         }
@@ -913,6 +971,7 @@ public final class LiveViewCheckpointLifecycle {
     }
 
     public static final class CleanupStats {
+        private static final CleanupStats NONE = new CleanupStats(0, 0);
         private final int failedCount;
         private final int removedCount;
 

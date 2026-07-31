@@ -1109,14 +1109,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * catalogue entries the pass leaves naming nothing for the next seal of this
      * directory to remove.
      * <p>
-     * The second half is the one no reconciliation can stand in for. A publication
-     * that renamed its segments into place and then failed leaves files the
-     * catalogue never held, and only {@code append} re-arms the reconciliation that
-     * would have read the id ceiling naming them - so a failed retention,
-     * compaction or repair publication left its segments where they were, and the
-     * next seal's id skip stepped over them and put them out of the ceiling rule's
-     * reach for good. See
-     * {@link LiveViewCheckpointLifecycle#purgeUncataloguedSegments}.
+     * The second half is what a publication that renamed its segments into place
+     * and then failed leaves behind. Nothing but the catalogue can name those
+     * files: only {@code append} re-arms the reconciliation that would have read
+     * the id ceiling naming them, so a failed retention, compaction or repair
+     * publication left its segments where they were and the next seal's id skip
+     * stepped over them and put them out of the ceiling rule's reach for good.
+     * {@link LiveViewCheckpointLifecycle#reconcile} applies the same catalogue rule
+     * over every generation it adopts, so the two differ in when they run rather
+     * than in what they decide, and this is the one that does not wait for a
+     * restart. See {@link LiveViewCheckpointLifecycle#purgeUncataloguedSegments}.
      * <p>
      * This is the reclamation half of {@link LiveViewCheckpointLifecycle#reconcile}
      * on its own, without the epoch, repair-descriptor and orphan rules that only a

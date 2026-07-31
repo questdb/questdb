@@ -711,12 +711,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Without the cadence a sweep runs only where {@link LiveViewCheckpointLifecycle#reconcile}
      * does - once per worker per directory - so everything a seal, a repair, a
      * compaction or a retention pass supersedes after that first seal waits for a
-     * restart before its bytes come back. The uncatalogued half waits longer than
-     * that: the retention and compaction passes that run ahead of this one publish
-     * their own generation and re-arm no reconciliation, so the segments a failed
-     * one renamed into place were never collected at all. Best-effort, like those
-     * two passes: the sweep publishes no generation, so a fault costs one deferred
-     * collection and leaves the checkpoint store byte-identical.
+     * restart before its bytes come back, and so do the files a failed one renamed
+     * into place. Both halves wait exactly that long, because reconciliation
+     * applies the same two rules; the cadence is what stops either of them from
+     * waiting. Best-effort, like the retention and compaction passes ahead of it:
+     * the sweep publishes no generation, so a fault costs one deferred collection
+     * and leaves the checkpoint store byte-identical.
      */
     private void maybeSweepCheckpointSegments(LiveViewInstance instance) {
         final long interval = engine.getConfiguration().getLiveViewCheckpointPurgeInterval();

@@ -655,13 +655,14 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
     }
 
     @Test
-    public void testTheIdCeilingRuleCannotReachTheOrphansOfAFailedPublication() throws Exception {
+    public void testAReconciliationCollectsTheOrphansTheIdCeilingRuleCannotReach() throws Exception {
         assertMemoryLeak(() -> {
             // The control that gives the case above its meaning, and the statement of
-            // what was actually broken rather than merely late. With the cadence off,
-            // the only rule left is the id ceiling a reconciliation reads - and by the
-            // time anything reads it, the seals that followed have moved it past every
-            // file the failed publication left, so no restart ever collects them either.
+            // what the cadence buys against what the catalogue rule buys. With the
+            // cadence off nothing collects while the process runs, and by the time a
+            // reconciliation looks, the seals that followed have moved the id ceiling
+            // past every file the failed publication left - so the ceiling rule has no
+            // way to name them and the collection has to come from the catalogue.
             setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 0);
             setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS, RETENTION_MICROS);
             createView();
@@ -689,9 +690,9 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
                 }
                 driveRefreshToQuiescence(job);
 
-                // Every one of them now sits below the durable ceiling, which is the
-                // whole of the leak: the rule names a file by comparing its id against
-                // that ceiling, and the comparison has stopped being true.
+                // Every one of them now sits below the durable ceiling, which is what
+                // put them beyond the deferred rule: it names a file by comparing its
+                // id against that ceiling, and the comparison has stopped being true.
                 final long ceiling = nextSegmentIdCeiling(instance);
                 final Set<Long> metaFiles = metaSegmentIds(instance);
                 for (long segmentId : orphans) {
@@ -706,16 +707,22 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
                     );
                 }
 
-                // And a full reconciliation, which is everything a restart would run,
-                // leaves them exactly where they are.
+                // A full reconciliation, which is everything a restart would run,
+                // collects them anyway - not by the ceiling the assertion above just
+                // ruled out, but because the catalogue never held their ids.
                 purgeCycle(instance);
                 final Set<Long> afterReconcile = metaSegmentIds(instance);
                 for (long segmentId : orphans) {
-                    Assert.assertTrue(
-                            "a reconciliation collected an orphan below the ceiling, segmentId=" + segmentId,
+                    Assert.assertFalse(
+                            "a reconciliation left an orphan the catalogue does not hold, segmentId=" + segmentId,
                             afterReconcile.contains(segmentId)
                     );
                 }
+                Assert.assertTrue(
+                        "the reconciliation left " + uncataloguedMetaSegmentIds(instance)
+                                + " on disk with nothing naming them",
+                        uncataloguedMetaSegmentIds(instance).isEmpty()
+                );
 
                 assertCatalogueMatchesDisk(instance);
                 restartCycle();

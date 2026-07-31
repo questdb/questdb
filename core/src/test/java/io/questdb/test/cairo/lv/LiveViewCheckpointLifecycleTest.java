@@ -35,12 +35,14 @@ import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairState;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -55,6 +57,7 @@ import org.junit.Test;
 
 public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
 
+    private static final LongList EMPTY_SEGMENT_IDS = new LongList();
     private static final String LV_DIR = "lv_checkpoint_lifecycle";
 
     @Test
@@ -174,15 +177,25 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrphanCleanupProtectsBothSlotsAndPreservesMonotonicIds() throws Exception {
+    public void testOrphanCleanupCollectsWhatNoGenerationCatalogues() throws Exception {
         assertMemoryLeak(() -> {
             ensureDirs();
-            publish(1, 1, 7, 0, 10);
-            publish(2, 2, 7, 0, 20);
+            touchFinal(false, 5);
+            // Two generations of a real catalogue. Generation 2 registers the
+            // directory segment generation 1 left pending, then supersedes its pages,
+            // so that entry ends at a zero reference count against a retirement
+            // generation the fallback slot has not reached - the shape the purge
+            // sweep defers.
+            publishCatalogue(1, 1, 7, 10, segmentIds(5), segmentIds());
+            publishCatalogue(2, 2, 7, 20, segmentIds(), segmentIds());
 
+            // Everything else in the two directories is a file no generation ever
+            // catalogued: below the older slot's ceiling, between the two, and above
+            // both. The id-ceiling rule tells those three apart and defers all of
+            // them; the catalogue rule does not have to, and defers none.
+            touchFinal(false, 9);
+            touchFinal(true, 9);
             touchFinal(false, 19);
-            touchFinal(true, 19);
-            touchFinal(false, 20);
             touchFinal(true, 21);
             touchTemp(false, 22);
             touchTemp(true, 23);
@@ -191,30 +204,60 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
             try (Path dir = checkpointsDir()) {
                 reconciliation = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
             }
-            Assert.assertEquals(2, reconciliation.getRemovedOrphanCount());
             Assert.assertEquals(0, reconciliation.getFailedOrphanCount());
-            Assert.assertEquals(22, reconciliation.getFinalOrphanUpperBound());
-            Assert.assertTrue(segmentExists(false, 19, false));
-            Assert.assertTrue(segmentExists(true, 19, false));
-            Assert.assertTrue(segmentExists(false, 20, false));
-            Assert.assertTrue(segmentExists(true, 21, false));
+            Assert.assertEquals("four uncatalogued final names and two temporaries",
+                    6, reconciliation.getRemovedOrphanCount());
+            Assert.assertFalse(segmentExists(false, 9, false));
+            Assert.assertFalse(segmentExists(true, 9, false));
+            Assert.assertFalse(segmentExists(false, 19, false));
+            Assert.assertFalse(segmentExists(true, 21, false));
             Assert.assertFalse(segmentExists(false, 22, true));
             Assert.assertFalse(segmentExists(true, 23, true));
 
-            // Advance the A/B commit point beyond the pre-existing final names.
-            // Only after this publication may cleanup unlink that orphan range.
-            try (LiveViewCheckpointMetaStore store = openStore()) {
-                final LiveViewCheckpointSuperblock superblock = store.getSuperblock();
-                superblock.generation = 3;
-                superblock.nextSegmentId = 22;
-                store.publish();
+            Assert.assertTrue("a referenced segment survives", segmentExists(false, 5, false));
+            Assert.assertTrue("a fallback-protected entry survives", segmentExists(true, 1, false));
+            Assert.assertTrue("the pending directory segment survives", segmentExists(true, 2, false));
+
+            // And the deferred rule is left with nothing: it records a range only
+            // where no catalogue could answer, and here one did.
+            Assert.assertEquals(20, reconciliation.getFinalOrphanUpperBound());
+        });
+    }
+
+    @Test
+    public void testOrphanCleanupDefersWhereNoGenerationCanAnswer() throws Exception {
+        assertMemoryLeak(() -> {
+            ensureDirs();
+            // No _timeline, so no catalogue exists to name anything and the deferred
+            // id-ceiling rule is the only one left. Its ceiling is zero, which makes
+            // every final name an orphan - and it still removes none of them until a
+            // publication has durably advanced past their ids, which is what keeps
+            // allocation monotonic across the crash this shape comes from.
+            touchFinal(false, 20);
+            touchFinal(true, 21);
+            touchTemp(false, 22);
+
+            final LiveViewCheckpointLifecycle.ReconcileResult reconciliation;
+            try (Path dir = checkpointsDir()) {
+                reconciliation = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
             }
+            Assert.assertEquals("only the temporary goes now", 1, reconciliation.getRemovedOrphanCount());
+            Assert.assertEquals(0, reconciliation.getFailedOrphanCount());
+            Assert.assertEquals(22, reconciliation.getFinalOrphanUpperBound());
+            Assert.assertTrue(segmentExists(false, 20, false));
+            Assert.assertTrue(segmentExists(true, 21, false));
+            Assert.assertFalse(segmentExists(false, 22, true));
+
+            // The publication allocates above the recorded bound, exactly as a seal
+            // does with what reconciliation handed it, and only then may the rule
+            // unlink the range below.
+            publish(1, 22, 7, 0, 23);
             final LiveViewCheckpointLifecycle.CleanupStats cleanup;
             try (Path dir = checkpointsDir()) {
                 cleanup = LiveViewCheckpointLifecycle.purgeFinalOrphans(
                         configuration,
                         dir,
-                        20,
+                        0,
                         reconciliation.getFinalOrphanUpperBound(),
                         true
                 );
@@ -223,8 +266,7 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
             Assert.assertEquals(0, cleanup.getFailedCount());
             Assert.assertFalse(segmentExists(false, 20, false));
             Assert.assertFalse(segmentExists(true, 21, false));
-            Assert.assertTrue("fallback-protected data survives", segmentExists(false, 19, false));
-            Assert.assertTrue("fallback-protected metadata survives", segmentExists(true, 19, false));
+            Assert.assertTrue("the publication's own segment sits above the bound", segmentExists(true, 22, false));
         });
     }
 
@@ -500,6 +542,74 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
             superblock.pendingDirectorySegmentPages = 1;
             store.publish();
         }
+    }
+
+    /**
+     * Publishes one generation over a real catalogue: {@code registered} joins it at
+     * a reference count of one, {@code released} loses one, and the directory
+     * segment the previous generation left pending is registered as that
+     * publication's own, exactly as a seal does it. The publication then supersedes
+     * the catalogue pages it path-copies, so the previous directory segment ends at
+     * a zero count against this generation.
+     */
+    private void publishCatalogue(
+            long generation,
+            long directorySegmentId,
+            long definitionTxn,
+            long nextSegmentId,
+            LongList registered,
+            LongList released
+    ) {
+        try (
+                LiveViewCheckpointSegmentDirectoryWriter directoryWriter =
+                        new LiveViewCheckpointSegmentDirectoryWriter(configuration);
+                LiveViewCheckpointMetaStore store = openStore();
+                Path dir = checkpointsDir()
+        ) {
+            directoryWriter.of(dir);
+            final LiveViewCheckpointSuperblock superblock = store.getSuperblock();
+            directoryWriter.begin(superblock.segmentDirectoryRootRef);
+            if (superblock.pendingDirectorySegmentId != Numbers.LONG_NULL) {
+                directoryWriter.addSegment(
+                        superblock.pendingDirectorySegmentId,
+                        superblock.pendingDirectorySegmentBytes,
+                        superblock.pendingDirectorySegmentPages,
+                        LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_META
+                );
+            }
+            for (int i = 0, n = registered.size(); i < n; i++) {
+                directoryWriter.addSegment(registered.getQuick(i), 1, 1);
+            }
+            if (released.size() > 0) {
+                directoryWriter.applyRootReferenceChanges(released, EMPTY_SEGMENT_IDS, generation);
+            }
+            final LiveViewCheckpointPageRef directoryRoot = new LiveViewCheckpointPageRef();
+            directoryWriter.publish(directorySegmentId, generation, directoryRoot);
+
+            superblock.generation = generation;
+            superblock.definitionTxn = definitionTxn;
+            superblock.historyEpoch = 0;
+            superblock.normalizedBaseSeqTxn = generation;
+            superblock.coveredLvSeqTxn = generation;
+            superblock.nextSegmentId = nextSegmentId;
+            superblock.segmentDirectoryRootRef.of(
+                    directoryRoot.getSegmentId(),
+                    directoryRoot.getOffset(),
+                    directoryRoot.getLength()
+            );
+            superblock.pendingDirectorySegmentId = directorySegmentId;
+            superblock.pendingDirectorySegmentBytes = directoryWriter.getLastSegmentBytes();
+            superblock.pendingDirectorySegmentPages = directoryWriter.getLastSegmentPageCount();
+            store.publish();
+        }
+    }
+
+    private static LongList segmentIds(long... ids) {
+        final LongList list = new LongList();
+        for (long id : ids) {
+            list.add(id);
+        }
+        return list;
     }
 
     /**
