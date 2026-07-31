@@ -209,7 +209,7 @@ public class LiveViewCheckpointRingSealBenchmark {
             directoryWriter.of(checkpointsDir);
             directoryWriter.begin(directoryRoot);
             directoryWriter.addSegment(FIXTURE_SEGMENT_ID, segmentBytes, 1);
-            directoryWriter.publish(META_SEGMENT_ID, directoryRoot);
+            directoryWriter.publish(META_SEGMENT_ID, 1, directoryRoot);
             directory.of(checkpointsDir, directoryRoot);
         }
         printFixture(segmentBytes);
