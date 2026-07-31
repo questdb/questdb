@@ -84,6 +84,12 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
     private static final int KEYS = 24;
     // In-order seals the repair case folds its correction back into.
     private static final int REPAIR_HISTORY_SEALS = 10;
+    // Seals above the corrected anchor segment. They are what a resume would have to
+    // replay, and so what makes the localized rebuild the cheaper disposition.
+    private static final int REPAIR_TAIL_SEALS = 20;
+    // The anchor period the repair case resets on, in seconds. Wide enough to hold that
+    // case's whole in-order history, so its correction lands inside one segment.
+    private static final int SEGMENT_SECONDS = 60;
     private static final int TRICKLE_SEALS = 6;
     private static final String VIEW_SQL = "SELECT ts, sym, sum(x) OVER (" +
             "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW" +
@@ -223,33 +229,50 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
     @Test
     public void testRepairCaptureSharesColdPartitionsAcrossBoundaries() throws Exception {
         assertMemoryLeak(() -> {
-            createView();
+            // An anchored view rather than the ROWS one the other cases use, because a
+            // ROWS repair may not re-version the boundaries it crosses at all - see
+            // LiveViewCheckpointRepairPlan.isReplayStateKeyComplete() - and a repair that
+            // truncates the timeline freezes nothing. The anchor keeps the two properties
+            // this case needs: the state is whole-image per key, so the elision under test
+            // is the one that runs, and the segment is a wall in both directions, so a
+            // correction inside it converges at the segment end.
+            createAnchoredView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // Two commits over the whole key set, then a trickle into one key, so
-                // the range a correction replays holds rows for every key at its floor
-                // and rows for one key above it.
-                commitEveryKey(job, 10);
-                commitEveryKey(job, 20);
+                // Two commits over the whole key set at the bottom of one anchor segment,
+                // then a trickle into one key above them, so the range a correction
+                // replays - the whole segment - holds rows for every key at its floor and
+                // rows for one key above it.
+                commitEveryKey(job, SEGMENT_SECONDS + 10);
+                commitEveryKey(job, SEGMENT_SECONDS + 20);
                 for (int seal = 1; seal <= REPAIR_HISTORY_SEALS; seal++) {
-                    commitHotKey(job, 20 + seal * 10, seal);
+                    commitHotKey(job, SEGMENT_SECONDS + 20 + seal * 3, seal);
+                }
+                // A tail in the segments above. It carries the runtime frontier past the
+                // convergence bound the correction below derives - without which the
+                // repair cannot prove the change sits outside the frame the runtime holds
+                // - and it is what makes the localized rebuild the cheaper disposition: a
+                // resume off the boundary under the correction would replay every row of
+                // it, while the rebuild stops at the end of the corrected segment.
+                for (int seal = 1; seal <= REPAIR_TAIL_SEALS; seal++) {
+                    commitHotKey(job, 2 * SEGMENT_SECONDS + seal * 10, REPAIR_HISTORY_SEALS + seal);
                 }
                 driveRefreshToQuiescence(job);
-                assertViewMatchesRecompute();
+                assertAnchoredViewMatchesRecompute();
 
                 final LiveViewInstance instance = viewInstance();
                 final Set<Page> before = allPages(boundaryPages(instance));
                 final long repairedBefore = repairedRows(instance);
 
-                // One out-of-order row inside the ROWS frame's look-behind, so the
-                // repair replays a range that crosses several boundaries and freezes
-                // each of them into one capture segment.
-                commitHotKey(job, 25, 9_000);
+                // One out-of-order row part-way up the first segment, so the repair
+                // replays that whole segment, crosses several boundaries above the
+                // correction and freezes each of them into one capture segment.
+                commitHotKey(job, SEGMENT_SECONDS + 25, 9_000);
                 driveRefreshToQuiescence(job);
                 Assert.assertTrue(
                         "the correction must be repaired rather than appended",
                         repairedRows(instance) > repairedBefore
                 );
-                assertViewMatchesRecompute();
+                assertAnchoredViewMatchesRecompute();
 
                 // The capture shares against the boundary it froze immediately before,
                 // reading it out of its own still-unpublished segment. So a key the
@@ -380,6 +403,24 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
         );
     }
 
+    /**
+     * The oracle for the anchored view: an anchor puts every function on the partition
+     * back to identity when its value changes, so a cumulative sum under a
+     * {@code timestamp_floor} anchor is the same sum partitioned by that floor.
+     */
+    private void assertAnchoredViewMatchesRecompute() throws Exception {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(SELECT ts, sym, sum(x) OVER (PARTITION BY sym, timestamp_floor('"
+                        + SEGMENT_SECONDS + "s', ts) ORDER BY ts) AS s FROM base) ORDER BY 2, 1",
+                "(lv) ORDER BY 2, 1",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
+    }
+
     private void assertRingViewMatchesRecompute(String ringWindow) throws Exception {
         TestUtils.assertSqlCursors(
                 engine,
@@ -477,6 +518,14 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
         drainWalQueue();
         drainJob(job);
         drainWalQueue();
+    }
+
+    private void createAnchoredView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS "
+                + "SELECT ts, sym, sum(x) OVER w AS s FROM base "
+                + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('"
+                + SEGMENT_SECONDS + "s', ts))");
     }
 
     private void createView() throws Exception {

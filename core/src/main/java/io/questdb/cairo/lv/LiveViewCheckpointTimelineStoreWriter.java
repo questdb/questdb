@@ -1431,6 +1431,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
     }
 
+    /**
+     * Drops every partition the predecessor root holds that this freeze did not
+     * image, so a root describes the keys the runtime held at the boundary rather
+     * than every key it has ever held. A cadence seal freezes the whole live map, so
+     * a key missing from it has genuinely gone; a repair capture freezes what its
+     * replay carried, so the same rule reads as "the replay is the whole truth" -
+     * see {@link RepairCapture} for what the caller must have proved before that
+     * holds.
+     */
     private static void removeMissingPartitions(
             Path checkpointsDir,
             LiveViewCheckpointPageRef oldFunctionRootRef,
@@ -2380,6 +2389,20 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * Everything it writes lands in one temporary data segment, so a capture that
      * is closed without publishing leaves an unreferenced temp file and nothing
      * else - no metadata names it and no generation can reach it.
+     *
+     * <h2>What the caller has to have proved</h2>
+     * A frozen boundary images the runtime as the replay left it, and the
+     * publication makes that image the whole of the boundary: a key the replay
+     * never carried is <b>removed</b> from the root it re-versions, and a key it
+     * carried is re-imaged from the rows it carried. So a capture is sound only for
+     * a replay whose state at every boundary it crosses is the state a whole-history
+     * replay would hold there, for every live key rather than for the keys the
+     * repair's bounds were derived for - which is
+     * {@link LiveViewCheckpointRepairPlan#isReplayStateKeyComplete()}, and which a
+     * ROWS dependency does not give. The runtime is not held to the same standard
+     * because the scratch overlay puts the pre-repair state back over it; a
+     * published root has nothing to put it back from, and a later resume or restart
+     * reads it as the whole truth.
      */
     public class RepairCapture implements Closeable {
         private final ObjList<FrozenBoundary> boundaries = new ObjList<>();

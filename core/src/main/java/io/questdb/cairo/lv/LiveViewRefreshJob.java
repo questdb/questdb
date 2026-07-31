@@ -4382,6 +4382,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // fullRebuild veto as the floors: a rebuild that must recompute the whole view
         // may not stop early, whatever the plan derived.
         final boolean finiteHighBound = localized && plan.isRuntimeStatePreserved();
+        // Whether this repair may re-version the logical boundaries it crosses instead
+        // of truncating the timeline at R. It needs the finite H every splice needs,
+        // and one thing more: the replay has to reconstruct every key's state, not only
+        // the state of the keys its bounds were derived for. A ROWS dependency does not
+        // - see LiveViewCheckpointRepairPlan.isReplayStateKeyComplete() - and a root
+        // frozen from such a replay describes a narrower key set than the boundary it
+        // replaces, which a later resume or restore then reads as the whole truth. The
+        // runtime survives that because the overlay puts it back; a published root has
+        // nothing to put it back from.
+        final boolean isTimelineSpliceable = finiteHighBound && plan.isReplayStateKeyComplete();
         // The publication ordering this rebuild walks. It owns the two decisions the
         // rest of the method used to spread across local flags: what happens to the
         // runtime once the repair publishes, and whether the replacement is
@@ -4417,14 +4427,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long scannedRows = 0;
         // The timeline range splice this repair publishes instead of retiring
         // the whole timeline. Taken only by a repair that stopped at a finite
-        // H: that is exactly the case with a converged suffix to keep, and the
-        // case whose runtime is restored rather than promoted, so it creates no
-        // new logical boundary either. Null leaves the retire in place, and the
-        // boundary list stays empty so the replay's segmentation is a dead
+        // H whose replay reconstructs every key: that is the case with a converged
+        // suffix to keep, and the case whose runtime is restored rather than
+        // promoted, so it creates no new logical boundary either. Null leaves the
+        // retire - or, for a localized repair, the prefix truncate - in place, and
+        // the boundary list stays empty so the replay's segmentation is a dead
         // branch.
         LiveViewCheckpointTimelineStoreWriter.RepairCapture timelineCapture = resuming
                 ? resumed.takeCapture()
-                : finiteHighBound ? beginCheckpointTimelineRepair(instance, plan, session) : null;
+                : isTimelineSpliceable ? beginCheckpointTimelineRepair(instance, plan, session) : null;
         if (session != null) {
             // The publication mirrors every stage it records into the descriptor, and
             // a resumed turn walks the stages from PLAN again over the same record.
