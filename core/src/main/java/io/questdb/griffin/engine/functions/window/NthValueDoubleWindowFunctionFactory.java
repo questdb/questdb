@@ -865,7 +865,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override

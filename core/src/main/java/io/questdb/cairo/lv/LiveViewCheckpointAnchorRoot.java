@@ -62,7 +62,7 @@ public class LiveViewCheckpointAnchorRoot implements Closeable {
      */
     static final int ENTRY_STATE_SIZE = Long.BYTES;
     private static final int FIXED_SIZE = 5 * Integer.BYTES + LiveViewCheckpointPageRef.BYTES;
-    private static final int FORMAT_VERSION = 2;
+    private static final int FORMAT_VERSION = 1;
     private final LiveViewCheckpointPageRef partitionMapRootRef = new LiveViewCheckpointPageRef();
     private final LiveViewCheckpointMetaSegmentReader reader;
     private int anchorValueType;

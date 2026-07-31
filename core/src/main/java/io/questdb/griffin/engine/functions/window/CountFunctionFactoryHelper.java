@@ -752,7 +752,7 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override

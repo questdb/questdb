@@ -3210,7 +3210,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -5403,7 +5403,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -7664,7 +7664,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -9867,7 +9867,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -12025,7 +12025,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -14183,7 +14183,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override

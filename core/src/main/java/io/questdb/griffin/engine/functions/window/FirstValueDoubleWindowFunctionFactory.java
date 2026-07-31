@@ -1698,7 +1698,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override

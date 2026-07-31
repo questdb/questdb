@@ -1529,7 +1529,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -3280,7 +3280,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -4930,7 +4930,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -6750,7 +6750,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -8425,7 +8425,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -10074,7 +10074,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override

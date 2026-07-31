@@ -51,7 +51,7 @@ public class LiveViewCheckpointAnchorRootTest extends AbstractCairoTest {
     private static final byte[] EMPTY_KEY_SCHEMA = keySchema();
     // Kept in step with LiveViewCheckpointAnchorRoot's own constant, so a hand-written
     // page exercises the field checks rather than the version gate ahead of them.
-    private static final int FORMAT_VERSION = 2;
+    private static final int FORMAT_VERSION = 1;
     private static final String LV_DIR = "lv_anchor_root";
     private static final byte[] SYMBOL_KEY_SCHEMA = keySchema(ColumnType.STRING);
     private static final byte[] WINDOW_NAME = "w".getBytes(StandardCharsets.UTF_8);

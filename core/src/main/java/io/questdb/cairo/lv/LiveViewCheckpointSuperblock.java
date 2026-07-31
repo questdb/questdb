@@ -87,7 +87,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public static final int SLOT_CRC_COVERAGE = SLOT_CRC_OFFSET;
     public static final int SLOT_DATA_BYTES_OFFSET = 80;
     public static final int SLOT_DEFINITION_TXN_OFFSET = 24;
-    public static final int SLOT_FORMAT_VERSION = 5;
+    public static final int SLOT_FORMAT_VERSION = 1;
     public static final int SLOT_FORMAT_VERSION_OFFSET = 8;
     public static final int SLOT_GENERATION_OFFSET = 16;
     public static final int SLOT_HISTORY_EPOCH_OFFSET = 32;
@@ -97,7 +97,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * version nibble. A distinctive 8-byte value so a foreign or zeroed slot is
      * rejected before the checksum runs.
      */
-    public static final long SLOT_MAGIC = 0x4C56_544D_4C4E_0005L;
+    public static final long SLOT_MAGIC = 0x4C56_544D_4C4E_0001L;
     /**
      * The magic without its version nibble. A slot matching this under
      * {@link #SLOT_MAGIC_FAMILY_MASK} was written as a timeline superblock by

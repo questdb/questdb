@@ -1707,7 +1707,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -3627,7 +3627,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -5486,7 +5486,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -7420,7 +7420,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -9232,7 +9232,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -11048,7 +11048,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 2;
+            return 1;
         }
 
         @Override
