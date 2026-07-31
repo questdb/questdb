@@ -215,12 +215,12 @@ public class LiveViewCheckpointDataStore implements Closeable {
      * catalogue answers true.
      * <p>
      * The asymmetry is what justifies that. Keeping a segment costs disk -
-     * {@link LiveViewCheckpointLifecycle#purgeFinalOrphans} reclaims it at the
-     * first cadence seal after a reconcile, while its id still sits at or above
-     * the durable {@code nextSegmentId} ceiling, and leaks it once a publication
-     * has stepped over that id or if the view stops sealing. That is the same
-     * best-effort reclaim the metadata segments of a failed publication already
-     * rely on. Unlinking a live target costs the whole timeline.
+     * {@link LiveViewCheckpointLifecycle#purgeUncataloguedSegments} reclaims it at
+     * the next cadence sweep, whatever the durable {@code nextSegmentId} ceiling
+     * has done in the meantime, and holds it only while this same fail-closed read
+     * keeps answering true. That is the same best-effort reclaim the metadata
+     * segments of a failed publication already rely on. Unlinking a live target
+     * costs the whole timeline.
      */
     private boolean isSegmentDurablyCatalogued(long segmentId) {
         try (

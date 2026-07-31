@@ -82,6 +82,14 @@ import java.util.Set;
  * restart and the from-base recompute oracle, so a count that retired a segment
  * one page or one root too early surfaces as a failed restore rather than as a
  * saving.
+ * <p>
+ * Two cases cover a third disposition, which is neither unit: the files a
+ * publication renamed into place and then failed to commit, which no count ever
+ * describes because the catalogue never held them. The rule there is the
+ * catalogue's silence rather than a reference reaching zero, and the pair states
+ * both halves of why it had to be - the sweep collects them, and the id-ceiling
+ * rule that used to own them cannot, because the seals that follow move the
+ * ceiling past every one.
  */
 public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewTest {
 
@@ -93,6 +101,13 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
     private static final String ANCHORED_VIEW_SQL = "SELECT ts, sym, row_number() OVER w AS s FROM base " +
             "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')";
     private static final int KEYS = 4;
+    // Four seals per sweep, so the files a failed publication leaves are observable
+    // between the pass that writes them and the pass that collects them.
+    private static final int ORPHAN_PURGE_INTERVAL = 4;
+    // Event-time retention horizon. At the ten-second commit spacing below it
+    // saturates within the first eight seals, after which a retention pass
+    // publishes - and so can fail - on every seal.
+    private static final long RETENTION_MICROS = 60 * 1_000_000L;
     // Two measurement points far enough apart that unbounded growth cannot hide.
     private static final int SEALS_EARLY = 8;
     private static final int SEALS_LATE = 32;
@@ -583,6 +598,133 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
     }
 
     @Test
+    public void testTheCadenceSweepCollectsTheOrphansOfAFailedPublication() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, ORPHAN_PURGE_INTERVAL);
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS, RETENTION_MICROS);
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                int seal = 1;
+                for (; seal <= SEALS_EARLY; seal++) {
+                    commit(job, seal);
+                }
+                final LiveViewInstance instance = viewInstance();
+
+                // A retention pass that renamed its timeline and catalogue segments
+                // into place and then died. It differs from a failed seal in the one
+                // way that matters here: a failed seal re-arms the reconciliation
+                // that reads the id ceiling, and this re-arms nothing at all.
+                job.setCheckpointTimelineTestFailureStage(
+                        LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_RETENTION_METADATA_PUBLISH
+                );
+                commit(job, seal++);
+                job.setCheckpointTimelineTestFailureStage(0);
+
+                final Set<Long> orphans = uncataloguedMetaSegmentIds(instance);
+                Assert.assertFalse(
+                        "the failed retention publication left no file behind, so the case proves nothing",
+                        orphans.isEmpty()
+                );
+
+                // Enough seals for one sweep to fire whatever phase the cadence
+                // counter is in. Each of them steps its own allocation over the
+                // orphans, which is what the id-ceiling rule cannot survive.
+                for (int last = seal + ORPHAN_PURGE_INTERVAL; seal <= last; seal++) {
+                    commit(job, seal);
+                }
+                driveRefreshToQuiescence(job);
+
+                final Set<Long> metaFiles = metaSegmentIds(instance);
+                for (long segmentId : orphans) {
+                    Assert.assertFalse(
+                            "a file no generation catalogues survived the cadence sweep, segmentId=" + segmentId,
+                            metaFiles.contains(segmentId)
+                    );
+                }
+                final Set<Long> remaining = uncataloguedMetaSegmentIds(instance);
+                Assert.assertTrue(
+                        "the sweep left " + remaining + " on disk with nothing naming them",
+                        remaining.isEmpty()
+                );
+
+                assertCatalogueMatchesDisk(instance);
+                restartCycle();
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testTheIdCeilingRuleCannotReachTheOrphansOfAFailedPublication() throws Exception {
+        assertMemoryLeak(() -> {
+            // The control that gives the case above its meaning, and the statement of
+            // what was actually broken rather than merely late. With the cadence off,
+            // the only rule left is the id ceiling a reconciliation reads - and by the
+            // time anything reads it, the seals that followed have moved it past every
+            // file the failed publication left, so no restart ever collects them either.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 0);
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS, RETENTION_MICROS);
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                int seal = 1;
+                for (; seal <= SEALS_EARLY; seal++) {
+                    commit(job, seal);
+                }
+                final LiveViewInstance instance = viewInstance();
+
+                job.setCheckpointTimelineTestFailureStage(
+                        LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_RETENTION_METADATA_PUBLISH
+                );
+                commit(job, seal++);
+                job.setCheckpointTimelineTestFailureStage(0);
+
+                final Set<Long> orphans = uncataloguedMetaSegmentIds(instance);
+                Assert.assertFalse(
+                        "the failed retention publication left no file behind, so the case proves nothing",
+                        orphans.isEmpty()
+                );
+
+                for (int last = seal + ORPHAN_PURGE_INTERVAL; seal <= last; seal++) {
+                    commit(job, seal);
+                }
+                driveRefreshToQuiescence(job);
+
+                // Every one of them now sits below the durable ceiling, which is the
+                // whole of the leak: the rule names a file by comparing its id against
+                // that ceiling, and the comparison has stopped being true.
+                final long ceiling = nextSegmentIdCeiling(instance);
+                final Set<Long> metaFiles = metaSegmentIds(instance);
+                for (long segmentId : orphans) {
+                    Assert.assertTrue(
+                            "the seals that followed did not step over the orphan, so the id-ceiling rule"
+                                    + " could still name it, segmentId=" + segmentId + ", ceiling=" + ceiling,
+                            segmentId < ceiling
+                    );
+                    Assert.assertTrue(
+                            "a segment was unlinked with the purge cadence disabled, segmentId=" + segmentId,
+                            metaFiles.contains(segmentId)
+                    );
+                }
+
+                // And a full reconciliation, which is everything a restart would run,
+                // leaves them exactly where they are.
+                purgeCycle(instance);
+                final Set<Long> afterReconcile = metaSegmentIds(instance);
+                for (long segmentId : orphans) {
+                    Assert.assertTrue(
+                            "a reconciliation collected an orphan below the ceiling, segmentId=" + segmentId,
+                            afterReconcile.contains(segmentId)
+                    );
+                }
+
+                assertCatalogueMatchesDisk(instance);
+                restartCycle();
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testTheCadenceSweepStaysOffAtIntervalZero() throws Exception {
         assertMemoryLeak(() -> {
             // The control that gives the case above its meaning, and the statement
@@ -913,6 +1055,23 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
         return count[0];
     }
 
+    /**
+     * The highest {@code nextSegmentId} of the two valid slots - the floor the
+     * id-ceiling orphan rule compares a file against. A publication that steps its
+     * allocation over an orphan raises this past it, and the rule then has no way
+     * to tell that file from a live segment.
+     */
+    private long nextSegmentIdCeiling(LiveViewInstance instance) {
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the generation must be readable", metaStore.isValid());
+            return metaStore.getSuperblock().getNextSegmentIdCeiling();
+        }
+    }
+
     private long pendingDirectorySegmentId(LiveViewInstance instance) {
         try (
                 Path dir = checkpointsDir(instance);
@@ -1015,6 +1174,21 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
             }
         }
         return keys;
+    }
+
+    /**
+     * Metadata files on disk that the selected generation's catalogue does not hold
+     * at all, less the one documented exception: the segment carrying the directory
+     * root itself, which the superblock names as pending because a tree cannot list
+     * the file it is being written into. What is left is reachable from nothing -
+     * the shape a publication that renamed its segments into place and then failed
+     * leaves behind.
+     */
+    private Set<Long> uncataloguedMetaSegmentIds(LiveViewInstance instance) {
+        final Set<Long> uncatalogued = new HashSet<>(metaSegmentIds(instance));
+        uncatalogued.removeAll(catalogue(instance));
+        uncatalogued.remove(pendingDirectorySegmentId(instance));
+        return uncatalogued;
     }
 
     /**

@@ -84,9 +84,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     @TestOnly
     public static final int TEST_FAIL_AFTER_METADATA_PUBLISH = 2;
     /**
+     * Throws where {@link #TEST_FAIL_AFTER_METADATA_PUBLISH} would, but only in
+     * {@link #publishTruncateBelow}, so a seal gets through and the retention pass
+     * that follows it does not. That is the failure shape no reconciliation ever
+     * sees: a seal failure re-arms the reconciliation on the next one, while a
+     * retention, compaction or repair failure re-arms nothing at all.
+     */
+    @TestOnly
+    public static final int TEST_FAIL_AFTER_RETENTION_METADATA_PUBLISH = 4;
+    /**
      * Throws once the superblock has committed, so the caller observes a failed
-     * publication over a durably advanced generation. Unlike the two stages
-     * above, {@link #publishCompaction} is the only path that honours it -
+     * publication over a durably advanced generation. Unlike the stages above,
+     * {@link #publishCompaction} is the only path that honours it -
      * compaction is the only publication that stages a data segment an abort
      * could unlink.
      */
@@ -1055,7 +1064,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LiveViewCheckpointPageRef newDirectoryRoot = new LiveViewCheckpointPageRef();
             directoryWriter.publish(directorySegmentId, generation, newDirectoryRoot);
             metadataBytesAdded = checkedAdd(metadataBytesAdded, directoryWriter.getLastSegmentBytes());
-            if (testFailureStage == TEST_FAIL_AFTER_METADATA_PUBLISH) {
+            if (testFailureStage == TEST_FAIL_AFTER_METADATA_PUBLISH
+                    || testFailureStage == TEST_FAIL_AFTER_RETENTION_METADATA_PUBLISH) {
                 throw CairoException.critical(0).put("test failure after live view checkpoint metadata publication");
             }
 
@@ -1094,9 +1104,19 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
-     * Unlinks every catalogued segment the current generation no longer reaches,
-     * and stages the catalogue entries the pass leaves naming nothing for the next
-     * seal of this directory to remove.
+     * Unlinks every catalogued segment the current generation no longer reaches
+     * and every final-name file no generation ever catalogued, and stages the
+     * catalogue entries the pass leaves naming nothing for the next seal of this
+     * directory to remove.
+     * <p>
+     * The second half is the one no reconciliation can stand in for. A publication
+     * that renamed its segments into place and then failed leaves files the
+     * catalogue never held, and only {@code append} re-arms the reconciliation that
+     * would have read the id ceiling naming them - so a failed retention,
+     * compaction or repair publication left its segments where they were, and the
+     * next seal's id skip stepped over them and put them out of the ceiling rule's
+     * reach for good. See
+     * {@link LiveViewCheckpointLifecycle#purgeUncataloguedSegments}.
      * <p>
      * This is the reclamation half of {@link LiveViewCheckpointLifecycle#reconcile}
      * on its own, without the epoch, repair-descriptor and orphan rules that only a
@@ -1142,6 +1162,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 dataStore.of(checkpointsDir);
                 purge = dataStore.purge();
             }
+            // The catalogue decides the fate of every segment a generation ever
+            // named; this decides the fate of the files it never named at all. The
+            // two are disjoint by construction and the second is the half no
+            // reconciliation can do late, because the ceiling it would have read is
+            // gone by then.
+            final LiveViewCheckpointLifecycle.CleanupStats orphans =
+                    LiveViewCheckpointLifecycle.purgeUncataloguedSegments(
+                            configuration,
+                            checkpointsDir,
+                            superblock,
+                            true
+                    );
             // The sweep re-proposes every entry whose file is already gone, so this
             // list supersedes whatever an earlier sweep left pending rather than
             // adding to it: an entry missing from it is one a publication has
@@ -1159,7 +1191,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     purge.getFailedSegmentCount(),
                     retirable.size(),
                     purge.getLiveSegmentCount(),
-                    purge.getObsoleteBytes()
+                    purge.getObsoleteBytes(),
+                    orphans.getRemovedCount(),
+                    orphans.getFailedCount()
             );
         }
     }
@@ -2474,12 +2508,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * other field is zero.
      */
     public static final class SweepResult {
-        static final SweepResult NOT_SWEPT = new SweepResult(0, 0, 0, 0, 0, 0, false);
+        static final SweepResult NOT_SWEPT = new SweepResult(0, 0, 0, 0, 0, 0, 0, 0, false);
+        private final int failedOrphanCount;
         private final int failedSegmentCount;
         private final int liveSegmentCount;
         private final long obsoleteBytes;
         private final long purgedBytes;
         private final int purgedSegmentCount;
+        private final int removedOrphanCount;
         private final int retirableEntryCount;
         private final boolean swept;
 
@@ -2490,6 +2526,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 int retirableEntryCount,
                 int liveSegmentCount,
                 long obsoleteBytes,
+                int removedOrphanCount,
+                int failedOrphanCount,
                 boolean swept
         ) {
             this.purgedSegmentCount = purgedSegmentCount;
@@ -2498,6 +2536,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             this.retirableEntryCount = retirableEntryCount;
             this.liveSegmentCount = liveSegmentCount;
             this.obsoleteBytes = obsoleteBytes;
+            this.removedOrphanCount = removedOrphanCount;
+            this.failedOrphanCount = failedOrphanCount;
             this.swept = swept;
         }
 
@@ -2507,7 +2547,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 int failedSegmentCount,
                 int retirableEntryCount,
                 int liveSegmentCount,
-                long obsoleteBytes
+                long obsoleteBytes,
+                int removedOrphanCount,
+                int failedOrphanCount
         ) {
             this(
                     purgedSegmentCount,
@@ -2516,8 +2558,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     retirableEntryCount,
                     liveSegmentCount,
                     obsoleteBytes,
+                    removedOrphanCount,
+                    failedOrphanCount,
                     true
             );
+        }
+
+        /**
+         * @return uncatalogued files this sweep could not unlink; the next one
+         * re-derives them, since nothing durable records the attempt
+         */
+        public int getFailedOrphanCount() {
+            return failedOrphanCount;
         }
 
         /**
@@ -2550,6 +2602,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         public int getPurgedSegmentCount() {
             return purgedSegmentCount;
+        }
+
+        /**
+         * @return final-name files this sweep unlinked because no generation
+         * catalogues them - what a publication that renamed its segments into
+         * place and then failed left behind
+         */
+        public int getRemovedOrphanCount() {
+            return removedOrphanCount;
         }
 
         /**

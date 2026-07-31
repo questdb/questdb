@@ -51,6 +51,14 @@ import org.jetbrains.annotations.Nullable;
  * Zero-reference deletion delegates to {@link LiveViewCheckpointDataStore},
  * retaining its old-slot, reader-pin, candidate-ownership, and retry guards.</p>
  *
+ * <p>That id-ceiling rule needs a reconciliation to read the ceiling before the
+ * next publication moves it, which only a restart and a failed {@code append}
+ * give it. {@link #purgeUncataloguedSegments} states the same disposition
+ * against the catalogue instead, so it holds whatever the ceiling has since done,
+ * and the purge cadence runs it on every sweep - that is what collects the
+ * segments a failed retention, compaction or repair publication renamed into
+ * place.</p>
+ *
  * <p>Ahead of all of that, reconciliation classifies the directory as a whole.
  * A {@code _timeline} carrying a foreign layout version, or a top-level entry
  * outside the current layout, means a build with a different on-disk format
@@ -200,6 +208,12 @@ public final class LiveViewCheckpointLifecycle {
 
     /**
      * Removes final-name orphans after a new slot durably advances past them.
+     * <p>
+     * This is the id-ceiling rule, and it only ever holds for the files a
+     * publication left above the ceiling the reconciliation beside it read. Once
+     * any later publication has stepped its own allocation over one of those ids,
+     * the file drops below the ceiling and this rule can no longer name it -
+     * {@link #purgeUncataloguedSegments} is the one that still can.
      */
     public static CleanupStats purgeFinalOrphans(
             @NotNull CairoConfiguration configuration,
@@ -233,6 +247,87 @@ public final class LiveViewCheckpointLifecycle {
         return new CleanupStats(result.removed, result.failed);
     }
 
+    /**
+     * Removes every final-name segment file the newest durable generation neither
+     * catalogues nor names as its pending directory segment.
+     * <p>
+     * Since Phase 2a/2b the catalogue holds an entry for every segment a published
+     * root can reach - data, tree metadata and boundary metadata alike - and the
+     * one documented exception is the segment carrying the directory root itself,
+     * which the superblock names as pending because a tree cannot list the file it
+     * is being written into. A final-name file outside both sets is therefore
+     * reachable from nothing, whatever its id: it is what a publication that
+     * renamed its segments into place and then failed left behind.
+     * <p>
+     * The rule this applies is strictly stronger than
+     * {@link #purgeFinalOrphans}'s, and it is stronger in the direction that
+     * matters. The id ceiling decays - {@code skipPublishedSegmentIds} steps the
+     * next publication's allocation over an orphan, the ceiling rises past it, and
+     * no later reconciliation can tell it from a live segment again - while a
+     * catalogue that never held the id keeps saying so. That is why a failed
+     * retention, compaction or repair publication used to leak its segments for
+     * the life of the directory: none of the three re-runs a reconciliation, so
+     * nothing read the ceiling before the next seal moved it.
+     * <p>
+     * Nothing has to advance past these ids first, because the monotonic
+     * {@code nextSegmentId} is what preserves allocation order on its own -
+     * unlinking a file never lowers it, and the id skip only ever moves forward.
+     * The pass publishes no generation, so a fault costs one deferred collection.
+     * <p>
+     * It is fail-closed at every step it cannot complete: a catalogue this build
+     * cannot read, a directory root the superblock does not name, or a slot that
+     * lost the newest-generation race all leave every file where it is. Keeping a
+     * dead file costs disk; unlinking a live one costs the timeline.
+     * <p>
+     * Temporary files are not this pass's business. A {@code .tmp} belongs to
+     * whichever writer is holding it open - a repair capture spans several
+     * {@code capture} calls before it commits - so ownership rather than
+     * reachability decides its fate, and reconciliation, which runs where no
+     * writer can own one, is where that decision belongs.
+     */
+    public static CleanupStats purgeUncataloguedSegments(
+            @NotNull CairoConfiguration configuration,
+            @NotNull Path checkpointsDir,
+            @NotNull LiveViewCheckpointSuperblock superblock,
+            boolean primaryOwner
+    ) {
+        if (!primaryOwner || !superblock.isSelectedSlotNewest() || superblock.segmentDirectoryRootRef.isNull()) {
+            // A root that failed bounded validation, or a generation whose
+            // catalogue has no root at all, is no evidence that anything on disk
+            // is free.
+            return new CleanupStats(0, 0);
+        }
+        final CleanupResult result = new CleanupResult(0);
+        try (LiveViewCheckpointSegmentDirectoryReader directory =
+                     new LiveViewCheckpointSegmentDirectoryReader(configuration)) {
+            directory.of(checkpointsDir, superblock.segmentDirectoryRootRef);
+            final LiveViewCheckpointSegmentDirectoryEntry entry = new LiveViewCheckpointSegmentDirectoryEntry();
+            try (Path path = new Path()) {
+                purgeUncataloguedSegmentsInDir(
+                        configuration.getFilesFacade(),
+                        LiveViewCheckpointLayout.metaDirPath(path, checkpointsDir),
+                        LiveViewCheckpointLayout.META_SEGMENT_PREFIX,
+                        directory,
+                        entry,
+                        superblock.pendingDirectorySegmentId,
+                        result
+                );
+                purgeUncataloguedSegmentsInDir(
+                        configuration.getFilesFacade(),
+                        LiveViewCheckpointLayout.dataDirPath(path, checkpointsDir),
+                        LiveViewCheckpointLayout.DATA_SEGMENT_PREFIX,
+                        directory,
+                        entry,
+                        superblock.pendingDirectorySegmentId,
+                        result
+                );
+            }
+        } catch (CairoException e) {
+            LOG.error().$("could not read the live view checkpoint catalogue while collecting orphans [path=")
+                    .$(checkpointsDir).$(", error=").$safe(e.getFlyweightMessage()).I$();
+        }
+        return new CleanupStats(result.removed, result.failed);
+    }
 
     /**
      * Retires the timeline-owned files. When {@code pinOwner} is supplied, a
@@ -508,6 +603,56 @@ public final class LiveViewCheckpointLifecycle {
                 if (segmentId >= lo && segmentId < hi) {
                     removeFile(ff, dir, dirLen, name, result);
                 }
+            } while (ff.findNext(findPtr) > 0);
+        } finally {
+            ff.findClose(findPtr);
+            dir.trimTo(dirLen);
+        }
+    }
+
+    private static void purgeUncataloguedSegmentsInDir(
+            @NotNull FilesFacade ff,
+            @NotNull Path dir,
+            @NotNull CharSequence prefix,
+            @NotNull LiveViewCheckpointSegmentDirectoryReader directory,
+            @NotNull LiveViewCheckpointSegmentDirectoryEntry entry,
+            long pendingDirectorySegmentId,
+            @NotNull CleanupResult result
+    ) {
+        if (!ff.exists(dir.$())) {
+            return;
+        }
+        final int dirLen = dir.size();
+        final StringSink name = new StringSink();
+        final long findPtr = ff.findFirst(dir.$());
+        if (findPtr == 0) {
+            return;
+        }
+        try {
+            do {
+                final long namePtr = ff.findName(findPtr);
+                if (namePtr == 0) {
+                    continue;
+                }
+                name.clear();
+                if (!Utf8s.utf8ToUtf16Z(namePtr, name)
+                        || !Chars.startsWith(name, prefix)
+                        || Chars.endsWith(name, LiveViewCheckpointLayout.TMP_SUFFIX)) {
+                    continue;
+                }
+                final long segmentId = parseSegmentId(name, prefix.length(), name.length());
+                // An unparsable name is not a segment this build wrote, the pending
+                // id is the one live segment no catalogue may hold, and everything
+                // the catalogue does hold is either live or the purge sweep's to
+                // decide on.
+                if (segmentId < 0
+                        || segmentId == pendingDirectorySegmentId
+                        || directory.find(segmentId, entry)) {
+                    continue;
+                }
+                LOG.info().$("removing a live view checkpoint segment no generation catalogues [dir=")
+                        .$(dir).$(", name=").$safe(name).I$();
+                removeFile(ff, dir, dirLen, name, result);
             } while (ff.findNext(findPtr) > 0);
         } finally {
             ff.findClose(findPtr);
