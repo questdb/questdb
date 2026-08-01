@@ -240,19 +240,6 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
-    private static boolean hasOutputColumn(IQueryModel model, CharSequence columnName) {
-        if (model.getAliasToColumnMap().contains(columnName)
-                || model.getAliasToColumnNameMap().contains(columnName)) {
-            return true;
-        }
-        ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        if (columns.size() > 0 && !isWildcard(columns)) {
-            return false;
-        }
-        IQueryModel nested = model.getNestedModel();
-        return nested != null && nested != model && hasOutputColumn(nested, columnName);
-    }
-
     private static boolean isCountAggregate(ExpressionNode node) {
         return node != null
                 && node.type == ExpressionNode.FUNCTION
@@ -263,37 +250,6 @@ class LateralJoinRewriter implements Mutable {
         return node != null
                 && node.type == ExpressionNode.LITERAL
                 && matchesOuterRefAlias(node.token, outerRefAlias);
-    }
-
-    private static boolean isQualifiedColumnUnambiguous(IQueryModel layer, CharSequence qualifiedName) {
-        int dot = Chars.indexOfLastUnquoted(qualifiedName, '.');
-        if (dot < 1) {
-            return false;
-        }
-        IQueryModel sourceLayer = layer;
-        int sourceIndex = sourceLayer.getModelAliasIndex(qualifiedName, 0, dot);
-        while (sourceIndex < 0
-                && sourceLayer.getNestedModel() != null
-                && !sourceLayer.isNestedModelIsSubQuery()) {
-            sourceLayer = sourceLayer.getNestedModel();
-            sourceIndex = sourceLayer.getModelAliasIndex(qualifiedName, 0, dot);
-        }
-        if (sourceIndex < 0) {
-            return false;
-        }
-
-        CharSequence columnName = qualifiedName.subSequence(dot + 1, qualifiedName.length());
-        ObjList<IQueryModel> joinModels = sourceLayer.getJoinModels();
-        int resolvedIndex = -1;
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
-            if (hasOutputColumn(joinModels.getQuick(i), columnName)) {
-                if (resolvedIndex > -1) {
-                    return false;
-                }
-                resolvedIndex = i;
-            }
-        }
-        return resolvedIndex == sourceIndex;
     }
 
     private static boolean isSimpleColumnRef(ExpressionNode node) {
@@ -307,25 +263,6 @@ class LateralJoinRewriter implements Mutable {
             }
         }
         return false;
-    }
-
-    private static boolean isWildcardSourceMatch(IQueryModel layer, CharSequence wildcard, CharSequence qualifiedName) {
-        int wildcardDot = Chars.indexOfLastUnquoted(wildcard, '.');
-        int qualifiedDot = Chars.indexOfLastUnquoted(qualifiedName, '.');
-        if (wildcardDot < 1 || qualifiedDot < 1) {
-            return false;
-        }
-        IQueryModel sourceLayer = layer;
-        while (true) {
-            int sourceIndex = sourceLayer.getModelAliasIndex(qualifiedName, 0, qualifiedDot);
-            if (sourceIndex > -1) {
-                return sourceIndex == sourceLayer.getModelAliasIndex(wildcard, 0, wildcardDot);
-            }
-            if (sourceLayer.getNestedModel() == null || sourceLayer.isNestedModelIsSubQuery()) {
-                return false;
-            }
-            sourceLayer = sourceLayer.getNestedModel();
-        }
     }
 
     private static boolean matchesOuterRefAlias(CharSequence token, CharSequence outerRefAlias) {
