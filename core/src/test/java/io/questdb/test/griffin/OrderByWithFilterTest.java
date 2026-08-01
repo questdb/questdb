@@ -317,6 +317,40 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByExcludedSymbolValuesOrdersTheSameWithAndWithoutCache() throws Exception {
+        // FilterOnExcludedValues sorts its per-symbol cursor factories by symbol
+        // VALUE so the scan emits them in ORDER BY order. The comparator reads two
+        // values out of the symbol map at once, and on a NOCACHE column both reads
+        // land in the same flyweight - so the comparator saw one value twice,
+        // returned 0 for every pair, and left the factories in symbol-KEY order,
+        // which is insertion order. 'w' is inserted before 'b' precisely so the two
+        // orders disagree.
+        assertMemoryLeak(() -> {
+            for (String cacheClause : new String[]{"cache", "nocache"}) {
+                execute("CREATE TABLE a (s SYMBOL " + cacheClause + " INDEX)");
+                execute("INSERT INTO a VALUES ('a'), ('w'), ('b'), ('a'), (NULL)");
+                assertQuery("SELECT * FROM a WHERE s != 'a' ORDER BY s")
+                        .noLeakCheck()
+                        .returns("""
+                                s
+
+                                b
+                                w
+                                """);
+                assertQuery("SELECT * FROM a WHERE s != 'a' ORDER BY s DESC")
+                        .noLeakCheck()
+                        .returns("""
+                                s
+                                w
+                                b
+
+                                """);
+                execute("DROP TABLE a");
+            }
+        });
+    }
+
+    @Test
     public void testOrderByNonPrefixedColumnNotOnSelectList1() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
