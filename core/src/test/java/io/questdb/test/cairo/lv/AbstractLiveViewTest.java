@@ -37,6 +37,7 @@ import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Before;
 
 /**
  * Shared driver helpers for the live view tests. Every test in this package advances a live view by
@@ -114,6 +115,23 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      */
     protected static long ts(String timestamp) {
         return MicrosTimestampDriver.floor(timestamp);
+    }
+
+    @Before
+    @Override
+    public void setUp() {
+        super.setUp();
+        // The tests hand-drive the clock, and CairoTestConfiguration derives the millisecond clock
+        // the engine's spin deadlines run on from that same simulated clock. So a soak whose refresh
+        // driver advances the clock by CLOCK_ADVANCE_MICROS per tick, on its own thread, fast-forwards
+        // every concurrent reader's deadline with it: a reader that loses one benign race in
+        // TableReader.readTxnSlow - the writer commits between its txn read and its scoreboard acquire -
+        // re-checks a deadline the driver has already blown by tens of simulated seconds and throws
+        // "Transaction read timeout" milliseconds after entering the loop. Raising the budget past any
+        // span a test can simulate takes the simulated clock out of the spin loops. It costs no real
+        // liveness cover: the clock is simulated, so the timeout never measured real time here anyway,
+        // and AbstractTest's JUnit timeout rule still fails a genuinely stuck reader.
+        spinLockTimeout = 365L * 24 * 60 * 60 * 1000; // a simulated year
     }
 
     /**
