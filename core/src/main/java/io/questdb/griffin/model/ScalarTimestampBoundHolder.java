@@ -44,27 +44,23 @@ import io.questdb.std.Numbers;
  * makes the frozen value visible to those readers.
  */
 public class ScalarTimestampBoundHolder {
-    private final boolean nonDeterministic;
     private final int timestampType;
     private volatile boolean published;
     private volatile long value = Numbers.LONG_NULL;
 
-    public ScalarTimestampBoundHolder(int timestampType, boolean nonDeterministic) {
+    public ScalarTimestampBoundHolder(int timestampType) {
         this.timestampType = timestampType;
-        this.nonDeterministic = nonDeterministic;
     }
 
     public int getTimestampType() {
         return timestampType;
     }
 
-    /**
-     * Mirrors the wrapped sub-query factory's determinism so the residual filter that reads this
-     * holder keeps the exact framing/optimization behaviour the direct sub-query bound had.
-     */
-    public boolean isNonDeterministic() {
-        return nonDeterministic;
-    }
+    // Deliberately carries no determinism flag: the only prospective reader is the residual-side
+    // ScalarSubQueryBoundRefFunction, and forwarding the sub-query factory's fail-safe
+    // RecordCursorFactory#isNonDeterministic() hint into the fail-open Function legality flag makes
+    // the materialized-view guard reject valid DDL (see the polarity note in
+    // ScalarSubQueryBoundRefFunction).
 
     public boolean isPublished() {
         return published;

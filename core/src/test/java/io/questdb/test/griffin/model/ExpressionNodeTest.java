@@ -60,7 +60,7 @@ public class ExpressionNodeTest {
         // ones fed a cloned filter expression on the filter-stealing path - must read that same
         // holder. Dropping it on clone makes FunctionParser re-open the sub-query per worker.
         final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
-        final ScalarTimestampBoundHolder holder = new ScalarTimestampBoundHolder(ColumnType.TIMESTAMP, false);
+        final ScalarTimestampBoundHolder holder = new ScalarTimestampBoundHolder(ColumnType.TIMESTAMP);
 
         final ExpressionNode node = pool.next().of(ExpressionNode.QUERY, "query", 0, 0);
         node.scalarBoundHolder = holder;
@@ -79,7 +79,7 @@ public class ExpressionNodeTest {
         // ScalarSubQueryBoundRefFunction and read a bound frozen by a previous execution.
         final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
         final ExpressionNode node = pool.next().of(ExpressionNode.QUERY, "query", 0, 0);
-        node.scalarBoundHolder = new ScalarTimestampBoundHolder(ColumnType.TIMESTAMP, false);
+        node.scalarBoundHolder = new ScalarTimestampBoundHolder(ColumnType.TIMESTAMP);
 
         node.clear();
         Assert.assertNull(node.scalarBoundHolder);

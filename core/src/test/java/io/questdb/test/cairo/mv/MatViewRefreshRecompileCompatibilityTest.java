@@ -75,6 +75,19 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testRefreshRecompileSucceedsForMonotonicWrapperAfterAddIndex() throws Exception {
+        // Unlike the bare-ts shape above, a monotonic wrapper over the designated timestamp keeps
+        // the original predicate as a residual filter that re-reads the pruning bound through
+        // ScalarSubQueryBoundRefFunction, so this exercises the shared-holder path in the refresh
+        // recompile. ADD INDEX flips the sub-query factory's fail-safe determinism hint under the
+        // live view; the guard must not read that hint.
+        assertRefreshRecompiles(
+                "dateadd('h', 1, ts) >= (SELECT max(lim) FROM cfg WHERE k = 'a')",
+                true
+        );
+    }
+
+    @Test
     public void testRefreshRecompileSucceedsForAggregateSubQuery() throws Exception {
         assertRefreshRecompiles("ts > (SELECT max(lim) FROM cfg)", false);
     }

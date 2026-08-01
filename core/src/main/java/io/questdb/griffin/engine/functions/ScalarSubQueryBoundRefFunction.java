@@ -57,10 +57,17 @@ public final class ScalarSubQueryBoundRefFunction extends TimestampFunction {
         return holder.value();
     }
 
-    @Override
-    public boolean isNonDeterministic() {
-        return holder.isNonDeterministic();
-    }
+    // Deliberately does NOT override isNonDeterministic(). The holder mirrors the wrapped sub-query
+    // factory's RecordCursorFactory#isNonDeterministic(), a fail-safe optimizer hint defaulting to
+    // true (an index-driven sub-query scan reports true even for a fixed-literal key), while
+    // Function#isNonDeterministic() is the opposite polarity: a fail-open legality flag read by the
+    // materialized-view guard in FunctionParser. Bridging the two makes the enclosing comparison
+    // operator inherit the fail-safe true, so the guard rejects DDL that compiled on master - and
+    // ADD INDEX on the sub-query's table flips the hint under a live view, failing its refresh
+    // recompile and invalidating it cluster-wide. Genuinely non-deterministic bounds never reach
+    // this reader: they are rejected while the sub-query body is generated (FunctionParser guard)
+    // and they fail isStableWithinExecution(), so no holder is installed (WhereClauseParser). See
+    // CursorFunction for the same polarity note on the direct path.
 
     @Override
     public boolean isRuntimeConstant() {

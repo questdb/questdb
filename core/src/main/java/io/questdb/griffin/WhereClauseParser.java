@@ -3361,7 +3361,7 @@ public final class WhereClauseParser implements Mutable {
         // Only actual scalar SUBQUERY bounds need sharing; direct runtime constants (bind variables,
         // now()) already re-read the same frozen SqlExecutionContext snapshot on every open.
         if (boundNode != null && bound instanceof ScalarSubQueryTimestampFunction ssf) {
-            final ScalarTimestampBoundHolder holder = new ScalarTimestampBoundHolder(ssf.getType(), ssf.isNonDeterministic());
+            final ScalarTimestampBoundHolder holder = new ScalarTimestampBoundHolder(ssf.getType());
             ssf.setPublishHolder(holder);
             boundNode.scalarBoundHolder = holder;
         }
