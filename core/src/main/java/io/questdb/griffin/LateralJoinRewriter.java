@@ -102,6 +102,10 @@ class LateralJoinRewriter implements Mutable {
     // set when a run-time LIMIT reads an outer column: such a guard cannot be
     // evaluated in the outer projection, so a scalar-count body must be rejected
     private ExpressionNode scalarCountGuardBlocker;
+    // set once the push-down descent crosses an aggregation layer: a LIMIT below
+    // the aggregate only caps its input and can never drop the aggregate row, so
+    // it must not enter the guard (a run-time 0 would masquerade as NULL)
+    private boolean scalarCountGuardDisarmed;
     private boolean hasCorrelation;
     private int outerRefId;
 
@@ -143,6 +147,7 @@ class LateralJoinRewriter implements Mutable {
     public void clear() {
         scalarCountGuard = null;
         scalarCountGuardBlocker = null;
+        scalarCountGuardDisarmed = false;
         correlatedPreds.clear();
         innerJoinCorrelated.clear();
         innerJoinNonCorrelated.clear();
@@ -1397,6 +1402,7 @@ class LateralJoinRewriter implements Mutable {
                 boolean isScalarCountBody = isLeft && hasScalarCountBody(topInner);
                 scalarCountGuard = null;
                 scalarCountGuardBlocker = null;
+                scalarCountGuardDisarmed = false;
                 CharSequence perSideCloneAlias = null;
                 if (isPerSidePush) {
                     perSideCloneAlias = pushDownPerSidePush(
@@ -1987,6 +1993,12 @@ class LateralJoinRewriter implements Mutable {
         if (limitLo == null && limitHi == null) {
             return;
         }
+        if (scalarCountGuardDisarmed) {
+            // below an aggregation layer: this LIMIT caps the aggregate's input,
+            // not the aggregate row itself - the coalesce compensation stays valid
+            // with no guard (and an outer-column LIMIT here needs no blocker)
+            return;
+        }
         if (classifyLateralLimit(limitLo, limitHi) != LIMIT_UNPROVABLE) {
             // compile-time decidable: hasScalarCountBody already folded it, no guard needed
             return;
@@ -2350,6 +2362,11 @@ class LateralJoinRewriter implements Mutable {
         } else if (hasGroupBy || hasAggregates) {
             compensateAggregate(current);
         }
+        if (current.getSampleBy() != null || hasGroupBy || hasAggregates) {
+            // deeper layers feed this aggregation: their LIMITs cap its input and
+            // cannot drop the aggregate row, so they stay out of the guard
+            scalarCountGuardDisarmed = true;
+        }
         if (hasWindowColumns(current)) {
             compensateWindow(current, outerRefJoinModel.getAlias().token);
         }
@@ -2484,8 +2501,10 @@ class LateralJoinRewriter implements Mutable {
         // outer model (and a leftover blocker would spuriously reject valid queries)
         final ExpressionNode savedScalarCountGuard = scalarCountGuard;
         final ExpressionNode savedScalarCountGuardBlocker = scalarCountGuardBlocker;
+        final boolean savedScalarCountGuardDisarmed = scalarCountGuardDisarmed;
         scalarCountGuard = null;
         scalarCountGuardBlocker = null;
+        scalarCountGuardDisarmed = false;
         pushDownOuterRefs(
                 null, jmNested, outerToInnerAlias, isLeftJoin,
                 clonedOuterRef, jm, depth
@@ -2500,6 +2519,7 @@ class LateralJoinRewriter implements Mutable {
         }
         scalarCountGuard = savedScalarCountGuard;
         scalarCountGuardBlocker = savedScalarCountGuardBlocker;
+        scalarCountGuardDisarmed = savedScalarCountGuardDisarmed;
 
         ExpressionNode alignCriteria = jm.getJoinCriteria();
         IQueryModel jmTop = jm.getNestedModel();
@@ -2590,6 +2610,7 @@ class LateralJoinRewriter implements Mutable {
         // must survive it, or the last branch's guard would leak onto the outer model
         final ExpressionNode savedScalarCountGuard = scalarCountGuard;
         final ExpressionNode savedScalarCountGuardBlocker = scalarCountGuardBlocker;
+        final boolean savedScalarCountGuardDisarmed = scalarCountGuardDisarmed;
         for (int bi = 1, bn = terminateJoins.size(); bi < bn; bi++) {
             IQueryModel branch = terminateLevel.getJoinModels().getQuick(bi);
             IQueryModel branchNested = branch.getNestedModel();
@@ -2621,6 +2642,7 @@ class LateralJoinRewriter implements Mutable {
             boolean isScalarCountBody = isLeftJoin && hasScalarCountBody(branchNested);
             scalarCountGuard = null;
             scalarCountGuardBlocker = null;
+            scalarCountGuardDisarmed = false;
             pushDownOuterRefs(
                     null, branchNested, outerToInnerAlias, isLeftJoin,
                     clonedOuterRef, branch, depth
@@ -2681,6 +2703,7 @@ class LateralJoinRewriter implements Mutable {
         }
         scalarCountGuard = savedScalarCountGuard;
         scalarCountGuardBlocker = savedScalarCountGuardBlocker;
+        scalarCountGuardDisarmed = savedScalarCountGuardDisarmed;
 
         if (firstCloneAlias != null) {
             // Identity-tracked propagation: walk the projection layers between
