@@ -2470,6 +2470,11 @@ class LateralJoinRewriter implements Mutable {
         int aliasSaveBase = saveAndRemapOuterToInnerAlias(cloneAlias);
 
         boolean isScalarCountBody = isLeftJoin && hasScalarCountBody(jmNested);
+        // Branch-local guard scope: consumed below onto localCountModel; the caller's
+        // guard state must be restored, or this branch's guard would leak onto the
+        // outer model (and a leftover blocker would spuriously reject valid queries)
+        final ExpressionNode savedScalarCountGuard = scalarCountGuard;
+        final ExpressionNode savedScalarCountGuardBlocker = scalarCountGuardBlocker;
         scalarCountGuard = null;
         scalarCountGuardBlocker = null;
         pushDownOuterRefs(
@@ -2484,6 +2489,8 @@ class LateralJoinRewriter implements Mutable {
                 jm.setJoinType(IQueryModel.JOIN_LEFT_OUTER);
             }
         }
+        scalarCountGuard = savedScalarCountGuard;
+        scalarCountGuardBlocker = savedScalarCountGuardBlocker;
 
         ExpressionNode alignCriteria = jm.getJoinCriteria();
         IQueryModel jmTop = jm.getNestedModel();
@@ -2570,6 +2577,10 @@ class LateralJoinRewriter implements Mutable {
         }
 
         CharSequence firstCloneAlias = scalarCountDriver != null ? scalarCountDriver.getAlias().token : null;
+        // Branch-local guards are consumed inside the loop; the caller's guard state
+        // must survive it, or the last branch's guard would leak onto the outer model
+        final ExpressionNode savedScalarCountGuard = scalarCountGuard;
+        final ExpressionNode savedScalarCountGuardBlocker = scalarCountGuardBlocker;
         for (int bi = 1, bn = terminateJoins.size(); bi < bn; bi++) {
             IQueryModel branch = terminateLevel.getJoinModels().getQuick(bi);
             IQueryModel branchNested = branch.getNestedModel();
@@ -2659,6 +2670,8 @@ class LateralJoinRewriter implements Mutable {
 
             restoreOuterToInnerAlias(aliasSaveBase);
         }
+        scalarCountGuard = savedScalarCountGuard;
+        scalarCountGuardBlocker = savedScalarCountGuardBlocker;
 
         if (firstCloneAlias != null) {
             // Identity-tracked propagation: walk the projection layers between
