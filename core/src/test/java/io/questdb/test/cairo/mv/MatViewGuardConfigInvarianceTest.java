@@ -104,6 +104,10 @@ public class MatViewGuardConfigInvarianceTest extends AbstractCairoTest {
         final String cfg = "cfg_" + ns;
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, String.valueOf(parallel));
+        // The knob named in the class javadoc: it defaults to cpuAvailable >= 4, so it is the one that
+        // actually differs between a 2-vCPU and a 4-vCPU node. Varying only the generic parallel flags
+        // would leave the documented failure mode untested.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
         assertMemoryLeak(() -> {
             execute("CREATE TABLE " + base + " (ts TIMESTAMP, k SYMBOL, v DOUBLE, n LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE " + cfg + " (ts TIMESTAMP, k SYMBOL, lim TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
