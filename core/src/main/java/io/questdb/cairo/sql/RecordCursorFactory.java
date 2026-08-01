@@ -239,6 +239,30 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      *
      * @return the scan direction
      */
+    /**
+     * Asks this factory to stop guaranteeing designated-timestamp order, in exchange
+     * for whatever that guarantee costs it. Returns true if it did.
+     * <p>
+     * A multi-key covering scan pays heavily for the guarantee: it k-way merges its
+     * per-key cursors by row id, and the merged frames interleave keys so they carry
+     * no resolved symbol key, which makes the async worker arm skip them and decode
+     * every row on the cursor thread.
+     * <p>
+     * Only a CONSUMER may call this, and only one that (a) consumes its base to
+     * exhaustion, so no early-exit-on-ordered-stream is given up, and (b) does not
+     * depend on row order for its results. A parallel GROUP BY / SAMPLE BY with no
+     * order-sensitive aggregate satisfies both. A LIMIT over an ordered scan does
+     * NOT -- it relies on the ordered stream to stop early, and losing that is
+     * O(limit) -> O(n log n).
+     * <p>
+     * After a successful call {@link #getScanDirection()} reports
+     * {@link #SCAN_DIRECTION_OTHER}, so anything above that trusts scan direction
+     * still sees the truth.
+     */
+    default boolean tryDisableTimestampOrdering() {
+        return false;
+    }
+
     int getScanDirection();
 
     /**

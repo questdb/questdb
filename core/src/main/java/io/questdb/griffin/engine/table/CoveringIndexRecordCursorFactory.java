@@ -148,7 +148,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // False when the consumer does not require designated-timestamp order, which
     // lets the multi-key path emit one frame per key instead of merging. Always
     // true for single-key and latestBy, which never merge in the first place.
-    private final boolean tsOrderedFrames;
+    // Not final: a consumer that provably needs no timestamp order drops the
+    // guarantee via tryDisableTimestampOrdering().
+    private boolean tsOrderedFrames;
 
     public CoveringIndexRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -582,6 +584,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             Misc.free(frameCursor);
             throw th;
         }
+    }
+
+    @Override
+    public boolean tryDisableTimestampOrdering() {
+        // Only the multi-key merge pays for ordering: single-key frames are already
+        // per-key, and multi-key latestBy has its own ordering contract.
+        if (latestBy || multiKeyPageFrameCursor == null) {
+            return false;
+        }
+        if (tsOrderedFrames) {
+            tsOrderedFrames = false;
+            multiKeyPageFrameCursor.setTsOrderedFrames(false);
+        }
+        return true;
     }
 
     @Override
@@ -2837,7 +2853,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private int perKeyPartitionIndex = -1;
         private long perKeyRowHi;
         private long perKeyRowLo;
-        private final boolean tsOrderedFrames;
+        private boolean tsOrderedFrames;
 
         MultiKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -2851,6 +2867,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             super(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes);
             this.mergeObserver = mergeObserver;
             this.tsOrderedFrames = tsOrderedFrames;
+        }
+
+        void setTsOrderedFrames(boolean value) {
+            this.tsOrderedFrames = value;
         }
 
         @Override

@@ -10393,6 +10393,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // frame per key -- would silently return "whichever key was scanned
                     // first" instead of the earliest row. Fail closed, matching how
                     // SAMPLE BY ALIGN TO FIRST OBSERVATION already rejects such a base.
+                    offerUnorderedScan(factory, groupByFunctions0);
                     validateOrderSensitiveAggregates(factory, groupByFunctions0);
                     return generateFill(
                             model,
@@ -11871,6 +11872,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return result;
+    }
+
+    /**
+     * A GROUP BY / SAMPLE BY consumes its base to EXHAUSTION, so it gives up no
+     * early-exit-on-ordered-stream, and it only depends on row order through
+     * order-sensitive aggregates. When it has none, tell the base it may stop
+     * guaranteeing designated-timestamp order -- which lets a multi-key covering
+     * scan emit one frame per key instead of k-way merging, keeping the decode on
+     * the async workers instead of the cursor thread.
+     * <p>
+     * This is the consumer declaring what it needs, rather than the base guessing.
+     * A LIMIT over an ordered scan must NOT do this: it relies on the ordered stream
+     * to stop early, and losing that turns O(limit) into O(n log n).
+     */
+    private static void offerUnorderedScan(
+            RecordCursorFactory base,
+            ObjList<GroupByFunction> groupByFunctions
+    ) {
+        if (base == null || groupByFunctions == null) {
+            return;
+        }
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            final GroupByFunction f = groupByFunctions.getQuick(i);
+            if (f != null && f.isOrderSensitive()) {
+                return;
+            }
+        }
+        base.tryDisableTimestampOrdering();
     }
 
     /**
