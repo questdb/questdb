@@ -26,15 +26,19 @@ package org.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 
 import java.io.IOException;
@@ -258,11 +262,85 @@ public class LiveViewSteadyStateBenchmark {
                         );
                     }
                 }
+
+                reportFootprint(engine, dbRoot);
             }
         } finally {
             engine = Misc.free(engine);
             deleteRecursively(dbRoot);
         }
+    }
+
+    /**
+     * What the view costs to keep, once it has stopped growing. Heap is what the
+     * output SYMBOL column's writer-side cache dominates when the column is CACHE,
+     * so this is the line the base-column capacity/cache propagation moves; the
+     * off-heap total is the window state and the WAL symbol maps; the on-disk
+     * numbers separate the view's own symbol dictionary from its column data.
+     * <p>
+     * Heap is read after a best-effort collection, which is advisory rather than
+     * exact. Run with a fixed -Xmx and compare two builds on the same host.
+     */
+    private static void reportFootprint(CairoEngine engine, Path dbRoot) throws IOException {
+        for (int i = 0; i < 4; i++) {
+            System.gc();
+            try {
+                Thread.sleep(150);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        final Runtime runtime = Runtime.getRuntime();
+        final long heapBytes = runtime.totalMemory() - runtime.freeMemory();
+        final TableToken viewToken = engine.getTableTokenIfExists("mm_transaction_live_created_at_view");
+        final Path viewPath = dbRoot.resolve(viewToken.getDirName());
+        int symbolCapacity = -1;
+        boolean isSymbolCached = false;
+        try (TableMetadata viewMeta = engine.getTableMetadata(viewToken)) {
+            for (int i = 0, n = viewMeta.getColumnCount(); i < n; i++) {
+                if (ColumnType.isSymbol(viewMeta.getColumnType(i))) {
+                    symbolCapacity = viewMeta.getColumnMetadata(i).getSymbolCapacity();
+                    isSymbolCached = viewMeta.getColumnMetadata(i).isSymbolCacheFlag();
+                    break;
+                }
+            }
+        }
+        System.out.printf(
+                Locale.ROOT,
+                "# footprint heap_mb=%.1f offheap_mb=%.1f view_symbol_mb=%.1f view_total_mb=%.1f "
+                        + "view_symbol_capacity=%d view_symbol_cached=%s%n",
+                heapBytes / (1024.0 * 1024.0),
+                Unsafe.getMemUsed() / (1024.0 * 1024.0),
+                dirBytes(viewPath, "cod_acct_no.") / (1024.0 * 1024.0),
+                dirBytes(viewPath, null) / (1024.0 * 1024.0),
+                symbolCapacity,
+                isSymbolCached
+        );
+    }
+
+    /**
+     * Sums the size of every file under {@code dir}, optionally restricted to file
+     * names starting with {@code namePrefix}. The symbol dictionary of a column
+     * lives in {@code <column>.o/.c/.k/.v} at the table root, so the prefix picks
+     * exactly it out of the table's own directory - partition subdirectories hold
+     * the column data and are counted only by the unrestricted call.
+     */
+    private static long dirBytes(Path dir, String namePrefix) throws IOException {
+        if (!Files.exists(dir)) {
+            return 0;
+        }
+        final long[] total = new long[1];
+        Files.walkFileTree(dir, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                if (namePrefix == null || file.getFileName().toString().startsWith(namePrefix)) {
+                    total[0] += attrs.size();
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        return total[0];
     }
 
     private static void deleteRecursively(Path dir) throws IOException {

@@ -154,6 +154,7 @@ import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.mp.continuation.TimerShards;
 import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.preferences.SettingsStore;
+import io.questdb.std.BoolList;
 import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
@@ -1384,6 +1385,11 @@ public class CairoEngine implements Closeable, WriterSource {
         // referenced base column invalidates the view instead of re-reading the new
         // bytes through the stale compile-time stride.
         final IntList dependencyColumnTypes = new IntList();
+        // Per output column, the SYMBOL cache flag the view's table is created
+        // with: positionally parallel to the view's own metadata, and carrying
+        // the server default for a column that does not project a base SYMBOL
+        // column. See LiveViewTableStructure.
+        final BoolList outputSymbolCacheFlags = new BoolList();
         try (SqlCompiler compiler = getSqlCompiler()) {
             // Arm the shared non-determinism guard for the LV body, mirroring the
             // mat-view compile (SqlCompilerImpl.compileCreateMatView). With it armed,
@@ -1427,6 +1433,27 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
                         dependencyColumnNames.add(Chars.toString(colName));
                         dependencyColumnTypes.add(baseColumn.getType());
+                    }
+
+                    // A SYMBOL column the view projects straight out of the base
+                    // inherits the base column's cache flag, so a base that asked
+                    // for NOCACHE does not get caching back through its view - at
+                    // multi-million cardinality the view's own cache outweighs its
+                    // window state. The projection does not carry the flag
+                    // (SqlCodeGenerator mints a fresh TableColumnMetadata for a
+                    // SYMBOL output column), so resolve it here by name. That is
+                    // exact rather than heuristic: a live view admits no projection
+                    // between the window and the base scan, so a plain column
+                    // cannot be aliased, and no window function returns SYMBOL.
+                    for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                        boolean isCached = configuration.getDefaultSymbolCacheFlag();
+                        if (ColumnType.isSymbol(metadata.getColumnType(i))) {
+                            final CairoColumn baseColumn = baseTable.getColumnQuiet(metadata.getColumnName(i));
+                            if (baseColumn != null && ColumnType.isSymbol(baseColumn.getType())) {
+                                isCached = baseColumn.isSymbolCached();
+                            }
+                        }
+                        outputSymbolCacheFlags.add(isCached);
                     }
                 }
 
@@ -1564,7 +1591,14 @@ public class CairoEngine implements Closeable, WriterSource {
                 dependencyColumnTypes,
                 metadata
         );
-        LiveViewTableStructure struct = new LiveViewTableStructure(configuration, op.getViewName(), partitionBy, metadata, definition);
+        LiveViewTableStructure struct = new LiveViewTableStructure(
+                configuration,
+                op.getViewName(),
+                partitionBy,
+                metadata,
+                definition,
+                outputSymbolCacheFlags
+        );
         try (
                 MemoryMARW mem = Vm.getCMARWInstance();
                 BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
