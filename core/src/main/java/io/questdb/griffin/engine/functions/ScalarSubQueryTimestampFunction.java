@@ -70,6 +70,12 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        // Disarm before re-opening the sub-query, so the residual-side assertion is live on every
+        // execution rather than only the first one, and so a readTimestamp() failure below leaves the
+        // holder unpublished instead of silently retaining the previous execution's bound.
+        if (publishHolder != null) {
+            publishHolder.reset();
+        }
         cursorFunction.init(symbolTableSource, executionContext);
         value = ScalarSubQueryUtils.readTimestamp(factory, executionContext, position);
         // Publish the single per-execution value so the retained residual filter (and its per-worker
