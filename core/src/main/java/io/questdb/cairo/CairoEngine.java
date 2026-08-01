@@ -1437,9 +1437,9 @@ public class CairoEngine implements Closeable, WriterSource {
 
                     // A SYMBOL column the view projects straight out of the base
                     // inherits the base column's cache flag, so a base that asked
-                    // for NOCACHE does not get caching back through its view - at
-                    // multi-million cardinality the view's own cache outweighs its
-                    // window state. The projection does not carry the flag
+                    // for NOCACHE does not get writer and reader caching turned
+                    // back on through its view. The projection does not carry
+                    // the flag
                     // (SqlCodeGenerator mints a fresh TableColumnMetadata for a
                     // SYMBOL output column), so resolve it here by name. That is
                     // exact rather than heuristic: a live view admits no projection

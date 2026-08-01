@@ -227,6 +227,44 @@ public class DirectCharSequenceIntHashMapTest {
     }
 
     @Test
+    public void testKeyBufferOffsetLimitDoesNotCorruptMap() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectCharSequenceIntHashMap map = new DirectCharSequenceIntHashMap(
+                    16,
+                    0.5,
+                    DirectCharSequenceIntHashMap.NO_ENTRY_VALUE,
+                    1,
+                    MemoryTag.NATIVE_DEFAULT,
+                    64
+            )) {
+                for (int i = 0; i < 5; i++) {
+                    String key = "k" + i;
+                    int hashCode = Chars.hashCode(key);
+                    int index = map.keyIndex(key, hashCode);
+                    Assert.assertTrue(map.tryPutAt(index, key, i, hashCode));
+                }
+
+                Assert.assertFalse(map.hasKeyCapacity("k5"));
+                int hashCode = Chars.hashCode("k5");
+                int index = map.keyIndex("k5", hashCode);
+                Assert.assertFalse(map.tryPutAt(index, "k5", 5, hashCode));
+                try {
+                    map.put("k5", 5);
+                    Assert.fail("Expected CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "maximum direct map key storage exceeded");
+                }
+
+                Assert.assertEquals(5, map.size());
+                Assert.assertEquals(DirectCharSequenceIntHashMap.NO_ENTRY_VALUE, map.get("k5"));
+                for (int i = 0; i < 5; i++) {
+                    Assert.assertEquals(i, map.get("k" + i));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testKeyIndexDetectsExistingEntry() throws Exception {
         assertMemoryLeak(() -> {
             try (DirectCharSequenceIntHashMap map = new DirectCharSequenceIntHashMap()) {

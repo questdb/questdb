@@ -32,13 +32,13 @@ import org.junit.Test;
  * A live view's output SYMBOL column inherits the cache flag of the base column
  * it projects, and deliberately does not inherit its capacity.
  * <p>
- * The cache flag is what costs heap: a cached SYMBOL keeps a {@code String} per
- * distinct value in the writer and an {@code ObjList} per reader, so a view over
- * a multi-million-cardinality NOCACHE base column that re-enables caching costs
- * more heap than its own window state. Inheriting the capacity looks like the
- * companion change and is not: it leaves heap unchanged and makes refresh several
- * times slower, because the view probes its own committed dictionary once per row
- * and that probe is slower against a pre-sized index than against one that grew.
+ * CACHE enables a native writer value-to-key map and lets each reader lazily
+ * retain resolved values on the heap. Inheriting NOCACHE prevents the view from
+ * re-enabling those costs for a high-cardinality output.
+ * Inheriting the capacity looks like the companion change and is not: it makes
+ * refresh several times slower, because the view probes its own committed
+ * dictionary once per row and that probe is slower against a pre-sized index
+ * than against one that grew.
  * {@link #testSymbolCapacityIsNotInherited} pins that decision.
  * <p>
  * The engine resolves the base column by name, which is exact rather than

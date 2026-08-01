@@ -36,6 +36,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -44,9 +45,11 @@ import java.io.Closeable;
  */
 public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
     public static final int NO_ENTRY_VALUE = -1;
+    private static final long MAX_KEY_BUFFER_CAPACITY = (long) Integer.MAX_VALUE << 2;
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final int NO_ENTRY_OFFSET = 0;
     private final double loadFactor;
+    private final long maxKeyBufferCapacity;
     // Tag every buffer this map owns is charged to, so memory_metrics() can
     // attribute it. Fixed for the map's lifetime: the grow and shrink paths
     // reallocate under the same tag they allocated under, and a mismatch would
@@ -132,17 +135,38 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
             int avgKeySize,
             int memoryTag
     ) {
+        this(initialCapacity, loadFactor, noEntryValue, avgKeySize, memoryTag, MAX_KEY_BUFFER_CAPACITY);
+    }
+
+    @TestOnly
+    public DirectCharSequenceIntHashMap(
+            int initialCapacity,
+            double loadFactor,
+            int noEntryValue,
+            int avgKeySize,
+            int memoryTag,
+            long maxKeyBufferCapacity
+    ) {
         this.memoryTag = memoryTag;
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
+        if (maxKeyBufferCapacity < 8
+                || maxKeyBufferCapacity > MAX_KEY_BUFFER_CAPACITY
+                || (maxKeyBufferCapacity & 3) != 0) {
+            throw new IllegalArgumentException("8 <= maxKeyBufferCapacity <= 8589934588 and 4-byte aligned");
+        }
         this.mapCapacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
         this.loadFactor = loadFactor;
+        this.maxKeyBufferCapacity = maxKeyBufferCapacity;
         final int len = Numbers.ceilPow2((int) (this.mapCapacity / loadFactor));
         mask = len - 1;
         this.capacity = (long) len << 3;
         this.address = Unsafe.malloc(capacity, memoryTag);
-        this.kvCapacity = Numbers.ceilPow2((long) initialCapacity * (((long) avgKeySize << 1) + 8L));
+        this.kvCapacity = Math.min(
+                Numbers.ceilPow2((long) initialCapacity * (((long) avgKeySize << 1) + 8L)),
+                maxKeyBufferCapacity
+        );
         this.kvAddress = Unsafe.malloc(this.kvCapacity, memoryTag);
         this.noEntryValue = noEntryValue;
         clear();
@@ -299,6 +323,15 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
     }
 
     /**
+     * Returns whether the key buffer can represent one more entry for {@code key}.
+     */
+    public boolean hasKeyCapacity(@NotNull CharSequence key) {
+        final long requiredCapacity = (((long) key.length() << 1) + 11) & ~3L;
+        final long currentCapacity = (long) currentOffset << 2;
+        return requiredCapacity <= maxKeyBufferCapacity - currentCapacity;
+    }
+
+    /**
      * Inserts or overwrites {@code key} with {@code value}.
      */
     public void put(@NotNull CharSequence key, int value) {
@@ -315,8 +348,25 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      * Inserts a key using a previously calculated slot.
      */
     public void putAt(int index, @NotNull CharSequence key, int value, int hashCode) {
+        if (!tryPutAt(index, key, value, hashCode)) {
+            throw CairoException.nonCritical().put("maximum direct map key storage exceeded");
+        }
+    }
+
+    /**
+     * Inserts a key using a previously calculated slot, unless the key buffer's
+     * 32-bit word offsets can no longer represent the result.
+     *
+     * @return true when the key was inserted, false when it would exceed the
+     * maximum representable key-buffer offset
+     */
+    public boolean tryPutAt(int index, @NotNull CharSequence key, int value, int hashCode) {
+        if (!hasKeyCapacity(key)) {
+            return false;
+        }
         final int offset = this.writeKey(key, value);
         putAt0(index, offset, hashCode);
+        return true;
     }
 
     /**
@@ -449,15 +499,21 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
     }
 
     private int writeKey(@NotNull CharSequence key, int value) {
-        // We need to store the key (2 bytes per char), its length (4 bytes) and the value (4 bytes) aligned to 4 bytes.
-        int requiredCapacity = ((key.length() << 1) + 11) & ~3;
-        if (kvCapacity < ((long) currentOffset << 2) + requiredCapacity) {
+        // We need to store the key (2 bytes per char), its length (4 bytes) and
+        // the value (4 bytes), aligned to 4 bytes. Keep the arithmetic wide so
+        // gigantic CharSequences cannot wrap before the capacity check.
+        final long requiredCapacity = (((long) key.length() << 1) + 11) & ~3L;
+        final long currentCapacity = (long) currentOffset << 2;
+        if (kvCapacity < currentCapacity + requiredCapacity) {
             final long oldSize = kvCapacity;
-            long newKvCapacity = Numbers.ceilPow2(kvCapacity + (long) requiredCapacity);
+            long newKvCapacity = Math.min(
+                    Numbers.ceilPow2(currentCapacity + requiredCapacity),
+                    maxKeyBufferCapacity
+            );
             kvAddress = Unsafe.realloc(kvAddress, oldSize, newKvCapacity, memoryTag);
             kvCapacity = newKvCapacity;
         }
-        final long lo = kvAddress + ((long) currentOffset << 2);
+        final long lo = kvAddress + currentCapacity;
         Unsafe.putInt(lo, value);
         Unsafe.putInt(lo + 4, key.length());
         for (int i = 0; i < key.length(); i++) {
@@ -465,7 +521,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         }
 
         final int oldOffset = currentOffset;
-        currentOffset += requiredCapacity >> 2;
+        currentOffset = (int) ((currentCapacity + requiredCapacity) >> 2);
 
         return oldOffset;
     }

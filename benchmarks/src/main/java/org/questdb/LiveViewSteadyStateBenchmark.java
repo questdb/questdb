@@ -272,11 +272,11 @@ public class LiveViewSteadyStateBenchmark {
     }
 
     /**
-     * What the view costs to keep, once it has stopped growing. Heap is what the
-     * output SYMBOL column's writer-side cache dominates when the column is CACHE,
-     * so this is the line the base-column capacity/cache propagation moves; the
-     * off-heap total is the window state and the WAL symbol maps; the on-disk
-     * numbers separate the view's own symbol dictionary from its column data.
+     * What the view costs to keep, once it has stopped growing. A CACHE output
+     * SYMBOL uses native memory for the writer's value-to-key map and heap only
+     * for values that readers resolve and retain. The off-heap total also
+     * includes the window state and WAL symbol maps; the on-disk numbers separate
+     * the view's own symbol dictionary from its column data.
      * <p>
      * Heap is read after a best-effort collection, which is advisory rather than
      * exact. Run with a fixed -Xmx and compare two builds on the same host.

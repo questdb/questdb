@@ -123,13 +123,10 @@ public class LiveViewTableStructure implements TableStructure {
      * The base column's cache flag when this column projects a base SYMBOL
      * column, else the server default.
      * <p>
-     * A cached SYMBOL keeps a {@code String} per distinct value on the heap in
-     * the writer's {@code CharSequenceIntHashMap}, plus an {@code ObjList} sized
-     * to the column's capacity in every reader that opens it. A view over a
-     * high-cardinality base column that says NOCACHE otherwise gets caching back
-     * through its own output column, which costs more heap than the view's window
-     * state: measured at 1.675 million distinct accounts, inheriting the flag
-     * takes the live set from 448 MB to 231 MB with no change in refresh time.
+     * CACHE enables a native writer value-to-key map and lets each reader lazily
+     * retain the values it resolves on the heap. A view over a high-cardinality
+     * base column that says NOCACHE must not turn
+     * those caches back on through its own output column.
      */
     @Override
     public boolean getSymbolCacheFlag(int columnIndex) {

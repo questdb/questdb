@@ -494,6 +494,13 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     private int lookupPutAndCache(int index, CharSequence symbol, int hashCode, SymbolValueCountCollector countCollector) {
+        if (!cache.hasKeyCapacity(symbol)) {
+            // The map uses 32-bit word offsets for key storage. Once those are
+            // exhausted, discard this optional accelerator and use the on-disk
+            // index for this and subsequent lookups.
+            cache = Misc.free(cache);
+            return lookupAndPut(symbol, countCollector);
+        }
         final int result = lookupAndPut(symbol, countCollector);
         // Copies the chars into the map's own off-heap key buffer, so unlike the
         // on-heap predecessor this retains no String and leaves nothing for the
