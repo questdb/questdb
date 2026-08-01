@@ -47,6 +47,11 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final int NO_ENTRY_OFFSET = 0;
     private final double loadFactor;
+    // Tag every buffer this map owns is charged to, so memory_metrics() can
+    // attribute it. Fixed for the map's lifetime: the grow and shrink paths
+    // reallocate under the same tag they allocated under, and a mismatch would
+    // corrupt the counter rather than merely misreport it.
+    private final int memoryTag;
     private final int noEntryValue;
     private final DirectString sview = new DirectString();
     // address of the offset and hashcode buffer, the content follows this layout:
@@ -107,6 +112,27 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      * @param avgKeySize      hint for key buffer sizing, in chars
      */
     public DirectCharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue, int avgKeySize) {
+        this(initialCapacity, loadFactor, noEntryValue, avgKeySize, MemoryTag.NATIVE_DEFAULT);
+    }
+
+    /**
+     * Creates the map giving full control over sizing knobs and the tag its
+     * native buffers are charged to.
+     *
+     * @param initialCapacity expected number of keys
+     * @param loadFactor      load factor triggering rehash
+     * @param noEntryValue    value returned when the key is missing
+     * @param avgKeySize      hint for key buffer sizing, in chars
+     * @param memoryTag       tag the native buffers are charged to
+     */
+    public DirectCharSequenceIntHashMap(
+            int initialCapacity,
+            double loadFactor,
+            int noEntryValue,
+            int avgKeySize,
+            int memoryTag
+    ) {
+        this.memoryTag = memoryTag;
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -115,9 +141,9 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         final int len = Numbers.ceilPow2((int) (this.mapCapacity / loadFactor));
         mask = len - 1;
         this.capacity = (long) len << 3;
-        this.address = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
+        this.address = Unsafe.malloc(capacity, memoryTag);
         this.kvCapacity = Numbers.ceilPow2((long) initialCapacity * (((long) avgKeySize << 1) + 8L));
-        this.kvAddress = Unsafe.malloc(this.kvCapacity, MemoryTag.NATIVE_DEFAULT);
+        this.kvAddress = Unsafe.malloc(this.kvCapacity, memoryTag);
         this.noEntryValue = noEntryValue;
         clear();
     }
@@ -131,7 +157,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
             final long oldCapacity = kvCapacity;
             // We only shrink the capacity by 2 to avoid unnecessary grow-back later
             long newKvCapacity = kvCapacity >> 1;
-            kvAddress = Unsafe.realloc(kvAddress, oldCapacity, newKvCapacity, MemoryTag.NATIVE_DEFAULT);
+            kvAddress = Unsafe.realloc(kvAddress, oldCapacity, newKvCapacity, memoryTag);
             kvCapacity = newKvCapacity;
         }
         free = mapCapacity;
@@ -145,12 +171,12 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      */
     public void close() {
         if (this.address != 0) {
-            Unsafe.free(address, this.capacity, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, this.capacity, memoryTag);
             this.address = 0;
             this.capacity = 0;
         }
         if (this.kvAddress != 0) {
-            Unsafe.free(kvAddress, kvCapacity, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(kvAddress, kvCapacity, memoryTag);
             this.kvAddress = 0;
             this.kvCapacity = 0;
         }
@@ -306,7 +332,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         long oldCapacity = capacity;
         long oldAddress = address;
         long newCapacity = (long) len << 3;
-        long newAddress = Unsafe.malloc(newCapacity, MemoryTag.NATIVE_DEFAULT);
+        long newAddress = Unsafe.malloc(newCapacity, memoryTag);
 
         mapCapacity = newMapCapacity;
         free = newFree;
@@ -327,7 +353,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
             }
         }
 
-        Unsafe.free(oldAddress, oldCapacity, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(oldAddress, oldCapacity, memoryTag);
     }
 
     /**
@@ -428,7 +454,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         if (kvCapacity < ((long) currentOffset << 2) + requiredCapacity) {
             final long oldSize = kvCapacity;
             long newKvCapacity = Numbers.ceilPow2(kvCapacity + (long) requiredCapacity);
-            kvAddress = Unsafe.realloc(kvAddress, oldSize, newKvCapacity, MemoryTag.NATIVE_DEFAULT);
+            kvAddress = Unsafe.realloc(kvAddress, oldSize, newKvCapacity, memoryTag);
             kvCapacity = newKvCapacity;
         }
         final long lo = kvAddress + ((long) currentOffset << 2);

@@ -31,9 +31,9 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.wal.DirectCharSequenceIntHashMap;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Hash;
@@ -55,12 +55,23 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     public static final int HEADER_CAPACITY = 0;
     public static final int HEADER_NULL_FLAG = 8;
     public static final int HEADER_SIZE = 64;
+    // Expected key length in chars, sizing the cache's initial key buffer only.
+    // writeKey() grows it geometrically, so an under-estimate costs a realloc and
+    // an over-estimate costs untouched bytes until the first clear() halves it.
+    private static final int CACHE_AVG_KEY_SIZE = 16;
+    // Deliberately NOT the column's declared capacity. Sizing the cache from the
+    // capacity allocates the whole hash table before a single symbol is written,
+    // which for a column declared CAPACITY 2097152 is hundreds of megabytes that
+    // a table holding ten symbols never uses. The map doubles as it fills, so the
+    // steady state is the same either way and only the empty case differs.
+    private static final int CACHE_INITIAL_CAPACITY = 64;
+    private static final double CACHE_LOAD_FACTOR = 0.4;
     private static final Log LOG = LogFactory.getLog(SymbolMapWriter.class);
     private final MemoryMARW charMem;
     private final int columnIndex; // column index in the table writer metadata
     private final BitmapIndexWriter indexWriter;
     private final SymbolValueCountCollector valueCountCollector;
-    private CharSequenceIntHashMap cache;
+    private DirectCharSequenceIntHashMap cache;
     private boolean cachedFlag;
     private int maxHash;
     private boolean nullValue = false;
@@ -186,6 +197,9 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     public void close() {
         Misc.free(indexWriter);
         Misc.free(charMem);
+        // The value-to-key cache holds native buffers, so it dies here rather
+        // than with the writer's last reference.
+        cache = Misc.free(cache);
         if (offsetMem != null) {
             long fd = offsetMem.getFd();
             offsetMem = Misc.free(offsetMem);
@@ -247,8 +261,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         }
 
         if (cache != null) {
-            int index = cache.keyIndex(symbol);
-            return index < 0 ? cache.valueAt(index) : lookupPutAndCache(index, symbol, valueCountCollector);
+            // The cache stores keys off-heap, so it needs the hash both to probe
+            // and to write the slot. Compute it once rather than once per call.
+            final int hashCode = Chars.hashCode(symbol);
+            final int index = cache.keyIndex(symbol, hashCode);
+            return index < 0 ? cache.valueAt(index) : lookupPutAndCache(index, symbol, hashCode, valueCountCollector);
         }
         return lookupAndPut(symbol, valueCountCollector);
     }
@@ -431,6 +448,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private void closeNoTruncate() {
         // If we fail to rebuild or open the files, we need to close them without truncate.
         // Truncating them can lead to full symbol map data loss when truncate offsets are not set correctly.
+        // The cache owns native memory either way, so it is freed on this path too.
+        cache = Misc.free(cache);
         if (charMem != null) {
             charMem.close(false);
         }
@@ -474,9 +493,13 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return put0(symbol, hash, countCollector);
     }
 
-    private int lookupPutAndCache(int index, CharSequence symbol, SymbolValueCountCollector countCollector) {
+    private int lookupPutAndCache(int index, CharSequence symbol, int hashCode, SymbolValueCountCollector countCollector) {
         final int result = lookupAndPut(symbol, countCollector);
-        cache.putAt(index, symbol.toString(), result);
+        // Copies the chars into the map's own off-heap key buffer, so unlike the
+        // on-heap predecessor this retains no String and leaves nothing for the
+        // collector to trace. lookupAndPut runs first: if it throws, the slot the
+        // caller probed is simply never filled.
+        cache.putAt(index, symbol, result, hashCode);
         return result;
     }
 
@@ -497,14 +520,24 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return symIndex;
     }
 
+    /**
+     * Replaces the value-to-key cache to match {@code newCacheFlag}, freeing the
+     * native buffers the previous one owned. The cache is off-heap, so every path
+     * that drops it has to free it: this one, {@link #close()} and
+     * {@link #closeNoTruncate()}.
+     */
     private void setupCache(boolean newCacheFlag) {
+        cache = Misc.free(cache);
         if (newCacheFlag) {
-            this.cache = new CharSequenceIntHashMap(symbolCapacity, 0.3, CharSequenceIntHashMap.NO_ENTRY_VALUE);
-            cachedFlag = true;
-        } else {
-            this.cache = null;
-            cachedFlag = false;
+            this.cache = new DirectCharSequenceIntHashMap(
+                    CACHE_INITIAL_CAPACITY,
+                    CACHE_LOAD_FACTOR,
+                    DirectCharSequenceIntHashMap.NO_ENTRY_VALUE,
+                    CACHE_AVG_KEY_SIZE,
+                    MemoryTag.NATIVE_TABLE_WRITER
+            );
         }
+        cachedFlag = newCacheFlag;
     }
 
     static int offsetToKey(long offset) {

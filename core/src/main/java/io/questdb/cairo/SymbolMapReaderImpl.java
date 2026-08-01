@@ -222,9 +222,14 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // theoretically should require 2 value cells in index per hash
             // we use 4 cells to compensate for occasionally unlucky hash distribution
             this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
-            if (cached) {
-                cache.setPos(symbolCapacity);
-            }
+            // The cache grows on demand in fetchAndCache, which is why it is not
+            // pre-sized here. Pre-sizing allocated and zero-filled an Object[] of
+            // the column's DECLARED capacity on every open - 16 MB for a column
+            // declared CAPACITY 2097152, retained for the reader's life, whether or
+            // not a single value was ever resolved through it. It bought nothing
+            // even then: the clear() below immediately reset the position to zero,
+            // so only the backing array survived, and extendAndSet grows that
+            // geometrically anyway.
             cache.clear();
             LOG.debug().$("open [columnName=").$(path.trimTo(plen).concat(columnName).$())
                     .$(", fd=").$(offsetMem.getFd())

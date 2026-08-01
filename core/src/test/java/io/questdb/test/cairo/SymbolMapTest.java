@@ -1196,4 +1196,47 @@ public class SymbolMapTest extends AbstractCairoTest {
             path.trimTo(plen);
         }
     }
+
+    @Test
+    public void testWriterCacheIsOffHeapAndReleased() throws Exception {
+        // The writer's value-to-key cache holds its keys in unmanaged memory, so it
+        // shows up under NATIVE_TABLE_WRITER rather than on the Java heap, and it has
+        // to be released on close - the enclosing assertMemoryLeak is what proves the
+        // second half. Measured as the difference between a cached and an uncached
+        // writer over the same values, so the writer's other native structures, which
+        // are identical between the two, cancel out.
+        TestUtils.assertMemoryLeak(() -> {
+            final int values = 10_000;
+            Assert.assertTrue(taggedBytesForWriter("cached", true, values) > taggedBytesForWriter("plain", false, values));
+        });
+    }
+
+    /**
+     * Peak NATIVE_TABLE_WRITER bytes a symbol map writer holds after interning
+     * {@code values} distinct values, over its own baseline. The writer is closed
+     * before returning, so the caller's leak check also covers the release path.
+     */
+    private static long taggedBytesForWriter(CharSequence name, boolean useCache, int values) {
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            create(path, name, 16, useCache);
+            final long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER);
+            try (SymbolMapWriter writer = new SymbolMapWriter(
+                    configuration,
+                    path,
+                    name,
+                    COLUMN_NAME_TXN_NONE,
+                    0,
+                    -1,
+                    NOOP_COLLECTOR,
+                    -1
+            )) {
+                Assert.assertEquals(useCache, writer.isCached());
+                for (int i = 0; i < values; i++) {
+                    writer.put("key" + i);
+                }
+                return Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER) - before;
+            }
+        }
+    }
+
 }
