@@ -1688,7 +1688,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         Function stolenFilter = null;
         ExpressionNode stolenFilterExpr = null;
         IntHashSet stolenFilterUsedColumnIndexes = null;
-        if (filterFactory.supportsFilterStealing()) {
+        // Mirror of the caller's pageFrameLeaf selection: when filterFactory itself provides
+        // page frames (the runtime-const gate), it IS the leaf and its filter must stay put -
+        // stealing here would apply the filter per row on top of the leaf that already gates.
+        if (!filterFactory.supportsPageFrameCursor() && filterFactory.supportsFilterStealing()) {
             stolenCompiledFilter = filterFactory.getCompiledFilter();
             stolenBindVarMemory = filterFactory.getBindVarMemory();
             stolenBindVarFunctions = filterFactory.getBindVarFunctions();
@@ -4468,8 +4471,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // The whole predicate is a runtime constant (e.g. a scalar boolean sub-query used
                 // directly, or its negation). Gate the outer scan behind a single per-execution
                 // evaluation instead of an async/serial per-row filter: false returns an empty
-                // cursor without opening the base, true delegates straight to the base.
-                return new RuntimeConstGateRecordCursorFactory(factory, filter);
+                // cursor without opening the base, true delegates straight to the base. The
+                // retained expression clone backs the gate's filter-stealing contract, which the
+                // ASOF/LT join fast paths use to unwrap the gate over a time-frame-capable base.
+                return new RuntimeConstGateRecordCursorFactory(factory, filter, deepClone(expressionNodePool, filterExpr));
             }
 
             // This path applies only to the read_parquet() table function.
@@ -4664,7 +4669,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // after the parallelism check. If parallelism gets downgraded (e.g., due to
             // unsupported group by functions), we leave the filter in the master factory
             // so the non-parallel path applies it correctly.
+            // !supportsPageFrameCursor(): the runtime-const gate supports page frames AND
+            // stealing; riding its frames directly (zero per-row filter cost, empty frames when
+            // false) dominates a stolen per-row filter, so steal only when frames are missing.
             canStealFilter = parallelHorizonJoinEnabled
+                    && !masterFactory.supportsPageFrameCursor()
                     && masterFactory.supportsFilterStealing()
                     && masterFactory.getBaseFactory().supportsPageFrameCursor();
             supportsParallelism |= canStealFilter;
@@ -6165,7 +6174,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     Function masterFilter = null;
                                     ExpressionNode masterFilterExpr = null;
                                     IntHashSet masterFilterUsedColumnIndexes = null;
-                                    if (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor()) {
+                                    // Steal only when the master cannot provide page frames itself:
+                                    // the runtime-const gate supports both, and its passthrough
+                                    // (zero per-row filter cost, empty frames when false) dominates
+                                    // a stolen per-row filter.
+                                    if (!master.supportsPageFrameCursor() && master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor()) {
                                         RecordCursorFactory filterFactory = master;
                                         master = master.getBaseFactory();
                                         compiledFilter = filterFactory.getCompiledFilter();
@@ -6535,7 +6548,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // its base and frees it once on close, so - unlike the const-false
                             // branch that builds EmptyTableRecordCursorFactory over the freed
                             // master's JoinRecordMetadata - no incrementRefCount is needed here.
-                            master = new RuntimeConstGateRecordCursorFactory(master, filter);
+                            master = new RuntimeConstGateRecordCursorFactory(master, filter, deepClone(expressionNodePool, filterExpr));
                         } else if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
                             collectColumnIndexes(sqlNodeStack, master.getMetadata(), filterExpr, filterUsedColumnIndexes);
@@ -7149,7 +7162,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // factory constructor adopts them, this catch owns their rollback.
             offsets = computeHorizonOffsets(horizonContext, masterMetadata);
             if (executionContext.isParallelHorizonJoinEnabled()) {
-                canStealFilter = masterFactory.supportsFilterStealing()
+                // !supportsPageFrameCursor(): prefer the runtime-const gate's direct page-frame
+                // passthrough over stealing its filter, same as the single-slave horizon path.
+                canStealFilter = !masterFactory.supportsPageFrameCursor()
+                        && masterFactory.supportsFilterStealing()
                         && masterFactory.getBaseFactory().supportsPageFrameCursor();
                 supportsParallelism = masterFactory.supportsPageFrameCursor() || canStealFilter;
             }
@@ -7812,7 +7828,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             ? recordCursorFactory : null;
                                     final RecordCursorFactory filterFactory = projectionWrapper != null
                                             ? projectionWrapper.getBaseFactory() : recordCursorFactory;
-                                    final RecordCursorFactory pageFrameLeaf = filterFactory.supportsFilterStealing()
+                                    // A factory may support BOTH page frames and filter stealing
+                                    // (the runtime-const gate). Riding its page frames directly
+                                    // dominates stealing - zero per-row filter cost, zero frames
+                                    // when false - so unwrap only when page frames are missing.
+                                    // Must stay consistent with buildAsyncTopKOverStolenFilter's
+                                    // steal condition.
+                                    final RecordCursorFactory pageFrameLeaf = !filterFactory.supportsPageFrameCursor() && filterFactory.supportsFilterStealing()
                                             ? filterFactory.getBaseFactory() : filterFactory;
 
                                     if (pageFrameLeaf != null && pageFrameLeaf.supportsPageFrameCursor()) {

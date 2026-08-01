@@ -59,6 +59,60 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ANY;
 public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
 
     @Test
+    public void testAsofSlaveRuntimeConstFilterStealsIntoFastPath() throws Exception {
+        // An ASOF join slave whose sub-query WHERE is a whole-predicate runtime constant compiles
+        // to the gate, and the gate has no time-frame cursor. The slave fast path recovers it by
+        // STEALING the gate's filter (supportsFilterStealing over a page-frame base) and running
+        // Filtered AsOf Join Fast over the gate's base - never AsOf Join Light / linear AsOf Join,
+        // which scan and hash the whole slave prefix: O(slave) per execution instead of
+        // O(master rows x seek depth), an unbounded slowdown in slave size.
+        assertMemoryLeak(() -> {
+            execute("create table am (k symbol, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("create table asl (k symbol, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into am select 'k' || (x % 3), x, x::timestamp from long_sequence(6)");
+            execute("insert into asl select 'k' || (x % 3), x, x::timestamp from long_sequence(6)");
+
+            // keyed: the stolen filter shows as join meta ("filter: ..."), the gate node
+            // ("Filter filter: ...") must be gone, and the slow hash join must not appear
+            printSql("explain select * from am asof join (select * from asl where now() < '2100-01-01') s on (k)");
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast");
+            TestUtils.assertNotContains(sink, "AsOf Join Light");
+            TestUtils.assertNotContains(sink, "Filter filter:");
+
+            // non-keyed
+            printSql("explain select * from am asof join (select * from asl where now() < '2100-01-01') s");
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast");
+            TestUtils.assertNotContains(sink, "Filter filter:");
+
+            // projection over the gate: the projection-peel branch steals through the same surface
+            printSql("explain select * from am asof join (select k, v, ts from (select * from asl where now() < '2100-01-01')) s on (k)");
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast");
+            TestUtils.assertNotContains(sink, "Filter filter:");
+
+            // TRUE: every master row joins its keyed prefix row; FALSE: slave side is all null -
+            // identical to what an empty gated slave would produce
+            assertQuery("select v, v1 from (select am.v, s.v as v1 from am asof join (select * from asl where now() > '2000-01-01') s on (k)) order by v")
+                    .expectSize()
+                    .returns("v\tv1\n1\t1\n2\t2\n3\t3\n4\t4\n5\t5\n6\t6\n");
+            assertQuery("select v, v1 from (select am.v, s.v as v1 from am asof join (select * from asl where now() > '2124-01-01') s on (k)) order by v")
+                    .expectSize()
+                    .returns("v\tv1\n1\tnull\n2\tnull\n3\tnull\n4\tnull\n5\tnull\n6\tnull\n");
+
+            // The stolen runtime constant must be re-read per execution: one compiled factory,
+            // flipped bind variable, slave values appear and disappear accordingly.
+            bindVariableService.setBoolean(0, true);
+            try (RecordCursorFactory factory =
+                         select("select am.v, s.v as v1 from am asof join (select * from asl where $1::boolean) s on (k)")) {
+                Assert.assertEquals(6, countNonNullSlave(factory, 1));
+                bindVariableService.setBoolean(0, false);
+                Assert.assertEquals(0, countNonNullSlave(factory, 1));
+                bindVariableService.setBoolean(0, true);
+                Assert.assertEquals(6, countNonNullSlave(factory, 1));
+            }
+        });
+    }
+
+    @Test
     public void testBindVarBooleanReEvaluatedPerExecution() throws Exception {
         // A single compiled gate factory must re-read the runtime constant on every open: a false
         // bind value yields no rows, a true bind value yields all rows, proving the value is never
@@ -207,7 +261,7 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createBigTable();
             RecordCursorFactory base = select("select * from big");
-            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false))) {
+            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false), null)) {
                 Assert.assertTrue("base must support page frames", base.supportsPageFrameCursor());
                 Assert.assertTrue("gate must keep the base page-frame capability", gate.supportsPageFrameCursor());
                 try (PageFrameCursor cursor = gate.getPageFrameCursor(sqlExecutionContext, ORDER_ANY)) {
@@ -234,12 +288,44 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             OpenCountingRecordCursorFactory base = new OpenCountingRecordCursorFactory(select("select * from t"));
-            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false))) {
+            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false), null)) {
                 try (RecordCursor cursor = gate.getCursor(sqlExecutionContext)) {
                     Assert.assertFalse("false predicate must yield no rows", cursor.hasNext());
                 }
                 Assert.assertEquals("base must not be opened when the predicate is false", 0, base.openCount);
             }
+        });
+    }
+
+    @Test
+    public void testGatePassthroughPreferredOverStealingByPageFrameConsumers() throws Exception {
+        // The gate advertises filter stealing for the ASOF/LT slave paths, but a consumer that can
+        // ride the gate's page frames directly must prefer them: the passthrough evaluates the
+        // filter zero times per row and yields zero frames when false, both of which a stolen
+        // per-row filter would forfeit. Pins TopK, horizon-join master and window-join master to
+        // the gate node ("Filter filter: now()...") staying in the plan, un-stolen.
+        assertMemoryLeak(() -> {
+            createBigTable();
+            execute("create table wm (k symbol, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ws (k symbol, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into wm select 'k' || (x % 3), x, x::timestamp from long_sequence(6)");
+            execute("insert into ws select 'k' || (x % 3), x, x::timestamp from long_sequence(6)");
+
+            // parallel TopK keeps the gate as its page-frame leaf and carries no stolen filter
+            printSql("explain select * from big where now() < '2100-01-01' order by v desc limit 3");
+            TestUtils.assertContains(sink, "Async Top K");
+            TestUtils.assertContains(sink, "filter: null");
+            TestUtils.assertContains(sink, "Filter filter: now()");
+
+            // horizon-join master stays parallel over the intact gate
+            printSql("explain select h.offset, avg(ws.v) from (select * from wm where now() < '2100-01-01') wm horizon join ws on (wm.k = ws.k) range from 0s to 2s step 1s as h");
+            TestUtils.assertContains(sink, "Async Horizon Join");
+            TestUtils.assertContains(sink, "Filter filter: now()");
+
+            // window-join master stays parallel over the intact gate
+            printSql("explain select wm.k, avg(ws.v) from (select * from wm where now() < '2100-01-01') wm window join ws on (wm.k = ws.k) range between 1 second preceding and current row");
+            TestUtils.assertContains(sink, "Async Window Fast Join");
+            TestUtils.assertContains(sink, "Filter filter: now()");
         });
     }
 
@@ -525,7 +611,7 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createBigTable();
             RecordCursorFactory base = select("select * from big");
-            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(true))) {
+            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(true), null)) {
                 Assert.assertTrue("base must support page frames", base.supportsPageFrameCursor());
                 Assert.assertTrue("gate must keep the base page-frame capability", gate.supportsPageFrameCursor());
                 try (PageFrameCursor cursor = gate.getPageFrameCursor(sqlExecutionContext, ORDER_ANY)) {
@@ -588,7 +674,7 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             OpenCountingRecordCursorFactory base = new OpenCountingRecordCursorFactory(select("select * from t"));
-            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(true))) {
+            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(true), null)) {
                 int rows = 0;
                 try (RecordCursor cursor = gate.getCursor(sqlExecutionContext)) {
                     while (cursor.hasNext()) {
@@ -599,6 +685,18 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
                 Assert.assertEquals("base must be opened exactly once when the predicate is true", 1, base.openCount);
             }
         });
+    }
+
+    private static int countNonNullSlave(RecordCursorFactory factory, int slaveColumnIndex) throws Exception {
+        int nonNull = 0;
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            while (cursor.hasNext()) {
+                if (cursor.getRecord().getLong(slaveColumnIndex) != io.questdb.std.Numbers.LONG_NULL) {
+                    nonNull++;
+                }
+            }
+        }
+        return nonNull;
     }
 
     private static void assertRowCount(int expected, RecordCursorFactory factory) throws Exception {
