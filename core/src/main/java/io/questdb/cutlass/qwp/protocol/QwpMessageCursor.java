@@ -24,13 +24,18 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
+import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_SYMBOL_DICTIONARY_SIZE;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TABLE_OPTION_TAG_DESIGNATED_TIMESTAMP_NAME;
 
 /**
  * Streaming cursor over a QWP v1 message.
@@ -52,6 +57,8 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_SYMBOL_DICTIONARY
  */
 public class QwpMessageCursor implements Mutable {
 
+    private final DirectUtf8String designatedTsName = new DirectUtf8String();
+    private final LongList designatedTsNameBounds = new LongList();
     private final QwpMessageHeader messageHeader = new QwpMessageHeader();
     private final QwpTableBlockCursor tableBlockCursor;
     private final QwpVarint.DecodeResult varintResult = new QwpVarint.DecodeResult();
@@ -76,6 +83,8 @@ public class QwpMessageCursor implements Mutable {
 
     @Override
     public void clear() {
+        designatedTsName.clear();
+        designatedTsNameBounds.clear();
         tableBlockCursor.clear();
         messageHeader.reset();
         payloadAddress = 0;
@@ -87,6 +96,30 @@ public class QwpMessageCursor implements Mutable {
         deltaSymbolDictEnabled = false;
         connectionSymbolDict = null;
         symbolDictRedefined = false;
+    }
+
+    /**
+     * Returns the create-only designated timestamp name option for a table.
+     * <p>
+     * The returned sequence is a reused flyweight over the message buffer and
+     * is invalidated by the next call to this method or {@link #clear()}.
+     *
+     * @param tableIndex zero-based table index in message order
+     * @return designated timestamp name, or {@code null} when absent
+     */
+    public Utf8Sequence getDesignatedTsName(int tableIndex) {
+        if (tableIndex < 0 || tableIndex >= tableCount) {
+            throw new IndexOutOfBoundsException("table index out of bounds: " + tableIndex);
+        }
+        int offsetIndex = tableIndex * 2;
+        if (offsetIndex >= designatedTsNameBounds.size()) {
+            return null;
+        }
+        long lo = designatedTsNameBounds.getQuick(offsetIndex);
+        if (lo < 0) {
+            return null;
+        }
+        return designatedTsName.of(lo, designatedTsNameBounds.getQuick(offsetIndex + 1));
     }
 
     /**
@@ -176,6 +209,11 @@ public class QwpMessageCursor implements Mutable {
         this.payloadAddress = messageAddress + HEADER_SIZE;
         this.payloadEnd = payloadAddress + payloadLength;
         this.currentTableAddress = payloadAddress;
+        this.designatedTsNameBounds.clear();
+
+        if (messageHeader.isTableOptionsEnabled()) {
+            parseTableOptions();
+        }
 
         // Parse delta symbol dictionary if enabled
         if (deltaSymbolDictEnabled && connectionSymbolDict != null) {
@@ -183,6 +221,82 @@ public class QwpMessageCursor implements Mutable {
         }
 
         this.currentTableIndex = -1;
+    }
+
+    private void parseTableOptions() throws QwpParseException {
+        long payloadSize = payloadEnd - payloadAddress;
+        if (payloadSize < Integer.BYTES) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "truncated table options footer"
+            );
+        }
+
+        long footerAddress = payloadEnd - Integer.BYTES;
+        long trailerLength = Unsafe.getInt(footerAddress) & 0xffffffffL;
+        long maxTrailerLength = footerAddress - payloadAddress;
+        if (trailerLength > maxTrailerLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "table options trailer length out of bounds [trailerLength=" + trailerLength
+                            + ", available=" + maxTrailerLength + ']'
+            );
+        }
+
+        long trailerAddress = footerAddress - trailerLength;
+        long address = trailerAddress;
+        for (int tableIndex = 0; tableIndex < tableCount; tableIndex++) {
+            if (address >= footerAddress) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "missing table options block [tableIndex=" + tableIndex + ']'
+                );
+            }
+
+            QwpVarint.decode(address, footerAddress, varintResult);
+            long blockLength = varintResult.value;
+            address += varintResult.bytesRead;
+            if (blockLength < 0 || blockLength > footerAddress - address) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "table options block overruns trailer [tableIndex=" + tableIndex
+                                + ", blockLength=" + blockLength + ']'
+                );
+            }
+
+            long blockEnd = address + blockLength;
+            long designatedTsNameHi = -1;
+            long designatedTsNameLo = -1;
+            while (address < blockEnd) {
+                int tag = Unsafe.getByte(address++) & 0xff;
+                QwpVarint.decode(address, blockEnd, varintResult);
+                long valueLength = varintResult.value;
+                address += varintResult.bytesRead;
+                if (valueLength < 0 || valueLength > blockEnd - address) {
+                    throw QwpParseException.create(
+                            QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                            "table option value overruns block [tableIndex=" + tableIndex
+                                    + ", tag=" + tag + ", valueLength=" + valueLength + ']'
+                    );
+                }
+
+                long valueEnd = address + valueLength;
+                if (tag == TABLE_OPTION_TAG_DESIGNATED_TIMESTAMP_NAME) {
+                    designatedTsNameLo = address;
+                    designatedTsNameHi = valueEnd;
+                }
+                address = valueEnd;
+            }
+            designatedTsNameBounds.add(designatedTsNameLo, designatedTsNameHi);
+        }
+
+        if (address != footerAddress) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "unexpected bytes after table options blocks: " + (footerAddress - address)
+            );
+        }
+        payloadEnd = trailerAddress;
     }
 
     /**

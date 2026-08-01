@@ -247,25 +247,6 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testWriteResponseOmitsMaxBatchSizeWhenAbsent() throws Exception {
-        assertMemoryLeak(() -> {
-            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
-
-            long buf = allocateBuffer(256);
-            try {
-                int written = QwpIngressHttpProcessor.writeResponse(
-                        buf, acceptKey, 1, null, false, null, null);
-
-                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
-                Assert.assertFalse("did not expect X-QWP-Max-Batch-Size header, got: " + response,
-                        response.contains("X-QWP-Max-Batch-Size"));
-            } finally {
-                freeBuffer(buf, 256);
-            }
-        });
-    }
-
-    @Test
     public void testThreadSafety() throws InterruptedException {
         // Test that accept key computation is thread-safe
         String clientKey = "dGhlIHNhbXBsZSBub25jZQ==";
@@ -358,9 +339,29 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
                         Connection: Upgrade\r
                         Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r
                         X-QWP-Version: 1\r
+                        X-QWP-Table-Options: 1\r
                         \r
                         """;
                 Assert.assertEquals(expected, responseStr);
+            } finally {
+                freeBuffer(buf, 256);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteResponseOmitsMaxBatchSizeWhenAbsent() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+
+            long buf = allocateBuffer(256);
+            try {
+                int written = QwpIngressHttpProcessor.writeResponse(
+                        buf, acceptKey, 1, null, false, null, null);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertFalse("did not expect X-QWP-Max-Batch-Size header, got: " + response,
+                        response.contains("X-QWP-Max-Batch-Size"));
             } finally {
                 freeBuffer(buf, 256);
             }

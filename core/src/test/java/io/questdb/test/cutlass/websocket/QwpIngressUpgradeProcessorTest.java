@@ -93,6 +93,8 @@ public class QwpIngressUpgradeProcessorTest extends AbstractWebSocketTest {
                 Assert.assertTrue("Response should contain Upgrade: websocket", response.contains("Upgrade: websocket"));
                 Assert.assertTrue("Response should contain Connection: Upgrade", response.contains("Connection: Upgrade"));
                 Assert.assertTrue("Response should contain Sec-WebSocket-Accept", response.contains("Sec-WebSocket-Accept: " + expectedAccept));
+                Assert.assertTrue("Response should advertise table option tag 1",
+                        response.contains("X-QWP-Table-Options: 1\r\n"));
                 Assert.assertTrue("Response should end with double CRLF", response.endsWith("\r\n\r\n"));
             } finally {
                 Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);

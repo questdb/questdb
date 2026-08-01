@@ -49,6 +49,7 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.Misc;
@@ -72,6 +73,7 @@ public class QwpTudCache implements QuietCloseable {
     private final long commitInterval;
     private final DefaultColumnTypes defaultColumnTypes;
     private final int defaultPartitionBy;
+    private final StringSink designatedTsNameUtf16 = new StringSink();
     private final CairoEngine engine;
     private final long maxUncommittedRows;
     private final StringSink tableNameUtf16 = new StringSink();
@@ -338,6 +340,30 @@ public class QwpTudCache implements QuietCloseable {
             QwpTableBlockCursor cursor,
             int maxTables
     ) {
+        return getTableUpdateDetails(
+                securityContext,
+                tableNameUtf8,
+                schema,
+                cursor,
+                null,
+                maxTables
+        );
+    }
+
+    /**
+     * Returns cached update details or creates them for a missing table.
+     *
+     * @param designatedTsName create-only designated timestamp name hint;
+     *                         existing tables silently ignore it
+     */
+    public WalTableUpdateDetails getTableUpdateDetails(
+            SecurityContext securityContext,
+            Utf8Sequence tableNameUtf8,
+            ObjList<QwpColumnDef> schema,
+            QwpTableBlockCursor cursor,
+            Utf8Sequence designatedTsName,
+            int maxTables
+    ) {
         int key = tableUpdateDetails.keyIndex(tableNameUtf8);
         if (key < 0) {
             return tableUpdateDetails.valueAt(key);
@@ -350,7 +376,13 @@ public class QwpTudCache implements QuietCloseable {
 
         tableNameUtf16.clear();
         Utf8s.utf8ToUtf16(tableNameUtf8, tableNameUtf16);
-        TableToken tableToken = getOrCreateTable(securityContext, tableNameUtf16, schema, cursor);
+        TableToken tableToken = getOrCreateTable(
+                securityContext,
+                tableNameUtf16,
+                schema,
+                cursor,
+                designatedTsName
+        );
         if (tableToken == null) {
             return null;
         }
@@ -419,8 +451,13 @@ public class QwpTudCache implements QuietCloseable {
         return TableUtils.isValidColumnName(columnName, maxFileNameLength);
     }
 
-    private TableToken getOrCreateTable(SecurityContext securityContext, StringSink tableNameUtf16,
-                                        ObjList<QwpColumnDef> schema, QwpTableBlockCursor cursor) {
+    private TableToken getOrCreateTable(
+            SecurityContext securityContext,
+            StringSink tableNameUtf16,
+            ObjList<QwpColumnDef> schema,
+            QwpTableBlockCursor cursor,
+            Utf8Sequence designatedTsName
+    ) {
         int maxFileNameLength = engine.getConfiguration().getMaxFileNameLength();
         if (!TableUtils.isValidTableName(tableNameUtf16, maxFileNameLength)) {
             return null;
@@ -441,17 +478,41 @@ public class QwpTudCache implements QuietCloseable {
                 }
             }
 
+            String timestampName = QwpTableStructureAdapter.DEFAULT_TIMESTAMP_FIELD;
+            if (designatedTsName != null) {
+                designatedTsNameUtf16.clear();
+                if (!Utf8s.utf8ToUtf16(designatedTsName, designatedTsNameUtf16)) {
+                    throw CairoException.schemaMismatch()
+                            .put("invalid UTF-8 in designated timestamp column name");
+                }
+                if (!TableUtils.isValidColumnName(designatedTsNameUtf16, maxFileNameLength)) {
+                    throw CairoException.schemaMismatch()
+                            .put("invalid designated timestamp column name: ")
+                            .put(designatedTsNameUtf16);
+                }
+                timestampName = designatedTsNameUtf16.toString();
+            }
+
             // Create table using QWP v1 schema
             QwpTableStructureAdapter tsa = new QwpTableStructureAdapter(
                     engine.getConfiguration(),
                     tableNameUtf16.toString(),
                     schema,
                     cursor,
+                    timestampName,
                     defaultPartitionBy
             );
 
+            final int timestampIndex = tsa.getTimestampIndex();
             for (int i = 0, n = tsa.getColumnCount(); i < n; i++) {
                 CharSequence columnName = tsa.getColumnName(i);
+                if (designatedTsName != null
+                        && i != timestampIndex
+                        && Chars.equalsIgnoreCase(columnName, timestampName)) {
+                    throw CairoException.schemaMismatch()
+                            .put("designated timestamp column name collides with schema column: ")
+                            .put(timestampName);
+                }
                 if (!TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
                     return null;
                 }
@@ -467,9 +528,9 @@ public class QwpTudCache implements QuietCloseable {
     /**
      * Table structure adapter for QWP v1 schema.
      * <p>
-     * When no timestamp column is provided in the schema, this adapter automatically
-     * adds a "timestamp" column as the designated timestamp. This matches the behavior
-     * of the old ILP text protocol.
+     * When no timestamp column is provided in the schema, this adapter adds a
+     * designated timestamp column. Its name comes from the create-only QWP
+     * table option, or defaults to {@code timestamp} for older clients.
      */
     private static class QwpTableStructureAdapter implements TableStructure {
         private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
@@ -481,14 +542,22 @@ public class QwpTudCache implements QuietCloseable {
         private final int partitionBy;
         private final ObjList<QwpColumnDef> schema;
         private final String tableName;
+        private final String timestampName;
         private int timestampSchemaIndex = -1;
 
-        QwpTableStructureAdapter(CairoConfiguration configuration, String tableName, ObjList<QwpColumnDef> schema,
-                                 QwpTableBlockCursor cursor, int partitionBy) {
+        QwpTableStructureAdapter(
+                CairoConfiguration configuration,
+                String tableName,
+                ObjList<QwpColumnDef> schema,
+                QwpTableBlockCursor cursor,
+                String timestampName,
+                int partitionBy
+        ) {
             this.configuration = configuration;
             this.tableName = tableName;
             this.schema = schema;
             this.cursor = cursor;
+            this.timestampName = timestampName;
             this.partitionBy = partitionBy;
 
             // Find designated timestamp column - empty name with TIMESTAMP or TIMESTAMP_NANOS type
@@ -522,12 +591,12 @@ public class QwpTudCache implements QuietCloseable {
         public CharSequence getColumnName(int columnIndex) {
             // If this is the auto-added timestamp column (no designated timestamp in schema)
             if (columnIndex == getTimestampIndex() && timestampSchemaIndex == -1) {
-                return DEFAULT_TIMESTAMP_FIELD;
+                return timestampName;
             }
-            // If this is the designated timestamp column from schema, use default name
+            // If this is the designated timestamp column from schema, use the option name
             // (the schema column name is empty for TYPE_DESIGNATED_TIMESTAMP)
             if (columnIndex == outputTimestampIndex) {
-                return DEFAULT_TIMESTAMP_FIELD;
+                return timestampName;
             }
             return schema.getQuick(includedSchemaIndexes.get(columnIndex)).getName();
         }

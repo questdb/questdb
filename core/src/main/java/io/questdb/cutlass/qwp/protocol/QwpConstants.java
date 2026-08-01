@@ -82,6 +82,10 @@ public final class QwpConstants {
      */
     public static final byte FLAG_GORILLA = 0x04;
     /**
+     * Flag bit: per-table options trailer enabled.
+     */
+    public static final byte FLAG_TABLE_OPTIONS = 0x20;
+    /**
      * Flag bit: the region starting at {@code delta_symbol_dict} (or the first
      * table block if no delta dict is present) is zstd-compressed. The prelude
      * remains uncompressed so the I/O thread can dispatch on msg_kind / batch_seq
@@ -159,6 +163,10 @@ public final class QwpConstants {
      * (query timeout, memory cap, circuit breaker, OOM).
      */
     public static final byte STATUS_LIMIT_EXCEEDED = 0x0B;
+    /**
+     * Per-table option tag: designated timestamp column name.
+     */
+    public static final byte TABLE_OPTION_TAG_DESIGNATED_TIMESTAMP_NAME = 0x01;
     /**
      * Status: Reserved. Node cannot accept writes (read-only replica /
      * demoting primary). Servers currently signal this state with a

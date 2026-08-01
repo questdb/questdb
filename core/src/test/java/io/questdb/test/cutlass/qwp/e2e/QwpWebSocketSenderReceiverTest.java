@@ -351,6 +351,100 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         });
     }
 
+    @Test
+    public void testAutoCreateWithDesignatedTimestampNames() throws Exception {
+        runInContext((port) -> {
+            try (Sender sender = createSender(port)) {
+                sender.table("ws_named_explicit_ts").tableOptions()
+                        .designatedTimestamp("event_time");
+                sender.longColumn("v", 42)
+                        .at(1_000_000L, ChronoUnit.MICROS);
+                sender.table("ws_named_server_ts").tableOptions()
+                        .designatedTimestamp("ingested_at");
+                sender.longColumn("v", 84)
+                        .atNow();
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT v, event_time FROM ws_named_explicit_ts")
+                    .noLeakCheck()
+                    .timestamp("event_time")
+                    .expectSize()
+                    .returns("v\tevent_time\n42\t1970-01-01T00:00:01.000000Z\n");
+            assertQuery("SELECT \"column\" FROM table_columns('ws_named_explicit_ts') ORDER BY \"column\"")
+                    .noLeakCheck()
+                    .returns("column\nevent_time\nv\n");
+            assertQuery("SELECT \"column\" FROM table_columns('ws_named_server_ts') ORDER BY \"column\"")
+                    .noLeakCheck()
+                    .returns("column\ningested_at\nv\n");
+            assertQuery("SELECT count() FROM ws_named_server_ts WHERE ingested_at >= '2025-01-01'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testDesignatedTimestampNameIsIgnoredForExistingTable() throws Exception {
+        runInContext((port) -> {
+            execute("CREATE TABLE ws_existing_named_ts (v LONG, actual_ts TIMESTAMP) "
+                    + "TIMESTAMP(actual_ts) PARTITION BY DAY WAL");
+
+            try (Sender sender = createSender(port)) {
+                sender.table("ws_existing_named_ts").tableOptions()
+                        .designatedTimestamp("bad/name");
+                sender.longColumn("v", 7)
+                        .at(2_000_000L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT v, actual_ts FROM ws_existing_named_ts")
+                    .noLeakCheck()
+                    .timestamp("actual_ts")
+                    .expectSize()
+                    .returns("v\tactual_ts\n7\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT \"column\" FROM table_columns('ws_existing_named_ts') ORDER BY \"column\"")
+                    .noLeakCheck()
+                    .returns("column\nactual_ts\nv\n");
+        });
+    }
+
+    @Test
+    public void testInvalidDesignatedTimestampNamesAreRejectedCleanly() throws Exception {
+        runInContext((port) -> {
+            assertDesignatedTimestampNameRejected(
+                    port,
+                    "ws_invalid_named_ts",
+                    "bad/name",
+                    "v",
+                    "invalid designated timestamp column name"
+            );
+            assertDesignatedTimestampNameRejected(
+                    port,
+                    "ws_colliding_named_ts",
+                    "v",
+                    "v",
+                    "collides with schema column"
+            );
+
+            try (Sender sender = createSender(port)) {
+                sender.table("ws_valid_after_named_ts_rejection").tableOptions()
+                        .designatedTimestamp("event_time");
+                sender.longColumn("v", 1)
+                        .at(3_000_000L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM ws_valid_after_named_ts_rejection")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n1\n");
+        });
+    }
+
     /**
      * Tests that multiple rows sent with atNow() in the same batch get per-row timestamps.
      * <p>
@@ -4376,6 +4470,51 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     .noLeakCheck()
                     .returnsOnce("count\n1\n");
         });
+    }
+
+    private static void assertDesignatedTimestampNameRejected(
+            int port,
+            String tableName,
+            String designatedTimestampName,
+            String columnName,
+            String expectedMessage
+    ) throws Exception {
+        CompletableFuture<SenderError> firstError = new CompletableFuture<>();
+        CompletableFuture<SenderError> terminalError = new CompletableFuture<>();
+        QwpWebSocketSender sender = connectWs(port, error -> {
+            if (error.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                terminalError.complete(error);
+            }
+            firstError.complete(error);
+        }, 1);
+        SenderError.Category expectedTerminalCategory = null;
+        try {
+            sender.table(tableName).tableOptions()
+                    .designatedTimestamp(designatedTimestampName);
+            sender.longColumn(columnName, 1)
+                    .at(1_000_000L, ChronoUnit.MICROS);
+            try {
+                sender.flush();
+            } catch (LineSenderServerException ignored) {
+                // The I/O thread may deliver the terminal before flush polls it.
+            }
+
+            SenderError error = firstError.get(10, TimeUnit.SECONDS);
+            Assert.assertSame(SenderError.Category.SCHEMA_MISMATCH, error.getCategory());
+            Assert.assertSame(SenderError.Policy.TERMINAL, error.getAppliedPolicy());
+            Assert.assertTrue(
+                    error.getServerMessage(),
+                    error.getServerMessage() != null && error.getServerMessage().contains(expectedMessage)
+            );
+            expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
+        } finally {
+            assertRejectionTerminalOnClose(
+                    sender,
+                    terminalError,
+                    expectedTerminalCategory,
+                    expectedMessage
+            );
+        }
     }
 
     /**

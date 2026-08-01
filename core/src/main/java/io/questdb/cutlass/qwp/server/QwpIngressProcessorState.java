@@ -922,6 +922,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             }
 
             // Process each table block using streaming cursors
+            int tableIndex = 0;
             while (messageCursor.hasNextTable()) {
                 QwpTableBlockCursor tableBlock = messageCursor.nextTable();
 
@@ -930,6 +931,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                         tableBlock.getTableNameUtf8(),
                         tableBlock.getSchema(),
                         tableBlock,
+                        messageCursor.getDesignatedTsName(tableIndex++),
                         configuration.getQwpMaxTablesPerConnection()
                 );
                 if (tud == null) {

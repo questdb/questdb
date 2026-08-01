@@ -31,6 +31,7 @@ import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
@@ -174,6 +175,8 @@ public class QwpCursorBoundsCheckFuzzTest {
      */
     private static byte[] generateValidMessage(Rnd rnd) {
         int tableCount = 1 + rnd.nextInt(3); // 1-3 tables
+        boolean withTableOptions = rnd.nextBoolean();
+        ObjList<String> designatedTsNames = new ObjList<>(tableCount);
 
         ByteArrayOutputStream payload = new ByteArrayOutputStream(512);
         for (int t = 0; t < tableCount; t++) {
@@ -189,6 +192,33 @@ public class QwpCursorBoundsCheckFuzzTest {
 
             String tableName = "t" + rnd.nextInt(100);
             writeTablePayload(payload, rnd, tableName, rowCount, columnCount, columnTypes, columnNames);
+            designatedTsNames.add(withTableOptions && (t == 0 || rnd.nextBoolean()) ? "ts_" + t : null);
+        }
+
+        if (withTableOptions) {
+            ByteArrayOutputStream trailer = new ByteArrayOutputStream();
+            for (int t = 0; t < tableCount; t++) {
+                ByteArrayOutputStream block = new ByteArrayOutputStream();
+                if (rnd.nextBoolean()) {
+                    block.write(0x7f);
+                    writeVarint(block, 2);
+                    block.write('x');
+                    block.write('y');
+                }
+                String designatedTsName = designatedTsNames.getQuick(t);
+                if (designatedTsName != null) {
+                    byte[] nameBytes = designatedTsName.getBytes(StandardCharsets.UTF_8);
+                    block.write(TABLE_OPTION_TAG_DESIGNATED_TIMESTAMP_NAME);
+                    writeVarint(block, nameBytes.length);
+                    block.write(nameBytes, 0, nameBytes.length);
+                }
+                byte[] blockBytes = block.toByteArray();
+                writeVarint(trailer, blockBytes.length);
+                trailer.write(blockBytes, 0, blockBytes.length);
+            }
+            byte[] trailerBytes = trailer.toByteArray();
+            payload.write(trailerBytes, 0, trailerBytes.length);
+            writeInt32LE(payload, trailerBytes.length);
         }
 
         byte[] payloadBytes = payload.toByteArray();
@@ -200,7 +230,7 @@ public class QwpCursorBoundsCheckFuzzTest {
         message[2] = 'P';
         message[3] = '1';
         message[HEADER_OFFSET_VERSION] = VERSION;
-        message[HEADER_OFFSET_FLAGS] = 0;
+        message[HEADER_OFFSET_FLAGS] = withTableOptions ? FLAG_TABLE_OPTIONS : 0;
         message[HEADER_OFFSET_TABLE_COUNT] = (byte) tableCount;
         message[HEADER_OFFSET_TABLE_COUNT + 1] = (byte) (tableCount >>> 8);
         message[HEADER_OFFSET_PAYLOAD_LENGTH] = (byte) payloadBytes.length;
@@ -220,7 +250,9 @@ public class QwpCursorBoundsCheckFuzzTest {
         QwpMessageCursor cursor = new QwpMessageCursor();
         cursor.of(address, length, null);
 
+        int tableIndex = 0;
         while (cursor.hasNextTable()) {
+            cursor.getDesignatedTsName(tableIndex++);
             QwpTableBlockCursor table = cursor.nextTable();
 
             // Iterate all rows to exercise advanceRow() on each column cursor

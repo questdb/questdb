@@ -546,6 +546,9 @@ public class QwpCursorBoundsCheckTest {
     private static byte[] generateValidMessage(Rnd rnd, int iter) {
         try (QwpTableBuffer buffer = new QwpTableBuffer("fuzz_" + iter);
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+            if ((iter & 1) == 0) {
+                buffer.setDesignatedTimestampName("event_time_" + iter);
+            }
             populateFuzzTable(buffer, rnd, iter);
 
             int size = encoder.encode(buffer);
@@ -559,7 +562,9 @@ public class QwpCursorBoundsCheckTest {
         cursor.of(address, length, new ObjList<>());
 
         long checksum = 0;
+        int tableIndex = 0;
         while (cursor.hasNextTable()) {
+            cursor.getDesignatedTsName(tableIndex++);
             QwpTableBlockCursor table = cursor.nextTable();
             while (table.hasNextRow()) {
                 table.nextRow();

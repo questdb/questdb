@@ -386,6 +386,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         int datagramState = 0;
         try {
             messageCursor.of(address, (int) totalLength, null);
+            int tableIndex = 0;
             while (messageCursor.hasNextTable()) {
                 QwpTableBlockCursor tableBlock = messageCursor.nextTable();
                 WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(
@@ -393,6 +394,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                         tableBlock.getTableNameUtf8(),
                         tableBlock.getSchema(),
                         tableBlock,
+                        messageCursor.getDesignatedTsName(tableIndex++),
                         configuration.getMaxTablesPerConnection()
                 );
                 if (tud == null) {

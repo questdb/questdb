@@ -64,6 +64,15 @@ public class QwpMessageHeaderTest {
     }
 
     @Test
+    public void testFlagTableOptions() throws QwpParseException {
+        byte[] header = createValidHeader(1, FLAG_TABLE_OPTIONS, 1, 100);
+        QwpMessageHeader h = new QwpMessageHeader();
+        h.parse(header, 0, header.length);
+
+        Assert.assertTrue(h.isTableOptionsEnabled());
+    }
+
+    @Test
     public void testHeaderToString() throws QwpParseException {
         byte[] header = createValidHeader(1, FLAG_GORILLA, 5, 1234);
         QwpMessageHeader h = new QwpMessageHeader();
