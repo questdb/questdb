@@ -29,6 +29,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Arrays;
@@ -39,32 +40,48 @@ import java.util.Arrays;
 public class LiveViewCheckpointPartitionMapReader implements Closeable {
 
     /**
-     * Decoded nodes one bound root memoises. A seal looks the same root up once per
-     * partition - both to find the previous boundary's entry and to carry the old
-     * root's entry into the new one - and every lookup used to re-walk the same
-     * root-to-leaf path, checksumming and decoding a metadata page per level and
-     * rebuilding the whole page's entry image, state page references included, to
-     * read one entry out of it.
-     * <p>
-     * Sized to hold a descent rather than a working set: the pages one path touches
-     * stay resident, and a lookup that leaves the path evicts in clock order. The
-     * memo covers one root at a time, so a page cached under a root cannot outlive
-     * it - {@link #find} drops the memo as soon as another root is asked for.
+     * Levels the memo covers. Every tree a production capacity builds is far
+     * shallower, but the writer accepts capacities as low as two, where a split
+     * hands one child to the left node and an ascending build grows a level per
+     * couple of keys. A descent past this point still answers, out of a scratch
+     * node, rather than growing the memo with the tree.
      */
-    private static final int NODE_CACHE_SIZE = 4;
+    private static final int MAX_MEMO_DEPTH = 64;
     private static final int SEGMENT_CACHE_SIZE = 8;
     private final Path checkpointsDir = new Path();
     private final CairoConfiguration configuration;
+    private final LiveViewCheckpointPartitionMapNode deepNode = new LiveViewCheckpointPartitionMapNode();
     private final LiveViewCheckpointPartitionMapNode navNode = new LiveViewCheckpointPartitionMapNode();
-    private final LiveViewCheckpointPartitionMapNode[] nodeCache = new LiveViewCheckpointPartitionMapNode[NODE_CACHE_SIZE];
-    private final long[] nodeCacheOffset = new long[NODE_CACHE_SIZE];
-    private final long[] nodeCacheSegmentId = new long[NODE_CACHE_SIZE];
     private final LiveViewCheckpointPartitionMapEntry scratchEntry = new LiveViewCheckpointPartitionMapEntry();
     private final long[] segmentIds = new long[SEGMENT_CACHE_SIZE];
     private final LiveViewCheckpointMetaSegmentReader[] segmentReaders = new LiveViewCheckpointMetaSegmentReader[SEGMENT_CACHE_SIZE];
     private long boundRootOffset = -1;
     private long boundRootSegmentId = -1;
-    private int nodeCacheClock;
+    private long decodedPageCount;
+    /**
+     * Decoded nodes one bound root memoises, indexed by the depth they sit at. A
+     * seal looks the same root up once per partition - both to find the previous
+     * boundary's entry and to carry the old root's entry into the new one - and
+     * every lookup would otherwise re-walk the same root-to-leaf path, checksumming
+     * and decoding a metadata page per level and rebuilding the whole page's entry
+     * image, state page references included, to read one entry out of it.
+     * <p>
+     * A B+ tree holds every leaf at the same depth and a page at exactly one level,
+     * so indexing by depth memoises the whole descent and never has one level evict
+     * another. The alternative - a fixed-slot cache in clock order - has to be at
+     * least as deep as the tree or a descent evicts its own prefix: with four slots
+     * the memo served descents up to depth four and then collapsed to nothing when
+     * a growing map pushed the root down a level, taking the seal from 0.3s back to
+     * 4.5s at around 2.4 million partitions. Depth-indexing removes the sizing
+     * question rather than answering it.
+     * <p>
+     * The memo covers one root at a time, so a page cached under a root cannot
+     * outlive it - {@link #find} drops the memo as soon as another root is asked
+     * for.
+     */
+    private LiveViewCheckpointPartitionMapNode[] nodeCache = new LiveViewCheckpointPartitionMapNode[0];
+    private long[] nodeCacheOffset = new long[0];
+    private long[] nodeCacheSegmentId = new long[0];
     private LiveViewCheckpointPartitionMapNode[] nodePool = new LiveViewCheckpointPartitionMapNode[0];
     private int segmentClock;
 
@@ -123,8 +140,9 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
             boundRootSegmentId = segmentId;
             boundRootOffset = offset;
         }
+        int depth = 0;
         while (true) {
-            final LiveViewCheckpointPartitionMapNode node = decodedNode(segmentId, offset, length);
+            final LiveViewCheckpointPartitionMapNode node = decodedNode(segmentId, offset, length, depth++);
             if (node.isLeaf()) {
                 final int index = node.find(key);
                 if (index < 0) {
@@ -139,6 +157,17 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
             offset = ref.getOffset();
             length = ref.getLength();
         }
+    }
+
+    /**
+     * @return how many pages this reader has decoded since it was constructed. A
+     * descent that the memo cannot serve decodes one page per level, so this is what
+     * separates a memo holding a whole descent from one that evicts its own prefix -
+     * a difference no lookup result shows.
+     */
+    @TestOnly
+    public long getDecodedPageCount() {
+        return decodedPageCount;
     }
 
     public void iterateAll(@NotNull LiveViewCheckpointPageRef rootRef, @NotNull Visitor visitor) {
@@ -181,41 +210,55 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
         final LiveViewCheckpointMetaSegmentReader reader = readerFor(segmentId);
         reader.openPageAt(offset, length);
         node.decode(reader);
+        decodedPageCount++;
     }
 
     private void clearNodeCache() {
         Arrays.fill(nodeCacheSegmentId, -1);
         Arrays.fill(nodeCacheOffset, -1);
-        nodeCacheClock = 0;
         boundRootSegmentId = -1;
         boundRootOffset = -1;
     }
 
     /**
      * @return the decoded image of the page at {@code segmentId}/{@code offset},
-     * out of the memo when the bound root already reached it. The caller must not
-     * hold the node across another lookup, which may recycle its slot.
+     * which sits {@code depth} levels below the bound root, out of the memo when a
+     * previous descent already reached it. The caller must not hold the node across
+     * another lookup, which may recycle its slot.
      */
-    private LiveViewCheckpointPartitionMapNode decodedNode(long segmentId, long offset, int length) {
-        for (int i = 0; i < NODE_CACHE_SIZE; i++) {
-            if (nodeCacheSegmentId[i] == segmentId && nodeCacheOffset[i] == offset) {
-                return nodeCache[i];
-            }
+    private LiveViewCheckpointPartitionMapNode decodedNode(long segmentId, long offset, int length, int depth) {
+        if (depth >= MAX_MEMO_DEPTH) {
+            openAndDecode(segmentId, offset, length, deepNode);
+            return deepNode;
         }
-        final int slot = nodeCacheClock;
-        nodeCacheClock = slot + 1 == NODE_CACHE_SIZE ? 0 : slot + 1;
-        if (nodeCache[slot] == null) {
-            nodeCache[slot] = new LiveViewCheckpointPartitionMapNode();
+        ensureNodeCacheCapacity(depth + 1);
+        if (nodeCacheSegmentId[depth] == segmentId && nodeCacheOffset[depth] == offset) {
+            return nodeCache[depth];
+        }
+        if (nodeCache[depth] == null) {
+            nodeCache[depth] = new LiveViewCheckpointPartitionMapNode();
         }
         // A rejected page leaves the slot holding a half-decoded node, so drop the
         // slot's identity before the decode rather than let a throw leave a memo
         // entry claiming a page it does not hold.
-        nodeCacheSegmentId[slot] = -1;
-        nodeCacheOffset[slot] = -1;
-        openAndDecode(segmentId, offset, length, nodeCache[slot]);
-        nodeCacheSegmentId[slot] = segmentId;
-        nodeCacheOffset[slot] = offset;
-        return nodeCache[slot];
+        nodeCacheSegmentId[depth] = -1;
+        nodeCacheOffset[depth] = -1;
+        openAndDecode(segmentId, offset, length, nodeCache[depth]);
+        nodeCacheSegmentId[depth] = segmentId;
+        nodeCacheOffset[depth] = offset;
+        return nodeCache[depth];
+    }
+
+    private void ensureNodeCacheCapacity(int capacity) {
+        if (capacity <= nodeCache.length) {
+            return;
+        }
+        final int oldLength = nodeCache.length;
+        nodeCache = Arrays.copyOf(nodeCache, capacity);
+        nodeCacheOffset = Arrays.copyOf(nodeCacheOffset, capacity);
+        nodeCacheSegmentId = Arrays.copyOf(nodeCacheSegmentId, capacity);
+        Arrays.fill(nodeCacheOffset, oldLength, capacity, -1);
+        Arrays.fill(nodeCacheSegmentId, oldLength, capacity, -1);
     }
 
     private void iterate(LiveViewCheckpointPageRef ref, Visitor visitor, int depth) {

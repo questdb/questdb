@@ -157,6 +157,67 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeepDescentsAreMemoisedAtEveryLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            // The memo has to hold a whole descent whatever the tree's depth. A
+            // fixed-slot memo shallower than the tree evicts its own prefix mid
+            // descent, which drops the hit rate to zero the moment a growing map
+            // pushes the root down one more level - and shows up nowhere except in
+            // seal duration. That is the shape of the ~2.4-million-partition cliff
+            // that took the incremental checkpoint from 0.3s back to 4.5s.
+            final int keyCount = 1024;
+            final LiveViewCheckpointPartitionMapWriter.Mutation[] initial =
+                    new LiveViewCheckpointPartitionMapWriter.Mutation[keyCount];
+            for (int i = 0; i < keyCount; i++) {
+                initial[i] = put(i, i, i % 5);
+            }
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            // Narrow nodes stand in for a large map: the depth is what matters. Four
+            // rather than the minimum two, so a split hands each side more than one
+            // child and the tree stays the shape a production capacity produces.
+            try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 4, 4);
+                 Path dir = new Path()) {
+                writer.of(checkpointsDir(dir));
+                writer.apply(new LiveViewCheckpointPageRef(), initial, initial.length, 1, root);
+            }
+
+            final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+            try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
+                 Path dir = new Path()) {
+                reader.of(checkpointsDir(dir));
+                Assert.assertTrue(reader.find(root, key(0), entry));
+                final long depth = reader.getDecodedPageCount();
+                Assert.assertTrue(
+                        "the tree has to be deeper than the memo this guards, depth=" + depth,
+                        depth > 4
+                );
+
+                // Repeating one lookup must decode nothing at all.
+                for (int pass = 0; pass < 8; pass++) {
+                    Assert.assertTrue(reader.find(root, key(0), entry));
+                    Assert.assertEquals(0, scalar(entry));
+                }
+                Assert.assertEquals(depth, reader.getDecodedPageCount());
+
+                // A seal walks the keys it touched in the order it touched them, so
+                // an ascending sweep is the shape that matters: each page is decoded
+                // as the sweep reaches it, and once.
+                final long beforeSweep = reader.getDecodedPageCount();
+                for (int i = 0; i < keyCount; i++) {
+                    Assert.assertTrue(reader.find(root, key(i), entry));
+                    Assert.assertEquals(i, scalar(entry));
+                }
+                final long sweepDecodes = reader.getDecodedPageCount() - beforeSweep;
+                Assert.assertTrue(
+                        "an ascending sweep decoded " + sweepDecodes + " pages, a memoless descent per key costs "
+                                + keyCount * depth,
+                        sweepDecodes < keyCount * depth / 4
+                );
+            }
+        });
+    }
+
+    @Test
     public void testRandomBatchPropertyAgainstTreeMap() throws Exception {
         assertMemoryLeak(() -> {
             final TreeMap<Integer, Integer> expected = new TreeMap<>();
@@ -271,8 +332,8 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             for (int i = 0; i < keyCount; i++) {
                 initial[i] = put(i, i, i % 5);
             }
-            // Narrow nodes, so one descent touches more pages than the memo holds and a
-            // lookup that leaves the path evicts what it replaces.
+            // Narrow nodes, so a descent is many levels deep and a lookup that leaves
+            // the path replaces the memo entry of every level it diverges at.
             try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 2, 2);
                  Path dir = new Path()) {
                 writer.of(checkpointsDir(dir));
