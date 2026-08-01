@@ -96,8 +96,8 @@ public interface PGConfiguration extends IODispatcherConfiguration, WorkerPoolCo
     }
 
     /**
-     * Requests {@link WorkerPoolMode#FIBER_HOST} for the PG worker pool. The resolved
-     * worker pool mode controls execution when multiple services share the same pool.
+     * Enables fiber execution for PG when its resolved worker pool also uses
+     * {@link WorkerPoolMode#FIBER_HOST}.
      */
     default boolean isFiberEnabled() {
         return true;

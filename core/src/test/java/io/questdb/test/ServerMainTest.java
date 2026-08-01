@@ -29,6 +29,7 @@ import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.WorkerPoolManager;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
@@ -180,6 +181,48 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     "close() must deregister the shutdown hook",
                     Runtime.getRuntime().removeShutdownHook(hook)
             );
+        });
+    }
+
+    @Test
+    public void testCloseRetriesIncompleteLifecycleStop() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger closeAttempts = new AtomicInteger();
+            final ServerMain serverMain = new ServerMain(getServerMainArgs()) {
+                @Override
+                protected io.questdb.lifecycle.LifecycleOrchestrator newOrchestrator(
+                        io.questdb.log.Log log,
+                        WorkerPoolManager workerPoolManager,
+                        Object tokioRuntime
+                ) {
+                    return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
+                        @Override
+                        public void close() {
+                            if (closeAttempts.incrementAndGet() > 1) {
+                                super.close();
+                            }
+                        }
+
+                        @Override
+                        public boolean isStopComplete() {
+                            return closeAttempts.get() > 1 && super.isStopComplete();
+                        }
+                    };
+                }
+            };
+            try {
+                serverMain.start();
+
+                serverMain.close();
+                Assert.assertFalse(serverMain.isCloseComplete());
+                Assert.assertTrue(serverMain.hasBeenClosed());
+
+                serverMain.close();
+                Assert.assertTrue(serverMain.isCloseComplete());
+                Assert.assertTrue(serverMain.hasBeenClosed());
+            } finally {
+                serverMain.close();
+            }
         });
     }
 

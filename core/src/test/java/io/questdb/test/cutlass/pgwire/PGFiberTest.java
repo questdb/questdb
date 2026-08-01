@@ -139,10 +139,10 @@ public class PGFiberTest extends BasePGTest {
     }
 
     @Test
-    public void testResolvedWorkerPoolModeControlsFiberExecution() throws Exception {
+    public void testProtocolAndWorkerPoolModesControlFiberExecution() throws Exception {
         assertMemoryLeak(() -> {
             assertQueryExecutionMode(false, WorkerPoolMode.LEGACY, false);
-            assertQueryExecutionMode(false, WorkerPoolMode.FIBER_HOST, true);
+            assertQueryExecutionMode(false, WorkerPoolMode.FIBER_HOST, false);
             assertQueryExecutionMode(true, WorkerPoolMode.LEGACY, false);
             assertQueryExecutionMode(true, WorkerPoolMode.FIBER_HOST, true);
         });
@@ -286,38 +286,43 @@ public class PGFiberTest extends BasePGTest {
                 return workerPoolMode;
             }
         };
+        final WorkerPool workerPool = new TestWorkerPool(workerPoolConfiguration);
         try (
-                WorkerPool workerPool = new TestWorkerPool(workerPoolConfiguration);
+                workerPool;
                 PGServer server = createPGWireServer(configuration, engine, workerPool)
         ) {
             workerPool.start(LOG);
-            for (int i = 0; i < 60_000 && !server.isListening(); i++) {
-                Os.sleep(1);
-            }
-            Assert.assertTrue(server.isListening());
-            try (
-                    Connection connection = getConnection(Mode.EXTENDED, server.getPort(), true);
-                    Statement statement = connection.createStatement();
-                    ResultSet resultSet = statement.executeQuery("SELECT 42 x")
-            ) {
-                Assert.assertTrue(resultSet.next());
-                Assert.assertEquals(42, resultSet.getInt(1));
-            }
+            try {
+                for (int i = 0; i < 60_000 && !server.isListening(); i++) {
+                    Os.sleep(1);
+                }
+                Assert.assertTrue(server.isListening());
+                try (
+                        Connection connection = getConnection(Mode.EXTENDED, server.getPort(), true);
+                        Statement statement = connection.createStatement();
+                        ResultSet resultSet = statement.executeQuery("SELECT 42 x")
+                ) {
+                    Assert.assertTrue(resultSet.next());
+                    Assert.assertEquals(42, resultSet.getInt(1));
+                }
 
-            Assert.assertEquals(workerPoolMode, workerPool.getWorkerPoolMode());
-            Assert.assertEquals(
-                    isFiberEnabled ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY,
-                    configuration.getWorkerPoolMode()
-            );
-            if (workerPoolMode == WorkerPoolMode.FIBER_HOST) {
+                Assert.assertEquals(workerPoolMode, workerPool.getWorkerPoolMode());
                 Assert.assertEquals(
-                        isFiberExecutionExpected,
-                        workerPool.getFiberRuntime().getLaunchCount(LaunchResult.LAUNCHED) > 0
+                        isFiberEnabled ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY,
+                        configuration.getWorkerPoolMode()
                 );
-                Assert.assertEquals(
-                        isFiberExecutionExpected,
-                        workerPool.getFiberRuntime().getCreatedFiberCount() > 0
-                );
+                if (workerPoolMode == WorkerPoolMode.FIBER_HOST) {
+                    Assert.assertEquals(
+                            isFiberExecutionExpected,
+                            workerPool.getFiberRuntime().getLaunchCount(LaunchResult.LAUNCHED) > 0
+                    );
+                    Assert.assertEquals(
+                            isFiberExecutionExpected,
+                            workerPool.getFiberRuntime().getCreatedFiberCount() > 0
+                    );
+                }
+            } finally {
+                workerPool.halt();
             }
         }
     }

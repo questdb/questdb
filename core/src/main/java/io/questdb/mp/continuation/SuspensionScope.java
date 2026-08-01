@@ -77,6 +77,16 @@ public final class SuspensionScope {
             scope.roleSwitchReadLock = lock;
             scope.roleSwitchReadLockDepth = currentDepth + 1;
         }
+        if (currentDepth == 0) {
+            scope.roleSwitchReadLockMode = scope.mode;
+            if (scope.mode == Mode.FIBER) {
+                scope.mode = Mode.BLOCKING;
+            }
+        }
+    }
+
+    public static void enterTimerShards(@Nullable TimerShards timerShards) {
+        SCOPE.get().timerShards = timerShards;
     }
 
     public static CancellationBinding getCancellationBindingScratch() {
@@ -102,6 +112,10 @@ public final class SuspensionScope {
             return 0;
         }
         return fiber != null ? fiber.getRoleSwitchReadLockDepth() : scope.roleSwitchReadLockDepth;
+    }
+
+    public static @Nullable TimerShards getTimerShards() {
+        return SCOPE.get().timerShards;
     }
 
     public static boolean hasRoleSwitchReadLock(CarrierScope scope) {
@@ -133,11 +147,16 @@ public final class SuspensionScope {
         if (currentLock != lock || currentDepth < 1) {
             throw new IllegalMonitorStateException("role-switch read lock is not held by this execution");
         }
+        final boolean isFinalRelease = currentDepth == 1;
         if (fiber != null) {
-            fiber.setRoleSwitchReadLock(currentDepth == 1 ? null : lock, currentDepth - 1);
+            fiber.setRoleSwitchReadLock(isFinalRelease ? null : lock, currentDepth - 1);
         } else {
-            scope.roleSwitchReadLock = currentDepth == 1 ? null : lock;
+            scope.roleSwitchReadLock = isFinalRelease ? null : lock;
             scope.roleSwitchReadLockDepth = currentDepth - 1;
+        }
+        if (isFinalRelease) {
+            scope.mode = scope.roleSwitchReadLockMode;
+            scope.roleSwitchReadLockMode = null;
         }
     }
 
@@ -189,5 +208,7 @@ public final class SuspensionScope {
         Mode mode;
         Lock roleSwitchReadLock;
         int roleSwitchReadLockDepth;
+        Mode roleSwitchReadLockMode;
+        TimerShards timerShards;
     }
 }

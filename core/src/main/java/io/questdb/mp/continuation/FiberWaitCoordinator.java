@@ -29,8 +29,8 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public final class FiberWaitCoordinator {
-    public static final int REASON_CAPACITY = 6;
     public static final int REASON_CANCEL = 4;
+    public static final int REASON_CAPACITY = 6;
     public static final int REASON_NONE = 0;
     public static final int REASON_PROGRESS = 7;
     public static final int REASON_SHUTDOWN = 3;

@@ -194,7 +194,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     }
                     collectSubSeq.done(cursor);
                     if (dispatcher != null && taskFrameSequence != null) {
-                        taskFrameSequence.signalProgress();
+                        dispatcher.signalProgress(taskFrameSequence);
                     }
                 } else if (canPark) {
                     awaitProgress(dispatcher, observedProgress, true);
@@ -256,7 +256,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         collectSubSeq.done(cursor);
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
         if (dispatcher != null) {
-            signalProgress();
+            dispatcher.signalProgress(this);
         }
     }
 
@@ -382,7 +382,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     // Not our task, nothing to collect. Go for another spin.
                     collectSubSeq.done(cursor);
                     if (dispatcher != null && thatFrameSequence != null) {
-                        thatFrameSequence.signalProgress();
+                        dispatcher.signalProgress(thatFrameSequence);
                     }
                 }
             } else if (cursor == -1) {

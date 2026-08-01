@@ -83,17 +83,17 @@ public class FiberWorkerPoolTest {
             try {
                 Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
                 Assert.assertTrue(taskEntered.await(10, TimeUnit.SECONDS));
-                Assert.assertFalse(pool.halt(TimeUnit.MILLISECONDS.toNanos(1)));
+                Assert.assertFalse(pool.haltWithin(TimeUnit.MILLISECONDS.toNanos(1)));
                 Assert.assertFalse(isCleanerClosed.get());
                 Assert.assertEquals(FiberRuntimeState.QUIESCING, runtime.state());
 
                 releaseTask.countDown();
-                Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(10)));
+                Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
                 Assert.assertTrue(isCleanerClosed.get());
                 Assert.assertEquals(FiberRuntimeState.CLOSED, runtime.state());
             } finally {
                 releaseTask.countDown();
-                pool.halt(TimeUnit.SECONDS.toNanos(10));
+                pool.haltWithin(TimeUnit.SECONDS.toNanos(10));
             }
         });
     }
@@ -139,7 +139,7 @@ public class FiberWorkerPoolTest {
                 Assert.assertTrue(cleanerClosed.await(10, TimeUnit.SECONDS));
             } finally {
                 releaseTask.countDown();
-                pool.halt(TimeUnit.SECONDS.toNanos(10));
+                pool.haltWithin(TimeUnit.SECONDS.toNanos(10));
             }
         });
     }
@@ -182,14 +182,14 @@ public class FiberWorkerPoolTest {
 
                 Assert.assertFalse(pool.isHaltTerminalSuccessfulForTesting(TimeUnit.MILLISECONDS.toNanos(1)));
                 releaseTask.countDown();
-                Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(10)));
+                Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
                 for (int i = 0; i < queuedTasks.size(); i++) {
                     Assert.assertTrue(queuedTasks.getQuick(i).isDone());
                 }
                 Assert.assertEquals(FiberRuntimeState.CLOSED, runtime.state());
             } finally {
                 releaseTask.countDown();
-                pool.halt(TimeUnit.SECONDS.toNanos(10));
+                pool.haltWithin(TimeUnit.SECONDS.toNanos(10));
             }
         });
     }
@@ -230,7 +230,7 @@ public class FiberWorkerPoolTest {
             try {
                 Assert.assertTrue(filled.await(10, TimeUnit.SECONDS));
             } finally {
-                Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(10)));
+                Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
             }
             // without rotation the sequence is a strict "abab..." alternation; an adjacent repeat
             // is the rotation's observable signature

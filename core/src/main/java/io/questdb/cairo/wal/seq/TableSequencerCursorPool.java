@@ -77,22 +77,21 @@ public final class TableSequencerCursorPool implements Closeable {
 
     void setTransactionLogCursor(int formatVersion, TransactionLogCursor cursor) {
         switch (formatVersion) {
-            case WAL_SEQUENCER_FORMAT_VERSION_V1:
+            case WAL_SEQUENCER_FORMAT_VERSION_V1 -> {
                 if (transactionLogCursorV1 != null && transactionLogCursorV1 != cursor) {
                     throw new IllegalStateException("WAL sequencer V1 cursor is already configured");
                 }
                 transactionLogCursorV1 = cursor;
-                break;
-            case WAL_SEQUENCER_FORMAT_VERSION_V2:
+            }
+            case WAL_SEQUENCER_FORMAT_VERSION_V2 -> {
                 if (transactionLogCursorV2 != null && transactionLogCursorV2 != cursor) {
                     throw new IllegalStateException("WAL sequencer V2 cursor is already configured");
                 }
                 transactionLogCursorV2 = cursor;
-                break;
-            default:
-                throw new IllegalArgumentException(
-                        "unsupported WAL sequencer format version [version=" + formatVersion + ']'
-                );
+            }
+            default -> throw new IllegalArgumentException(
+                    "unsupported WAL sequencer format version [version=" + formatVersion + ']'
+            );
         }
     }
 }

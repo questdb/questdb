@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.line.udp;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
@@ -58,6 +59,48 @@ public class LineUdpReceiverCloseTimeoutTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testFailedStartCannotReuseCompletedLatches() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    FailingStartLineUdpReceiver receiver = new FailingStartLineUdpReceiver(RCVR_CONF, engine)
+            ) {
+                try {
+                    receiver.start();
+                    Assert.fail();
+                } catch (IllegalStateException e) {
+                    Assert.assertEquals("thread creation failed", e.getMessage());
+                }
+                receiver.start();
+                Assert.assertEquals(1, receiver.getThreadCreationCount());
+            }
+        });
+    }
+
+    private static class FailingStartLineUdpReceiver extends AbstractLineProtoUdpReceiver {
+        private int threadCreationCount;
+
+        private FailingStartLineUdpReceiver(LineUdpReceiverConfiguration configuration, CairoEngine engine) {
+            super(configuration, engine, null);
+        }
+
+        @Override
+        protected Thread createThread(Runnable runnable) {
+            threadCreationCount++;
+            throw new IllegalStateException("thread creation failed");
+        }
+
+        @Override
+        protected boolean runSerially() {
+            return false;
+        }
+
+        private int getThreadCreationCount() {
+            return threadCreationCount;
+        }
     }
 
     private static class FailingThreadLineUdpReceiver extends LineUdpReceiver {

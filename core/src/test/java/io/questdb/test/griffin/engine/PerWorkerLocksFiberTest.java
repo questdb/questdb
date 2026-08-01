@@ -25,6 +25,8 @@
 package io.questdb.test.griffin.engine;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
@@ -38,6 +40,7 @@ import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.tasks.VectorAggregateTask;
@@ -126,23 +129,35 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPinnedSlotWaitFailsWithoutBlockingCarrier() throws Exception {
+    public void testPinnedSlotWaitFallsBackToBlocking() throws Exception {
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, 1);
         final int heldSlot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
         final FiberRuntime runtime = new FiberRuntime(1);
-        final PinnedSlotTask task = new PinnedSlotTask(locks);
+        final SqlExecutionCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine) {
+            private boolean isSlotHeld = true;
+
+            @Override
+            public void statefulThrowExceptionIfTripped() {
+                if (isSlotHeld) {
+                    isSlotHeld = false;
+                    locks.releaseSlot(heldSlot);
+                }
+                super.statefulThrowExceptionIfTripped();
+            }
+        };
+        final PinnedSlotTask task = new PinnedSlotTask(locks, circuitBreaker);
         try {
             Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
             Assert.assertEquals(1, runtime.drain(1));
 
-            Assert.assertTrue(task.hasError);
-            Assert.assertFalse(task.hasRun);
-            Assert.assertTrue(task.error instanceof ExceptionInInitializerError);
-            Assert.assertTrue(task.error.getCause().getMessage().contains("cannot suspend"));
+            Assert.assertFalse(task.hasError);
+            Assert.assertTrue(task.hasRun);
             Assert.assertTrue(runtime.getInlineSuspendViolationCount() > 0);
-            Assert.assertEquals(1, locks.getAcquiredSlotCount());
+            Assert.assertEquals(0, locks.getAcquiredSlotCount());
         } finally {
-            locks.releaseSlot(heldSlot);
+            if (locks.getAcquiredSlotCount() > 0) {
+                locks.releaseSlot(heldSlot);
+            }
             close(runtime);
         }
     }
@@ -244,6 +259,40 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimerWakesSlotWaiterToObserveCancellation() {
+        final PerWorkerLocks locks = new PerWorkerLocks(new CairoConfigurationWrapper(configuration) {
+            @Override
+            public long getQueryContinuationWakeIntervalMillis() {
+                return 20;
+            }
+        }, 1);
+        final int heldSlot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+        final FiberRuntime runtime = new FiberRuntime(2, 2);
+        final SlotTask task = new SlotTask(locks, null, circuitBreaker, engine.getTimerShards());
+        try {
+            Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertEquals(1, runtime.getParkedFiberCount());
+
+            circuitBreaker.cancel();
+            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (!task.hasError && System.nanoTime() < deadline) {
+                runtime.drain(1);
+                Os.pause();
+            }
+
+            Assert.assertTrue(task.hasError);
+            Assert.assertFalse(task.hasRun);
+            Assert.assertEquals(1, locks.getAcquiredSlotCount());
+        } finally {
+            locks.releaseSlot(heldSlot);
+            close(runtime);
+        }
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+    }
+
+    @Test
     public void testVectorAggregateJobRunsEntryInBlockingScope() {
         final MessageBus messageBus = engine.getMessageBus();
         final MPSequence pubSeq = messageBus.getVectorAggregatePubSeq();
@@ -329,18 +378,18 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
 
     private static class PinnedSlotTask extends FiberTask {
         private static final ThreadLocal<PinnedSlotTask> CURRENT_TASK = new ThreadLocal<>();
-        private Throwable error;
+        private final SqlExecutionCircuitBreaker circuitBreaker;
         private boolean hasError;
         private boolean hasRun;
         private final PerWorkerLocks locks;
 
-        private PinnedSlotTask(PerWorkerLocks locks) {
+        private PinnedSlotTask(PerWorkerLocks locks, SqlExecutionCircuitBreaker circuitBreaker) {
+            this.circuitBreaker = circuitBreaker;
             this.locks = locks;
         }
 
         @Override
         protected void onError(Throwable th) {
-            error = th;
             hasError = true;
         }
 
@@ -356,7 +405,7 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
         }
 
         private void runPinned() {
-            final int slot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            final int slot = locks.acquireSlot(0, circuitBreaker);
             try {
                 hasRun = true;
             } finally {
@@ -389,13 +438,26 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
 
     private static class SlotTask extends FiberTask {
         private final @Nullable FiberCancellationSignal cancellationSignal;
+        private final SqlExecutionCircuitBreaker circuitBreaker;
         private final PerWorkerLocks locks;
+        private final @Nullable TimerShards timerShards;
         private boolean hasError;
         private boolean hasRun;
 
         private SlotTask(PerWorkerLocks locks, @Nullable FiberCancellationSignal cancellationSignal) {
+            this(locks, cancellationSignal, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER, null);
+        }
+
+        private SlotTask(
+                PerWorkerLocks locks,
+                @Nullable FiberCancellationSignal cancellationSignal,
+                SqlExecutionCircuitBreaker circuitBreaker,
+                @Nullable TimerShards timerShards
+        ) {
             this.cancellationSignal = cancellationSignal;
+            this.circuitBreaker = circuitBreaker;
             this.locks = locks;
+            this.timerShards = timerShards;
         }
 
         @Override
@@ -410,7 +472,8 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
 
         @Override
         protected boolean runStep() {
-            final int slot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            SuspensionScope.enterTimerShards(timerShards);
+            final int slot = locks.acquireSlot(0, circuitBreaker);
             try {
                 hasRun = true;
             } finally {

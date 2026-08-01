@@ -33,20 +33,31 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 final class WalApplyExecutorPool implements Closeable {
+    private volatile @Nullable Runnable beforeCreateForTesting;
     private int createdCount;
     private final CairoEngine engine;
     private int freeCount;
     private ApplyWal2TableJob freeList;
     private boolean isClosed;
     private final int maxLiveCount;
+    private final int maxRetainedCount;
     private final int sharedQueryWorkerCount;
 
-    WalApplyExecutorPool(CairoEngine engine, int sharedQueryWorkerCount, int maxLiveCount) {
+    WalApplyExecutorPool(
+            CairoEngine engine,
+            int sharedQueryWorkerCount,
+            int maxLiveCount,
+            int maxRetainedCount
+    ) {
         if (maxLiveCount < 1) {
             throw new IllegalArgumentException("WAL apply executor limit must be positive");
         }
+        if (maxRetainedCount < 1 || maxRetainedCount > maxLiveCount) {
+            throw new IllegalArgumentException("WAL apply executor retention must be positive and not exceed live limit");
+        }
         this.engine = engine;
         this.maxLiveCount = maxLiveCount;
+        this.maxRetainedCount = maxRetainedCount;
         this.sharedQueryWorkerCount = sharedQueryWorkerCount;
     }
 
@@ -99,7 +110,7 @@ final class WalApplyExecutorPool implements Closeable {
             if (executor.isPooled || createdCount <= freeCount) {
                 throw new IllegalStateException("WAL apply executor pool overflow");
             }
-            if (isClosed) {
+            if (isClosed || freeCount >= maxRetainedCount) {
                 createdCount--;
                 isFree = true;
             } else {
@@ -112,6 +123,11 @@ final class WalApplyExecutorPool implements Closeable {
         if (isFree) {
             Misc.free(executor);
         }
+    }
+
+    @TestOnly
+    public void setBeforeCreateForTesting(@Nullable Runnable beforeCreateForTesting) {
+        this.beforeCreateForTesting = beforeCreateForTesting;
     }
 
     public synchronized @Nullable ApplyWal2TableJob tryAcquire() {
@@ -128,6 +144,10 @@ final class WalApplyExecutorPool implements Closeable {
         }
         if (createdCount >= maxLiveCount) {
             return null;
+        }
+        final Runnable beforeCreate = beforeCreateForTesting;
+        if (beforeCreate != null) {
+            beforeCreate.run();
         }
         final ApplyWal2TableJob executor = new ApplyWal2TableJob(engine, sharedQueryWorkerCount);
         createdCount++;

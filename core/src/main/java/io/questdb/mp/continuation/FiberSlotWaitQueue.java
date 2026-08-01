@@ -77,7 +77,7 @@ public final class FiberSlotWaitQueue {
             if (registration == null) {
                 return false;
             }
-            if (registration.hasFired()) {
+            if (registration.tryFire()) {
                 return true;
             }
         }

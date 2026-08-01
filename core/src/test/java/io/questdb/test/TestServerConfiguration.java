@@ -207,6 +207,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         this.confViewCompilerPool = () -> 0;
         this.confExportPool = () -> 2;
         this.confWalApplyPool = () -> 0;
+        final WorkerPoolMode sharedWorkerPoolMode = TestUtils.getWorkerPoolMode();
         this.confSharedPool = new WorkerPoolConfiguration() {
             @Override
             public int getWorkerCount() {
@@ -215,7 +216,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
 
             @Override
             public WorkerPoolMode getWorkerPoolMode() {
-                return enableHttp || enablePgWire ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY;
+                return sharedWorkerPoolMode;
             }
         };
         this.confLineTcpIOPool = () -> workerCountLineTcpIO;

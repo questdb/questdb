@@ -38,8 +38,10 @@ import io.questdb.mp.continuation.FiberSlotWaitRegistration;
 import io.questdb.mp.continuation.FiberWaitCoordinator;
 import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -62,6 +64,8 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
     // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
     private final Rnd rnd;
     private final FiberSlotWaitQueue slotWaitQueue;
+    private final MillisecondClock timerClock;
+    private final long timerIntervalMillis;
     private final int workerCount;
     // Test-only: null in production, in which case acquireSlot() reads it once per frame and skips
     // the count down. Volatile so that a reducer on any thread sees the latch a test installs on the
@@ -81,6 +85,8 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
         this.workerCount = workerCount;
         locks = new AtomicIntegerArray(INTS_PER_SLOT * workerCount);
         slotWaitQueue = new FiberSlotWaitQueue(this);
+        timerClock = configuration.getMillisecondClock();
+        timerIntervalMillis = Math.max(1, configuration.getQueryContinuationWakeIntervalMillis());
     }
 
     /**
@@ -118,7 +124,6 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                 sqlCircuitBreaker.statefulThrowExceptionIfTripped();
                 throw CairoException.nonCritical().put("query aborted").setInterruption(true);
             }
-            throw CairoException.nonCritical().put("reducer slot wait cannot suspend in this execution scope");
         }
         if (mode == SuspensionScope.Mode.FORBIDDEN) {
             throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
@@ -159,7 +164,6 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
             if (fiberSlot != SLOT_WAIT_ABORTED) {
                 throw CairoException.nonCritical().put("query aborted").setInterruption(true);
             }
-            throw CairoException.nonCritical().put("reducer slot wait cannot suspend in this execution scope");
         } else if (mode == SuspensionScope.Mode.FORBIDDEN) {
             throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
         }
@@ -243,52 +247,65 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
         testBeforeSlotRelease = beforeSlotRelease;
     }
 
-    private int awaitSlot(int slotStart, @Nullable SqlExecutionCircuitBreaker circuitBreaker) {
+    private int awaitSlot(int slotStart, @Nullable ExecutionCircuitBreaker circuitBreaker) {
         final Fiber fiber = Fiber.current();
         if (fiber == null || !Fiber.isMounted()) {
             throw CairoException.nonCritical().put("reducer slot wait requires a mounted fiber");
         }
         final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
+        final TimerShards timerShards = SuspensionScope.getTimerShards();
         FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
         long cancellationSignalGeneration = SuspensionScope.getCancellationSignalGeneration();
-        if (cancellationSignal == null && circuitBreaker != null) {
+        if (cancellationSignal == null && circuitBreaker instanceof SqlExecutionCircuitBreaker sqlCircuitBreaker) {
             final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
-            circuitBreaker.copyCancelledFlagTo(cancellationBinding);
+            sqlCircuitBreaker.copyCancelledFlagTo(cancellationBinding);
             final AtomicBoolean cancelledFlag = cancellationBinding.getFlag();
             if (cancelledFlag instanceof FiberCancellationSignal signal) {
                 cancellationSignal = signal;
                 cancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
             }
         }
-        final long token = fiber.tryBeginWaitBuild(cancellationSignal == null ? 1 : 2);
-        if (token == Fiber.TOKEN_REFUSED) {
-            return -1;
-        }
-        try {
-            final FiberSlotWaitRegistration slotRegistration = coordinator.acquireSlot(token);
-            if (slotRegistration.register(slotWaitQueue) != SourceRegistrationResult.ACCEPTED) {
-                throw new IllegalStateException("reducer slot wait registration failed");
+        final int sourceCount = 1 + (cancellationSignal != null ? 1 : 0) + (timerShards != null ? 1 : 0);
+        while (true) {
+            if (circuitBreaker != null && circuitBreaker.checkIfTripped()) {
+                return -1;
             }
-            if (cancellationSignal != null
-                    && !coordinator.armCancellation(token, cancellationSignal, cancellationSignalGeneration)) {
-                throw new IllegalStateException("reducer cancellation registration failed");
+            final long token = fiber.tryBeginWaitBuild(sourceCount);
+            if (token == Fiber.TOKEN_REFUSED) {
+                return -1;
             }
+            try {
+                final FiberSlotWaitRegistration slotRegistration = coordinator.acquireSlot(token);
+                if (slotRegistration.register(slotWaitQueue) != SourceRegistrationResult.ACCEPTED) {
+                    throw new IllegalStateException("reducer slot wait registration failed");
+                }
+                if (cancellationSignal != null
+                        && !coordinator.armCancellation(token, cancellationSignal, cancellationSignalGeneration)) {
+                    throw new IllegalStateException("reducer cancellation registration failed");
+                }
+                if (timerShards != null
+                        && !coordinator.armTimer(token, timerShards, timerClock, timerIntervalMillis)) {
+                    return SLOT_WAIT_ABORTED;
+                }
 
-            final int slot = tryAcquireSlot(slotStart);
-            if (slot > -1) {
-                return slot;
-            }
+                final int slot = tryAcquireSlot(slotStart);
+                if (slot > -1) {
+                    return slot;
+                }
 
-            final int reason = fiber.suspendWait(token, SLOT_WAIT_ABORTED);
-            if (reason == FiberWaitCoordinator.REASON_SLOT) {
-                return slotRegistration.takeSlot();
+                final int reason = fiber.suspendWait(token, SLOT_WAIT_ABORTED);
+                if (reason == FiberWaitCoordinator.REASON_SLOT) {
+                    return slotRegistration.takeSlot();
+                }
+                if (reason == SLOT_WAIT_ABORTED) {
+                    return SLOT_WAIT_ABORTED;
+                }
+                if (reason != FiberWaitCoordinator.REASON_TIMER) {
+                    return -1;
+                }
+            } finally {
+                coordinator.teardownWait(token);
             }
-            if (reason == SLOT_WAIT_ABORTED) {
-                return SLOT_WAIT_ABORTED;
-            }
-            return -1;
-        } finally {
-            coordinator.teardownWait(token);
         }
     }
 

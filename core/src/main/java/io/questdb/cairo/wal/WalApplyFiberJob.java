@@ -56,12 +56,25 @@ public final class WalApplyFiberJob implements Closeable, Job {
     private final ConcurrentHashMap<WalApplyFiberTask> tasks = new ConcurrentHashMap<>();
 
     public WalApplyFiberJob(CairoEngine engine, int sharedQueryWorkerCount, FiberRuntime runtime) {
+        this(engine, sharedQueryWorkerCount, runtime, 1);
+    }
+
+    public WalApplyFiberJob(
+            CairoEngine engine,
+            int sharedQueryWorkerCount,
+            FiberRuntime runtime,
+            int maxRetainedExecutorCount
+    ) {
+        if (maxRetainedExecutorCount < 1) {
+            throw new IllegalArgumentException("WAL apply executor retention must be positive");
+        }
         this.engine = engine;
         this.runtime = runtime;
         this.executorPool = new WalApplyExecutorPool(
                 engine,
                 sharedQueryWorkerCount,
-                runtime.getMaxLiveFiberCount()
+                runtime.getMaxLiveFiberCount(),
+                Math.min(maxRetainedExecutorCount, runtime.getMaxLiveFiberCount())
         );
         this.queue = engine.getMessageBus().getWalTxnNotificationQueue();
         this.subSeq = engine.getMessageBus().getWalTxnNotificationSubSequence();
@@ -112,17 +125,16 @@ public final class WalApplyFiberJob implements Closeable, Job {
             return false;
         }
         final long fiberReservationEpoch = fiber.getReservationEpoch();
-        ApplyWal2TableJob executor = executorPool.tryAcquire();
-        if (executor == null) {
-            runtime.releaseReservedFiber(fiber, fiberReservationEpoch);
-            return false;
-        }
-
+        ApplyWal2TableJob executor = null;
         long cursor = -1;
         TableToken tableToken = null;
         WalApplyFiberTask fiberTask = null;
         boolean isTaskBound = false;
         try {
+            executor = executorPool.tryAcquire();
+            if (executor == null) {
+                return false;
+            }
             cursor = nextCursor();
             if (cursor < 0) {
                 return false;
@@ -134,7 +146,7 @@ public final class WalApplyFiberJob implements Closeable, Job {
 
             fiberTask = getTask(tableToken);
             fiberTask.signal();
-            if (!fiberTask.hasBound(executor)) {
+            if (!fiberTask.tryBind(executor)) {
                 return true;
             }
             isTaskBound = true;
@@ -194,6 +206,11 @@ public final class WalApplyFiberJob implements Closeable, Job {
                 }
             }
         }
+    }
+
+    @TestOnly
+    public void setBeforeExecutorCreateForTesting(@Nullable Runnable beforeCreateForTesting) {
+        executorPool.setBeforeCreateForTesting(beforeCreateForTesting);
     }
 
     @TestOnly

@@ -233,7 +233,7 @@ final class WalApplyFiberTask extends FiberTask implements Job.WorkerContext {
         Unsafe.getAndAddLong(this, REQUEST_VERSION_OFFSET, 1);
     }
 
-    boolean hasBound(ApplyWal2TableJob executor) {
+    boolean tryBind(ApplyWal2TableJob executor) {
         if (!Unsafe.cas(this, LEASE_STATE_OFFSET, LEASE_IDLE, LEASE_BOUND)) {
             return false;
         }

@@ -125,7 +125,7 @@ public abstract class WorkerPoolManager implements Target {
     }
 
     public boolean halt() {
-        return halt(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+        return haltBy(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
     }
 
     /**
@@ -133,12 +133,12 @@ public abstract class WorkerPoolManager implements Target {
      * <p>
      * The deadline is shared across all pools: each pool gets the time remaining until the deadline,
      * so a single wedged pool cannot reset the budget for the next one. This keeps server shutdown
-     * bounded even when a worker thread is stuck. See {@link WorkerPool#halt(long)} for the
+     * bounded even when a worker thread is stuck. See {@link WorkerPool#haltWithin(long)} for the
      * resource-retention behaviour after a timeout.
      *
      * @param deadlineNanos absolute deadline from {@link System#nanoTime()} by which all pools should be halted
      */
-    public synchronized boolean halt(long deadlineNanos) {
+    public synchronized boolean haltBy(long deadlineNanos) {
         boolean isHaltComplete = true;
         final boolean isLineTcpIOHaltComplete = closePool(
                 lineTcpIOPool,
@@ -168,7 +168,7 @@ public abstract class WorkerPoolManager implements Target {
             isHaltComplete &= closePool(lineTcpWriterPool, "closing Line TCP writer pool [name=", deadlineNanos);
         }
         if (sharedPoolWrite != lineTcpIOPool
-                && (sharedPoolWrite != lineTcpWriterPool || !isLineTcpIOHaltComplete)
+                && sharedPoolWrite != lineTcpWriterPool
                 && sharedPoolWrite != sharedPoolNetwork
                 && sharedPoolWrite != sharedPoolQuery) {
             isHaltComplete &= closePool(sharedPoolWrite, "closing shared Write pool [name=", deadlineNanos);
@@ -226,12 +226,12 @@ public abstract class WorkerPoolManager implements Target {
                     .$(", workers=").$(p.getWorkerCount())
                     .I$();
             try {
-                return p.halt(Math.max(1, deadlineNanos - System.nanoTime()));
+                return p.haltWithin(Math.max(1, deadlineNanos - System.nanoTime()));
             } catch (Throwable th) {
                 LOG.error().$("worker pool cleanup failed [pool=").$(p.getPoolName())
                         .$(", error=").$(th).I$();
                 try {
-                    return p.halt(Math.max(1, deadlineNanos - System.nanoTime()));
+                    return p.haltWithin(Math.max(1, deadlineNanos - System.nanoTime()));
                 } catch (Throwable retryFailure) {
                     LOG.error().$("worker pool cleanup retry failed [pool=").$(p.getPoolName())
                             .$(", error=").$(retryFailure).I$();

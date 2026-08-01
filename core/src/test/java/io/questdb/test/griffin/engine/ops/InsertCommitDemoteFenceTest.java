@@ -42,15 +42,11 @@ import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
-import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
-import io.questdb.mp.continuation.FiberWaitCoordinator;
-import io.questdb.mp.continuation.FiberWalWaitQueue;
-import io.questdb.mp.continuation.FiberWalWaitRegistration;
 import io.questdb.mp.continuation.LaunchResult;
-import io.questdb.mp.continuation.SourceRegistrationResult;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -59,7 +55,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Proxy;
-import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -359,13 +354,11 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRoleSwitchReadLockCleanupAfterDriverFailure() throws Exception {
+    public void testRoleSwitchReadLockRestoresModeAfterTaskFailure() throws Exception {
         assertMemoryLeak(() -> {
             try (CairoEngine primaryEngine = buildPrimaryEngine()) {
-                final AtomicReference<Fiber> fiberRef = new AtomicReference<>();
                 final AtomicReference<Throwable> taskError = new AtomicReference<>();
                 final FiberRuntime runtime = new FiberRuntime(1);
-                final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
                 final Lock readLock = primaryEngine.getRoleSwitchReadLock();
                 final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
                 final FiberTask task = new FiberTask() {
@@ -378,31 +371,24 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                     protected boolean runStep() {
                         readLock.lock();
                         try {
-                            fiberRef.set(Objects.requireNonNull(Fiber.current()));
-                            park(waitQueue);
+                            Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
+                            failFiberTask();
+                            return true;
                         } finally {
                             readLock.unlock();
                         }
-                        return true;
                     }
                 };
                 try {
                     Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
                     Assert.assertEquals(1, runtime.drain(1));
-                    Assert.assertFalse(task.isDone());
-                    Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
-
-                    waitQueue.fire(1, false);
-                    Objects.requireNonNull(fiberRef.get()).setExecutionStateForTesting(Long.MAX_VALUE);
-                    Assert.assertEquals(1, runtime.drain(1));
-
                     Assert.assertTrue(task.isDone());
                     Assert.assertNotNull(taskError.get());
+                    TestUtils.assertContains(taskError.get().getMessage(), "role-switch read lock blocks suspension");
                     Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
                     Assert.assertTrue(writeLock.tryLock());
                     writeLock.unlock();
                 } finally {
-                    waitQueue.fire(1, false);
                     close(runtime);
                 }
             }
@@ -536,20 +522,12 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRoleSwitchReadLockRemainsReentrantAfterCarrierMigration() throws Exception {
+    public void testRoleSwitchReadLockRestoresFiberMode() throws Exception {
         assertMemoryLeak(() -> {
             try (CairoEngine primaryEngine = buildPrimaryEngine()) {
-                final AtomicReference<Throwable> driverError = new AtomicReference<>();
                 final AtomicReference<Throwable> taskError = new AtomicReference<>();
-                final AtomicReference<Throwable> writerError = new AtomicReference<>();
-                final AtomicBoolean isWriterAcquired = new AtomicBoolean();
-                final CountDownLatch writerStarted = new CountDownLatch(1);
                 final FiberRuntime runtime = new FiberRuntime(1);
-                final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
                 final Lock readLock = primaryEngine.getRoleSwitchReadLock();
-                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
-                final AtomicReference<Thread> firstCarrier = new AtomicReference<>();
-                final AtomicReference<Thread> secondCarrier = new AtomicReference<>();
                 final FiberTask task = new FiberTask() {
                     @Override
                     protected void onError(Throwable th) {
@@ -558,15 +536,14 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
 
                     @Override
                     protected boolean runStep() {
+                        Assert.assertEquals(SuspensionScope.Mode.FIBER, SuspensionScope.getMode());
                         readLock.lock();
                         try {
-                            firstCarrier.set(Thread.currentThread());
-                            park(waitQueue);
-                            secondCarrier.set(Thread.currentThread());
-                            Assert.assertNotSame(firstCarrier.get(), secondCarrier.get());
+                            Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
                             Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
                             readLock.lock();
                             try {
+                                Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
                                 Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
                             } finally {
                                 readLock.unlock();
@@ -575,70 +552,21 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                         } finally {
                             readLock.unlock();
                         }
+                        Assert.assertEquals(SuspensionScope.Mode.FIBER, SuspensionScope.getMode());
                         return true;
                     }
                 };
-                final Thread writer = new Thread(() -> {
-                    writerStarted.countDown();
-                    try {
-                        if (!writeLock.tryLock(10, TimeUnit.SECONDS)) {
-                            throw new AssertionError("timed out acquiring role-switch write lock");
-                        }
-                        try {
-                            isWriterAcquired.set(true);
-                        } finally {
-                            writeLock.unlock();
-                        }
-                    } catch (Throwable th) {
-                        writerError.set(th);
-                    }
-                });
-                final Thread resumedCarrier = new Thread(() -> {
-                    try {
-                        Assert.assertEquals(1, runtime.drain(1));
-                    } catch (Throwable th) {
-                        driverError.set(th);
-                    }
-                });
-                writer.setDaemon(true);
-                resumedCarrier.setDaemon(true);
                 try {
                     Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
                     Assert.assertEquals(1, runtime.drain(1));
-                    Assert.assertFalse(task.isDone());
-                    Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
-
-                    writer.start();
-                    Assert.assertTrue(writerStarted.await(10, TimeUnit.SECONDS));
-                    awaitThreadWaiting(writer);
-                    Assert.assertFalse(isWriterAcquired.get());
-
-                    waitQueue.fire(1, false);
-                    resumedCarrier.start();
-                    resumedCarrier.join(TimeUnit.SECONDS.toMillis(10));
-                    Assert.assertFalse(resumedCarrier.isAlive());
-                    if (driverError.get() != null) {
-                        throw new AssertionError(driverError.get());
-                    }
                     if (taskError.get() != null) {
                         throw new AssertionError(taskError.get());
                     }
                     Assert.assertTrue(task.isDone());
                 } finally {
-                    waitQueue.fire(1, false);
-                    runtime.drain(8);
                     close(runtime);
-                    resumedCarrier.join(TimeUnit.SECONDS.toMillis(10));
-                    writer.join(TimeUnit.SECONDS.toMillis(10));
                 }
-                Assert.assertFalse(writer.isAlive());
-                if (writerError.get() != null) {
-                    throw new AssertionError(writerError.get());
-                }
-                Assert.assertTrue(isWriterAcquired.get());
                 Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
-                Assert.assertNotNull(firstCarrier.get());
-                Assert.assertNotNull(secondCarrier.get());
             }
         });
     }
@@ -889,24 +817,8 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
         );
     }
 
-    private static void park(FiberWalWaitQueue waitQueue) {
-        final Fiber fiber = Objects.requireNonNull(Fiber.current());
-        final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
-        final long token = fiber.beginWaitBuild(1);
-        final FiberWalWaitRegistration registration = coordinator.acquireWal(token, 1);
-        try {
-            if (registration.register(waitQueue) != SourceRegistrationResult.ACCEPTED) {
-                throw new IllegalStateException("role-switch wait registration failed");
-            }
-            final int reason = fiber.suspendWait(token);
-            if (reason != FiberWaitCoordinator.REASON_WAL) {
-                throw new IllegalStateException("unexpected role-switch wait reason [reason=" + reason + ']');
-            }
-        } finally {
-            registration.cancel();
-            coordinator.abort(token);
-            coordinator.consume(token);
-        }
+    private static void failFiberTask() {
+        throw new IllegalStateException("role-switch read lock blocks suspension");
     }
 
     /**

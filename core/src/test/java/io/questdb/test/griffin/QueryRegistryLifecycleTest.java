@@ -141,6 +141,44 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCancellationBindingSurvivesThreeDeepMiddleUnregister() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                context.setUseSimpleCircuitBreaker(true);
+                long queryIdA = -1;
+                long queryIdB = -1;
+                long queryIdC = -1;
+                try {
+                    queryIdA = registry.register("portal A", context);
+                    queryIdB = registry.register("portal B", context);
+                    queryIdC = registry.register("portal C", context);
+                    final QueryRegistry.Entry entryC = registry.getEntry(queryIdC);
+                    Assert.assertNotNull(entryC);
+                    final AtomicBoolean cancelledC = entryC.getCancelled();
+                    Assert.assertSame(cancelledC, context.getCircuitBreaker().getCancelledFlag());
+
+                    registry.unregister(queryIdB, context);
+
+                    Assert.assertSame(cancelledC, context.getCircuitBreaker().getCancelledFlag());
+                    Assert.assertTrue(registry.cancel(queryIdC, context));
+                    Assert.assertTrue(context.getCircuitBreaker().checkIfTripped());
+                } finally {
+                    if (queryIdC > -1 && registry.getEntry(queryIdC) != null) {
+                        registry.unregister(queryIdC, context);
+                    }
+                    if (queryIdB > -1 && registry.getEntry(queryIdB) != null) {
+                        registry.unregister(queryIdB, context);
+                    }
+                    if (queryIdA > -1 && registry.getEntry(queryIdA) != null) {
+                        registry.unregister(queryIdA, context);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCancellationBindingRestoredAfterNestedUnregister() throws Exception {
         assertMemoryLeak(() -> {
             final QueryRegistry registry = engine.getQueryRegistry();

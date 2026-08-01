@@ -341,7 +341,7 @@ public class QueryRegistry {
 
     private void recycle(Entry entry) {
         entry.clear();
-        queryPool.hasPushed(entry, queryPoolCapacity);
+        queryPool.tryPush(entry, queryPoolCapacity);
     }
 
     public interface Listener {

@@ -29,24 +29,27 @@ import io.questdb.mp.continuation.SuspensionScope;
 import java.util.Objects;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.StampedLock;
 
 /**
- * Adds logical-execution read reentrancy to an ownerless {@link StampedLock}, so a fiber may
- * release its read hold after carrier migration. One logical execution may hold one engine's
- * role-switch read lock at a time.
+ * Adds logical-execution read reentrancy to an ownerless {@link StampedLock}. One logical
+ * execution may hold one engine's role-switch read lock at a time. A fiber executes in blocking
+ * mode while it holds the read lock, so a role-switch writer cannot wait on a parked read holder.
  */
 final class RoleSwitchReadWriteLock {
-    private final Semaphore admissionGate = new Semaphore(1, true);
     private final StampedLock delegate = new StampedLock();
-    private final Lock readLock;
+    private final AtomicInteger pendingWriterCount = new AtomicInteger();
+    private final ReadLock readLock;
     private final WriteLock writeLock;
+    private final Semaphore writerGate = new Semaphore(1, true);
 
     RoleSwitchReadWriteLock() {
-        writeLock = new WriteLock(admissionGate, delegate);
-        readLock = new ReadLock(admissionGate, delegate.asReadLock(), writeLock);
+        writeLock = new WriteLock(delegate, pendingWriterCount, writerGate);
+        readLock = new ReadLock(delegate.asReadLock(), pendingWriterCount, writeLock, writerGate);
+        writeLock.setReadLock(readLock);
     }
 
     int getReadLockCount() {
@@ -73,33 +76,42 @@ final class RoleSwitchReadWriteLock {
     }
 
     private static final class ReadLock implements Lock {
-        private final Semaphore admissionGate;
         private final Lock delegate;
+        private final AtomicInteger pendingWriterCount;
         private final WriteLock writeLock;
+        private final Semaphore writerGate;
 
-        private ReadLock(Semaphore admissionGate, Lock delegate, WriteLock writeLock) {
-            this.admissionGate = admissionGate;
+        private ReadLock(
+                Lock delegate,
+                AtomicInteger pendingWriterCount,
+                WriteLock writeLock,
+                Semaphore writerGate
+        ) {
             this.delegate = delegate;
+            this.pendingWriterCount = pendingWriterCount;
             this.writeLock = writeLock;
+            this.writerGate = writerGate;
         }
 
         @Override
         public void lock() {
             final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
-            if (hasReentered(scope)) {
+            if (tryReenter(scope)) {
                 return;
             }
-            if (writeLock.hasEnteredReadDowngrade()) {
+            if (writeLock.tryEnterReadDowngrade()) {
                 enterDowngraded(scope);
                 return;
             }
-            admissionGate.acquireUninterruptibly();
-            try {
+            while (true) {
+                awaitPendingWriters();
                 delegate.lock();
-            } finally {
-                admissionGate.release();
+                if (pendingWriterCount.get() == 0) {
+                    enter(scope);
+                    return;
+                }
+                delegate.unlock();
             }
-            enter(scope);
         }
 
         @Override
@@ -121,13 +133,15 @@ final class RoleSwitchReadWriteLock {
                 enterDowngraded(scope);
                 return;
             }
-            admissionGate.acquire();
-            try {
+            while (true) {
+                awaitPendingWritersInterruptibly();
                 delegate.lockInterruptibly();
-            } finally {
-                admissionGate.release();
+                if (pendingWriterCount.get() == 0) {
+                    enter(scope);
+                    return;
+                }
+                delegate.unlock();
             }
-            enter(scope);
         }
 
         @Override
@@ -138,23 +152,21 @@ final class RoleSwitchReadWriteLock {
         @Override
         public boolean tryLock() {
             final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
-            if (hasReentered(scope)) {
+            if (tryReenter(scope)) {
                 return true;
             }
-            if (writeLock.hasEnteredReadDowngrade()) {
+            if (writeLock.tryEnterReadDowngrade()) {
                 enterDowngraded(scope);
                 return true;
             }
-            if (!admissionGate.tryAcquire()) {
+            if (pendingWriterCount.get() != 0) {
                 return false;
             }
-            final boolean isLocked;
-            try {
-                isLocked = delegate.tryLock();
-            } finally {
-                admissionGate.release();
+            if (!delegate.tryLock()) {
+                return false;
             }
-            if (!isLocked) {
+            if (pendingWriterCount.get() != 0) {
+                delegate.unlock();
                 return false;
             }
             enter(scope);
@@ -183,23 +195,25 @@ final class RoleSwitchReadWriteLock {
             }
             final long timeoutNanos = unit.toNanos(time);
             final long startNanos = System.nanoTime();
-            if (!admissionGate.tryAcquire(time, unit)) {
-                return false;
-            }
-            final boolean isLocked;
-            try {
-                isLocked = delegate.tryLock(
+            while (true) {
+                if (!awaitPendingWriters(remainingNanos(timeoutNanos, startNanos))) {
+                    return false;
+                }
+                if (!delegate.tryLock(
                         remainingNanos(timeoutNanos, startNanos),
                         TimeUnit.NANOSECONDS
-                );
-            } finally {
-                admissionGate.release();
+                )) {
+                    return false;
+                }
+                if (pendingWriterCount.get() == 0) {
+                    enter(scope);
+                    return true;
+                }
+                delegate.unlock();
+                if (remainingNanos(timeoutNanos, startNanos) == 0) {
+                    return false;
+                }
             }
-            if (!isLocked) {
-                return false;
-            }
-            enter(scope);
-            return true;
         }
 
         @Override
@@ -209,11 +223,43 @@ final class RoleSwitchReadWriteLock {
                 throw new IllegalMonitorStateException("role-switch read lock is not held by this execution");
             }
             if (SuspensionScope.getRoleSwitchReadLockDepth(scope, this) == 1) {
-                if (!writeLock.hasCancelledReadDowngrade()) {
+                if (!writeLock.tryCancelReadDowngrade()) {
                     delegate.unlock();
                 }
             }
             SuspensionScope.leaveRoleSwitchReadLock(scope, this);
+        }
+
+        private void awaitPendingWriters() {
+            while (pendingWriterCount.get() != 0) {
+                writerGate.acquireUninterruptibly();
+                writerGate.release();
+            }
+        }
+
+        private boolean awaitPendingWriters(long timeoutNanos) throws InterruptedException {
+            if (pendingWriterCount.get() == 0) {
+                return true;
+            }
+            if (!writerGate.tryAcquire(timeoutNanos, TimeUnit.NANOSECONDS)) {
+                return false;
+            }
+            writerGate.release();
+            return true;
+        }
+
+        private void awaitPendingWritersInterruptibly() throws InterruptedException {
+            while (pendingWriterCount.get() != 0) {
+                writerGate.acquire();
+                writerGate.release();
+            }
+        }
+
+        private void cancelDowngrade() {
+            final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+            while (SuspensionScope.hasRoleSwitchReadLock(scope, this)) {
+                SuspensionScope.leaveRoleSwitchReadLock(scope, this);
+            }
         }
 
         private void checkNoOtherRoleSwitchReadLock(SuspensionScope.CarrierScope scope) {
@@ -241,12 +287,12 @@ final class RoleSwitchReadWriteLock {
             try {
                 SuspensionScope.enterRoleSwitchReadLock(scope, this);
             } catch (Throwable th) {
-                writeLock.hasCancelledReadDowngrade();
+                writeLock.tryCancelReadDowngrade();
                 throw th;
             }
         }
 
-        private boolean hasReentered(SuspensionScope.CarrierScope scope) {
+        private boolean tryReenter(SuspensionScope.CarrierScope scope) {
             if (SuspensionScope.hasRoleSwitchReadLock(scope, this)) {
                 SuspensionScope.enterRoleSwitchReadLock(scope, this);
                 return true;
@@ -257,16 +303,23 @@ final class RoleSwitchReadWriteLock {
     }
 
     private static final class WriteLock implements Lock {
-        private final Semaphore admissionGate;
         private final StampedLock delegate;
         private int holdCount;
         private boolean isReadDowngradePending;
         private volatile Thread owner;
+        private final AtomicInteger pendingWriterCount;
+        private ReadLock readLock;
         private long stamp;
+        private final Semaphore writerGate;
 
-        private WriteLock(Semaphore admissionGate, StampedLock delegate) {
-            this.admissionGate = admissionGate;
+        private WriteLock(
+                StampedLock delegate,
+                AtomicInteger pendingWriterCount,
+                Semaphore writerGate
+        ) {
             this.delegate = delegate;
+            this.pendingWriterCount = pendingWriterCount;
+            this.writerGate = writerGate;
         }
 
         @Override
@@ -275,7 +328,8 @@ final class RoleSwitchReadWriteLock {
                 holdCount++;
                 return;
             }
-            admissionGate.acquireUninterruptibly();
+            pendingWriterCount.incrementAndGet();
+            writerGate.acquireUninterruptibly();
             boolean isLocked = false;
             try {
                 final long newStamp = delegate.writeLock();
@@ -283,7 +337,7 @@ final class RoleSwitchReadWriteLock {
                 isLocked = true;
             } finally {
                 if (!isLocked) {
-                    admissionGate.release();
+                    releaseWriterGate();
                 }
             }
         }
@@ -297,15 +351,21 @@ final class RoleSwitchReadWriteLock {
                 holdCount++;
                 return;
             }
-            admissionGate.acquire();
+            pendingWriterCount.incrementAndGet();
+            boolean isGateAcquired = false;
             boolean isLocked = false;
             try {
+                writerGate.acquire();
+                isGateAcquired = true;
                 final long newStamp = delegate.writeLockInterruptibly();
                 enter(newStamp);
                 isLocked = true;
             } finally {
                 if (!isLocked) {
-                    admissionGate.release();
+                    if (isGateAcquired) {
+                        writerGate.release();
+                    }
+                    pendingWriterCount.decrementAndGet();
                 }
             }
         }
@@ -321,7 +381,9 @@ final class RoleSwitchReadWriteLock {
                 holdCount++;
                 return true;
             }
-            if (!admissionGate.tryAcquire()) {
+            pendingWriterCount.incrementAndGet();
+            if (!writerGate.tryAcquire()) {
+                pendingWriterCount.decrementAndGet();
                 return false;
             }
             final long newStamp = delegate.tryWriteLock();
@@ -329,7 +391,7 @@ final class RoleSwitchReadWriteLock {
                 enter(newStamp);
                 return true;
             }
-            admissionGate.release();
+            releaseWriterGate();
             return false;
         }
 
@@ -345,11 +407,14 @@ final class RoleSwitchReadWriteLock {
             }
             final long timeoutNanos = unit.toNanos(time);
             final long startNanos = System.nanoTime();
-            if (!admissionGate.tryAcquire(time, unit)) {
-                return false;
-            }
+            pendingWriterCount.incrementAndGet();
+            boolean isGateAcquired = false;
             boolean isLocked = false;
             try {
+                if (!writerGate.tryAcquire(time, unit)) {
+                    return false;
+                }
+                isGateAcquired = true;
                 final long newStamp = delegate.tryWriteLock(
                         remainingNanos(timeoutNanos, startNanos),
                         TimeUnit.NANOSECONDS
@@ -361,7 +426,10 @@ final class RoleSwitchReadWriteLock {
                 return isLocked;
             } finally {
                 if (!isLocked) {
-                    admissionGate.release();
+                    if (isGateAcquired) {
+                        writerGate.release();
+                    }
+                    pendingWriterCount.decrementAndGet();
                 }
             }
         }
@@ -378,23 +446,19 @@ final class RoleSwitchReadWriteLock {
                 final long readStamp = delegate.tryConvertToReadLock(stamp);
                 if (readStamp == 0) {
                     delegate.unlockWrite(stamp);
-                    clear();
-                    admissionGate.release();
+                    try {
+                        readLock.cancelDowngrade();
+                    } finally {
+                        clear();
+                        releaseWriterGate();
+                    }
                     throw new IllegalStateException("could not downgrade role-switch write lock");
                 }
             } else {
                 delegate.unlockWrite(stamp);
             }
             clear();
-            admissionGate.release();
-        }
-
-        private boolean hasCancelledReadDowngrade() {
-            if (isHeldByCurrentThread() && isReadDowngradePending) {
-                isReadDowngradePending = false;
-                return true;
-            }
-            return false;
+            releaseWriterGate();
         }
 
         private void clear() {
@@ -422,7 +486,24 @@ final class RoleSwitchReadWriteLock {
             return owner == Thread.currentThread();
         }
 
-        private boolean hasEnteredReadDowngrade() {
+        private void releaseWriterGate() {
+            pendingWriterCount.decrementAndGet();
+            writerGate.release();
+        }
+
+        private void setReadLock(ReadLock readLock) {
+            this.readLock = readLock;
+        }
+
+        private boolean tryCancelReadDowngrade() {
+            if (isHeldByCurrentThread() && isReadDowngradePending) {
+                isReadDowngradePending = false;
+                return true;
+            }
+            return false;
+        }
+
+        private boolean tryEnterReadDowngrade() {
             if (isHeldByCurrentThread()) {
                 enterReadDowngrade();
                 return true;

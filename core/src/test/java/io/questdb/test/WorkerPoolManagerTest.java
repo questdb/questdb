@@ -125,7 +125,7 @@ public class WorkerPoolManagerTest {
 
             final long budgetNanos = TimeUnit.MILLISECONDS.toNanos(200L);
             final long start = System.nanoTime();
-            Assert.assertFalse(pool.halt(budgetNanos));
+            Assert.assertFalse(pool.haltWithin(budgetNanos));
             final long elapsed = System.nanoTime() - start;
 
             // halt() retained the live pool and returned close to the budget rather than blocking
@@ -141,7 +141,7 @@ public class WorkerPoolManagerTest {
             Assert.assertEquals(0, closeOrder.get());
         } finally {
             release.set(true);
-            Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(30)));
+            Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(30)));
         }
         Assert.assertEquals(1, closeOrder.get());
     }
@@ -290,7 +290,7 @@ public class WorkerPoolManagerTest {
             Assert.assertSame(failure, e);
         }
         Assert.assertEquals(1, closeOrder.get());
-        Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(30)));
+        Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(30)));
     }
 
     @Test
@@ -321,7 +321,7 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
-    public void testLineTcpSharedWriterPoolHaltsWhenIoPoolTimesOut() {
+    public void testLineTcpSharedWriterPoolRetainedWhenIoPoolTimesOut() {
         final AtomicInteger closeOrder = new AtomicInteger();
         final AtomicInteger haltSignalCount = new AtomicInteger();
         final AtomicBoolean releaseJob = new AtomicBoolean();
@@ -349,11 +349,12 @@ public class WorkerPoolManagerTest {
         workerPoolManager.start(null);
         try {
             Assert.assertTrue(jobEntered.await(TimeUnit.SECONDS.toNanos(30)));
-            Assert.assertFalse(workerPoolManager.halt(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
-            Assert.assertEquals(1, haltSignalCount.get());
+            Assert.assertFalse(workerPoolManager.haltBy(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
+            Assert.assertEquals(0, closeOrder.get());
+            Assert.assertEquals(0, haltSignalCount.get());
         } finally {
             releaseJob.set(true);
-            Assert.assertTrue(workerPoolManager.halt(System.nanoTime() + TimeUnit.SECONDS.toNanos(30)));
+            Assert.assertTrue(workerPoolManager.haltBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(30)));
         }
         Assert.assertEquals(1, closeOrder.get());
         Assert.assertEquals(1, haltSignalCount.get());
@@ -391,11 +392,11 @@ public class WorkerPoolManagerTest {
         try {
             Assert.assertEquals(LaunchResult.LAUNCHED, ioPool.getFiberRuntime().launch(task));
             Assert.assertTrue(taskEntered.await(TimeUnit.SECONDS.toNanos(30)));
-            Assert.assertFalse(workerPoolManager.halt(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
+            Assert.assertFalse(workerPoolManager.haltBy(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
             Assert.assertEquals(0, closeOrder.get());
         } finally {
             releaseTask.set(true);
-            Assert.assertTrue(workerPoolManager.halt(System.nanoTime() + TimeUnit.SECONDS.toNanos(30)));
+            Assert.assertTrue(workerPoolManager.haltBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(30)));
         }
         Assert.assertEquals(2, closeOrder.get());
     }
@@ -430,11 +431,11 @@ public class WorkerPoolManagerTest {
         try {
             Assert.assertEquals(LaunchResult.LAUNCHED, ioPool.getFiberRuntime().launch(task));
             Assert.assertTrue(taskEntered.await(TimeUnit.SECONDS.toNanos(30)));
-            Assert.assertFalse(workerPoolManager.halt(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
+            Assert.assertFalse(workerPoolManager.haltBy(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
             Assert.assertEquals(0, closeOrder.get());
         } finally {
             releaseTask.set(true);
-            Assert.assertTrue(workerPoolManager.halt(System.nanoTime() + TimeUnit.SECONDS.toNanos(30)));
+            Assert.assertTrue(workerPoolManager.haltBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(30)));
         }
         Assert.assertEquals(2, closeOrder.get());
     }

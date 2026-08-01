@@ -26,6 +26,7 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshTask;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
@@ -41,19 +42,25 @@ import org.junit.Test;
 import java.util.concurrent.TimeUnit;
 
 public class MatViewFiberRefreshTest extends AbstractCairoTest {
+    private static final String CREATE_BASE_TABLE = """
+            CREATE TABLE base_price (
+                sym VARCHAR,
+                price DOUBLE,
+                ts TIMESTAMP
+            ) TIMESTAMP(ts) PARTITION BY DAY WAL
+            """;
+    private static final String CREATE_MAT_VIEW = """
+            CREATE MATERIALIZED VIEW price_1h AS
+            SELECT sym, last(price) AS price, ts
+            FROM base_price
+            SAMPLE BY 1h
+            """;
 
     @Test
     public void testFiberModeIncrementalAndFullRefresh() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-            execute(
-                    "create materialized view price_1h as " +
-                            "select sym, last(price) as price, ts from base_price sample by 1h"
-            );
+            execute(CREATE_BASE_TABLE);
+            execute(CREATE_MAT_VIEW);
 
             final WorkerPool pool = newFiberHostPool();
             final FiberRuntime runtime = pool.getFiberRuntime();
@@ -100,7 +107,7 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
                 Assert.assertEquals(0, runtime.getOutstandingTaskCount());
                 Assert.assertEquals(1, runtime.getRetainedFiberCount());
             } finally {
-                Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(10)));
+                Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
             }
         });
     }
@@ -108,15 +115,8 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
     @Test
     public void testFiberSaturationLeavesRefreshQueued() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-            execute(
-                    "create materialized view price_1h as " +
-                            "select sym, last(price) as price, ts from base_price sample by 1h"
-            );
+            execute(CREATE_BASE_TABLE);
+            execute(CREATE_MAT_VIEW);
             drainWalAndMatViewQueues();
 
             final WorkerPool pool = newFiberHostPool();
@@ -150,7 +150,7 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
                     runtime.releaseReservedFiber(heldFiber, heldFiberEpoch);
                 }
                 closeRuntime(runtime);
-                Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(10)));
+                Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
             }
         });
     }
@@ -158,15 +158,8 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
     @Test
     public void testQuiesceLeavesRefreshQueued() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-            execute(
-                    "create materialized view price_1h as " +
-                            "select sym, last(price) as price, ts from base_price sample by 1h"
-            );
+            execute(CREATE_BASE_TABLE);
+            execute(CREATE_MAT_VIEW);
             drainWalAndMatViewQueues();
 
             execute("insert into base_price (sym, price, ts) values('gbpusd', 1.5, '2024-09-10T13:01')");
@@ -187,7 +180,7 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
                 Assert.assertNotNull(task.baseTableToken);
                 Assert.assertNull(task.matViewToken);
             } finally {
-                Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(10)));
+                Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
             }
         });
     }
@@ -195,15 +188,8 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
     @Test
     public void testQuiesceBeforeFirstMountRequeuesRefresh() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-            execute(
-                    "create materialized view price_1h as " +
-                            "select sym, last(price) as price, ts from base_price sample by 1h"
-            );
+            execute(CREATE_BASE_TABLE);
+            execute(CREATE_MAT_VIEW);
             drainWalAndMatViewQueues();
 
             final WorkerPool pool = newFiberHostPool();
@@ -229,7 +215,7 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
                 Assert.assertEquals(22, task.rangeTo);
                 Assert.assertFalse(engine.getMatViewStateStore().tryDequeueRefreshTask(task));
             } finally {
-                Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(10)));
+                Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
             }
         });
     }
@@ -237,17 +223,21 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
     @Test
     public void testShutdownWakesParkedRefresh() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
+            execute(CREATE_BASE_TABLE);
+            execute(CREATE_MAT_VIEW);
+            drainWalAndMatViewQueues();
+
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(
+                    engine.verifyTableName("price_1h")
             );
-            execute(
-                    "create materialized view price_1h with base base_price as " +
-                            "select b.sym, last(b.price) as price, b.ts " +
-                            "from base_price b cross join sleep(60.0) s " +
-                            "where s.sleep is not null sample by 1h"
-            );
+            Assert.assertNotNull(viewState);
+            viewState.getViewDefinition().setMatViewSqlForTesting("""
+                    SELECT b.sym, last(b.price) AS price, b.ts
+                    FROM base_price b
+                    CROSS JOIN sleep(60.0) s
+                    WHERE s.sleep IS NOT NULL
+                    SAMPLE BY 1h
+                    """);
             execute("insert into base_price (sym, price, ts) values('gbpusd', 1.5, '2024-09-10T13:01')");
             drainWalQueue();
 
@@ -259,11 +249,11 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
                 awaitParkedRefresh(runtime);
                 // Budget is far below the parked timer, so only a shutdown-driven wake can drain in
                 // time; letting the timer expire on its own would not satisfy this.
-                Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(5)));
+                Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(5)));
                 Assert.assertEquals(FiberRuntimeState.CLOSED, runtime.state());
                 Assert.assertEquals(0, runtime.getOutstandingTaskCount());
             } finally {
-                pool.halt(TimeUnit.SECONDS.toNanos(10));
+                pool.haltWithin(TimeUnit.SECONDS.toNanos(10));
             }
         });
     }

@@ -2536,7 +2536,6 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.WORKER_FIBER_MOUNT_BUDGET.getPropertyPath(), "5");
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
 
-        assertWorkerPoolFiberConfiguration(configuration.getExportPoolConfiguration(), 37, 11, 5);
         assertWorkerPoolFiberConfiguration(configuration.getHttpMinServerConfiguration(), 37, 11, 5);
         assertWorkerPoolFiberConfiguration(configuration.getHttpServerConfiguration(), 37, 11, 5);
         assertWorkerPoolFiberConfiguration(

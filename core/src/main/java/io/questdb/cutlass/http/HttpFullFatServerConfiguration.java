@@ -144,9 +144,8 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
     }
 
     /**
-     * Requests {@link WorkerPoolMode#FIBER_HOST} for the full-fat HTTP worker pool.
-     * The resolved worker pool mode controls execution when multiple services share
-     * the same pool.
+     * Enables fiber execution for full-fat HTTP when its resolved worker pool also
+     * uses {@link WorkerPoolMode#FIBER_HOST}.
      */
     default boolean isFiberEnabled() {
         return true;

@@ -154,6 +154,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -2293,7 +2294,7 @@ public final class TestUtils {
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine);
+        WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine, true);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
     }
 
@@ -2625,7 +2626,11 @@ public final class TestUtils {
     }
 
     private static AtomicInteger createWorkerPoolModeSequence() {
-        final WorkerPoolMode mode = getWorkerPoolMode(generateRandom(LOG));
+        final WorkerPoolMode mode = WORKER_POOL_MODE_OVERRIDE != null
+                ? WORKER_POOL_MODE_OVERRIDE
+                : ThreadLocalRandom.current().nextBoolean()
+                        ? WorkerPoolMode.FIBER_HOST
+                        : WorkerPoolMode.LEGACY;
         LOG.info().$("test worker pool mode sequence starts with [mode=").$(mode.name()).I$();
         return new AtomicInteger(mode == WorkerPoolMode.FIBER_HOST ? 0 : 1);
     }

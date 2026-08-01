@@ -49,6 +49,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     protected final LineUdpParserImpl parser;
     private final LineUdpReceiverConfiguration configuration;
     private final SOCountDownLatch halted = new SOCountDownLatch(1);
+    private boolean isStartAttempted;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final SOCountDownLatch started = new SOCountDownLatch(1);
     protected int commitRate;
@@ -115,7 +116,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         if (fd > -1) {
             if (running.compareAndSet(true, false)) {
                 started.await();
@@ -136,8 +137,10 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
         }
     }
 
-    public void start() {
-        if (configuration.ownThread() && running.compareAndSet(false, true)) {
+    public synchronized void start() {
+        if (configuration.ownThread() && fd > -1 && !isStartAttempted) {
+            isStartAttempted = true;
+            running.set(true);
             final Thread thread;
             try {
                 thread = createThread(() -> {

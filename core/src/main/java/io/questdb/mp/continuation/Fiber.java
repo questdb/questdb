@@ -73,6 +73,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private FiberCancellationSignal assignedCancellationSignal;
     private long assignedCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
     private FiberTask assignedTask;
+    private TimerShards assignedTimerShards;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long executionState = packExecutionState(0, EXECUTION_FREE);
     private boolean isAsyncRandomInitialized;
@@ -108,6 +109,9 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     public static boolean isMounted() {
         return Continuation.getCurrentContinuation(SCOPE) != null;
+    }
+
+    static void verifyRuntimeAccess() {
     }
 
     @Override
@@ -339,6 +343,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         assignedCancellationSignal = null;
         assignedCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
         assignedTask = null;
+        assignedTimerShards = null;
     }
 
     private Throwable releaseRoleSwitchReadLock(boolean isTaskLeak) {
@@ -718,10 +723,12 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         final FiberCancellationSignal previousCancellationSignal = scope.cancellationSignal;
         final long previousCancellationSignalGeneration = scope.cancellationSignalGeneration;
         final SuspensionScope.Mode previousMode = scope.mode;
+        final TimerShards previousTimerShards = scope.timerShards;
         scope.cancellationSignal = assignedCancellationSignal;
         scope.cancellationSignalGeneration = assignedCancellationSignalGeneration;
         scope.fiber = this;
         scope.mode = SuspensionScope.Mode.FIBER;
+        scope.timerShards = assignedTimerShards;
         try {
             continuation.run();
         } finally {
@@ -729,6 +736,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 if (assignedTask != null) {
                     assignedCancellationSignal = scope.cancellationSignal;
                     assignedCancellationSignalGeneration = scope.cancellationSignalGeneration;
+                    assignedTimerShards = scope.timerShards;
                     assignedTask.updateCancellationBinding(
                             assignedCancellationSignal,
                             assignedCancellationSignalGeneration
@@ -739,6 +747,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 scope.cancellationSignalGeneration = previousCancellationSignalGeneration;
                 scope.fiber = previousFiber;
                 scope.mode = previousMode;
+                scope.timerShards = previousTimerShards;
             }
         }
     }

@@ -89,6 +89,14 @@ public final class FiberRuntime {
             @Nullable Runnable beforeFiberAcquireForTesting,
             @Nullable Runnable beforeWaitFireForTesting
     ) {
+        try {
+            Fiber.verifyRuntimeAccess();
+        } catch (IllegalAccessError e) {
+            throw new IllegalStateException(
+                    "fiber-host mode requires --add-exports=java.base/jdk.internal.vm=io.questdb",
+                    e
+            );
+        }
         if (maxLiveFiberCount < 1) {
             throw new IllegalArgumentException("maxLiveFiberCount must be positive");
         }
@@ -142,6 +150,7 @@ public final class FiberRuntime {
             return FiberWaitCoordinator.REASON_SHUTDOWN;
         }
         final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
+        boolean isWaitTornDown = false;
         try {
             if (!coordinator.armEvent(token, capacityWaitQueue)) {
                 throw new IllegalStateException("fiber capacity wait registration failed");
@@ -156,8 +165,27 @@ public final class FiberRuntime {
                 return FiberWaitCoordinator.REASON_CAPACITY;
             }
             return fiber.suspendWait(token, FiberWaitCoordinator.REASON_NONE);
+        } catch (RuntimeException | Error th) {
+            isWaitTornDown = true;
+            try {
+                coordinator.teardownWait(token);
+            } catch (RuntimeException | Error cleanupFailure) {
+                if (cleanupFailure != th) {
+                    th.addSuppressed(cleanupFailure);
+                }
+            }
+            try {
+                capacityWaitQueue.fire();
+            } catch (RuntimeException | Error cleanupFailure) {
+                if (cleanupFailure != th) {
+                    th.addSuppressed(cleanupFailure);
+                }
+            }
+            throw th;
         } finally {
-            coordinator.teardownWait(token);
+            if (!isWaitTornDown) {
+                coordinator.teardownWait(token);
+            }
         }
     }
 

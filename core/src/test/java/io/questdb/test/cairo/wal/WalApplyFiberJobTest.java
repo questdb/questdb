@@ -209,6 +209,69 @@ public class WalApplyFiberJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExecutorConstructionFailureReleasesReservation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wal_fiber_executor_failure (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            execute("INSERT INTO wal_fiber_executor_failure VALUES (42, '2026-01-01T00:00:00.000000Z')");
+
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final WalApplyFiberJob job = new WalApplyFiberJob(engine, 0, runtime);
+            try {
+                final RuntimeException expected = new RuntimeException("expected");
+                job.setBeforeExecutorCreateForTesting(() -> {
+                    throw expected;
+                });
+                try {
+                    job.run(Job.RUNNING_STATUS);
+                    Assert.fail();
+                } catch (RuntimeException e) {
+                    Assert.assertSame(expected, e);
+                }
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(0, job.getExecutorCount());
+
+                job.setBeforeExecutorCreateForTesting(null);
+                drain(job, runtime);
+                assertQuery("SELECT x FROM wal_fiber_executor_failure").expectSize().returns("x\n42\n");
+                close(runtime);
+            } finally {
+                close(runtime, job);
+            }
+        });
+    }
+
+    @Test
+    public void testExecutorPoolTrimsIdleExecutors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wal_fiber_trim_a (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE wal_fiber_trim_b (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            execute("INSERT INTO wal_fiber_trim_a VALUES (1, '2026-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO wal_fiber_trim_b VALUES (2, '2026-01-01T00:00:00.000000Z')");
+
+            final FiberRuntime runtime = new FiberRuntime(1, 2);
+            final WalApplyFiberJob job = new WalApplyFiberJob(engine, 0, runtime, 1);
+            try {
+                Assert.assertTrue(job.run(Job.RUNNING_STATUS));
+                Assert.assertTrue(job.run(Job.RUNNING_STATUS));
+                Assert.assertEquals(2, job.getExecutorCount());
+                Assert.assertEquals(0, job.getFreeExecutorCount());
+
+                drain(job, runtime);
+
+                Assert.assertEquals(1, job.getExecutorCount());
+                Assert.assertEquals(1, job.getFreeExecutorCount());
+                assertQuery("SELECT x FROM wal_fiber_trim_a").expectSize().returns("x\n1\n");
+                assertQuery("SELECT x FROM wal_fiber_trim_b").expectSize().returns("x\n2\n");
+                close(runtime);
+            } finally {
+                close(runtime, job);
+            }
+        });
+    }
+
+    @Test
     public void testQuiesceDuringLaunchReleasesIdleLease() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE wal_fiber_quiesce (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");

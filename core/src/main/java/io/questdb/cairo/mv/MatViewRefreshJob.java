@@ -411,16 +411,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             //   2. Period range refresh triggered by period timer
 
             // First, do a range replace commit.
-            fencedMatViewCommit(() -> walWriter.commitWithParams(
+            fencedCommitWithParams(
+                    walWriter,
                     replacementTimestampLo,
                     replacementTimestampHi,
                     WAL_DEDUP_MODE_REPLACE_RANGE
-            ));
+            );
             // Second, if it's a period range refresh, we need to persist state
             // with the new lastPeriodHi, but the same base txn and cached txn intervals.
             // If we did a mat view data commit, we'd unintentionally reset the cached intervals.
             if (refreshContext.periodHi != Numbers.LONG_NULL) {
-                fencedMatViewCommit(() -> walWriter.resetMatViewState(
+                fencedResetMatViewState(
+                        walWriter,
                         viewState.getLastRefreshBaseTxn(),
                         refreshFinishTimestampUs,
                         false,
@@ -428,7 +430,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         commitPeriodHi,
                         viewState.getRefreshIntervals(),
                         viewState.getRefreshIntervalsBaseTxn()
-                ));
+                );
             }
             viewState.rangeRefreshSuccess(
                     factory,
@@ -442,13 +444,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // It's an incremental/full refresh.
             // Easy job: first commit data along with the mat view state and then update the in-memory state.
             // The mat view data commit will reset cached txn intervals since we want to evict them.
-            fencedMatViewCommit(() -> walWriter.commitMatView(
+            fencedCommitMatView(
+                    walWriter,
                     refreshContext.toBaseTxn,
                     refreshFinishTimestampUs,
                     commitPeriodHi,
                     replacementTimestampLo,
                     replacementTimestampHi
-            ));
+            );
             viewState.refreshSuccess(
                     factory,
                     copier,
@@ -476,7 +479,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // externalization only -- the MatViewState.closed flag, the refresh latch and the state-store redirect
     // that defend the native cursor are untouched. The fence is a strict no-op for non-replicating
     // deployments: the read lock is uncontended and the read-only flag is static.
-    private void fencedMatViewCommit(Runnable commit) {
+    private Lock acquireMatViewCommitFence() {
         if (engine.isReadOnlyMode()) {
             throw CairoException.readOnlyAccess();
         }
@@ -487,7 +490,79 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 throw CairoException.readOnlyAccess();
             }
             engine.fireRoleSwitchMintObserver();
-            commit.run();
+            return lock;
+        } catch (Throwable th) {
+            lock.unlock();
+            throw th;
+        }
+    }
+
+    private void fencedCommitMatView(
+            WalWriter walWriter,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long lastPeriodHi,
+            long lastReplaceRangeLowTs,
+            long lastReplaceRangeHiTs
+    ) {
+        final Lock lock = acquireMatViewCommitFence();
+        try {
+            walWriter.commitMatView(
+                    lastRefreshBaseTxn,
+                    lastRefreshTimestamp,
+                    lastPeriodHi,
+                    lastReplaceRangeLowTs,
+                    lastReplaceRangeHiTs
+            );
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void fencedCommitWithParams(
+            WalWriter walWriter,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode
+    ) {
+        final Lock lock = acquireMatViewCommitFence();
+        try {
+            walWriter.commitWithParams(replaceRangeLowTs, replaceRangeHiTs, dedupMode);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void fencedResetMatViewState(
+            WalWriter walWriter,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean isInvalid,
+            @Nullable CharSequence invalidationReason,
+            long lastPeriodHi,
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn
+    ) {
+        final Lock lock = acquireMatViewCommitFence();
+        try {
+            walWriter.resetMatViewState(
+                    lastRefreshBaseTxn,
+                    lastRefreshTimestamp,
+                    isInvalid,
+                    invalidationReason,
+                    lastPeriodHi,
+                    refreshIntervals,
+                    refreshIntervalsBaseTxn
+            );
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void fencedTruncateSoft(WalWriter walWriter) {
+        final Lock lock = acquireMatViewCommitFence();
+        try {
+            walWriter.truncateSoft();
         } finally {
             lock.unlock();
         }
@@ -820,7 +895,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 engine.detachReader(baseTableReader);
                 refreshSqlExecutionContext.of(baseTableReader);
                 try {
-                    fencedMatViewCommit(walWriter::truncateSoft);
+                    fencedTruncateSoft(walWriter);
                     resetInvalidState(viewState, walWriter);
 
                     final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewDefinition, viewState, walWriter, Numbers.LONG_NULL);
@@ -1163,11 +1238,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 final long commitStart = System.nanoTime();
                                 final long lo = replacementTimestampLo;
                                 final long hi = replacementTimestampHi;
-                                fencedMatViewCommit(() -> walWriter.commitWithParams(
+                                fencedCommitWithParams(
+                                        walWriter,
                                         lo,
                                         hi,
                                         WAL_DEDUP_MODE_REPLACE_RANGE
-                                ));
+                                );
                                 viewState.recordCommitNanos(System.nanoTime() - commitStart);
                                 if (pendingScanRangeTsUnits > 0) {
                                     viewState.recordScanMetrics(pendingScanSampleNanos, pendingScanRangeTsUnits);
@@ -1249,11 +1325,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 } else {
                                     final long lo = replacementTimestampLo;
                                     final long hi = replacementTimestampHi;
-                                    fencedMatViewCommit(() -> walWriter.commitWithParams(
+                                    fencedCommitWithParams(
+                                            walWriter,
                                             lo,
                                             hi,
                                             WAL_DEDUP_MODE_REPLACE_RANGE
-                                    ));
+                                    );
                                 }
                                 viewState.recordCommitNanos(System.nanoTime() - commitStart);
                                 viewState.recordScanMetrics(pendingScanSampleNanos, pendingScanRangeTsUnits);
@@ -2018,7 +2095,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // derived state, so the new primary recomputes it forward.
         if (walWriter != null && !engine.isReadOnlyMode()) {
             try {
-                fencedMatViewCommit(() -> walWriter.resetMatViewState(
+                fencedResetMatViewState(
+                        walWriter,
                         viewState.getLastRefreshBaseTxn(),
                         viewState.getLastRefreshFinishTimestampUs(),
                         true,
@@ -2026,7 +2104,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         viewState.getLastPeriodHi(),
                         viewState.getRefreshIntervals(),
                         viewState.getRefreshIntervalsBaseTxn()
-                ));
+                );
             } catch (CairoException refused) {
                 // A demote landed between the eager check above and the fence's in-lock re-check, so the
                 // fence refused the mint. This is the abandon-on-demote outcome -- swallow it here (this is
@@ -2226,7 +2304,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 periodHi
         );
         if (walWriter != null) {
-            fencedMatViewCommit(() -> walWriter.resetMatViewState(
+            fencedResetMatViewState(
+                    walWriter,
                     baseTableTxn,
                     refreshFinishedTimestamp,
                     false,
@@ -2234,7 +2313,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     periodHi,
                     null,
                     -1
-            ));
+            );
         }
     }
 
@@ -2245,7 +2324,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         viewState.getRefreshIntervals().clear();
         viewState.setLastRefreshTimestampUs(Numbers.LONG_NULL);
         viewState.setLastPeriodHi(Numbers.LONG_NULL);
-        fencedMatViewCommit(() -> walWriter.resetMatViewState(
+        fencedResetMatViewState(
+                walWriter,
                 viewState.getLastRefreshBaseTxn(),
                 viewState.getLastRefreshFinishTimestampUs(),
                 false,
@@ -2253,7 +2333,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 viewState.getLastPeriodHi(),
                 null,
                 -1
-        ));
+        );
     }
 
     // Re-throws a read-only authorization refusal so the surrounding outer catch routes it through
@@ -2276,7 +2356,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         viewState.markAsInvalid(invalidationReason);
         viewState.setLastRefreshTimestampUs(invalidationTimestamp);
         viewState.setLastRefreshStartTimestampUs(invalidationTimestamp);
-        fencedMatViewCommit(() -> walWriter.resetMatViewState(
+        fencedResetMatViewState(
+                walWriter,
                 viewState.getLastRefreshBaseTxn(),
                 viewState.getLastRefreshFinishTimestampUs(),
                 true,
@@ -2284,7 +2365,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 viewState.getLastPeriodHi(),
                 viewState.getRefreshIntervals(),
                 viewState.getRefreshIntervalsBaseTxn()
-        ));
+        );
     }
 
     private void updateRefreshIntervals(@NotNull MatViewRefreshTask refreshTask) {
@@ -2447,7 +2528,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
                 viewState.setRefreshIntervalsBaseTxn(lastBaseTxn);
 
-                fencedMatViewCommit(() -> walWriter.resetMatViewState(
+                fencedResetMatViewState(
+                        walWriter,
                         viewState.getLastRefreshBaseTxn(),
                         viewState.getLastRefreshFinishTimestampUs(),
                         false,
@@ -2455,7 +2537,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         viewState.getLastPeriodHi(),
                         viewState.getRefreshIntervals(),
                         viewState.getRefreshIntervalsBaseTxn()
-                ));
+                );
 
                 return viewState.getRefreshIntervals();
             } catch (CairoException ex) {

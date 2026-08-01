@@ -83,6 +83,7 @@ public class ServerMain implements Closeable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean isCloseComplete = new AtomicBoolean();
+    private final AtomicBoolean isClosing = new AtomicBoolean();
     private final AtomicBoolean running = new AtomicBoolean();
     private WorkerPoolManager workerPoolManager;
     private volatile Thread compileViewsThread;
@@ -195,16 +196,15 @@ public class ServerMain implements Closeable {
 
     @Override
     public void close() {
-        if (!closed.compareAndSet(false, true)) {
+        closed.set(true);
+        if (isCloseComplete.get() || !isClosing.compareAndSet(false, true)) {
             return;
         }
         isCloseComplete.set(false);
         try {
             closeInternal();
         } finally {
-            if (!isCloseComplete.get()) {
-                closed.set(false);
-            }
+            isClosing.set(false);
         }
     }
 
@@ -426,7 +426,7 @@ public class ServerMain implements Closeable {
                 // the normal-shutdown second call is a no-op.
                 orchestrator.setPreStopHook(() -> {
                     if (workerPoolManager != null) {
-                        if (!workerPoolManager.halt(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
+                        if (!workerPoolManager.haltBy(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
                             throw new IllegalStateException("worker pools did not halt before lifecycle teardown");
                         }
                     }
@@ -512,7 +512,6 @@ public class ServerMain implements Closeable {
         joinThread(hydrateMetadataThread, true);
         joinThread(compileViewsThread, true);
         System.err.println("QuestDB is shutting down...");
-        System.out.println("QuestDB is shutting down...");
         if (bootstrap != null && bootstrap.getLog() != null) {
             // Still useful in case of custom logger
             bootstrap.getLog().info().$("QuestDB is shutting down...").$();
@@ -526,6 +525,10 @@ public class ServerMain implements Closeable {
             isLifecycleStopComplete = orchestrator.isStopComplete();
         }
         if (!isTimerShardsHaltComplete || !isLifecycleStopComplete) {
+            bootstrap.getLog().error()
+                    .$("QuestDB shutdown deferred [timerShardsHalted=").$(isTimerShardsHaltComplete)
+                    .$(", lifecycleStopped=").$(isLifecycleStopComplete)
+                    .I$();
             return;
         }
         boolean isMinHttpHaltComplete = true;
@@ -558,9 +561,13 @@ public class ServerMain implements Closeable {
         // bounded variant retains the live object graph when the deadline expires.
         boolean isWorkerPoolHaltComplete = true;
         if (workerPoolManager != null) {
-            isWorkerPoolHaltComplete = workerPoolManager.halt(haltDeadline);
+            isWorkerPoolHaltComplete = workerPoolManager.haltBy(haltDeadline);
         }
         if (!isMinHttpHaltComplete || !isWorkerPoolHaltComplete) {
+            bootstrap.getLog().error()
+                    .$("QuestDB shutdown deferred [minHttpHalted=").$(isMinHttpHaltComplete)
+                    .$(", workerPoolsHalted=").$(isWorkerPoolHaltComplete)
+                    .I$();
             return;
         }
         Throwable cleanupFailure = null;
@@ -861,7 +868,8 @@ public class ServerMain implements Closeable {
             final WalApplyFiberJob job = new WalApplyFiberJob(
                     engine,
                     sharedQueryWorkerCount,
-                    sharedPoolWrite.getFiberRuntime()
+                    sharedPoolWrite.getFiberRuntime(),
+                    sharedPoolWrite.getWorkerCount()
             );
             sharedPoolWrite.freeResourceOnExit(job);
             sharedPoolWrite.assign(job);
@@ -1350,7 +1358,7 @@ public class ServerMain implements Closeable {
 
         private boolean haltAndFree(long timeoutNanos) {
             if (pool != null) {
-                if (!pool.halt(timeoutNanos)) {
+                if (!pool.haltWithin(timeoutNanos)) {
                     return false;
                 }
                 pool = null;

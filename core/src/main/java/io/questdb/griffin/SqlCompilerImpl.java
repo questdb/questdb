@@ -4904,10 +4904,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int liveWalProgressPosition = functionParser.getExecutionRequirements().getPosition(
                 SqlExecutionRequirements.REQUIRES_LIVE_WAL_PROGRESS
         );
-        if (metadata.isWalEnabled() && !executionContext.isWalApplication() && liveWalProgressPosition >= 0) {
+        if (!executionContext.isWalApplication() && liveWalProgressPosition >= 0) {
             recordCursorFactory.close();
             throw SqlException.position(liveWalProgressPosition)
-                    .put("WAL UPDATE cannot require live WAL progress");
+                    .put("UPDATE cannot require live WAL progress");
         }
 
         if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {

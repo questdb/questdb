@@ -55,9 +55,10 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     private final CopyExportContext copyContext;
     private final CairoEngine engine;
     private final StringSink fileName = new StringSink();
+    private final @NotNull MicrosecondClock microsecondClock;
+    private boolean isClosed;
     private boolean isRequestLoaded;
     private CopyExportRequestTask localTaskCopy;
-    private final @NotNull MicrosecondClock microsecondClock;
     private SQLSerialParquetExporter serialExporter;
 
     public CopyExportRequestJob(final CairoEngine engine) {
@@ -87,6 +88,10 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
 
     @Override
     public void close() {
+        if (isClosed) {
+            return;
+        }
+        isClosed = true;
         Throwable cleanupFailure = null;
         if (isRequestLoaded) {
             try {

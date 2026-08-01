@@ -44,7 +44,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool implements Closeable {
     // Generous backstop used by the unbounded halt() so a wedged worker cannot block shutdown forever.
-    // Callers that want a tighter, shared budget across several pools pass an explicit timeout to halt(long).
+    // Callers that want a tighter, shared budget across several pools pass an explicit timeout to haltWithin(long).
     public static final long DEFAULT_HALT_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(30);
     private static final Log LOG = LogFactory.getLog(WorkerPool.class);
     // Every Job instance the pool mints through assign() (the blueprint and its
@@ -254,20 +254,12 @@ public class WorkerPool implements Closeable {
      * <p>
      * Every pool retains its object graph when carrier shutdown misses the deadline.
      * <p>
-     * Footgun: this overload takes a RELATIVE timeout (a nanosecond duration measured from now),
-     * but {@link io.questdb.WorkerPoolManager#halt(long)} has the identical {@code (long)} signature
-     * and takes an ABSOLUTE deadline (a {@link System#nanoTime()} value). The two cannot be used
-     * interchangeably: passing this method an absolute nanoTime would wait for a duration roughly
-     * equal to the system's uptime, and passing WorkerPoolManager a small relative value would make
-     * its deadline already in the past. Read the parameter name before calling either one.
-     *
      * @param timeoutNanos upper bound on the combined wait for started and halted, a RELATIVE
-     *                     duration in nanoseconds measured from the call (NOT an absolute
-     *                     {@link System#nanoTime()} deadline, unlike {@link io.questdb.WorkerPoolManager#halt(long)})
+     *                     duration in nanoseconds measured from the call
      * @return true when the pool released all owned resources, false when the pool retained its
      * live object graph after the deadline
      */
-    public boolean halt(long timeoutNanos) {
+    public boolean haltWithin(long timeoutNanos) {
         return halt(timeoutNanos, false);
     }
 
@@ -300,7 +292,7 @@ public class WorkerPool implements Closeable {
     }
 
     /**
-     * Installs a hook fired immediately after {@link #halt(long)} flips {@code closed}.
+     * Installs a hook fired immediately after {@link #haltWithin(long)} flips {@code closed}.
      * Tests use it to prove a concurrent {@link #start(Log)} observes the close before
      * the parked add-loop resumes. Pass {@code null} to clear.
      */
@@ -313,7 +305,7 @@ public class WorkerPool implements Closeable {
      * Installs a hook fired inside {@link #start(Log)} after the worker threads are spawned and
      * running but BEFORE {@code started.countDown()}. A test uses it to reproduce a start() that
      * stalls in that window (realistic on an OOM mid-launch): the hook blocks or throws, leaving
-     * {@code started} un-counted while the workers loop, so a concurrent {@link #halt(long)} takes
+     * {@code started} un-counted while the workers loop, so a concurrent {@link #haltWithin(long)} takes
      * the start-latch-timeout branch. Pass {@code null} to clear.
      */
     @TestOnly
@@ -326,7 +318,7 @@ public class WorkerPool implements Closeable {
      * the workersLock is held for that worker's add. Unlike {@link #setBeforeStartedSignalForTesting(Runnable)},
      * which fires AFTER the whole add-loop has completed (outside the monitor), this hook fires in the
      * middle of the add-loop with the monitor held: a test can block here to hold the add critical
-     * section open and prove that a concurrent {@link #halt(long)} first pass is held off (serialized)
+     * section open and prove that a concurrent {@link #haltWithin(long)} first pass is held off (serialized)
      * rather than reading the half-built list torn. Pass {@code null} to clear.
      */
     @TestOnly
@@ -396,7 +388,7 @@ public class WorkerPool implements Closeable {
                             beforeWorkerAdded.run();
                         }
                         // Re-check closed inside the critical section, before spawning. A concurrent
-                        // halt(long) sets closed and frees freeOnExit under this same monitor; if the seam
+                        // haltWithin(long) sets closed and frees freeOnExit under this same monitor; if the seam
                         // (or a real OOM-stalled launch) held the add open while halt() ran, freeOnExit is
                         // already gone by the time this loop resumes. Spawning a worker now would loop it on
                         // freed resources -- a use-after-free plus an orphan thread. Break instead: the

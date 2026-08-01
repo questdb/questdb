@@ -43,8 +43,6 @@ final class FiberRing {
     private static final int MIN_CAPACITY = 32;
     private final RingQueue<Holder> buffer;
     private final int capacity;
-    @TestOnly
-    private volatile boolean isFullForTesting;
     private final MPSequence pubSeq;
     private final MCSequence subSeq;
 
@@ -72,9 +70,6 @@ final class FiberRing {
         if (fiber == null) {
             throw new IllegalArgumentException("fiber must not be null");
         }
-        if (isFullForTesting) {
-            throw new IllegalStateException("fiber ring is full");
-        }
         while (true) {
             final long cursor = pubSeq.next();
             if (cursor > -1) {
@@ -96,7 +91,7 @@ final class FiberRing {
         if (depth < 0 || depth > capacity) {
             throw new IllegalArgumentException("depth is out of range [value=" + depth + ']');
         }
-        isFullForTesting = depth == capacity;
+        pubSeq.setCurrent(subSeq.current() + depth);
     }
 
     Fiber tryDequeue() {

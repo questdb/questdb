@@ -394,7 +394,7 @@ public class WorkerPoolBootFailureTest {
             }
             Assert.assertTrue("the workers must be running their assigned job", jobTicks.get() > 0);
 
-            Assert.assertFalse(pool.halt(TimeUnit.MILLISECONDS.toNanos(200)));
+            Assert.assertFalse(pool.haltWithin(TimeUnit.MILLISECONDS.toNanos(200)));
             Assert.assertFalse("halt() must retain freeOnExit while start() is live", resourceFreed.get());
 
             // After halt the workers must STOP ticking. Sample, wait well past the worker sleep
@@ -411,7 +411,7 @@ public class WorkerPoolBootFailureTest {
             releaseStart.countDown();
             starter.join(TimeUnit.SECONDS.toMillis(10));
             Assert.assertFalse("start() must finish after release", starter.isAlive());
-            Assert.assertTrue(pool.halt(TimeUnit.SECONDS.toNanos(10)));
+            Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
         }
         Assert.assertTrue("the retry must free freeOnExit", resourceFreed.get());
     }

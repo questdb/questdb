@@ -100,7 +100,7 @@ public class PGServer implements Closeable {
         try {
             this.acceptOpen = acceptOpen;
             this.metrics = engine.getMetrics();
-            if (sharedPoolNetwork.isFiberHost()) {
+            if (configuration.isFiberEnabled() && sharedPoolNetwork.isFiberHost()) {
                 fiberRuntimeLocal = sharedPoolNetwork.getFiberRuntime();
             }
             if (configuration.isSelectCacheEnabled()) {

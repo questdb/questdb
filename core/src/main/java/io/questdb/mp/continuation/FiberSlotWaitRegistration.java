@@ -94,7 +94,7 @@ public final class FiberSlotWaitRegistration extends FiberWaitRegistrationNode<F
         return slot;
     }
 
-    boolean hasFired() {
+    boolean tryFire() {
         if (!Unsafe.cas(this, STATE_OFFSET, STATE_GRANTED, STATE_FIRING)) {
             return true;
         }

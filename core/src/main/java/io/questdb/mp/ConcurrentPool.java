@@ -72,7 +72,7 @@ public class ConcurrentPool<T> {
         count.incrementAndGet();
     }
 
-    public boolean hasPushed(T item, int maxSize) {
+    public boolean tryPush(T item, int maxSize) {
         while (true) {
             final int currentCount = count.get();
             if (currentCount >= maxSize) {

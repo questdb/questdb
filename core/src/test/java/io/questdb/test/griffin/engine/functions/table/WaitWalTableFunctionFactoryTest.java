@@ -27,9 +27,7 @@ package io.questdb.test.griffin.engine.functions.table;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
@@ -41,27 +39,15 @@ import org.junit.Test;
 public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testAsyncUpdateRejectsLiveWalProgress() throws Exception {
+    public void testNonWalUpdateRejectsLiveWalProgress() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE update_tab (v LONG)");
             final String sql = "UPDATE update_tab SET v = v + 1 WHERE wait_wal_table('update_tab')";
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    UpdateOperation operation = compiler.compile(sql, sqlExecutionContext).getUpdateOperation()
-            ) {
-                try {
-                    operation.startAsync();
-                    Assert.fail();
-                } catch (CairoException e) {
-                    Assert.assertEquals(sql.indexOf("wait_wal_table"), e.getPosition());
-                    Assert.assertTrue(
-                            e.getFlyweightMessage().toString(),
-                            e.getFlyweightMessage().toString().contains(
-                                    "asynchronous UPDATE cannot require live WAL progress"
-                            )
-                    );
-                }
-            }
+            assertException(
+                    sql,
+                    sql.indexOf("wait_wal_table"),
+                    "UPDATE cannot require live WAL progress"
+            );
         });
     }
 
@@ -209,7 +195,7 @@ public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
         assertException(
                 sql,
                 sql.indexOf("wait_wal_table"),
-                "WAL UPDATE cannot require live WAL progress"
+                "UPDATE cannot require live WAL progress"
         );
     }
 
