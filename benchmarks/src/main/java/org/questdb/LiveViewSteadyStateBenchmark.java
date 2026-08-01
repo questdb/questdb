@@ -67,6 +67,7 @@ import java.util.Locale;
  */
 public class LiveViewSteadyStateBenchmark {
 
+    private static final int RESTART_PROBE_ROWS = 1_000;
     private static final long START_TS = 1_785_496_035_000_000L;
     private static final long TS_STEP_MICROS = 444L;
 
@@ -77,9 +78,14 @@ public class LiveViewSteadyStateBenchmark {
         long checkpointRows = 135_000L;
         long checkpointDurationMicros = 24L * Micros.HOUR_MICROS;
         boolean isIndexed = true;
+        boolean isRestartMeasured = false;
         boolean isSymbolPreSized = true;
         int recycleAccounts = 0; // 0 = every row a brand new account
         for (String arg : args) {
+            if (arg.startsWith("--restart=")) {
+                isRestartMeasured = Boolean.parseBoolean(arg.substring(10));
+                continue;
+            }
             if (arg.startsWith("--seed=")) {
                 seedRows = Long.parseLong(arg.substring(7));
             } else if (arg.startsWith("--batch=")) {
@@ -205,6 +211,52 @@ public class LiveViewSteadyStateBenchmark {
                             instance.getRefreshFaultCount()
                     );
                     firstRow += batchRows;
+                }
+
+                if (isRestartMeasured) {
+                    // Drop the in-memory instances and read the definitions back from
+                    // disk, so the next refresh has to rebuild every window map from
+                    // the checkpoint rather than from memory. This is the restart the
+                    // live view tests drive, and it isolates the checkpoint restore
+                    // from the rest of engine startup. One small batch is what makes
+                    // the view resume at all - with nothing to process it would not
+                    // restore - and its own refresh cost is negligible beside a
+                    // multi-million key restore.
+                    final long stateRows = firstRow - 1;
+                    engine.getLiveViewRegistry().clear();
+                    engine.buildViewGraphs();
+                    engine.execute(insertSql(firstRow, RESTART_PROBE_ROWS, recycleAccounts), sqlCtx);
+                    drainWal(engine);
+                    final LiveViewInstance restarted = engine.getLiveViewRegistry()
+                            .getViewInstance("mm_transaction_live_created_at_view");
+                    try (LiveViewRefreshJob restartJob = new LiveViewRefreshJob(0, engine, 1)) {
+                        final long checkpointRootIdBefore = restarted.getHeadCheckpointRootId();
+                        final long restoreStart = System.nanoTime();
+                        drainLiveView(engine, restarted, restartJob);
+                        final long restoreNanos = System.nanoTime() - restoreStart;
+                        // A restore raises checkpointFullScanRequired, so any seal the
+                        // resumed view performs in this window is a full-state scan,
+                        // not a touched-key one. Report it separately: it is a distinct
+                        // cost from reading the checkpoint back.
+                        final boolean isCheckpointWritten = restarted.getHeadCheckpointRootId() != checkpointRootIdBefore;
+                        final double checkpointMs = isCheckpointWritten ? restarted.getHeadCheckpointWriteMicros() / 1e3 : 0.0;
+                        final long expected = stateRows + RESTART_PROBE_ROWS;
+                        if (restarted.getLvRowsTotal() != expected) {
+                            throw new IllegalStateException(
+                                    "restore row mismatch: expected " + expected + ", got " + restarted.getLvRowsTotal());
+                        }
+                        System.out.printf(
+                                Locale.ROOT,
+                                "# restore state_rows=%d window_ms=%.3f reseal_ms=%.3f read_back_ms=%.3f probe_rows=%d lookup_depth=%d faults=%d%n",
+                                stateRows,
+                                restoreNanos / 1e6,
+                                checkpointMs,
+                                restoreNanos / 1e6 - checkpointMs,
+                                RESTART_PROBE_ROWS,
+                                restarted.getCheckpointLastLookupDepth(),
+                                restarted.getRefreshFaultCount()
+                        );
+                    }
                 }
             }
         } finally {
