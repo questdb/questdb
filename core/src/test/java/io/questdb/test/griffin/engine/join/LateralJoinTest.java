@@ -11829,6 +11829,279 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testLateralAliasCollisionScalarCountVsOuterProjection() throws Exception {
+        // The outer projection declares a function column with the same alias as the
+        // lateral scalar-count column. The count reference is renamed (cnt -> cnt1) to
+        // stay unique, and must keep scalar-count semantics: 0 for a non-matching outer
+        // row, never NULL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt1
+                            10\t1
+                            20\t0
+                            """);
+
+            // same collision with a non-eliminable correlation (expression forces the
+            // decorrelated outer-ref carrier to survive into the execution plan)
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt1
+                            10\t1
+                            20\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionScalarCountBareReferenceBaseline() throws Exception {
+        // A bare (unqualified) reference to the lateral scalar-count column must carry
+        // the coalesce-to-zero semantics the same way a qualified reference does.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT cnt, abs(t0.b) cnt2
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY cnt
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt2
+                            0\t20
+                            1\t10
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionCarrierNotLeakedWhenNotEliminable() throws Exception {
+        // Correlation through an expression (t0.a + 0) cannot be eliminated, so the
+        // hidden __qdb_outer_ref__ carrier column survives in the decorrelated join
+        // model. SELECT * and l1.* must not expose it, and the scalar count must still
+        // coalesce to 0 for non-matching outer rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT *
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tcnt
+                            1\t10\t1
+                            2\t20\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionCountAliasedAsCorrelationColumn() throws Exception {
+        // The user aliases the scalar count with the correlation column name (x). The
+        // decorrelated sub-query carries its own hidden x-derived key column; neither
+        // wildcard shape may expose it, and the count keeps 0-for-no-match semantics.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT *
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) AS x FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tx
+                            1\t10\t1
+                            2\t20\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) AS x FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tx
+                            1\t1
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionFunctionStealsCorrelationColumn() throws Exception {
+        // Inside the lateral body a function takes the correlation column's name that
+        // GROUP BY also refers to. Grouped (non-scalar) count keeps SQL
+        // NULL semantics for unmatched outer rows - a contrast to the scalar-count
+        // coalesce - and no helper columns may leak into either wildcard.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT abs(x) x, count(*) cnt FROM t2 WHERE t2.x = t0.a GROUP BY x) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tx\tcnt
+                            1\t1\t1
+                            2\tnull\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT *
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT abs(x) x, count(*) cnt FROM t2 WHERE t2.x = t0.a GROUP BY x) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tx\tcnt
+                            1\t10\t1\t1
+                            2\t20\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionUserColumnOccupiesCarrierName() throws Exception {
+        // The user declares a column whose alias matches the generated correlation
+        // carrier name. The rewriter must keep the two apart: the user column stays
+        // visible under its name, the internal carrier stays hidden, and scalar count
+        // still coalesces to 0. Only the count is compensated for the unmatched outer
+        // row; the sibling user column stays NULL per the engine's LEFT JOIN contract.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt, 1 __qdb_outer_ref__0_a FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\t__qdb_outer_ref__0_a
+                            1\t1\t1
+                            2\t0\tnull
+                            """);
+        });
+    }
+
+    // A bare (unqualified) reference to the lateral scalar-count column keeps its
+    // coalesce-to-zero compensation even when an outer projection alias steals the
+    // column name: the parser dedupes the bare ref (cnt -> cnt1), and the scalar-count
+    // marking must follow the join column the data comes from, not the same-named
+    // projection alias. See also the qualified-reference twin
+    // (testLateralAliasCollisionScalarCountVsOuterProjection) and the collision-free
+    // baseline (testLateralAliasCollisionScalarCountBareReferenceBaseline).
+    @Test
+    public void testLateralAliasCollisionScalarCountBareRefStolenAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt1
+                            10\t1
+                            20\t0
+                            """);
+
+            // same shape with a non-eliminable correlation
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt1
+                            10\t1
+                            20\t0
+                            """);
+
+            // bare reference inside an expression, same stolen alias: the coalesced
+            // count feeds the arithmetic, so the unmatched row yields 0, not NULL
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, cnt + 0 c2
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tc2
+                            10\t1
+                            20\t0
+                            """);
+        });
+    }
+
     private void createOrdersAndTrades() throws Exception {
         execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

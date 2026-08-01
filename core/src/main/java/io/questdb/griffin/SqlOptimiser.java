@@ -526,6 +526,22 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private static QueryColumn findUniqueJoinColumn(IQueryModel baseModel, CharSequence columnName) {
+        final ObjList<IQueryModel> joinModels = baseModel.getJoinModels();
+        QueryColumn found = null;
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            final QueryColumn qc = joinModels.getQuick(i).getAliasToColumnMap().get(columnName);
+            if (qc != null) {
+                if (found != null) {
+                    // ambiguous unqualified reference - leave resolution to the caller's fallback
+                    return null;
+                }
+                found = qc;
+            }
+        }
+        return found;
+    }
+
     private static boolean hasLinearFill(ObjList<ExpressionNode> fill) {
         for (int i = 0, n = fill.size(); i < n; i++) {
             if (isLinearKeyword(fill.getQuick(i).token)) {
@@ -1014,9 +1030,16 @@ public class SqlOptimiser implements Mutable {
             );
             final QueryColumn sourceColumn;
             if (modelIndex < 0) {
-                sourceColumn = innerVirtualModel != null
-                        ? innerVirtualModel.getAliasToColumnMap().get(refColumn)
-                        : null;
+                // validateColumnAndGetModelIndex returns -1 when the bare literal also matches
+                // a projection alias in the inner virtual model. The translating model always
+                // reads from the base model, so resolve column metadata against the join models
+                // first - the same source the data comes from - and only fall back to the
+                // projection alias. Otherwise a lateral scalar-count column loses its
+                // coalesce-to-zero marking when an outer projection alias steals its name.
+                final QueryColumn baseColumn = findUniqueJoinColumn(baseModel, refColumn);
+                sourceColumn = baseColumn != null
+                        ? baseColumn
+                        : (innerVirtualModel != null ? innerVirtualModel.getAliasToColumnMap().get(refColumn) : null);
             } else {
                 IQueryModel sourceModel = baseModel.getJoinModels().getQuick(modelIndex);
                 sourceColumn = dot < 0
