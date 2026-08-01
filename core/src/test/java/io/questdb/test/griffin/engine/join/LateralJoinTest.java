@@ -2908,6 +2908,123 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // The count layer's OWN LIMIT on a per-side-push-eligible body (correlation
+    // only inside a join branch, uncorrelated main chain). Per-side push cannot
+    // key the chain per outer row, so a chain LIMIT disqualifies it and the body
+    // takes the general path, which partitions the LIMIT per outer row and
+    // guards the coalesce(count, 0) compensation.
+    @Test
+    public void testLateralScalarCountChainBindVarLimitPerSideShape() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT :m) l ON true ORDER BY t1.k";
+
+            // row-preserving value: every outer row keeps its own count, and the
+            // no-match outer row yields 0, not NULL
+            bindVariableService.setLong("m", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            // LIMIT 0 empties the body per outer row, so NULL - observed on the
+            // SAME statement, proving the guard is not baked into the cached plan
+            bindVariableService.setLong("m", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\tnull
+                    2\tnull
+                    3\tnull
+                    """);
+
+            // and back again, to rule out a one-way latch
+            bindVariableService.setLong("m", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            // compile-time decidable values fold without a guard on the same shape
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT 1) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT 0) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\tnull
+                            2\tnull
+                            3\tnull
+                            """);
+        });
+    }
+
+    // A chain LIMIT on a per-side-push-eligible NON-count body must apply per
+    // outer row, not globally over the decorrelated result.
+    @Test
+    public void testLateralChainLimitPerSideShapePerOuterRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t0 (k INT, x INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (1, 11), (1, 12), (2, 20)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            // a global LIMIT 2 would keep two rows TOTAL; per outer row it keeps
+            // two rows for k=1, one for k=2, and LEFT preserves k=3
+            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT t0.x FROM t0 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t0.k "
+                    + " ORDER BY t0.x LIMIT 2) l ON true ORDER BY t1.k, l.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t10
+                            1\t11
+                            2\t20
+                            3\tnull
+                            """);
+
+            // INNER lateral: same per-outer-row limiting, no row preservation
+            assertQuery("SELECT t1.k, l.x FROM t1 JOIN LATERAL "
+                    + "(SELECT t0.x FROM t0 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t0.k "
+                    + " ORDER BY t0.x LIMIT 2) l ON true ORDER BY t1.k, l.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t10
+                            1\t11
+                            2\t20
+                            """);
+        });
+    }
+
     @Test
     public void testNestedLateralLeftCountLimitCardinality() throws Exception {
         assertMemoryLeak(() -> {

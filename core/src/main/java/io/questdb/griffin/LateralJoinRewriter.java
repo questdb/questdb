@@ -536,9 +536,18 @@ class LateralJoinRewriter implements Mutable {
     //  2. All branches are INNER/CROSS/RIGHT (no LEFT/FULL row preservation)
     //  3. Table-model branches have no correlated ON (can't create clone)
     //  4. At least one correlated branch exists (alignment needs a source)
+    //  5. No main chain layer carries a LIMIT. Lateral semantics apply a body
+    //     LIMIT per outer row, but per-side push keeps the chain unkeyed, so
+    //     the LIMIT would run globally over the decorrelated result, and the
+    //     scalar-count guard would never be built (compensateLimit is not
+    //     reached for chain layers on this path). The general path partitions
+    //     the LIMIT per outer row and guards the count compensation.
     private boolean canPerSidePush(IQueryModel model, int depth) {
         IQueryModel m = model;
         while (m != null) {
+            if (m.getLimitLo() != null || m.getLimitHi() != null) {
+                return false;
+            }
             if (m.isOwnCorrelatedAtDepth(depth, ~CORRELATED_JOIN_ON)) {
                 return false;
             }
