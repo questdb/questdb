@@ -61,6 +61,55 @@ public class PGDecimalsTest extends BasePGTest {
         assertDecimalConversion("-99999999999999999999999999999999999999", 38, 0);
     }
 
+    @Test
+    public void testBinaryResultSpansSendBuffer() throws Exception {
+        assertWithPgServerExtendedBinaryOnly(
+                (connection, _, _, _) -> {
+                    try (PreparedStatement statement = connection.prepareStatement(
+                            """
+                                    select x,
+                                        lpad('', 600, 'x')::varchar,
+                                        cast(decimal_value as decimal(18, 4)),
+                                        cast(decimal_value as decimal(2, 1)),
+                                        cast(decimal_value as decimal(4, 2)),
+                                        cast(decimal_value as decimal(9, 4)),
+                                        cast(decimal_value as decimal(38, 18)),
+                                        cast(decimal_value as decimal(76, 38))
+                                    from (
+                                        select x,
+                                            case
+                                                when x % 10 = 0 then null
+                                                when x % 2 = 0 then x % 9
+                                                else -(x % 9)
+                                            end decimal_value
+                                        from long_sequence(100)
+                                    )
+                                    """
+                    )) {
+                        try (ResultSet resultSet = statement.executeQuery()) {
+                            final int[] scales = {4, 1, 2, 4, 18, 38};
+                            for (int i = 1; i <= 100; i++) {
+                                Assert.assertTrue(resultSet.next());
+                                Assert.assertEquals(i, resultSet.getLong(1));
+                                Assert.assertEquals(600, resultSet.getString(2).length());
+                                for (int column = 0; column < scales.length; column++) {
+                                    final BigDecimal actual = resultSet.getBigDecimal(column + 3);
+                                    if (i % 10 == 0) {
+                                        Assert.assertNull(actual);
+                                    } else {
+                                        final long value = i % 2 == 0 ? i % 9 : -(i % 9);
+                                        Assert.assertEquals(BigDecimal.valueOf(value).setScale(scales[column]), actual);
+                                    }
+                                }
+                            }
+                            Assert.assertFalse(resultSet.next());
+                        }
+                    }
+                },
+                () -> sendBufferSize = 512
+        );
+    }
+
     // Test DECIMAL128 (precision 19-38)
     @Test
     public void testDecimal128_NineteenDigits() throws Exception {

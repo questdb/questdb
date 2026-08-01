@@ -1179,6 +1179,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private long calculateRecordTailSize(
+            SqlExecutionContext sqlExecutionContext,
             Record record,
             int columnCount,
             long maxBlobSize,
@@ -1202,6 +1203,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
             final int columnValueSize = calculateColumnBinSize(
                     this,
+                    sqlExecutionContext,
                     record,
                     i,
                     columnType,
@@ -1401,7 +1403,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     // Used to estimate required column size (or full record size in case of text format)
     // to be reported to the user in the insufficient send buffer size case.
-    private long estimateRecordSize(Record record, int columnCount) throws PGMessageProcessingException {
+    private long estimateRecordSize(
+            SqlExecutionContext sqlExecutionContext,
+            Record record,
+            int columnCount
+    ) throws PGMessageProcessingException {
         long recordSize = 0;
         for (int i = 0; i < columnCount; i++) {
             final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
@@ -1414,9 +1420,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             final long columnValueSize;
             // if column is not variable size and format code is text, we can't calculate size
             if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
-                columnValueSize = estimateColumnTxtSize(record, i, typeTag);
+                columnValueSize = estimateColumnTxtSize(record, i, columnType);
             } else {
-                columnValueSize = calculateColumnBinSize(this, record, i, columnType, geohashSize, Long.MAX_VALUE, -1);
+                columnValueSize = calculateColumnBinSize(
+                        this,
+                        sqlExecutionContext,
+                        record,
+                        i,
+                        columnType,
+                        geohashSize,
+                        Long.MAX_VALUE,
+                        -1
+                );
             }
 
             if (columnValueSize < 0) {
@@ -2957,7 +2972,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 if (utf8Sink.getWrittenBytes() == 0) {
                     // We had nothing but the record in the send buffer,
                     // so we can estimate the required size to be reported to the user.
-                    final long estimatedSize = estimateRecordSize(record, columnCount);
+                    final long estimatedSize = estimateRecordSize(sqlExecutionContext, record, columnCount);
                     e.setBytesRequired(estimatedSize);
                 }
             } else {
@@ -2967,6 +2982,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     assert sizeInBuffer > 0;
                     try {
                         final long recordTailSize = calculateRecordTailSize(
+                                sqlExecutionContext,
                                 record,
                                 columnCount,
                                 utf8Sink.getMaxBlobSize(),
@@ -2981,7 +2997,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             if (utf8Sink.getWrittenBytes() == 0) {
                                 // We had nothing but the record in the send buffer,
                                 // so we can estimate the required size to be reported to the user.
-                                e.setBytesRequired(estimateRecordSize(record, columnCount));
+                                e.setBytesRequired(estimateRecordSize(sqlExecutionContext, record, columnCount));
                             }
                         }
                     } catch (PGMessageProcessingException bpe) {

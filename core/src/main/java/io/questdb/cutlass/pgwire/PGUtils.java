@@ -28,8 +28,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
@@ -54,6 +58,7 @@ class PGUtils {
     private static final int MAX_SHORT_TEXT_LEN = String.valueOf(Short.MIN_VALUE).length();
     private static final int MAX_TIMESTAMP_TEXT_LEN = 31; // "294247-01-10 04:00:54.775807123"
     private static final int MAX_UUID_TEXT_LEN = 36;
+    private static final int PG_NUMERIC_FIXED_BIN_SIZE = Integer.BYTES + 4 * Short.BYTES;
 
     private PGUtils() {
     }
@@ -79,6 +84,7 @@ class PGUtils {
      */
     public static int calculateColumnBinSize(
             PGPipelineEntry pipelineEntry,
+            SqlExecutionContext sqlExecutionContext,
             Record record,
             int columnIndex,
             int columnType,
@@ -119,6 +125,42 @@ class PGUtils {
             case ColumnType.DOUBLE:
                 final double doubleValue = record.getDouble(columnIndex);
                 return Double.isNaN(doubleValue) ? Integer.BYTES : Integer.BYTES + Double.BYTES;
+            case ColumnType.DECIMAL8:
+                final byte decimal8 = record.getDecimal8(columnIndex);
+                return decimal8 == Decimals.DECIMAL8_NULL
+                        ? Integer.BYTES
+                        : calculateDecimalBinSize(decimal8, ColumnType.getDecimalScale(columnType));
+            case ColumnType.DECIMAL16:
+                final short decimal16 = record.getDecimal16(columnIndex);
+                return decimal16 == Decimals.DECIMAL16_NULL
+                        ? Integer.BYTES
+                        : calculateDecimalBinSize(decimal16, ColumnType.getDecimalScale(columnType));
+            case ColumnType.DECIMAL32:
+                final int decimal32 = record.getDecimal32(columnIndex);
+                return decimal32 == Decimals.DECIMAL32_NULL
+                        ? Integer.BYTES
+                        : calculateDecimalBinSize(decimal32, ColumnType.getDecimalScale(columnType));
+            case ColumnType.DECIMAL64:
+                final long decimal64 = record.getDecimal64(columnIndex);
+                return decimal64 == Decimals.DECIMAL64_NULL
+                        ? Integer.BYTES
+                        : calculateDecimalBinSize(decimal64, ColumnType.getDecimalScale(columnType));
+            case ColumnType.DECIMAL128:
+                final Decimal128 decimal128 = sqlExecutionContext.getDecimal128();
+                record.getDecimal128(columnIndex, decimal128);
+                return calculateDecimalBinSize(
+                        decimal128,
+                        ColumnType.getDecimalPrecision(columnType),
+                        ColumnType.getDecimalScale(columnType)
+                );
+            case ColumnType.DECIMAL256:
+                final Decimal256 decimal256 = sqlExecutionContext.getDecimal256();
+                record.getDecimal256(columnIndex, decimal256);
+                return calculateDecimalBinSize(
+                        decimal256,
+                        ColumnType.getDecimalPrecision(columnType),
+                        ColumnType.getDecimalScale(columnType)
+                );
             case ColumnType.UUID:
                 final long lo = record.getLong128Lo(columnIndex);
                 final long hi = record.getLong128Hi(columnIndex);
@@ -215,8 +257,9 @@ class PGUtils {
     public static long estimateColumnTxtSize(
             Record record,
             int columnIndex,
-            int typeTag
+            int columnType
     ) {
+        final int typeTag = ColumnType.tagOf(columnType);
         return switch (typeTag) {
             case ColumnType.NULL -> Integer.BYTES;
             case ColumnType.BOOLEAN -> Integer.BYTES + Byte.BYTES;
@@ -230,6 +273,13 @@ class PGUtils {
             case ColumnType.TIMESTAMP -> Integer.BYTES + MAX_TIMESTAMP_TEXT_LEN;
             case ColumnType.FLOAT -> Integer.BYTES + MAX_FLOAT_TEXT_LEN;
             case ColumnType.DOUBLE -> Integer.BYTES + MAX_DOUBLE_TEXT_LEN;
+            // Reserve bytes for an optional sign, decimal point, and leading zero.
+            case ColumnType.DECIMAL8,
+                 ColumnType.DECIMAL16,
+                 ColumnType.DECIMAL32,
+                 ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128,
+                 ColumnType.DECIMAL256 -> Integer.BYTES + ColumnType.getDecimalPrecision(columnType) + 3L;
             case ColumnType.UUID -> Integer.BYTES + MAX_UUID_TEXT_LEN;
             case ColumnType.LONG256 -> Integer.BYTES + MAX_LONG256_TEXT_LEN;
             case ColumnType.GEOBYTE -> Integer.BYTES + MAX_GEOBYTE_TEXT_LEN;
@@ -259,6 +309,67 @@ class PGUtils {
                 yield -1;
             }
         };
+    }
+
+    private static int calculateDecimalBinSize(long value, int scale) {
+        if (value == 0) {
+            return PG_NUMERIC_FIXED_BIN_SIZE;
+        }
+
+        if (value < 0) {
+            value = -value;
+        }
+        int highestPower = 0;
+        while (value >= 10) {
+            value /= 10;
+            highestPower++;
+        }
+        return calculateNonZeroDecimalBinSize(highestPower, scale);
+    }
+
+    private static int calculateDecimalBinSize(Decimal128 decimal, int precision, int scale) {
+        if (decimal.isNull()) {
+            return Integer.BYTES;
+        }
+        if (decimal.isZero()) {
+            return PG_NUMERIC_FIXED_BIN_SIZE;
+        }
+        if (decimal.isNegative()) {
+            decimal.negate();
+        }
+
+        int highestPower = precision - 1;
+        while (decimal.getDigitAtPowerOfTen(highestPower) == 0) {
+            highestPower--;
+        }
+        return calculateNonZeroDecimalBinSize(highestPower, scale);
+    }
+
+    private static int calculateDecimalBinSize(Decimal256 decimal, int precision, int scale) {
+        if (decimal.isNull()) {
+            return Integer.BYTES;
+        }
+        if (decimal.isZero()) {
+            return PG_NUMERIC_FIXED_BIN_SIZE;
+        }
+        if (decimal.isNegative()) {
+            decimal.negate();
+        }
+
+        int highestPower = precision - 1;
+        while (decimal.getDigitAtPowerOfTen(highestPower) == 0) {
+            highestPower--;
+        }
+        return calculateNonZeroDecimalBinSize(highestPower, scale);
+    }
+
+    private static int calculateNonZeroDecimalBinSize(int highestPower, int scale) {
+        // PostgreSQL NUMERIC groups decimal digits in base 10000. The first group's weight comes from the
+        // highest non-zero decimal digit, while the final group covers the end of the declared scale.
+        final int firstWeight = Math.floorDiv(highestPower - scale, 4);
+        final int digitCount = firstWeight + (scale + 3) / 4 + 1;
+        assert digitCount > 0;
+        return PG_NUMERIC_FIXED_BIN_SIZE + digitCount * Short.BYTES;
     }
 
     private static int calculateArrayHeaderSize(ArrayView array) {
