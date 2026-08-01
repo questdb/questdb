@@ -72,6 +72,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
     private final MillisecondClock clock;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
+    private final CairoEngine engine;
     private final StringSink errorMsg = new StringSink();
     private final LongList frameRowCounts = new LongList();
     private final MessageBus messageBus;
@@ -115,6 +116,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     ) {
         try {
             this.atom = atom;
+            this.engine = engine;
             this.frameAddressCache = new PageFrameAddressCache();
             this.messageBus = messageBus;
             this.reducer = reducer;
@@ -368,6 +370,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
 
     public SOUnboundedCountDownLatch getDoneLatch() {
         return doneLatch;
+    }
+
+    public CairoEngine getEngine() {
+        return engine;
     }
 
     public int getFrameCount() {

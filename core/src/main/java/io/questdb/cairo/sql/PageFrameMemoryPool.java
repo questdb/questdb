@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -147,6 +148,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private ParquetBuffers boundForRecordA;
     private ParquetBuffers boundForRecordB;
     private long cachedBytes;
+    // Per-pool, thread-safe view of the query's circuit breaker, forwarded to the parquet decoder so
+    // a decode that blocks waiting for data can probe for query cancellation. It keeps its OWN
+    // throttle/timer state over the query's shared cancelled flag, fd and timeout, so concurrent
+    // parallel-reduce decoders never probe one shared, thread-unsafe breaker. Lazily created on the
+    // first setCancelHandle and re-init'd per reduce; stays null on the owner-thread cursor paths
+    // (cancellation parity); freed at close().
+    private SqlExecutionCircuitBreakerWrapper cancelCircuitBreaker;
     // Live native bytes held by retained CoveringBuffers (covered decode buffers).
     // Unlike parquet's cachedBytes this is NOT an eviction budget: covered buffers are
     // query-lifetime and cannot be LRU-evicted mid-query (zero-copy first()/last()
@@ -238,6 +246,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         Misc.freeObjListAndClear(freeParquetBufferShells);
         addressCache = null;
         memoryTracker = null;
+        cancelCircuitBreaker = Misc.free(cancelCircuitBreaker);
     }
 
     public long getBindGeneration() {
@@ -884,6 +893,26 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     /**
+     * Binds the query's circuit breaker so a parquet decode that blocks waiting for data can probe
+     * for cancellation/timeout. The pool wraps it in its OWN {@link SqlExecutionCircuitBreakerWrapper}
+     * -- a per-pool view with private throttle/timer state over the query's shared cancelled flag, fd
+     * and timeout -- and forwards that wrapper to the decoder, never the raw {@code queryCircuitBreaker}
+     * (which is thread-unsafe and shared across the parallel-reduce workers). Set per reduce on the
+     * parallel path; left null (cancellation parity) on the owner-thread cursor paths.
+     */
+    public void setCancelHandle(CairoEngine engine, SqlExecutionCircuitBreaker queryCircuitBreaker) {
+        if (queryCircuitBreaker != null) {
+            if (cancelCircuitBreaker == null) {
+                cancelCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
+            }
+            cancelCircuitBreaker.init(queryCircuitBreaker);
+        }
+        if (parquetMetaDecoder != null) {
+            parquetMetaDecoder.setCancelHandle(cancelCircuitBreaker);
+        }
+    }
+
+    /**
      * Binds the per-query tracker propagated to each decode buffer on reopen.
      * Owners set it at per-query init (before the first {@link #navigateTo});
      * context-less owners leave it null for global-only accounting. A null
@@ -1034,6 +1063,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (parquetMetaDecoder == null) {
                 // Created lazily so the configuration's decoder factory is fully wired before first use.
                 parquetMetaDecoder = configuration.newParquetPartitionDecoder();
+                parquetMetaDecoder.setCancelHandle(cancelCircuitBreaker);
             }
             if (parquetMetaDecoder.getParquetMetaAddr() != parquetMetaFrame.getParquetMetaAddr() || parquetMetaDecoder.getParquetMetaSize() != parquetMetaFrame.getParquetMetaSize()) {
                 parquetMetaDecoder.of(parquetMetaFrame);

@@ -63,6 +63,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
     private final MillisecondClock clock;
+    private final CairoEngine engine;
     private final LongList frameRowCounts = new LongList();
     private final PageFrameReduceTaskFactory localTaskFactory;
     private final MessageBus messageBus;
@@ -113,6 +114,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     ) {
         try {
             this.atom = atom;
+            this.engine = engine;
             this.frameAddressCache = new PageFrameAddressCache();
             this.messageBus = messageBus;
             this.reducer = reducer;
@@ -268,6 +270,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     @Override
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
         return sqlExecutionContext.getCircuitBreaker();
+    }
+
+    public CairoEngine getEngine() {
+        return engine;
     }
 
     public int getFrameCount() {

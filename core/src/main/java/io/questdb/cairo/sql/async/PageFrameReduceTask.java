@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -298,6 +299,15 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public void releaseFrameMemory() {
         frameMemoryPool.releaseParquetBuffers();
         frameMemory = null;
+    }
+
+    /**
+     * Pushes the query's circuit breaker down to the frame memory pool, which wraps it in a
+     * per-pool thread-safe view for the parquet decoder, so a decode that blocks waiting for
+     * data can be cancelled.
+     */
+    public void setCancelHandle(CairoEngine engine, SqlExecutionCircuitBreaker queryCircuitBreaker) {
+        frameMemoryPool.setCancelHandle(engine, queryCircuitBreaker);
     }
 
     public void setErrorMsg(Throwable th) {
