@@ -253,12 +253,13 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
         if (capacity <= nodeCache.length) {
             return;
         }
+        final int newCapacity = Math.min(MAX_MEMO_DEPTH, Math.max(capacity, Math.max(4, nodeCache.length * 2)));
         final int oldLength = nodeCache.length;
-        nodeCache = Arrays.copyOf(nodeCache, capacity);
-        nodeCacheOffset = Arrays.copyOf(nodeCacheOffset, capacity);
-        nodeCacheSegmentId = Arrays.copyOf(nodeCacheSegmentId, capacity);
-        Arrays.fill(nodeCacheOffset, oldLength, capacity, -1);
-        Arrays.fill(nodeCacheSegmentId, oldLength, capacity, -1);
+        nodeCache = Arrays.copyOf(nodeCache, newCapacity);
+        nodeCacheOffset = Arrays.copyOf(nodeCacheOffset, newCapacity);
+        nodeCacheSegmentId = Arrays.copyOf(nodeCacheSegmentId, newCapacity);
+        Arrays.fill(nodeCacheOffset, oldLength, newCapacity, -1);
+        Arrays.fill(nodeCacheSegmentId, oldLength, newCapacity, -1);
     }
 
     private void iterate(LiveViewCheckpointPageRef ref, Visitor visitor, int depth) {

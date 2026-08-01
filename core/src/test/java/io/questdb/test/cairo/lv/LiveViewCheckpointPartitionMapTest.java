@@ -218,6 +218,49 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeepDescentsPastMemoLimitUseScratchNode() throws Exception {
+        assertMemoryLeak(() -> {
+            final int keyCount = 256;
+            final LiveViewCheckpointPartitionMapWriter.Mutation[] initial =
+                    new LiveViewCheckpointPartitionMapWriter.Mutation[keyCount];
+            for (int i = 0; i < keyCount; i++) {
+                initial[i] = put(i, i, i % 5);
+            }
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            // The minimum capacity makes an ascending build degenerate into a
+            // chain deeper than the bounded memo.
+            try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 2, 2);
+                 Path dir = new Path()) {
+                writer.of(checkpointsDir(dir));
+                writer.apply(new LiveViewCheckpointPageRef(), initial, initial.length, 1, root);
+            }
+
+            final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+            try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
+                 Path dir = new Path()) {
+                reader.of(checkpointsDir(dir));
+                Assert.assertTrue(reader.find(root, key(0), entry));
+                Assert.assertEquals(0, scalar(entry));
+                final long depth = reader.getDecodedPageCount();
+                Assert.assertTrue("the tree must exceed the 64-level memo, depth=" + depth, depth > 64);
+
+                // The cached prefix stays resident, while the suffix must be decoded
+                // through the scratch node on every descent.
+                final long beforeRepeat = reader.getDecodedPageCount();
+                Assert.assertTrue(reader.find(root, key(0), entry));
+                Assert.assertEquals(0, scalar(entry));
+                Assert.assertTrue(reader.getDecodedPageCount() > beforeRepeat);
+
+                for (int i = 0; i < keyCount; i++) {
+                    Assert.assertTrue(reader.find(root, key(i), entry));
+                    Assert.assertEquals(i, scalar(entry));
+                    Assert.assertEquals(i % 5, entry.getStatePageRef(0).getSegmentId());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRandomBatchPropertyAgainstTreeMap() throws Exception {
         assertMemoryLeak(() -> {
             final TreeMap<Integer, Integer> expected = new TreeMap<>();
