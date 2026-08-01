@@ -311,6 +311,14 @@ class PGUtils {
         };
     }
 
+    private static int calculateArrayHeaderSize(ArrayView array) {
+        return Integer.BYTES // size field (stores the number returned from this method)
+                + Integer.BYTES // dimension count
+                + Integer.BYTES // "has nulls" flag
+                + Integer.BYTES // component type
+                + array.getDimCount() * (2 * Integer.BYTES); // dimension lengths
+    }
+
     private static int calculateDecimalBinSize(long value, int scale) {
         if (value == 0) {
             return PG_NUMERIC_FIXED_BIN_SIZE;
@@ -370,14 +378,6 @@ class PGUtils {
         final int digitCount = firstWeight + (scale + 3) / 4 + 1;
         assert digitCount > 0;
         return PG_NUMERIC_FIXED_BIN_SIZE + digitCount * Short.BYTES;
-    }
-
-    private static int calculateArrayHeaderSize(ArrayView array) {
-        return Integer.BYTES // size field (stores the number returned from this method)
-                + Integer.BYTES // dimension count
-                + Integer.BYTES // "has nulls" flag
-                + Integer.BYTES // component type
-                + array.getDimCount() * (2 * Integer.BYTES); // dimension lengths
     }
 
     private static int countNotNullRecursive(ArrayView array, int dim, int flatIndex, int resumePoint) {
