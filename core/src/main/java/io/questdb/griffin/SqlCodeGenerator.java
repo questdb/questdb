@@ -10162,6 +10162,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw e;
                     }
 
+                    // Vectorized group by: every VectorAggregateFunction is
+                    // order-invariant (count/sum/avg/min/max/ksum/nsum -- there is no
+                    // vector first()/last()), and a group by consumes its base to
+                    // exhaustion, so the base's timestamp ordering is never needed.
+                    if (factory != null) {
+                        factory.tryDisableTimestampOrdering();
+                    }
                     return generateFill(
                             model,
                             new GroupByRecordCursorFactory(
@@ -10327,6 +10334,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         perWorkerFilters = null;
                         sharedOuterProjectionFunctions = null;
 
+                        // Not-keyed group by consumes its base to exhaustion too, so
+                        // the same rule applies as for the keyed path.
+                        offerUnorderedScan(factory, groupByFunctions0);
+                        validateOrderSensitiveAggregates(factory, groupByFunctions0);
                         return new AsyncGroupByNotKeyedRecordCursorFactory(
                                 executionContext.getCairoEngine(),
                                 asm,
