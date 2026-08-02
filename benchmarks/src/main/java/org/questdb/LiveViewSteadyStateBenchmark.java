@@ -37,8 +37,11 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 
@@ -250,13 +253,20 @@ public class LiveViewSteadyStateBenchmark {
             final LiveViewInstance instance = engine.getLiveViewRegistry()
                     .getViewInstance("mm_transaction_live_created_at_view");
 
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            try (
+                    LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+                    // What a refresh allocates and hands back within the batch. The window
+                    // state it retains shows up in the resting level rather than here, so the
+                    // reading isolates the transient: the WAL reader's symbol maps, the
+                    // per-txn diff overlays and the checkpoint's encode scratch.
+                    NativeTagPeakSampler sampler = new NativeTagPeakSampler(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
+            ) {
                 final long seedStart = System.nanoTime();
                 drainLiveView(engine, instance, job);
                 System.out.printf(Locale.ROOT, "# seed_ms=%.3f seed_checkpoint_ms=%.3f%n",
                         (System.nanoTime() - seedStart) / 1e6, instance.getHeadCheckpointWriteMicros() / 1e3);
 
-                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms");
+                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb");
                 long firstRow = seedRows + 1;
                 // A seal after a sweep is the one this measurement is about: compact()
                 // demotes the next seal to a full scan of the whole live state, while a
@@ -278,9 +288,11 @@ public class LiveViewSteadyStateBenchmark {
                     final long baseNanos = System.nanoTime() - baseStart;
 
                     final long checkpointRootIdBefore = instance.getHeadCheckpointRootId();
+                    sampler.reset();
                     final long refreshStart = System.nanoTime();
                     drainLiveView(engine, instance, job);
                     final long refreshNanos = System.nanoTime() - refreshStart;
+                    final double refreshPeakMb = sampler.peakAboveBaseBytes() / (1024.0 * 1024.0);
                     final boolean isCheckpointWritten = instance.getHeadCheckpointRootId() != checkpointRootIdBefore;
                     final double checkpointMs = isCheckpointWritten ? instance.getHeadCheckpointWriteMicros() / 1e3 : 0.0;
 
@@ -314,7 +326,7 @@ public class LiveViewSteadyStateBenchmark {
                             .getWriterTxn();
                     System.out.printf(
                             Locale.ROOT,
-                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f%n",
+                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.1f%n",
                             b,
                             expected,
                             baseNanos / 1e6,
@@ -328,7 +340,8 @@ public class LiveViewSteadyStateBenchmark {
                             anchorMapSize(instance),
                             sweeps,
                             evicted,
-                            sweepMs
+                            sweepMs,
+                            refreshPeakMb
                     );
                     firstRow += batchRows;
                 }
@@ -355,9 +368,11 @@ public class LiveViewSteadyStateBenchmark {
                             .getViewInstance("mm_transaction_live_created_at_view");
                     try (LiveViewRefreshJob restartJob = new LiveViewRefreshJob(0, engine, 1)) {
                         final long checkpointRootIdBefore = restarted.getHeadCheckpointRootId();
+                        sampler.reset();
                         final long restoreStart = System.nanoTime();
                         drainLiveView(engine, restarted, restartJob);
                         final long restoreNanos = System.nanoTime() - restoreStart;
+                        final double restorePeakMb = sampler.peakAboveBaseBytes() / (1024.0 * 1024.0);
                         // The seal the resumed view performs in this window is reported
                         // separately: it is a distinct cost from reading the checkpoint
                         // back, and whether it full-scans the restored state or freezes
@@ -375,7 +390,7 @@ public class LiveViewSteadyStateBenchmark {
                         System.out.printf(
                                 Locale.ROOT,
                                 "# restore state_rows=%d window_ms=%.3f reseal_ms=%.3f read_back_ms=%.3f probe_rows=%d "
-                                        + "state_bytes=%d lookup_depth=%d faults=%d%n",
+                                        + "state_bytes=%d lookup_depth=%d faults=%d peak_mb=%.1f%n",
                                 stateRows,
                                 restoreNanos / 1e6,
                                 checkpointMs,
@@ -383,7 +398,8 @@ public class LiveViewSteadyStateBenchmark {
                                 RESTART_PROBE_ROWS,
                                 restarted.getHeadCheckpointStateBytes(),
                                 restarted.getCheckpointLastLookupDepth(),
-                                restarted.getRefreshFaultCount()
+                                restarted.getRefreshFaultCount(),
+                                restorePeakMb
                         );
                     }
                 }
@@ -681,5 +697,58 @@ public class LiveViewSteadyStateBenchmark {
             capacity <<= 1;
         }
         return (int) Math.min(capacity, 1L << 30);
+    }
+
+    /**
+     * Samples one memory tag's native usage on a side thread and keeps the highest reading
+     * since the last {@link #reset()}. A refresh allocates and frees within {@code job.run()}
+     * - the WAL reader's symbol maps go back at the end of every drain - so nothing a caller
+     * reads before or after the call can see that peak, and a sampler is the only way to put
+     * a number on it. Sampling every millisecond costs nothing next to a refresh measured in
+     * hundreds, and the peaks this exists to catch last far longer than one interval.
+     */
+    private static final class NativeTagPeakSampler extends Thread implements QuietCloseable {
+        private final int memoryTag;
+        private volatile long base;
+        private volatile long peak;
+        private volatile boolean running = true;
+
+        NativeTagPeakSampler(int memoryTag) {
+            super("lv-native-peak-sampler");
+            this.memoryTag = memoryTag;
+            setDaemon(true);
+            reset();
+            start();
+        }
+
+        @Override
+        public void close() {
+            running = false;
+        }
+
+        /**
+         * The highest reading since the last reset, less the resting level that reset
+         * recorded - so retained state does not count towards a batch's transient peak.
+         */
+        public long peakAboveBaseBytes() {
+            return Math.max(0, peak - base);
+        }
+
+        public void reset() {
+            final long used = Unsafe.getMemUsedByTag(memoryTag);
+            base = used;
+            peak = used;
+        }
+
+        @Override
+        public void run() {
+            while (running) {
+                final long used = Unsafe.getMemUsedByTag(memoryTag);
+                if (used > peak) {
+                    peak = used;
+                }
+                Os.sleep(1);
+            }
+        }
     }
 }

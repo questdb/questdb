@@ -290,6 +290,25 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return null;
     }
 
+    /**
+     * Binds the caller's {@code view} to the value stored for {@code key}, reading the
+     * mapped char file directly. Two differences from {@link #valueOf(int)} make this the
+     * accessor a bulk consumer wants: the caller owns the view, so two live values can be
+     * held at once without the A/B pair this class keeps for itself, and the read always
+     * goes to the mapping rather than the heap cache - a cached column would otherwise
+     * retain a {@code String} per resolved key, which is precisely the footprint a reader
+     * that resolves millions of keys must not build.
+     * <p>
+     * The view stays valid until this reader is rebound by {@link #of} or closed, or until
+     * the caller rebinds it.
+     */
+    public CharSequence valueOf(int key, DirectString view) {
+        if (key > -1 && key < symbolCount) {
+            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), view);
+        }
+        return null;
+    }
+
     private CharSequence cachedValue(int key) {
         final String symbol = cache.getQuiet(key);
         return symbol != null ? symbol : fetchAndCache(key);
