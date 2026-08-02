@@ -56,6 +56,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.MicrosecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -176,7 +177,13 @@ public class LiveViewWindow implements QuietCloseable {
     // guard; the runtime latch is a backstop for a monotone-looking anchor that
     // nonetheless produces a decrease at runtime.
     private boolean compactionViable;
+    // Lifetime sweep instrumentation. Read by the live view benchmarks and by tests
+    // to tell a sweep that reclaimed a large generation apart from one that found
+    // little, and to price the sweep against the seal that follows it.
+    private long compactedPartitionCount;
     private long compactionCount;
+    private long compactionMicros;
+    private long lastCompactionMapSize;
     private long currentBucketPartitionCount;
     private long previousBucketPartitionCount;
     private long stalePartitionCount;
@@ -588,13 +595,45 @@ public class LiveViewWindow implements QuietCloseable {
         return checkpointDirtyAnchorMap == null ? 0 : checkpointDirtyAnchorMap.size();
     }
 
-    @TestOnly
+    /**
+     * @return the lifetime number of anchor entries the frontier sweep has dropped.
+     * Divided by {@link #getCompactionCount()} it gives the mean reclaim per sweep,
+     * which is what decides whether the seal that follows a sweep is worth
+     * optimising. Survives a sweep; only a window rebuild resets it.
+     */
+    public long getCompactedPartitionCount() {
+        return compactedPartitionCount;
+    }
+
+    /**
+     * @return the lifetime number of frontier sweeps this window has run.
+     */
     public long getCompactionCount() {
         return compactionCount;
     }
 
+    /**
+     * @return the lifetime wall time of the frontier sweeps, in micros. The sweep
+     * walks the whole anchor map and rebuilds every function's partition map from
+     * the survivors, so this is the cost the reclaim itself charges, separate from
+     * the seal that follows it.
+     */
+    public long getCompactionMicros() {
+        return compactionMicros;
+    }
+
     public ObjList<WindowFunction> getFunctions() {
         return functions;
+    }
+
+    /**
+     * @return the anchor map entry count the most recent frontier sweep started from,
+     * or 0 when this window has swept none. Read together with
+     * {@link #getCompactedPartitionCount()} it gives the survivor count the seal after
+     * that sweep has to freeze.
+     */
+    public long getLastCompactionMapSize() {
+        return lastCompactionMapSize;
     }
 
     /**
@@ -1035,6 +1074,9 @@ public class LiveViewWindow implements QuietCloseable {
             // Non-monotone/NULL anchor, or no frontier advance yet -> no safe cutoff.
             return;
         }
+        final MicrosecondClock clock = cairoConfiguration.getMicrosecondClock();
+        final long startMicros = clock.getTicks();
+        lastCompactionMapSize = anchorMap.size();
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         isCheckpointFullScanRequired = true;
         final long cutoff = prevFrontier;
@@ -1050,9 +1092,11 @@ public class LiveViewWindow implements QuietCloseable {
         }
         MapRecordCursor cursor = anchorMap.getCursor();
         MapRecord record = anchorMap.getRecord();
+        long evictedCount = 0;
         while (cursor.hasNext()) {
             MapValue srcValue = record.getValue();
             if (srcValue.getLong(SLOT_ANCHOR_VALUE) < cutoff) {
+                evictedCount++;
                 continue;
             }
             long srcKeyHash = record.keyHashCode();
@@ -1077,6 +1121,8 @@ public class LiveViewWindow implements QuietCloseable {
         stalePartitionCount = 0;
         lastCompactedFrontier = maxAnchorValue;
         compactionCount++;
+        compactedPartitionCount += evictedCount;
+        compactionMicros += clock.getTicks() - startMicros;
     }
 
     /**

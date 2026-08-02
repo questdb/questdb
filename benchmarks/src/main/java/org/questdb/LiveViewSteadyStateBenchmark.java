@@ -31,6 +31,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -59,6 +60,15 @@ import java.util.Locale;
  * Same customer schema and live-view DDL, a brand-new {@code cod_acct_no} per row by
  * default, and a forced checkpoint per batch so the seal is measured rather than skipped.
  * <p>
+ * With the default {@code ANCHOR DAILY} every row of a run lands in one anchor bucket -
+ * 3.1M rows 444 us apart span 23 minutes - so no partition ever falls behind the frontier
+ * and the sweep never fires. {@code --anchor-period} shortens the bucket so a run spans
+ * many of them, and {@code --account-window} bounds how many accounts are alive in one
+ * bucket, so older accounts age out and {@code LiveViewWindow.compact()} runs repeatedly.
+ * The per-batch {@code sweeps} / {@code evicted} / {@code sweep_ms} columns and the
+ * closing {@code # sweeps} line report what that costs, including the seal that follows
+ * a sweep against one that does not - the sweep demotes the next seal to a full scan.
+ * <p>
  * Build and run:
  * <pre>
  * mvn -pl benchmarks -am package -o -DskipTests -Dmaven.test.skip=true
@@ -67,10 +77,22 @@ import java.util.Locale;
  *     -cp benchmarks/target/benchmarks.jar \
  *     org.questdb.LiveViewSteadyStateBenchmark \
  *     --seed=2400000 --batch=135000 --batches=3 --checkpoint-rows=135000
+ *
+ * # sweep mode: 1M accounts alive per 8-minute bucket, 10 buckets over the run
+ * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx12g \
+ *     -cp benchmarks/target/benchmarks.jar \
+ *     org.questdb.LiveViewSteadyStateBenchmark \
+ *     --seed=1000000 --batch=1000000 --batches=10 --checkpoint-rows=1000000 \
+ *     --anchor-period=8m --account-window=1000000
  * </pre>
  */
 public class LiveViewSteadyStateBenchmark {
 
+    // The two must agree: DAILY_ANCHOR_TIME goes into the DDL, and the account window
+    // slides on bucket boundaries computed from the offset.
+    private static final long DAILY_ANCHOR_OFFSET_MICROS = 12L * Micros.HOUR_MICROS;
+    private static final String DAILY_ANCHOR_PERIOD = "daily";
+    private static final String DAILY_ANCHOR_TIME = "12:00";
     private static final int RESTART_PROBE_ROWS = 1_000;
     private static final long START_TS = 1_785_496_035_000_000L;
     private static final long TS_STEP_MICROS = 444L;
@@ -85,6 +107,9 @@ public class LiveViewSteadyStateBenchmark {
         boolean isRestartMeasured = false;
         boolean isSymbolPreSized = true;
         int recycleAccounts = 0; // 0 = every row a brand new account
+        long accountWindow = 0; // 0 = no rolling window, so nothing ages out
+        String anchorPeriod = DAILY_ANCHOR_PERIOD;
+        int compactThreshold = -1; // -1 = leave the configuration default alone
         for (String arg : args) {
             if (arg.startsWith("--restart=")) {
                 isRestartMeasured = Boolean.parseBoolean(arg.substring(10));
@@ -106,21 +131,32 @@ public class LiveViewSteadyStateBenchmark {
                 isIndexed = Boolean.parseBoolean(arg.substring(8));
             } else if (arg.startsWith("--recycle-accounts=")) {
                 recycleAccounts = Integer.parseInt(arg.substring(19));
+            } else if (arg.startsWith("--account-window=")) {
+                accountWindow = Long.parseLong(arg.substring(17));
+            } else if (arg.startsWith("--anchor-period=")) {
+                anchorPeriod = arg.substring(16);
+            } else if (arg.startsWith("--compact-threshold=")) {
+                compactThreshold = Integer.parseInt(arg.substring(20));
             } else {
                 throw new IllegalArgumentException("unknown argument: " + arg);
             }
         }
+        if (accountWindow > 0 && recycleAccounts > 0) {
+            throw new IllegalArgumentException("--account-window and --recycle-accounts both pick the account, use one");
+        }
 
-        System.out.printf(
-                Locale.ROOT,
-                "# seed=%d batch=%d batches=%d checkpointRows=%d preSizeSymbol=%s index=%s recycleAccounts=%d%n",
-                seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts
-        );
+        final long anchorPeriodMicros = anchorPeriodMicros(anchorPeriod);
+        final long anchorOffsetMicros = DAILY_ANCHOR_PERIOD.equals(anchorPeriod) ? DAILY_ANCHOR_OFFSET_MICROS : 0;
+        final long totalRows = seedRows + (long) batchRows * batches;
+        // What decides whether a sweep can fire at all: an account falls behind the
+        // frontier only once the anchor has advanced two buckets past its last row.
+        final long rowsPerBucket = anchorPeriodMicros / TS_STEP_MICROS;
 
         final Path dbRoot = Files.createTempDirectory("lv-steady-");
         CairoEngine engine = null;
         final long finalCheckpointRows = checkpointRows;
         final long finalCheckpointDuration = checkpointDurationMicros;
+        final int finalCompactThreshold = compactThreshold;
         try {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(dbRoot.toString()) {
                 @Override
@@ -134,10 +170,26 @@ public class LiveViewSteadyStateBenchmark {
                 }
 
                 @Override
+                public int getLiveViewPartitionCompactThreshold() {
+                    return finalCompactThreshold > 0
+                            ? finalCompactThreshold
+                            : super.getLiveViewPartitionCompactThreshold();
+                }
+
+                @Override
                 public boolean isDevModeEnabled() {
                     return true;
                 }
             };
+            System.out.printf(
+                    Locale.ROOT,
+                    "# seed=%d batch=%d batches=%d checkpointRows=%d preSizeSymbol=%s index=%s recycleAccounts=%d "
+                            + "anchorPeriod=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d%n",
+                    seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
+                    anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
+                    configuration.getLiveViewPartitionCompactThreshold()
+            );
+
             engine = new CairoEngine(configuration);
             engine.load();
             final SqlExecutionContext sqlCtx = new SqlExecutionContextImpl(engine, 1).with(
@@ -145,8 +197,11 @@ public class LiveViewSteadyStateBenchmark {
                     null, null, -1, null
             );
 
-            final long totalRows = seedRows + (long) batchRows * batches;
-            final String capacity = isSymbolPreSized ? " capacity " + symbolCapacity(totalRows) : "";
+            // Distinct accounts, not rows: a rolling window revisits its accounts, so
+            // sizing the symbol map on the row count would over-allocate it by orders
+            // of magnitude and distort the footprint line.
+            final long distinctAccounts = distinctAccounts(totalRows, rowsPerBucket, recycleAccounts, accountWindow);
+            final String capacity = isSymbolPreSized ? " capacity " + symbolCapacity(distinctAccounts) : "";
             final String indexClause = isIndexed ? " index capacity 4" : "";
             engine.execute(
                     "create table mm_transaction_live_created_at ("
@@ -156,7 +211,10 @@ public class LiveViewSteadyStateBenchmark {
                             + ") timestamp(created_at) partition by hour wal",
                     sqlCtx
             );
-            engine.execute(insertSql(1, seedRows, recycleAccounts), sqlCtx);
+            engine.execute(
+                    insertSql(1, seedRows, recycleAccounts, accountWindow, anchorPeriodMicros, anchorOffsetMicros),
+                    sqlCtx
+            );
             drainWal(engine);
 
             engine.execute(
@@ -166,7 +224,8 @@ public class LiveViewSteadyStateBenchmark {
                             + "sum(amt_txn) over w as cumulative_sum, "
                             + "count(cod_acct_no) over w as cumulative_count "
                             + "from mm_transaction_live_created_at "
-                            + "window w as (partition by cod_acct_no order by created_at anchor daily '12:00')",
+                            + "window w as (partition by cod_acct_no order by created_at "
+                            + anchorClause(anchorPeriod) + ")",
                     sqlCtx
             );
             final LiveViewInstance instance = engine.getLiveViewRegistry()
@@ -178,10 +237,23 @@ public class LiveViewSteadyStateBenchmark {
                 System.out.printf(Locale.ROOT, "# seed_ms=%.3f seed_checkpoint_ms=%.3f%n",
                         (System.nanoTime() - seedStart) / 1e6, instance.getHeadCheckpointWriteMicros() / 1e3);
 
-                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults");
+                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms");
                 long firstRow = seedRows + 1;
+                // A seal after a sweep is the one this measurement is about: compact()
+                // demotes the next seal to a full scan of the whole live state, while a
+                // seal in a sweep-free batch freezes only the keys the batch touched.
+                double sweptSealMs = 0.0;
+                int sweptSealCount = 0;
+                double unsweptSealMs = 0.0;
+                int unsweptSealCount = 0;
+                long compactionCountBefore = compactionCount(instance);
+                long compactedPartitionsBefore = compactedPartitionCount(instance);
+                long compactionMicrosBefore = compactionMicros(instance);
                 for (int b = 0; b < batches; b++) {
-                    engine.execute(insertSql(firstRow, batchRows, recycleAccounts), sqlCtx);
+                    engine.execute(
+                            insertSql(firstRow, batchRows, recycleAccounts, accountWindow, anchorPeriodMicros, anchorOffsetMicros),
+                            sqlCtx
+                    );
                     final long baseStart = System.nanoTime();
                     drainWal(engine);
                     final long baseNanos = System.nanoTime() - baseStart;
@@ -197,12 +269,33 @@ public class LiveViewSteadyStateBenchmark {
                     if (instance.getLvRowsTotal() != expected) {
                         throw new IllegalStateException("row mismatch: expected " + expected + ", got " + instance.getLvRowsTotal());
                     }
+                    // A recompiled window starts its counters at zero, so a delta below the
+                    // previous reading is that reading itself, not a negative sweep count.
+                    final long compactionCountAfter = compactionCount(instance);
+                    final long compactedPartitionsAfter = compactedPartitionCount(instance);
+                    final long compactionMicrosAfter = compactionMicros(instance);
+                    final long sweeps = Math.max(0, compactionCountAfter - compactionCountBefore);
+                    final long evicted = Math.max(0, compactedPartitionsAfter - compactedPartitionsBefore);
+                    final double sweepMs = Math.max(0, compactionMicrosAfter - compactionMicrosBefore) / 1e3;
+                    compactionCountBefore = compactionCountAfter;
+                    compactedPartitionsBefore = compactedPartitionsAfter;
+                    compactionMicrosBefore = compactionMicrosAfter;
+                    if (isCheckpointWritten) {
+                        if (sweeps > 0) {
+                            sweptSealMs += checkpointMs;
+                            sweptSealCount++;
+                        } else {
+                            unsweptSealMs += checkpointMs;
+                            unsweptSealCount++;
+                        }
+                    }
+
                     final long baseSeqTxn = engine.getTableSequencerAPI()
                             .getTxnTracker(engine.getTableTokenIfExists("mm_transaction_live_created_at"))
                             .getWriterTxn();
                     System.out.printf(
                             Locale.ROOT,
-                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d%n",
+                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f%n",
                             b,
                             expected,
                             baseNanos / 1e6,
@@ -212,10 +305,15 @@ public class LiveViewSteadyStateBenchmark {
                             batchRows / (refreshNanos / 1e9),
                             instance.getHeadCheckpointStateBytes(),
                             baseSeqTxn - instance.getLastProcessedSeqTxn(),
-                            instance.getRefreshFaultCount()
+                            instance.getRefreshFaultCount(),
+                            anchorMapSize(instance),
+                            sweeps,
+                            evicted,
+                            sweepMs
                     );
                     firstRow += batchRows;
                 }
+                reportSweeps(instance, sweptSealMs, sweptSealCount, unsweptSealMs, unsweptSealCount);
 
                 if (isRestartMeasured) {
                     // Drop the in-memory instances and read the definitions back from
@@ -229,7 +327,10 @@ public class LiveViewSteadyStateBenchmark {
                     final long stateRows = firstRow - 1;
                     engine.getLiveViewRegistry().clear();
                     engine.buildViewGraphs();
-                    engine.execute(insertSql(firstRow, RESTART_PROBE_ROWS, recycleAccounts), sqlCtx);
+                    engine.execute(
+                            insertSql(firstRow, RESTART_PROBE_ROWS, recycleAccounts, accountWindow, anchorPeriodMicros, anchorOffsetMicros),
+                            sqlCtx
+                    );
                     drainWal(engine);
                     final LiveViewInstance restarted = engine.getLiveViewRegistry()
                             .getViewInstance("mm_transaction_live_created_at_view");
@@ -274,6 +375,148 @@ public class LiveViewSteadyStateBenchmark {
             engine = Misc.free(engine);
             deleteRecursively(dbRoot);
         }
+    }
+
+    /**
+     * The SQL that picks a row's account. Three shapes:
+     * <ul>
+     *     <li>default - a brand-new account per row, so nothing recurs;</li>
+     *     <li>{@code --recycle-accounts=N} - N accounts round-robin, so every account
+     *     recurs forever and none ever falls behind the frontier;</li>
+     *     <li>{@code --account-window=N} - N accounts alive per anchor bucket, the
+     *     window sliding forward by half its width each bucket. Half a bucket's
+     *     accounts therefore recur from the previous bucket and half are new, and the
+     *     half left behind ages out two buckets later, which is what makes the sweep
+     *     fire. When a bucket holds fewer rows than the window, a bucket touches only
+     *     as many accounts as it has rows - the {@code rowsPerBucket} header field
+     *     is what tells the two apart.</li>
+     * </ul>
+     */
+    private static String accountExpression(
+            long firstRow,
+            int recycleAccounts,
+            long accountWindow,
+            long anchorPeriodMicros,
+            long anchorOffsetMicros
+    ) {
+        final String rowIndex = "(x + " + (firstRow - 1) + ")";
+        if (accountWindow > 0) {
+            final long slide = Math.max(1, accountWindow / 2);
+            final String bucket = "((" + START_TS + " + " + rowIndex + " * " + TS_STEP_MICROS
+                    + " - " + anchorOffsetMicros + ") / " + anchorPeriodMicros + ")";
+            return "'acct-' || (" + bucket + " * " + slide + " + " + rowIndex + " % " + accountWindow + ")::string";
+        }
+        if (recycleAccounts > 0) {
+            return "'acct-' || (" + rowIndex + " % " + recycleAccounts + ")::string";
+        }
+        return "'acct-' || " + rowIndex + "::string";
+    }
+
+    private static long anchorMapSize(LiveViewInstance instance) {
+        final LiveViewWindow window = instance.getAnchorWindow();
+        return window == null ? 0 : window.getAnchorMapSize();
+    }
+
+    /**
+     * ANCHOR DAILY is the sugar the reported workload uses. Every other period goes
+     * through {@code ANCHOR EXPRESSION timestamp_floor(...)}, the two-argument form the
+     * live view compiler can still prove monotone in the designated timestamp - which
+     * is what leaves the frontier sweep enabled at all.
+     */
+    private static String anchorClause(String anchorPeriod) {
+        return DAILY_ANCHOR_PERIOD.equals(anchorPeriod)
+                ? "anchor daily '" + DAILY_ANCHOR_TIME + "'"
+                : "anchor expression timestamp_floor('" + anchorPeriod + "', created_at)";
+    }
+
+    /**
+     * The anchor bucket width in micros, used to place a row's account in the rolling
+     * window. Only fixed-duration units are accepted: a calendar unit does not divide
+     * the timestamp axis evenly, so the account window could not slide in step with it.
+     */
+    private static long anchorPeriodMicros(String anchorPeriod) {
+        if (DAILY_ANCHOR_PERIOD.equals(anchorPeriod)) {
+            return Micros.DAY_MICROS;
+        }
+        final int length = anchorPeriod.length();
+        if (length < 2) {
+            throw new IllegalArgumentException("--anchor-period must be 'daily' or <count><unit>, e.g. 5m");
+        }
+        final long unitMicros = switch (anchorPeriod.charAt(length - 1)) {
+            case 's' -> Micros.SECOND_MICROS;
+            case 'm' -> Micros.MINUTE_MICROS;
+            case 'h' -> Micros.HOUR_MICROS;
+            case 'd' -> Micros.DAY_MICROS;
+            default -> throw new IllegalArgumentException("--anchor-period unit must be one of s, m, h, d: " + anchorPeriod);
+        };
+        final long count = Long.parseLong(anchorPeriod.substring(0, length - 1));
+        if (count < 1) {
+            throw new IllegalArgumentException("--anchor-period count must be positive: " + anchorPeriod);
+        }
+        return count * unitMicros;
+    }
+
+    private static long compactedPartitionCount(LiveViewInstance instance) {
+        final LiveViewWindow window = instance.getAnchorWindow();
+        return window == null ? 0 : window.getCompactedPartitionCount();
+    }
+
+    private static long compactionCount(LiveViewInstance instance) {
+        final LiveViewWindow window = instance.getAnchorWindow();
+        return window == null ? 0 : window.getCompactionCount();
+    }
+
+    private static long compactionMicros(LiveViewInstance instance) {
+        final LiveViewWindow window = instance.getAnchorWindow();
+        return window == null ? 0 : window.getCompactionMicros();
+    }
+
+    /**
+     * How many accounts the run creates, which is what the output SYMBOL column has to
+     * be sized for. A rolling window creates its own width once and then one slide per
+     * anchor bucket the run spans.
+     */
+    private static long distinctAccounts(long totalRows, long rowsPerBucket, int recycleAccounts, long accountWindow) {
+        if (accountWindow > 0) {
+            return accountWindow + (totalRows / rowsPerBucket + 1) * Math.max(1, accountWindow / 2);
+        }
+        return recycleAccounts > 0 ? recycleAccounts : totalRows;
+    }
+
+    /**
+     * What the frontier sweep cost the run. {@code seal_after_sweep_ms} is the mean seal
+     * in a batch that swept and {@code seal_no_sweep_ms} the mean seal in one that did
+     * not - the two numbers the removal-recording change has to move, since a sweep
+     * currently demotes the next seal to a full scan of the entire live state. Each
+     * carries its sample count, because a run that swept once compares a single seal
+     * against many.
+     */
+    private static void reportSweeps(
+            LiveViewInstance instance,
+            double sweptSealMs,
+            int sweptSealCount,
+            double unsweptSealMs,
+            int unsweptSealCount
+    ) {
+        final LiveViewWindow window = instance.getAnchorWindow();
+        if (window == null) {
+            System.out.println("# sweeps none - the view carries no anchored window");
+            return;
+        }
+        System.out.printf(
+                Locale.ROOT,
+                "# sweeps count=%d evicted=%d sweep_ms=%.3f last_sweep_map_rows=%d map_rows=%d "
+                        + "seal_after_sweep_ms=%.3f/%d seal_no_sweep_ms=%.3f/%d%n",
+                window.getCompactionCount(),
+                window.getCompactedPartitionCount(),
+                window.getCompactionMicros() / 1e3,
+                window.getLastCompactionMapSize(),
+                window.getAnchorMapSize(),
+                sweptSealCount > 0 ? sweptSealMs / sweptSealCount : 0.0,
+                sweptSealCount,
+                unsweptSealCount > 0 ? unsweptSealMs / unsweptSealCount : 0.0,
+                unsweptSealCount
+        );
     }
 
     /**
@@ -396,10 +639,15 @@ public class LiveViewSteadyStateBenchmark {
         }
     }
 
-    private static String insertSql(long firstRow, long rows, int recycleAccounts) {
-        final String acct = recycleAccounts > 0
-                ? "'acct-' || ((x + " + (firstRow - 1) + ") % " + recycleAccounts + ")::string"
-                : "'acct-' || (x + " + (firstRow - 1) + ")::string";
+    private static String insertSql(
+            long firstRow,
+            long rows,
+            int recycleAccounts,
+            long accountWindow,
+            long anchorPeriodMicros,
+            long anchorOffsetMicros
+    ) {
+        final String acct = accountExpression(firstRow, recycleAccounts, accountWindow, anchorPeriodMicros, anchorOffsetMicros);
         return "insert into mm_transaction_live_created_at "
                 + "select (" + START_TS + " + (x + " + (firstRow - 1) + ") * " + TS_STEP_MICROS + ")::timestamp, "
                 + acct + ", "

@@ -12567,6 +12567,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertNotNull(window);
                 Assert.assertEquals("the first sweep drops the three day-1-only partitions", 1L, window.getCompactionCount());
                 Assert.assertEquals(3L, window.getAnchorMapSize());
+                // The reclaim instrumentation the benchmark reports: a sweep that walked a
+                // six-entry map and dropped half of it. A count taken from the survivor side
+                // (or from the map after the ping-pong) would read 3 and 3 here.
+                Assert.assertEquals(3L, window.getCompactedPartitionCount());
+                Assert.assertEquals(6L, window.getLastCompactionMapSize());
 
                 execute("INSERT INTO base (ts, x, sym) VALUES " +
                         "('2026-08-04T00:00:00.000000Z', 13, 1), " +
@@ -12585,6 +12590,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         window.getCompactionCount()
                 );
                 Assert.assertEquals(3L, window.getAnchorMapSize());
+                Assert.assertEquals(3L, window.getCompactedPartitionCount());
+                Assert.assertEquals(6L, window.getLastCompactionMapSize());
             }
 
             execute("DROP LIVE VIEW lv");
