@@ -78,7 +78,11 @@ public final class SuspensionScope {
             scope.roleSwitchReadLockDepth = currentDepth + 1;
         }
         if (currentDepth == 0) {
-            scope.roleSwitchReadLockMode = scope.mode;
+            if (fiber != null) {
+                fiber.setRoleSwitchReadLockMode(scope.mode);
+            } else {
+                scope.roleSwitchReadLockMode = scope.mode;
+            }
             if (scope.mode == Mode.FIBER) {
                 scope.mode = Mode.BLOCKING;
             }
@@ -155,8 +159,13 @@ public final class SuspensionScope {
             scope.roleSwitchReadLockDepth = currentDepth - 1;
         }
         if (isFinalRelease) {
-            scope.mode = scope.roleSwitchReadLockMode;
-            scope.roleSwitchReadLockMode = null;
+            if (fiber != null) {
+                scope.mode = fiber.getRoleSwitchReadLockMode();
+                fiber.setRoleSwitchReadLockMode(null);
+            } else {
+                scope.mode = scope.roleSwitchReadLockMode;
+                scope.roleSwitchReadLockMode = null;
+            }
         }
     }
 

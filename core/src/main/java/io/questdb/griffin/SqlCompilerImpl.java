@@ -4917,8 +4917,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     selectQueryModel.getMetadataVersion(),
                     lexer.getPosition(),
                     recordCursorFactory,
-                    updateColumnNames,
-                    liveWalProgressPosition
+                    updateColumnNames
             );
         } else {
             recordCursorFactory.close();

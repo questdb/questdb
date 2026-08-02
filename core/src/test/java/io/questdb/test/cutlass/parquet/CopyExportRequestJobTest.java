@@ -88,6 +88,54 @@ public class CopyExportRequestJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstructionFailureLeavesQueuedExportAvailable() throws Exception {
+        assertMemoryLeak(() -> {
+            publishCopy("COPY (SELECT 1 AS x) TO 'queued' WITH FORMAT parquet");
+
+            try {
+                new CopyExportRequestJob(
+                        engine,
+                        null,
+                        () -> {
+                            throw new IllegalStateException("expected exporter construction failure");
+                        }
+                );
+                Assert.fail();
+            } catch (IllegalStateException e) {
+                TestUtils.assertContains(e.getMessage(), "expected exporter construction failure");
+            }
+
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                Assert.assertTrue(job.run());
+                assertExportRowCount("queued.parquet", 1);
+            }
+        });
+    }
+
+    @Test
+    public void testRestoresSuspensionModeAfterRequestFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            publishCopy("COPY (SELECT 1 AS x) TO 'failed' WITH FORMAT parquet");
+            try (CopyExportRequestJob job = new CopyExportRequestJob(
+                    engine,
+                    () -> {
+                        Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
+                        throw new IllegalStateException("expected callback failure");
+                    }
+            )) {
+                final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.FORBIDDEN);
+                try {
+                    Assert.assertTrue(job.run());
+                    Assert.assertEquals(SuspensionScope.Mode.FORBIDDEN, SuspensionScope.getMode());
+                } finally {
+                    SuspensionScope.restore(previousMode);
+                }
+                assertExportDoesNotExist("failed.parquet");
+            }
+        });
+    }
+
+    @Test
     public void testRunsSuspendableExportSynchronously() throws Exception {
         assertMemoryLeak(() -> {
             final CopyExportRequestJob job = new CopyExportRequestJob(engine);

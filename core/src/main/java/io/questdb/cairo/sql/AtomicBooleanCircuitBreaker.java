@@ -37,8 +37,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     @Deprecated
-    protected AtomicBoolean cancelledFlag = new AtomicBoolean(false);
-    private final CancellationBinding cancellationBinding = new CancellationBinding(cancelledFlag);
+    protected volatile AtomicBoolean cancelledFlag = new AtomicBoolean(false);
+    private final CancellationBinding cancellationBinding;
     private final CairoEngine engine;
     private final int throttle;
     private long fd = -1;
@@ -49,6 +49,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     public AtomicBooleanCircuitBreaker(CairoEngine engine, int throttle) {
+        this.cancellationBinding = new CancellationBinding(cancelledFlag);
         this.engine = engine;
         this.throttle = throttle;
     }

@@ -90,6 +90,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private volatile int retirementState;
     private Lock roleSwitchReadLock;
     private int roleSwitchReadLockDepth;
+    private SuspensionScope.Mode roleSwitchReadLockMode;
     @SuppressWarnings("unused")
     private volatile int waitAdmission;
     private int yieldReason = YIELD_WAIT;
@@ -112,6 +113,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     static void verifyRuntimeAccess() {
+        Continuation.getCurrentContinuation(SCOPE);
     }
 
     @Override
@@ -356,6 +358,8 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 : null;
         final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
         final Fiber previousFiber = scope.fiber;
+        final SuspensionScope.Mode previousMode = scope.mode;
+        final SuspensionScope.Mode savedMode = roleSwitchReadLockMode;
         scope.fiber = this;
         try {
             final Lock lock = roleSwitchReadLock;
@@ -371,7 +375,9 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         } finally {
             roleSwitchReadLock = null;
             roleSwitchReadLockDepth = 0;
+            roleSwitchReadLockMode = null;
             scope.fiber = previousFiber;
+            scope.mode = previousFiber == this ? savedMode : previousMode;
         }
         return failure;
     }
@@ -529,6 +535,11 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     int getRoleSwitchReadLockDepth() {
         return roleSwitchReadLockDepth;
+    }
+
+    @Nullable
+    SuspensionScope.Mode getRoleSwitchReadLockMode() {
+        return roleSwitchReadLockMode;
     }
 
     int getYieldReason() {
@@ -759,6 +770,10 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     void setRoleSwitchReadLock(@Nullable Lock lock, int depth) {
         roleSwitchReadLock = lock;
         roleSwitchReadLockDepth = depth;
+    }
+
+    void setRoleSwitchReadLockMode(@Nullable SuspensionScope.Mode mode) {
+        roleSwitchReadLockMode = mode;
     }
 
     void stage(FiberTask task, long reservationEpoch) {

@@ -489,13 +489,13 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testSharedPoolRunsHttpOnFiberWhenHttpEnabled() throws Exception {
-        assertSharedPoolRunsEnabledProtocolOnFiber(true);
+    public void testSharedPoolRunsHttpOnFiberWhenOnlyPgEnabled() throws Exception {
+        assertSharedPoolModeIsAuthoritative(true);
     }
 
     @Test
-    public void testSharedPoolRunsPgOnFiberWhenPgEnabled() throws Exception {
-        assertSharedPoolRunsEnabledProtocolOnFiber(false);
+    public void testSharedPoolRunsPgOnFiberWhenOnlyHttpEnabled() throws Exception {
+        assertSharedPoolModeIsAuthoritative(false);
     }
 
     @Test
@@ -810,12 +810,12 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
         });
     }
 
-    private void assertSharedPoolRunsEnabledProtocolOnFiber(boolean isSleepOverHttp) throws Exception {
+    private void assertSharedPoolModeIsAuthoritative(boolean isSleepOverHttp) throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
-                put(PropertyKey.HTTP_FIBER_ENABLED.getEnvVarName(), Boolean.toString(isSleepOverHttp));
+                put(PropertyKey.HTTP_FIBER_ENABLED.getEnvVarName(), Boolean.toString(!isSleepOverHttp));
                 put(PropertyKey.HTTP_WORKER_COUNT.getEnvVarName(), "0");
-                put(PropertyKey.PG_FIBER_ENABLED.getEnvVarName(), Boolean.toString(!isSleepOverHttp));
+                put(PropertyKey.PG_FIBER_ENABLED.getEnvVarName(), Boolean.toString(isSleepOverHttp));
                 put(PropertyKey.PG_WORKER_COUNT.getEnvVarName(), "0");
                 put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "30s");
                 put(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getEnvVarName(), "1");

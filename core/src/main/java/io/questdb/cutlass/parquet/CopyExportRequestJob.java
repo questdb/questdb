@@ -47,6 +47,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.Callable;
+import java.util.function.Supplier;
 
 public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportRequestTask> implements Closeable {
     private static final Log LOG = LogFactory.getLog(CopyExportRequestJob.class);
@@ -67,6 +68,15 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
 
     @TestOnly
     public CopyExportRequestJob(final CairoEngine engine, @Nullable Callable<Exception> callback) {
+        this(engine, callback, null);
+    }
+
+    @TestOnly
+    public CopyExportRequestJob(
+            final CairoEngine engine,
+            @Nullable Callable<Exception> callback,
+            @Nullable Supplier<SQLSerialParquetExporter> exporterFactory
+    ) {
         super(engine.getMessageBus().getCopyExportRequestQueue(), engine.getMessageBus().getCopyExportRequestSubSeq());
         this.callback = callback;
         this.copyContext = engine.getCopyExportContext();
@@ -74,10 +84,13 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
         microsecondClock = engine.getConfiguration().getMicrosecondClock();
         localTaskCopy = new CopyExportRequestTask();
         try {
-            serialExporter = new SQLSerialParquetExporter(engine);
+            serialExporter = exporterFactory != null
+                    ? exporterFactory.get()
+                    : new SQLSerialParquetExporter(engine);
         } catch (Throwable t) {
-            close();
-            throw t;
+            final Throwable failure = Misc.freeBestEffort(t, localTaskCopy);
+            localTaskCopy = null;
+            CairoException.rethrowCleanupFailure(failure);
         }
     }
 
@@ -196,6 +209,14 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
 
     private void processRequest(int carrierId) {
         final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
+        try {
+            processRequestBlocking(carrierId);
+        } finally {
+            SuspensionScope.restore(previousMode);
+        }
+    }
+
+    private void processRequestBlocking(int carrierId) {
         final CopyExportContext.ExportTaskEntry entry = localTaskCopy.getEntry();
         final SqlExecutionCircuitBreaker circuitBreaker = localTaskCopy.getCircuitBreaker();
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.WAITING;
@@ -260,11 +281,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     localTaskCopy.getCopyID()
             );
         } finally {
-            try {
-                releaseRequest();
-            } finally {
-                SuspensionScope.restore(previousMode);
-            }
+            releaseRequest();
         }
     }
 
@@ -299,10 +316,13 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
         } catch (Throwable th) {
             cleanupFailure = th;
         }
-        try {
-            serialExporter.clearMemoryTracker();
-        } catch (Throwable th) {
-            cleanupFailure = addCleanupFailure(cleanupFailure, th);
+        final SQLSerialParquetExporter exporter = serialExporter;
+        if (exporter != null) {
+            try {
+                exporter.clearMemoryTracker();
+            } catch (Throwable th) {
+                cleanupFailure = addCleanupFailure(cleanupFailure, th);
+            }
         }
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, memoryTracker);
         try {

@@ -39,29 +39,38 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
     private int freeCount;
     private PageFrameFiberTask freeTasks;
     private boolean isClosed;
+    private final int maxRetainedCount;
 
     PageFrameFiberTaskPool(
             CairoEngine engine,
             int capacity,
+            int maxRetainedCount,
             PageFrameReduceDispatcher dispatcher
     ) {
         if (capacity < 1) {
             throw new IllegalArgumentException("page frame fiber task capacity must be positive");
         }
+        if (maxRetainedCount < 1 || maxRetainedCount > capacity) {
+            throw new IllegalArgumentException(
+                    "page frame fiber task retention must be positive and not exceed capacity"
+            );
+        }
         this.capacity = capacity;
         this.dispatcher = dispatcher;
         this.engine = engine;
+        this.maxRetainedCount = maxRetainedCount;
     }
 
     @Override
     public void close() {
-        final Throwable failure;
+        final Throwable initialFailure;
+        PageFrameFiberTask task;
         synchronized (this) {
             if (isClosed) {
                 return;
             }
             isClosed = true;
-            Throwable cleanupFailure = freeCount == createdCount
+            initialFailure = freeCount == createdCount
                     ? null
                     : new IllegalStateException(
                     "page frame fiber task pool closed with leased tasks [created="
@@ -69,18 +78,18 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
                     + ", free=" + freeCount
                     + ']'
             );
-            PageFrameFiberTask task = freeTasks;
+            task = freeTasks;
             freeTasks = null;
             createdCount -= freeCount;
             freeCount = 0;
-            while (task != null) {
-                final PageFrameFiberTask next = task.nextFree;
-                task.isPooled = false;
-                task.nextFree = null;
-                cleanupFailure = Misc.freeBestEffort(cleanupFailure, task);
-                task = next;
-            }
-            failure = cleanupFailure;
+        }
+        Throwable failure = initialFailure;
+        while (task != null) {
+            final PageFrameFiberTask next = task.nextFree;
+            task.isPooled = false;
+            task.nextFree = null;
+            failure = Misc.freeBestEffort(failure, task);
+            task = next;
         }
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -93,19 +102,27 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         return createdCount != freeCount;
     }
 
-    synchronized void release(PageFrameFiberTask task) {
-        if (task.isPooled || createdCount <= freeCount) {
-            throw new IllegalStateException("page frame fiber task pool overflow");
+    void release(PageFrameFiberTask task) {
+        boolean isFree = false;
+        synchronized (this) {
+            if (task.isPooled || createdCount <= freeCount) {
+                throw new IllegalStateException("page frame fiber task pool overflow");
+            }
+            if (isClosed
+                    || freeCount >= maxRetainedCount
+                    || task.getScheduleState() != FiberTask.STATE_IDLE) {
+                createdCount--;
+                isFree = true;
+            } else {
+                task.isPooled = true;
+                task.nextFree = freeTasks;
+                freeTasks = task;
+                freeCount++;
+            }
         }
-        if (isClosed || task.getScheduleState() != FiberTask.STATE_IDLE) {
-            createdCount--;
+        if (isFree) {
             Misc.free(task);
-            return;
         }
-        task.isPooled = true;
-        task.nextFree = freeTasks;
-        freeTasks = task;
-        freeCount++;
     }
 
     @TestOnly

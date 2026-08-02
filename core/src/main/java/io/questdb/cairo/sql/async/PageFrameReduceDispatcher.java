@@ -82,7 +82,12 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
         this.batchRowBudget = configuredBatchRowBudget;
         this.messageBus = messageBus;
         this.runtime = runtime;
-        this.taskPool = new PageFrameFiberTaskPool(engine, runtime.getMaxLiveFiberCount(), this);
+        this.taskPool = new PageFrameFiberTaskPool(
+                engine,
+                runtime.getMaxLiveFiberCount(),
+                runtime.getMaxRetainedFiberCount(),
+                this
+        );
         this.timerClock = engine.getConfiguration().getMillisecondClock();
         this.timerIntervalMillis = Math.max(
                 1,

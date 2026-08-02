@@ -394,7 +394,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private void recycle() {
         clearBinding();
         circuitBreaker.clear();
-        record.clear();
+        record.of(null);
         try {
             tryReopen();
         } finally {

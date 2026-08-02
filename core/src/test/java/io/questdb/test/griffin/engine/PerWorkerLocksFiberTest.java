@@ -45,6 +45,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
@@ -129,37 +130,29 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPinnedSlotWaitFallsBackToBlocking() throws Exception {
+    public void testPinnedSlotWaitFailsWithoutBlockingCarrier() {
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, 1);
         final int heldSlot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
         final FiberRuntime runtime = new FiberRuntime(1);
-        final SqlExecutionCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine) {
-            private boolean isSlotHeld = true;
-
-            @Override
-            public void statefulThrowExceptionIfTripped() {
-                if (isSlotHeld) {
-                    isSlotHeld = false;
-                    locks.releaseSlot(heldSlot);
-                }
-                super.statefulThrowExceptionIfTripped();
-            }
-        };
-        final PinnedSlotTask task = new PinnedSlotTask(locks, circuitBreaker);
+        final PinnedSlotTask task = new PinnedSlotTask(locks);
         try {
             Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
             Assert.assertEquals(1, runtime.drain(1));
 
-            Assert.assertFalse(task.hasError);
-            Assert.assertTrue(task.hasRun);
-            Assert.assertTrue(runtime.getInlineSuspendViolationCount() > 0);
-            Assert.assertEquals(0, locks.getAcquiredSlotCount());
-        } finally {
-            if (locks.getAcquiredSlotCount() > 0) {
-                locks.releaseSlot(heldSlot);
+            Assert.assertNotNull(task.error);
+            Throwable error = task.error;
+            while (error.getCause() != null) {
+                error = error.getCause();
             }
+            TestUtils.assertContains(error.getMessage(), "reducer slot wait could not suspend");
+            Assert.assertFalse(task.hasRun);
+            Assert.assertTrue(runtime.getInlineSuspendViolationCount() > 0);
+            Assert.assertEquals(1, locks.getAcquiredSlotCount());
+        } finally {
+            locks.releaseSlot(heldSlot);
             close(runtime);
         }
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
     }
 
     @Test
@@ -378,19 +371,17 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
 
     private static class PinnedSlotTask extends FiberTask {
         private static final ThreadLocal<PinnedSlotTask> CURRENT_TASK = new ThreadLocal<>();
-        private final SqlExecutionCircuitBreaker circuitBreaker;
-        private boolean hasError;
+        private Throwable error;
         private boolean hasRun;
         private final PerWorkerLocks locks;
 
-        private PinnedSlotTask(PerWorkerLocks locks, SqlExecutionCircuitBreaker circuitBreaker) {
-            this.circuitBreaker = circuitBreaker;
+        private PinnedSlotTask(PerWorkerLocks locks) {
             this.locks = locks;
         }
 
         @Override
         protected void onError(Throwable th) {
-            hasError = true;
+            error = th;
         }
 
         @Override
@@ -405,7 +396,7 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
         }
 
         private void runPinned() {
-            final int slot = locks.acquireSlot(0, circuitBreaker);
+            final int slot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
             try {
                 hasRun = true;
             } finally {

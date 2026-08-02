@@ -54,6 +54,7 @@ public final class FiberRuntime {
     private final AtomicBoolean isInlineSuspendViolationLogged = new AtomicBoolean();
     private final ObjList<LongAdder> launchCounts = new ObjList<>(LaunchResult.COUNT);
     private final int maxLiveFiberCount;
+    private final int maxRetainedFiberCount;
     private final LongAdder mountCount = new LongAdder();
     private final LongAdder mountedCount = new LongAdder();
     private final AtomicInteger outstandingTaskCount = new AtomicInteger();
@@ -91,7 +92,7 @@ public final class FiberRuntime {
     ) {
         try {
             Fiber.verifyRuntimeAccess();
-        } catch (IllegalAccessError e) {
+        } catch (LinkageError e) {
             throw new IllegalStateException(
                     "fiber-host mode requires --add-exports=java.base/jdk.internal.vm=io.questdb",
                     e
@@ -107,6 +108,7 @@ public final class FiberRuntime {
         }
         this.beforeFiberAcquireForTesting = beforeFiberAcquireForTesting;
         this.maxLiveFiberCount = maxLiveFiberCount;
+        this.maxRetainedFiberCount = retainedFiberCount;
         this.capacityWaitQueue = new FiberEventWaitQueue(FiberWaitCoordinator.REASON_CAPACITY);
         this.runQueue = new FiberRunQueue(maxLiveFiberCount);
         this.fiberPool = new FiberPool(
@@ -282,6 +284,10 @@ public final class FiberRuntime {
 
     public int getMaxLiveFiberCount() {
         return maxLiveFiberCount;
+    }
+
+    public int getMaxRetainedFiberCount() {
+        return maxRetainedFiberCount;
     }
 
     public long getMountCount() {
@@ -800,6 +806,7 @@ public final class FiberRuntime {
             }
             if (fiber.isDone()) {
                 fiber.takeOutcome(outcome);
+                fiber.beginRetirement();
                 fiber.markRetired();
                 finishFiberRetirement(fiber);
                 hasFiberOwnership = false;

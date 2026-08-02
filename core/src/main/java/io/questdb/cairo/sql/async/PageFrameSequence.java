@@ -193,8 +193,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                         task.collected(true);
                     }
                     collectSubSeq.done(cursor);
-                    if (dispatcher != null && taskFrameSequence != null) {
-                        dispatcher.signalProgress(taskFrameSequence);
+                    if (dispatcher != null) {
+                        if (taskFrameSequence != null) {
+                            dispatcher.signalProgress(taskFrameSequence);
+                        } else {
+                            dispatcher.signalProgress();
+                        }
                     }
                 } else if (canPark) {
                     awaitProgress(dispatcher, observedProgress, true);
@@ -381,8 +385,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 } else {
                     // Not our task, nothing to collect. Go for another spin.
                     collectSubSeq.done(cursor);
-                    if (dispatcher != null && thatFrameSequence != null) {
-                        dispatcher.signalProgress(thatFrameSequence);
+                    if (dispatcher != null) {
+                        if (thatFrameSequence != null) {
+                            dispatcher.signalProgress(thatFrameSequence);
+                        } else {
+                            dispatcher.signalProgress();
+                        }
                     }
                 }
             } else if (cursor == -1) {
@@ -540,7 +548,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeqToRemove);
                 final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
                 if (dispatcher != null) {
-                    signalProgress();
+                    dispatcher.signalProgress();
                 }
                 LOG.debug().$("removed [seq=").$(collectSubSeqToRemove).I$();
             } catch (Throwable th) {

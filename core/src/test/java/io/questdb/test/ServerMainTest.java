@@ -65,7 +65,9 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.tools.TestUtils.*;
 import static java.util.Arrays.asList;
@@ -213,7 +215,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
             try {
                 serverMain.start();
 
-                serverMain.close();
+                try {
+                    serverMain.close();
+                    Assert.fail("incomplete close must fail");
+                } catch (IllegalStateException e) {
+                    assertContains(e.getMessage(), "shutdown did not complete");
+                }
                 Assert.assertFalse(serverMain.isCloseComplete());
                 Assert.assertTrue(serverMain.hasBeenClosed());
 
@@ -221,6 +228,86 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 Assert.assertTrue(serverMain.isCloseComplete());
                 Assert.assertTrue(serverMain.hasBeenClosed());
             } finally {
+                serverMain.close();
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentCloseWaitsForCurrentAttempt() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger closeAttempts = new AtomicInteger();
+            final SOCountDownLatch closeThreadsDone = new SOCountDownLatch(2);
+            final SOCountDownLatch firstCloseEntered = new SOCountDownLatch(1);
+            final SOCountDownLatch releaseFirstClose = new SOCountDownLatch(1);
+            final ServerMain serverMain = new ServerMain(getServerMainArgs()) {
+                @Override
+                protected io.questdb.lifecycle.LifecycleOrchestrator newOrchestrator(
+                        io.questdb.log.Log log,
+                        WorkerPoolManager workerPoolManager,
+                        Object tokioRuntime
+                ) {
+                    return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
+                        @Override
+                        public void close() {
+                            if (closeAttempts.incrementAndGet() == 1) {
+                                firstCloseEntered.countDown();
+                                releaseFirstClose.await();
+                            } else {
+                                super.close();
+                            }
+                        }
+
+                        @Override
+                        public boolean isStopComplete() {
+                            return closeAttempts.get() > 1 && super.isStopComplete();
+                        }
+                    };
+                }
+            };
+            final AtomicReference<Throwable> firstCloseFailure = new AtomicReference<>();
+            final AtomicReference<Throwable> secondCloseFailure = new AtomicReference<>();
+            final Thread firstCloseThread = new Thread(() -> {
+                try {
+                    serverMain.close();
+                } catch (Throwable th) {
+                    firstCloseFailure.set(th);
+                } finally {
+                    closeThreadsDone.countDown();
+                }
+            });
+            final Thread secondCloseThread = new Thread(() -> {
+                try {
+                    serverMain.close();
+                } catch (Throwable th) {
+                    secondCloseFailure.set(th);
+                } finally {
+                    closeThreadsDone.countDown();
+                }
+            });
+            try {
+                serverMain.start();
+                firstCloseThread.start();
+                Assert.assertTrue(firstCloseEntered.await(TimeUnit.SECONDS.toNanos(10)));
+                secondCloseThread.start();
+                TestUtils.assertEventually(
+                        () -> Assert.assertEquals(Thread.State.BLOCKED, secondCloseThread.getState()),
+                        10
+                );
+                releaseFirstClose.countDown();
+                Assert.assertTrue(closeThreadsDone.await(TimeUnit.SECONDS.toNanos(10)));
+                firstCloseThread.join();
+                secondCloseThread.join();
+
+                Assert.assertTrue(firstCloseFailure.get() instanceof IllegalStateException);
+                Assert.assertNull(secondCloseFailure.get());
+                Assert.assertTrue(closeAttempts.get() > 1);
+                Assert.assertTrue(serverMain.isCloseComplete());
+            } finally {
+                releaseFirstClose.countDown();
+                if (firstCloseThread.isAlive() || secondCloseThread.isAlive()) {
+                    closeThreadsDone.await(TimeUnit.SECONDS.toNanos(10));
+                }
                 serverMain.close();
             }
         });

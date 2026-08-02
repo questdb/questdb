@@ -2654,6 +2654,34 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testWorkerPoolFiberNoArgConfigurationsUseDefaultMountBudget() throws Exception {
+        final PropServerConfiguration configuration = newPropServerConfiguration(new Properties());
+
+        Assert.assertEquals(
+                64,
+                configuration.new PropHttpMinServerConfiguration().getFiberMountBudget()
+        );
+        Assert.assertEquals(
+                64,
+                configuration.new PropHttpServerConfiguration().getFiberMountBudget()
+        );
+    }
+
+    @Test
+    public void testWorkerPoolFiberRetainedCountClampedToDerivedLiveCount() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.SHARED_WORKER_COUNT.getPropertyPath(), "32");
+        properties.setProperty(PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "200");
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+
+        Assert.assertEquals(64, configuration.getHttpMinServerConfiguration().getFiberRetainedCount());
+        Assert.assertEquals(64, configuration.getMatViewRefreshPoolConfiguration().getFiberRetainedCount());
+        Assert.assertEquals(200, configuration.getSharedWorkerPoolNetworkConfiguration().getFiberRetainedCount());
+        Assert.assertEquals(200, configuration.getSharedWorkerPoolQueryConfiguration().getFiberRetainedCount());
+        Assert.assertEquals(200, configuration.getSharedWorkerPoolWriteConfiguration().getFiberRetainedCount());
+    }
+
+    @Test
     public void testWritePoolFiberHostFollowsSharedJobModes() throws Exception {
         final Properties properties = new Properties();
         Assert.assertEquals(

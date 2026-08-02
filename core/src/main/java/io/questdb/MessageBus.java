@@ -144,7 +144,9 @@ public interface MessageBus extends Closeable {
     FanOut getPageFrameCollectFanOut(int shard);
 
     @Nullable
-    PageFrameReduceDispatcher getPageFrameReduceDispatcher();
+    default PageFrameReduceDispatcher getPageFrameReduceDispatcher() {
+        return null;
+    }
 
     MPSequence getPageFrameReducePubSeq(int shard);
 
@@ -190,5 +192,9 @@ public interface MessageBus extends Closeable {
 
     MCSequence getWalTxnNotificationSubSequence();
 
-    void setPageFrameReduceDispatcher(@Nullable PageFrameReduceDispatcher dispatcher);
+    default void setPageFrameReduceDispatcher(@Nullable PageFrameReduceDispatcher dispatcher) {
+        if (dispatcher != null) {
+            throw new UnsupportedOperationException("page frame reduce dispatcher is not supported");
+        }
+    }
 }

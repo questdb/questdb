@@ -329,15 +329,18 @@ final class RoleSwitchReadWriteLock {
                 return;
             }
             pendingWriterCount.incrementAndGet();
-            writerGate.acquireUninterruptibly();
+            boolean isGateAcquired = false;
             boolean isLocked = false;
+            long newStamp = 0;
             try {
-                final long newStamp = delegate.writeLock();
+                writerGate.acquireUninterruptibly();
+                isGateAcquired = true;
+                newStamp = delegate.writeLock();
                 enter(newStamp);
                 isLocked = true;
             } finally {
                 if (!isLocked) {
-                    releaseWriterGate();
+                    rollbackAcquire(newStamp, isGateAcquired);
                 }
             }
         }
@@ -354,18 +357,16 @@ final class RoleSwitchReadWriteLock {
             pendingWriterCount.incrementAndGet();
             boolean isGateAcquired = false;
             boolean isLocked = false;
+            long newStamp = 0;
             try {
                 writerGate.acquire();
                 isGateAcquired = true;
-                final long newStamp = delegate.writeLockInterruptibly();
+                newStamp = delegate.writeLockInterruptibly();
                 enter(newStamp);
                 isLocked = true;
             } finally {
                 if (!isLocked) {
-                    if (isGateAcquired) {
-                        writerGate.release();
-                    }
-                    pendingWriterCount.decrementAndGet();
+                    rollbackAcquire(newStamp, isGateAcquired);
                 }
             }
         }
@@ -382,17 +383,26 @@ final class RoleSwitchReadWriteLock {
                 return true;
             }
             pendingWriterCount.incrementAndGet();
-            if (!writerGate.tryAcquire()) {
-                pendingWriterCount.decrementAndGet();
-                return false;
-            }
-            final long newStamp = delegate.tryWriteLock();
-            if (newStamp != 0) {
+            boolean isGateAcquired = false;
+            boolean isLocked = false;
+            long newStamp = 0;
+            try {
+                if (!writerGate.tryAcquire()) {
+                    return false;
+                }
+                isGateAcquired = true;
+                newStamp = delegate.tryWriteLock();
+                if (newStamp == 0) {
+                    return false;
+                }
                 enter(newStamp);
+                isLocked = true;
                 return true;
+            } finally {
+                if (!isLocked) {
+                    rollbackAcquire(newStamp, isGateAcquired);
+                }
             }
-            releaseWriterGate();
-            return false;
         }
 
         @Override
@@ -410,26 +420,24 @@ final class RoleSwitchReadWriteLock {
             pendingWriterCount.incrementAndGet();
             boolean isGateAcquired = false;
             boolean isLocked = false;
+            long newStamp = 0;
             try {
                 if (!writerGate.tryAcquire(time, unit)) {
                     return false;
                 }
                 isGateAcquired = true;
-                final long newStamp = delegate.tryWriteLock(
+                newStamp = delegate.tryWriteLock(
                         remainingNanos(timeoutNanos, startNanos),
                         TimeUnit.NANOSECONDS
                 );
-                isLocked = newStamp != 0;
-                if (isLocked) {
+                if (newStamp != 0) {
                     enter(newStamp);
+                    isLocked = true;
                 }
                 return isLocked;
             } finally {
                 if (!isLocked) {
-                    if (isGateAcquired) {
-                        writerGate.release();
-                    }
-                    pendingWriterCount.decrementAndGet();
+                    rollbackAcquire(newStamp, isGateAcquired);
                 }
             }
         }
@@ -489,6 +497,22 @@ final class RoleSwitchReadWriteLock {
         private void releaseWriterGate() {
             pendingWriterCount.decrementAndGet();
             writerGate.release();
+        }
+
+        private void rollbackAcquire(long acquiredStamp, boolean isGateAcquired) {
+            try {
+                if (acquiredStamp != 0) {
+                    delegate.unlockWrite(acquiredStamp);
+                }
+            } finally {
+                try {
+                    if (isGateAcquired) {
+                        writerGate.release();
+                    }
+                } finally {
+                    pendingWriterCount.decrementAndGet();
+                }
+            }
         }
 
         private void setReadLock(ReadLock readLock) {

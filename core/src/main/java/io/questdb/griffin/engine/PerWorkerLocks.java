@@ -120,10 +120,11 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                 countDownTestAcquireLatch();
                 return fiberSlot;
             }
-            if (fiberSlot != SLOT_WAIT_ABORTED) {
-                sqlCircuitBreaker.statefulThrowExceptionIfTripped();
-                throw CairoException.nonCritical().put("query aborted").setInterruption(true);
+            if (fiberSlot == SLOT_WAIT_ABORTED) {
+                throw CairoException.nonCritical().put("reducer slot wait could not suspend the mounted fiber");
             }
+            sqlCircuitBreaker.statefulThrowExceptionIfTripped();
+            throw CairoException.nonCritical().put("query aborted").setInterruption(true);
         }
         if (mode == SuspensionScope.Mode.FORBIDDEN) {
             throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
@@ -161,9 +162,10 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
             if (fiberSlot > -1) {
                 releaseSlot(fiberSlot);
             }
-            if (fiberSlot != SLOT_WAIT_ABORTED) {
-                throw CairoException.nonCritical().put("query aborted").setInterruption(true);
+            if (fiberSlot == SLOT_WAIT_ABORTED) {
+                throw CairoException.nonCritical().put("reducer slot wait could not suspend the mounted fiber");
             }
+            throw CairoException.nonCritical().put("query aborted").setInterruption(true);
         } else if (mode == SuspensionScope.Mode.FORBIDDEN) {
             throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
         }

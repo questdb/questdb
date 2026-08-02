@@ -185,11 +185,39 @@ public class LineTcpMeasurementSchedulerTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSharedPoolsUseTwoIlpJobs() throws Exception {
+        assertMemoryLeak(() -> {
+            final CapturingWorkerPool networkPool = new CapturingWorkerPool(8, WorkerPoolMode.LEGACY);
+            final CapturingWorkerPool writePool = new CapturingWorkerPool(8, WorkerPoolMode.LEGACY);
+            LineTcpMeasurementScheduler scheduler = null;
+            try {
+                scheduler = new LineTcpMeasurementScheduler(
+                        new DefaultLineTcpReceiverConfiguration(configuration),
+                        engine,
+                        networkPool,
+                        null,
+                        writePool
+                );
+                Assert.assertEquals(2, networkPool.getAssignedJobCount());
+                Assert.assertEquals(2, writePool.getAssignedJobCount());
+            } finally {
+                networkPool.halt();
+                writePool.halt();
+                Misc.free(scheduler);
+            }
+        });
+    }
+
     private static final class CapturingWorkerPool extends WorkerPool {
         private final ObjList<Job> assignedJobs = new ObjList<>();
 
         private CapturingWorkerPool() {
-            super(new FiberWorkerPoolConfiguration());
+            this(1, WorkerPoolMode.FIBER_HOST);
+        }
+
+        private CapturingWorkerPool(int workerCount, WorkerPoolMode workerPoolMode) {
+            super(new TestWorkerPoolConfiguration(workerCount, workerPoolMode));
         }
 
         @Override
@@ -201,9 +229,21 @@ public class LineTcpMeasurementSchedulerTest extends AbstractCairoTest {
         private Job getAssignedJob(int worker) {
             return assignedJobs.getQuick(worker);
         }
+
+        private int getAssignedJobCount() {
+            return assignedJobs.size();
+        }
     }
 
-    private static final class FiberWorkerPoolConfiguration implements WorkerPoolConfiguration {
+    private static final class TestWorkerPoolConfiguration implements WorkerPoolConfiguration {
+        private final int workerCount;
+        private final WorkerPoolMode workerPoolMode;
+
+        private TestWorkerPoolConfiguration(int workerCount, WorkerPoolMode workerPoolMode) {
+            this.workerCount = workerCount;
+            this.workerPoolMode = workerPoolMode;
+        }
+
         @Override
         public int getFiberMaxLiveCount() {
             return 1;
@@ -216,12 +256,12 @@ public class LineTcpMeasurementSchedulerTest extends AbstractCairoTest {
 
         @Override
         public int getWorkerCount() {
-            return 1;
+            return workerCount;
         }
 
         @Override
         public WorkerPoolMode getWorkerPoolMode() {
-            return WorkerPoolMode.FIBER_HOST;
+            return workerPoolMode;
         }
     }
 

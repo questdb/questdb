@@ -337,7 +337,7 @@ public class HttpQueryTestBuilder {
             try {
                 code.run(engine, sqlExecutionContext);
             } finally {
-                workerPool.halt();
+                workerPool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
 
                 if (telemetryJob != null) {
                     Misc.free(telemetryJob);

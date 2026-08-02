@@ -2526,6 +2526,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     ) throws ServerConfigurationException {
         configuration.configureFiber(maxLiveCount, mountBudget, retainedCount);
         if (configuration.getFiberRetainedCount() > configuration.getFiberMaxLiveCount()) {
+            if (maxLiveCount == 0) {
+                configuration.configureFiber(
+                        maxLiveCount,
+                        mountBudget,
+                        configuration.getFiberMaxLiveCount()
+                );
+                return;
+            }
             throw new ServerConfigurationException(
                     PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath()
                             + " must not exceed "
@@ -3429,7 +3437,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private abstract static class PropFiberWorkerPoolConfiguration implements WorkerPoolConfiguration {
         private int fiberMaxLiveCount;
-        private int fiberMountBudget;
+        private int fiberMountBudget = WorkerPoolConfiguration.super.getFiberMountBudget();
         private int fiberRetainedCount;
 
         protected PropFiberWorkerPoolConfiguration() {
