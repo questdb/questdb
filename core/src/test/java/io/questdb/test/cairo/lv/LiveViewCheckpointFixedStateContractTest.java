@@ -75,11 +75,12 @@ import org.junit.Test;
  * from the seal that wrote it. That is why the width is verified on every freeze
  * and why a malformed declaration is turned away at CREATE.
  * <p>
- * Nothing here changes what a seal writes. The cases pin the declarations against
- * the images the current page-backed writer already produces, so the step that
- * moves those images into the leaf inherits a contract that has been true all
- * along rather than one asserted for the first time by the change that depends on
- * it.
+ * The cases pin the declarations against the images the seal actually produces.
+ * They began doing that while the writer was still page-backed, which is what
+ * made the width a contract the inline entry could be built on rather than one
+ * asserted for the first time by the change that depends on it; now that the seal
+ * inlines a declared width, the same walk reads the image out of the leaf.
+ * {@code LiveViewCheckpointInlineStateTest} owns the entry shape itself.
  */
 public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTest {
 
@@ -320,9 +321,9 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
     }
 
     /**
-     * Walks every logical boundary the view has published and asserts that the
-     * function's root names one whole-state page of exactly {@code expected} bytes
-     * for every partition it holds.
+     * Walks every logical boundary the view has published and asserts that every
+     * partition its function root holds carries a whole-state image of exactly
+     * {@code expected} bytes, inlined in the leaf and naming no state page.
      */
     private void assertEveryStateImageIsExactly(WindowFunction function, int expected) {
         final LiveViewCheckpointFunctionIdentity identity = function.checkpointFunctionIdentity();
@@ -360,14 +361,14 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
                     functionRoot.getPartitionMapRootRef(partitionMapRoot);
                     partitions.iterateAll(partitionMapRoot, partition -> {
                         Assert.assertEquals(
-                                "a whole-state entry holds exactly one page",
-                                1,
+                                "an inlined image names no state page",
+                                0,
                                 partition.getStatePageCount()
                         );
                         Assert.assertEquals(
                                 "the image of " + function.getName() + " must be its declared width",
                                 expected,
-                                partition.getStatePageRef(0).getDecodedLength()
+                                partition.getScalarState().length
                         );
                         seen[0]++;
                     });

@@ -75,6 +75,10 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     private final LiveViewCheckpointPartitionMapReader partitionReader;
     private final LiveViewCheckpointRangeRingStateReader ringStateReader;
     private final LiveViewCheckpointRoot root;
+    // Holds one leaf-inlined state image while its function decodes it. The decoder
+    // reads through the same bounded reader a page-backed image is framed by, and
+    // that reader reads memory rather than a byte array.
+    private final MemoryCARW scalarMemory;
     private final LiveViewCheckpointSegmentDirectoryReader segmentDirectory;
     private final LiveViewCheckpointSegmentDirectoryEntry segmentDirectoryEntry = new LiveViewCheckpointSegmentDirectoryEntry();
     private final LiveViewStatePageReader statePageReader = new LiveViewStatePageReader();
@@ -98,6 +102,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         partitionReader = new LiveViewCheckpointPartitionMapReader(configuration);
         ringStateReader = new LiveViewCheckpointRangeRingStateReader(configuration);
         root = new LiveViewCheckpointRoot(configuration);
+        scalarMemory = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
         segmentDirectory = new LiveViewCheckpointSegmentDirectoryReader(configuration);
         timelineReader = new LiveViewCheckpointTimelineReader(configuration);
         Arrays.fill(dataSegmentIds, -1);
@@ -118,6 +123,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         Misc.free(partitionReader);
         Misc.free(ringStateReader);
         Misc.free(root);
+        Misc.free(scalarMemory);
         Misc.free(segmentDirectory);
         Misc.free(timelineReader);
         Misc.free(checkpointsDir);
@@ -421,6 +427,20 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         return keyPageReader.of(keyMemory, 0, encodedKey.length);
     }
 
+    /**
+     * Frames one leaf-inlined state image as a bounded page reader, so an inline
+     * decoder is held to exactly the bytes its entry carries - the same bound
+     * {@link #openStatePage} puts on a page-backed image, arrived at without a
+     * data segment.
+     */
+    private LiveViewStatePageReader openInlineStatePage(@NotNull byte[] scalarState) {
+        scalarMemory.jumpTo(0);
+        for (int i = 0; i < scalarState.length; i++) {
+            scalarMemory.putByte(scalarState[i]);
+        }
+        return statePageReader.of(scalarMemory, 0, scalarState.length);
+    }
+
     private LiveViewCheckpointDataSegmentReader openStatePage(@NotNull LiveViewCheckpointStatePageRef ref) {
         final LiveViewCheckpointDataSegmentReader reader = readerFor(
                 ref.getSegmentId(),
@@ -620,14 +640,28 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 function.restoreCheckpointRingState(ringStateReader, value);
                 return;
             }
+            // Mirrors what a complete freeze charges per partition - see the
+            // non-incremental arm of freezeFunction. Both shapes charge the state's own
+            // bytes, so a root part-way through converting from pages to inline entries
+            // still restores the figure it froze.
+            final byte[] scalarState = entry.getScalarState();
+            if (scalarState.length != 0) {
+                final long consumed = function.restoreCheckpointState(
+                        openInlineStatePage(scalarState),
+                        0,
+                        value
+                );
+                if (consumed != scalarState.length) {
+                    throw invalid("inline state decoder did not consume the entry exactly [consumed=")
+                            .put(consumed).put(", length=").put(scalarState.length).put(']');
+                }
+                restoredLogicalStateBytes += encodedKey.length + scalarState.length;
+                return;
+            }
             final LiveViewCheckpointStatePageRef ref = entry.getStatePageRef(0);
             final LiveViewCheckpointDataSegmentReader reader = openStatePage(ref);
             final long consumed = function.restoreCheckpointState(statePageReader, 0, value);
             reader.assertFullyConsumed(ref.getStoredLength(), consumed, 1);
-            // Mirrors what a complete freeze charges per partition - see the
-            // non-incremental arm of freezeFunction. validateFunction has already
-            // proven the entry carries no scalar state and exactly one page, which is
-            // what makes the two agree entry for entry.
             restoredLogicalStateBytes += encodedKey.length + ref.getDecodedLength();
         });
         if (!isRingShaped && baselineGeneration != Numbers.LONG_NULL) {
@@ -732,6 +766,16 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             return;
         }
         final boolean isRingShaped = function.supportsCheckpointRingState();
+        // The width the running function declares, which is the only width an inline
+        // entry may have: the leaf carries no length for its image beyond the scalar's
+        // own, so a decoder slices by the declaration and an entry that does not match
+        // it exactly would be decoded past or short of its state. A function declining
+        // a fixed width reports -1 and therefore admits no inline entry at all.
+        //
+        // The inline budget deliberately does not appear here. It is a writer-side
+        // storage choice, and a reader that re-applied it would reject entries a
+        // previous build legitimately wrote should the constant ever move.
+        final int fixedStateLength = function.checkpointStateFixedLength();
         final LiveViewCheckpointPageRef partitionRootRef = new LiveViewCheckpointPageRef();
         functionRoot.getPartitionMapRootRef(partitionRootRef);
         partitionReader.iterateAll(partitionRootRef, entry -> {
@@ -755,7 +799,19 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 }
                 return;
             }
-            if (entry.getScalarState().length != 0 || entry.getStatePageCount() != 1) {
+            // Two shapes, and no third. A whole-state image is either inlined in the
+            // leaf at the declared width with no page beside it, or held in one page
+            // the entry names with no scalar beside it. A copy-on-write tree converts
+            // entry by entry, so one root holds both while a legacy predecessor's
+            // untouched leaves are still reachable.
+            final byte[] scalarState = entry.getScalarState();
+            if (scalarState.length != 0) {
+                if (scalarState.length != fixedStateLength || entry.getStatePageCount() != 0) {
+                    throw invalid("function partition entry shape invalid");
+                }
+                return;
+            }
+            if (entry.getStatePageCount() != 1) {
                 throw invalid("function partition entry shape invalid");
             }
             openStatePage(entry.getStatePageRef(0));

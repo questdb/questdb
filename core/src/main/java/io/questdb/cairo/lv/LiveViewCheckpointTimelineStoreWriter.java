@@ -107,6 +107,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(LiveViewCheckpointTimelineStoreWriter.class);
     /**
+     * What an inlined entry names instead of a state page. The image sits in the
+     * leaf's scalar slot, so the entry references no data page at all - which is
+     * why reference accounting and physical compaction need no case for it: both
+     * walk the reference array, and this one is empty.
+     */
+    private static final LiveViewCheckpointStatePageRef[] NO_STATE_PAGES = new LiveViewCheckpointStatePageRef[0];
+    /**
      * Published data segments one seal may hold mapped at once while it compares
      * cold keys against their previous pages. Elision spreads a boundary's live
      * references over the segments each key was last written into, so a wide key
@@ -129,6 +136,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     // ever adds; kept per instance so the seal path allocates nothing for it.
     private final LongList emptySegmentIds = new LongList();
     private final MemoryCARWImpl keyBuffer;
+    @TestOnly
+    private long lastBoundaryPartitionPuts;
     // Catalogue entries a reconciliation's sweep left naming an unlinked file,
     // per checkpoint directory, waiting for the next seal of that view to carry
     // them out of the tree. A view whose seal is skipped keeps its proposal.
@@ -331,6 +340,23 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         Misc.free(stateBuffer);
         lifecycleReconciledDirs.clear();
         pendingEntryRetirements.clear();
+    }
+
+    /**
+     * @return partition puts the last boundary this writer built staged into its
+     * function roots. A key whose frozen state matches the one the predecessor root
+     * already holds is short-circuited before it reaches a root builder, so this is
+     * the count of keys a seal really re-imaged.
+     * <p>
+     * It exists because losing that short-circuit changes nothing observable in what
+     * gets published: the partition-map writer drops an equal put of its own accord
+     * and reuses the old tree root either way. What it would cost is a mutation, an
+     * entry copy and a tree descent per live key on every full-scan seal - real work,
+     * invisible in the artifacts, and only measurable here.
+     */
+    @TestOnly
+    public long getLastBoundaryPartitionPuts() {
+        return lastBoundaryPartitionPuts;
     }
 
     /**
@@ -1585,7 +1611,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     /**
      * The previous boundary's whole-state page for one partition, or null when
      * its entry holds something a whole-state freeze cannot reuse - a ring entry,
-     * a function-owned scalar payload beside the page, or no page at all.
+     * an image the leaf inlines, or no page at all. Only the page-backed arm of
+     * the freeze asks: a function that inlines compares scalar bytes instead, and
+     * every entry its own predecessor root holds is one of its own.
      */
     private static @Nullable LiveViewCheckpointStatePageRef wholeStatePageRef(
             @Nullable LiveViewCheckpointPartitionMapEntry entry
@@ -1770,6 +1798,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 : null;
         final boolean incremental = dirtyMap != null;
         frozen.isIncremental = incremental;
+        // Whether this function's whole-state image goes into the leaf rather than
+        // into a data page it names. Read once per function: the answer is a property
+        // of the compiled implementation, not of the partition being frozen.
+        final boolean inlineState = !isRingShaped
+                && LiveViewCheckpointContracts.isInlineableStateLength(function.checkpointStateFixedLength());
         long logicalBytes = incremental ? function.getCheckpointLogicalStateBytes() : 0;
         final ColumnTypes keyTypes = function.getCheckpointKeyColumnTypes();
         final int keyStartIndex = function.getCheckpointKeyStartIndex();
@@ -1861,31 +1894,73 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 ));
                 frozen.addPartition(ringEntry);
             } else {
-                final LiveViewCheckpointStatePageRef previousRef = wholeStatePageRef(previous);
-                final LiveViewCheckpointStatePageRef stateRef = freezeStatePage(
-                        dataWriter,
-                        function,
-                        value,
-                        previousBoundary,
-                        previousRef
-                );
-                final boolean isUnchanged = previousBoundary instanceof RootPreviousBoundary && previousRef != null
-                        && previousRef.getSegmentId() == stateRef.getSegmentId()
-                        && previousRef.getOffset() == stateRef.getOffset();
-                frozen.addPartition(key, stateRef, isUnchanged);
+                final long stateLength;
+                if (inlineState) {
+                    final byte[] scalarState = freezeInlineState(function, value);
+                    // The predecessor's image is already in the decoded leaf entry this
+                    // freeze holds, so the elision costs a byte compare and no longer has
+                    // to map the older data segment the page-backed arm below reads. The
+                    // zero-reference test is what keeps the short-circuit honest: skipping
+                    // the put leaves the predecessor's whole entry standing, and an entry
+                    // carrying a page beside these bytes is not the one this freeze means.
+                    final boolean isUnchanged = previousBoundary instanceof RootPreviousBoundary
+                            && previous != null
+                            && previous.getStatePageCount() == 0
+                            && Arrays.equals(previous.getScalarState(), scalarState);
+                    frozen.addPartition(key, scalarState, isUnchanged);
+                    stateLength = scalarState.length;
+                } else {
+                    final LiveViewCheckpointStatePageRef previousRef = wholeStatePageRef(previous);
+                    final LiveViewCheckpointStatePageRef stateRef = freezeStatePage(
+                            dataWriter,
+                            function,
+                            value,
+                            previousBoundary,
+                            previousRef
+                    );
+                    final boolean isUnchanged = previousBoundary instanceof RootPreviousBoundary && previousRef != null
+                            && previousRef.getSegmentId() == stateRef.getSegmentId()
+                            && previousRef.getOffset() == stateRef.getOffset();
+                    frozen.addPartition(key, stateRef, isUnchanged);
+                    stateLength = stateRef.getDecodedLength();
+                }
+                // The two shapes charge the same figure: an inlined image and a page
+                // named by a reference hold the same state bytes, and logical accounting
+                // counts the state rather than the framing that reaches it. That is what
+                // lets a root convert entry by entry without the running total moving.
                 if (incremental) {
-                    final long newLogicalBytes = checkedAdd(keyLength, stateRef.getDecodedLength());
+                    final long newLogicalBytes = checkedAdd(keyLength, stateLength);
                     logicalBytes = checkedAdd(
                             logicalBytes,
                             checkedAdd(newLogicalBytes, -logicalPartitionBytes(previous))
                     );
                 } else {
                     logicalBytes = checkedAdd(logicalBytes, keyLength);
-                    logicalBytes = checkedAdd(logicalBytes, stateRef.getDecodedLength());
+                    logicalBytes = checkedAdd(logicalBytes, stateLength);
                 }
             }
         }
         return logicalBytes;
+    }
+
+    /**
+     * Encodes one whole-state image into the bytes a partition-map leaf carries in
+     * place of a state page.
+     * <p>
+     * The encode runs through the same scratch buffer and the same
+     * {@link LiveViewStatePageWriter#freeze} the page-backed arm uses, so the image
+     * is verified against the width its function declared before it can reach a
+     * leaf that holds no length of its own to check it against later.
+     */
+    private byte[] freezeInlineState(WindowFunction function, @Nullable MapValue value) {
+        stateBuffer.jumpTo(0);
+        final LiveViewStatePageWriter pageWriter = statePageWriter.of(stateBuffer);
+        final int bytes = checkedIntLength(pageWriter.freeze(function, value), "function state");
+        final byte[] scalarState = new byte[bytes];
+        for (int i = 0; i < bytes; i++) {
+            scalarState[i] = stateBuffer.getByte(i);
+        }
+        return scalarState;
     }
 
     /**
@@ -2032,6 +2107,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             this.identity = identity;
             this.stateFormatVersion = stateFormatVersion;
             this.keySchema = keySchema;
+        }
+
+        /**
+         * Takes one whole-state image the leaf carries itself. The image is already
+         * a fresh array per partition, so it is stored rather than copied again.
+         */
+        private void addPartition(byte[] key, byte[] scalarState, boolean isUnchanged) {
+            addPartition(new FrozenPartition(key, scalarState, NO_STATE_PAGES, isUnchanged));
         }
 
         private void addPartition(byte[] key, LiveViewCheckpointStatePageRef stateRef, boolean isUnchanged) {
@@ -3287,6 +3370,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 LongList referencedSegmentIdsOut
         ) {
             writtenMetaSegments.clear();
+            lastBoundaryPartitionPuts = 0;
             final LiveViewCheckpointPageRef anchorRootRef = new LiveViewCheckpointPageRef();
             if (boundary.anchor != null) {
                 final FrozenAnchor anchor = boundary.anchor;
@@ -3362,6 +3446,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                                     partition.scalarState,
                                     partition.statePageRefs
                             );
+                            lastBoundaryPartitionPuts++;
                         }
                     }
                 }
