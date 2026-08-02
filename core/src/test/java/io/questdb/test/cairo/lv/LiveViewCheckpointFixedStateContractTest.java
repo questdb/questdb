@@ -372,10 +372,13 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
                     root.getStateRootRef(stateRootRef);
                     if (projection != null && !stateRootRef.isNull()
                             && windowRoot.ofIfWindowRoot(dir, stateRootRef)) {
+                        // The projection's own slice, not the component's: a derived one
+                        // reads a field of a wider host, and it is still its declared
+                        // width that has to describe what its decoder consumes.
                         Assert.assertEquals(
                                 "the manifest must lay out " + function.getName() + " at its declared width",
                                 expected,
-                                projection.getComponentStateLength()
+                                projection.getFunctionStateLength()
                         );
                         final int totalInlineStateBytes = windowRoot.getTotalInlineStateBytes();
                         windowRoot.getPartitionMapRootRef(partitionMapRoot);

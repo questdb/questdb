@@ -46,6 +46,16 @@ import java.util.Arrays;
  * of state. A function the plan does not bind is a <b>residual</b> and keeps the
  * legacy per-function root it has today; the two lists together are always the whole
  * factory.
+ * <p>
+ * Sharing comes in two strengths, and the plan applies them in that order. Two
+ * projections whose components are <b>identical</b> merge outright - {@code sum(x)}
+ * beside {@code avg(x)}. A projection whose component's whole image sits <b>inside</b>
+ * another's is folded onto that host and reads its own bytes out of the wider slice -
+ * {@code count(x)} beside either of them, which
+ * {@link LiveViewAccumulatorDescriptor#derivedStateOffset} is what proves. The second
+ * is what takes {@code sum(x) + avg(x) + count(x)} to one component and a 24-byte
+ * fused entry. Neither ever applies across arguments or contribution predicates, so
+ * the HDFC shape's {@code sum(amt)} and {@code count(acct)} remain two components.
  *
  * <h2>Scalar layout</h2>
  * <pre>
@@ -161,6 +171,11 @@ public final class LiveViewWindowStatePlan {
     /**
      * Returns the function that updates component {@code index}. Every other
      * projection on that component is a read-only reader of the same state.
+     * <p>
+     * A contributor is always a projection whose own function persists that exact
+     * component, never a {@link LiveViewAccumulatorProjection#isDerived() derived} one:
+     * a {@code count} folded onto a sum's counter freezes eight bytes and the component
+     * is sixteen, so it could not write the image even though it can read it.
      */
     public WindowFunction getContributor(int index) {
         return projectionFunctions.getQuick(contributorIndexes.getQuick(index));
@@ -267,6 +282,13 @@ public final class LiveViewWindowStatePlan {
         private final IntList componentContributors = new IntList();
         private final ObjList<LiveViewAccumulatorDescriptor> components = new ObjList<>();
         private final IntList projectionComponents = new IntList();
+        /**
+         * Per projection, the component its own function persists when it stands alone.
+         * Kept beside {@link #projectionComponents}, which the fold moves onto a host:
+         * the difference between the two is the slice the function's decoder reads, and
+         * a restore needs both.
+         */
+        private final ObjList<LiveViewAccumulatorDescriptor> projectionFunctionComponents = new ObjList<>();
         private final ObjList<WindowFunction> projectionFunctions = new ObjList<>();
         private final IntList projectionKinds = new IntList();
         private final IntList projectionOutputPositions = new IntList();
@@ -332,6 +354,7 @@ public final class LiveViewWindowStatePlan {
             }
             projectionFunctions.add(function);
             projectionComponents.add(componentIndex);
+            projectionFunctionComponents.add(component);
             projectionKinds.add(projectionKind);
             projectionOutputPositions.add(outputPosition);
             return true;
@@ -350,10 +373,11 @@ public final class LiveViewWindowStatePlan {
          * scalar layout does not fit the leaf budget.
          */
         public @Nullable LiveViewWindowStatePlan build() {
-            final int componentCount = components.size();
-            if (componentCount == 0) {
+            if (components.size() == 0) {
                 return null;
             }
+            foldDerivedComponents();
+            final int componentCount = components.size();
             sortComponentsByIdentity();
             final IntList componentOffsets = new IntList(componentCount);
             int offset = ANCHOR_STATE_OFFSET + ANCHOR_STATE_BYTES;
@@ -375,7 +399,8 @@ public final class LiveViewWindowStatePlan {
                         projectionOutputPositions.getQuick(i),
                         componentIndex,
                         componentOffsets.getQuick(componentIndex),
-                        components.getQuick(componentIndex)
+                        components.getQuick(componentIndex),
+                        projectionFunctionComponents.getQuick(i)
                 ));
             }
             return new LiveViewWindowStatePlan(
@@ -395,6 +420,114 @@ public final class LiveViewWindowStatePlan {
                     ),
                     offset
             );
+        }
+
+        /**
+         * Drops every component whose whole image already sits inside another's, moving
+         * its projections onto that host. This is what takes
+         * {@code sum(x) + avg(x) + count(x)} from two components and 32 inline bytes to
+         * one component and 24: the count reads the counter the sum already keeps rather
+         * than persisting a second copy of it.
+         * <p>
+         * The fold is a function of the component <b>set</b> and not of the order the
+         * projections were added in, which it has to be - the manifest it feeds is
+         * compared byte-for-byte against a predecessor's, so a fold that followed
+         * SELECT-list order would make reordering two outputs force a conversion seal.
+         * Where more than one host could serve, the smallest encoded identity wins, which
+         * is the order the layout is assigned in anyway.
+         * <p>
+         * A host must be strictly wider than its guest, so the relation is a strict
+         * partial order and cannot cycle. Guests are still resolved widest-first and a
+         * host that is itself folded is skipped, so a chain - which no pair in
+         * {@link LiveViewAccumulatorDescriptor#derivedStateOffset}'s table forms today -
+         * would collapse one link at a time rather than leave a projection pointing at a
+         * component that is no longer there.
+         */
+        private void foldDerivedComponents() {
+            final int n = components.size();
+            if (n < 2) {
+                return;
+            }
+            final int[] byDescendingWidth = orderByDescendingWidth();
+            final int[] hostOf = new int[n];
+            Arrays.fill(hostOf, -1);
+            for (int i = 0; i < n; i++) {
+                final int guest = byDescendingWidth[i];
+                final LiveViewAccumulatorDescriptor guestComponent = components.getQuick(guest);
+                int host = -1;
+                for (int candidate = 0; candidate < n; candidate++) {
+                    final LiveViewAccumulatorDescriptor candidateComponent = components.getQuick(candidate);
+                    if (candidate == guest
+                            || hostOf[candidate] != -1
+                            || candidateComponent.getStateLength() <= guestComponent.getStateLength()
+                            || candidateComponent.derivedStateOffset(guestComponent) < 0) {
+                        continue;
+                    }
+                    if (host < 0 || candidateComponent.compareIdentity(components.getQuick(host)) < 0) {
+                        host = candidate;
+                    }
+                }
+                hostOf[guest] = host;
+            }
+            final int[] newIndexOfOld = new int[n];
+            final ObjList<LiveViewAccumulatorDescriptor> kept = new ObjList<>(n);
+            final IntList keptContributors = new IntList(n);
+            final IntList keptContributorPositions = new IntList(n);
+            for (int i = 0; i < n; i++) {
+                if (hostOf[i] != -1) {
+                    // A folded component's contributor goes with it: the host has its own,
+                    // and it is the only one whose image is the whole component.
+                    newIndexOfOld[i] = -1;
+                    continue;
+                }
+                newIndexOfOld[i] = kept.size();
+                kept.add(components.getQuick(i));
+                keptContributors.add(componentContributors.getQuick(i));
+                keptContributorPositions.add(componentContributorOutputPositions.getQuick(i));
+            }
+            if (kept.size() == n) {
+                return;
+            }
+            for (int i = 0, m = projectionComponents.size(); i < m; i++) {
+                final int old = projectionComponents.getQuick(i);
+                projectionComponents.setQuick(i, newIndexOfOld[hostOf[old] != -1 ? hostOf[old] : old]);
+            }
+            components.clear();
+            components.addAll(kept);
+            componentContributors.clear();
+            componentContributors.addAll(keptContributors);
+            componentContributorOutputPositions.clear();
+            componentContributorOutputPositions.addAll(keptContributorPositions);
+        }
+
+        /**
+         * Orders the component indexes by descending state length, ties broken by encoded
+         * identity so the answer does not depend on insertion order.
+         */
+        private int[] orderByDescendingWidth() {
+            final int n = components.size();
+            final int[] order = new int[n];
+            for (int i = 0; i < n; i++) {
+                order[i] = i;
+            }
+            for (int i = 1; i < n; i++) {
+                final int candidate = order[i];
+                int j = i - 1;
+                while (j >= 0 && isWiderThan(candidate, order[j])) {
+                    order[j + 1] = order[j];
+                    j--;
+                }
+                order[j + 1] = candidate;
+            }
+            return order;
+        }
+
+        private boolean isWiderThan(int left, int right) {
+            final LiveViewAccumulatorDescriptor a = components.getQuick(left);
+            final LiveViewAccumulatorDescriptor b = components.getQuick(right);
+            return a.getStateLength() != b.getStateLength()
+                    ? a.getStateLength() > b.getStateLength()
+                    : a.compareIdentity(b) < 0;
         }
 
         /**

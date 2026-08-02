@@ -55,7 +55,9 @@ import org.junit.Test;
  * most, because everything the window-state root will do rests on them:
  * <ul>
  *     <li><b>sharing is proved, not guessed.</b> Two calls collapse onto one component
- *     only when their family, argument and contribution predicate all match. The HDFC
+ *     when their identities match outright, and a third folds onto that component when
+ *     its whole image is provably a slice of it - but never across arguments or
+ *     contribution predicates, whichever of the two relations is in play. The HDFC
  *     shape is the required negative control: {@code count(cod_acct_no)} must not read
  *     the counter inside {@code sum(amt_txn)}, because the two disagree on every row
  *     where exactly one column is null;</li>
@@ -148,37 +150,143 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testCountOverTheSummedColumnKeepsItsOwnComponentForNow() throws Exception {
+    public void testCountOverTheSummedColumnDerivesFromTheSumsCounter() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();
-            // sum and avg collapse; count(x) does not yet, because deriving a count from
-            // another family's counter is the next step's relation rather than a merge of
-            // identical descriptors. The fused entry is therefore 32 bytes here and becomes
-            // 24 once the derivation lands.
+            // The acceptance shape: three calls, one 16-byte accumulator, a 24-byte fused
+            // entry. sum and avg merge on identical identities; count folds onto the
+            // counter beside their sum, which it may because both count the finite values
+            // of the same column.
             assertPlan(
                     "select ts, sym, sum(x) over w as s, avg(x) over w as a, count(x) over w as c "
                             + "from base window w as (partition by sym order by ts anchor daily '00:00')",
                     plan -> {
                         Assert.assertNotNull(plan);
-                        Assert.assertEquals(2, plan.getComponentCount());
+                        Assert.assertEquals(1, plan.getComponentCount());
                         Assert.assertEquals(3, plan.getProjectionCount());
+                        Assert.assertEquals(ANCHOR_BYTES + SUM_STATE_BYTES, plan.getTotalInlineStateBytes());
+                        Assert.assertEquals(
+                                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        for (int i = 0; i < 3; i++) {
+                            Assert.assertEquals(
+                                    "every projection reads the one accumulator",
+                                    0,
+                                    plan.getProjection(i).getComponentIndex()
+                            );
+                        }
+
+                        // The two that persist the component read the whole of it; the
+                        // derived one reads the counter inside it and stops there.
+                        final LiveViewAccumulatorProjection sum = plan.getProjection(0);
+                        final LiveViewAccumulatorProjection count = plan.getProjection(2);
+                        Assert.assertFalse(sum.isDerived());
+                        Assert.assertFalse(plan.getProjection(1).isDerived());
+                        Assert.assertTrue(count.isDerived());
+                        Assert.assertEquals(sum.getComponentStateOffset(), sum.getFunctionStateOffset());
+                        Assert.assertEquals(SUM_STATE_BYTES, sum.getFunctionStateLength());
+                        Assert.assertEquals(count.getNonNullCountFieldOffset(), count.getFunctionStateOffset());
+                        Assert.assertEquals(COUNT_STATE_BYTES, count.getFunctionStateLength());
+                        Assert.assertEquals(
+                                "the derived slice sits inside the host, not beside it",
+                                count.getComponentStateOffset() + Double.BYTES,
+                                count.getFunctionStateOffset()
+                        );
+
+                        // The count freezes eight bytes and the component is sixteen, so it
+                        // could never write the image it reads. The contributor stays a
+                        // function that persists the whole component.
+                        Assert.assertSame(plan.getProjectionFunction(0), plan.getContributor(0));
+                        Assert.assertNotSame(plan.getProjectionFunction(2), plan.getContributor(0));
+                    }
+            );
+
+            // Which call comes first must not decide any of it: the fold reads the
+            // component set, and a manifest that moved with SELECT-list order would make
+            // reordering two outputs force a conversion seal.
+            Assert.assertArrayEquals(
+                    manifestOf("select ts, sym, sum(x) over w as s, count(x) over w as c "
+                            + "from base window w as (partition by sym order by ts anchor daily '00:00')"),
+                    manifestOf("select ts, sym, count(x) over w as c, sum(x) over w as s "
+                            + "from base window w as (partition by sym order by ts anchor daily '00:00')")
+            );
+        });
+    }
+
+    @Test
+    public void testCountWithNoSumBesideItKeepsItsOwnComponent() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // Nothing to fold onto: the counter is the whole durable state, and its own
+            // family is what persists it. Eight inline bytes, not sixteen.
+            assertPlan(
+                    "select ts, sym, count(x) over w as c "
+                            + "from base window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(
+                                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(ANCHOR_BYTES + COUNT_STATE_BYTES, plan.getTotalInlineStateBytes());
+                        Assert.assertFalse(plan.getProjection(0).isDerived());
+                        Assert.assertSame(plan.getProjectionFunction(0), plan.getContributor(0));
+                    }
+            );
+            // And a sum over a different column is not something to fold onto either.
+            assertPlan(
+                    "select ts, sym, sum(y) over w as s, count(x) over w as c "
+                            + "from base window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(2, plan.getComponentCount());
                         Assert.assertEquals(
                                 ANCHOR_BYTES + SUM_STATE_BYTES + COUNT_STATE_BYTES,
                                 plan.getTotalInlineStateBytes()
                         );
-                        Assert.assertEquals(
-                                "sum and avg read one component",
-                                plan.getProjection(0).getComponentIndex(),
-                                plan.getProjection(1).getComponentIndex()
-                        );
-                        Assert.assertNotEquals(
-                                "count(x) may not read the sum's counter yet",
-                                plan.getProjection(0).getComponentIndex(),
-                                plan.getProjection(2).getComponentIndex()
-                        );
                     }
             );
         });
+    }
+
+    @Test
+    public void testDerivationIsProvedFromTheComponentIdentityAndNotTheArithmetic() {
+        final LiveViewAccumulatorDescriptor sumCount = component(
+                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        final LiveViewAccumulatorDescriptor count = component(
+                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        // A component always contains itself, at offset zero.
+        Assert.assertEquals(0, sumCount.derivedStateOffset(sumCount));
+        // And it contains the bare counter over its own argument, at the counter's own
+        // field offset - which is the whole of what makes count(x) free beside sum(x).
+        Assert.assertEquals(
+                sumCount.getFieldOffset(LiveViewAccumulatorDescriptor.FIELD_NON_NULL_COUNT),
+                sumCount.derivedStateOffset(count)
+        );
+        // Not the other way round: eight bytes do not contain sixteen.
+        Assert.assertEquals(-1, count.derivedStateOffset(sumCount));
+        // A different column is a different accumulator however alike the families read.
+        Assert.assertEquals(-1, sumCount.derivedStateOffset(component(
+                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                1,
+                ColumnType.DOUBLE
+        )));
+        // And so is a counter over a differently typed argument: a SYMBOL count tests for
+        // null where the DOUBLE accumulators test for finiteness, so the two disagree on
+        // any infinity even before their columns do.
+        Assert.assertEquals(-1, sumCount.derivedStateOffset(component(
+                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                2,
+                ColumnType.SYMBOL
+        )));
     }
 
     @Test
@@ -516,7 +624,8 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     }
 
     private void createBaseTable() throws Exception {
-        execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+        execute("create table base (ts timestamp, sym symbol, x double, y double) "
+                + "timestamp(ts) partition by day wal");
     }
 
     @FunctionalInterface

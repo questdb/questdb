@@ -86,7 +86,9 @@ import java.util.Arrays;
  * </ul>
  * The end-to-end cases drive the target shape: an anchored cumulative sum and count per
  * account, whose two calls deliberately do <b>not</b> share a counter - their arguments
- * differ - but do share one tree, one key and one 32-byte inline payload.
+ * differ - but do share one tree, one key and one 32-byte inline payload. Beside it sits
+ * the shape that does share one: {@code sum}, {@code avg} and {@code count} over a single
+ * column, persisted as one accumulator and read back out of its fields.
  */
 public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
 
@@ -308,6 +310,52 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                 Assert.assertEquals("count(*) keeps the root it has today", 1, headFunctionRootCount());
                 Assert.assertEquals(ANCHOR_BYTES + SUM_STATE_BYTES, headWindowPayloadBytes());
                 assertHeadRestoresRuntime(instance());
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testDerivedProjectionsSealOneAccumulatorAndRestoreFromItsFields() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // Three calls over one column: the acceptance shape for derived projections.
+            // sum and avg merge on identical identities and count folds onto the counter
+            // beside their sum, so the durable state is one 16-byte accumulator and the
+            // fused entry is 24 bytes rather than the 32 two components would cost.
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, cod_acct_no, sum(amt_txn) over w as s, "
+                    + "avg(amt_txn) over w as a, count(amt_txn) over w as c "
+                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertAccount(job, "2026-01-01T09:00:00.000000Z", "acct-1", 5.0);
+                insertAccount(job, "2026-01-01T09:00:10.000000Z", "acct-2", 7.0);
+                insertAccount(job, "2026-01-01T09:00:20.000000Z", "acct-1", 11.0);
+                // A null contributes to neither the sum nor the counter, which is what
+                // makes one counter serve both - the count would have skipped this row on
+                // its own too.
+                insertAccount(job, "2026-01-01T09:00:30.000000Z", "acct-1", null);
+                // An all-null account, so a restored counter of zero has to come back as
+                // zero rather than as an absent entry.
+                insertAccount(job, "2026-01-01T09:00:40.000000Z", "acct-3", null);
+
+                final LiveViewInstance instance = instance();
+                final LiveViewWindowStatePlan plan = instance.getAnchorWindow().getCheckpointWindowStatePlan();
+                Assert.assertNotNull(plan);
+                Assert.assertEquals("one accumulator serves all three calls", 1, plan.getComponentCount());
+                Assert.assertEquals(3, plan.getProjectionCount());
+                Assert.assertTrue(isFusedHead());
+                Assert.assertEquals(ANCHOR_BYTES + SUM_STATE_BYTES, headWindowPayloadBytes());
+                Assert.assertEquals(3, headWindowEntryCount());
+                Assert.assertEquals("no call keeps a root of its own", 0, headFunctionRootCount());
+
+                // The restore is where a derivation earns its correctness: the count's map
+                // holds a counter of its own, filled from a field of the host's slice, and
+                // pointing its decoder at the component's offset would read the sum as a
+                // count. The snapshot comparison covers every projection's map.
+                assertHeadRestoresRuntime(instance);
+                assertDerivedViewMatchesRecompute();
                 assertNoRefreshFaults("lv");
             }
         });
@@ -665,6 +713,30 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                 .noLeakCheck().noRandomAccess()
                 .returns("checkpoint_repair_plan\tcheckpoint_repair_last_disposition\n"
                         + plan + "\t" + disposition + "\n");
+    }
+
+    /**
+     * The {@link #assertViewMatchesRecompute()} counterpart for the three-call shape:
+     * the outputs a derived binding produces must be the ones three independent
+     * accumulators would have.
+     */
+    private void assertDerivedViewMatchesRecompute() throws Exception {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
+        final String frame = "over (partition by cod_acct_no, bucket order by created_at "
+                + "rows between unbounded preceding and current row)";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(select created_at, cod_acct_no, "
+                        + "sum(amt_txn) " + frame + " as s, "
+                        + "avg(amt_txn) " + frame + " as a, "
+                        + "count(amt_txn) " + frame + " as c "
+                        + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)"
+                        + ") order by 2, 1",
+                "(lv) order by 2, 1",
+                LOG,
+                true
+        );
     }
 
     /**

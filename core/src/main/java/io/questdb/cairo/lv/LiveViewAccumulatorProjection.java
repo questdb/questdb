@@ -35,6 +35,17 @@ import org.jetbrains.annotations.NotNull;
  * those fields into the value the output column emits. Several projections may name
  * one component - that sharing is the whole point of the fused layout - and the
  * component's own identity, not any projection, is what the manifest persists.
+ *
+ * <h2>Derived projections</h2>
+ * A projection's component need not be the one its own function would have persisted
+ * alone. A {@code count(x)} beside a {@code sum(x)} reads the counter the sum already
+ * keeps, which the plan admits only where
+ * {@link LiveViewAccumulatorDescriptor#derivedStateOffset} proves the count's whole
+ * image sits verbatim inside the sum's. Such a projection is <b>derived</b>: it
+ * contributes nothing, and the slice its function's own decoder reads is narrower than
+ * the component - {@link #getFunctionStateOffset()} and
+ * {@link #getFunctionStateLength()} are that slice, and are what a restore hands the
+ * function rather than the component's own bounds.
  * <p>
  * <b>A projection is not checkpoint-stateless.</b> A derived {@code avg} or
  * {@code count} still depends on every row its component has absorbed, so it keeps
@@ -62,6 +73,9 @@ public final class LiveViewAccumulatorProjection {
     private final int componentIndex;
     private final int componentStateLength;
     private final int componentStateOffset;
+    private final int functionStateLength;
+    private final int functionStateOffset;
+    private final boolean isDerived;
     private final int kind;
     private final int nonNullCountFieldOffset;
     private final int outputPosition;
@@ -76,22 +90,37 @@ public final class LiveViewAccumulatorProjection {
      * @param componentIndex       index into the plan's ordered component list
      * @param componentStateOffset the component's offset in the fused scalar payload
      * @param component            the component this projection reads
+     * @param functionComponent    the component the projecting function persists on its
+     *                             own, which is {@code component} unless the plan folded
+     *                             it into a wider host
      */
     public LiveViewAccumulatorProjection(
             int kind,
             int outputPosition,
             int componentIndex,
             int componentStateOffset,
-            @NotNull LiveViewAccumulatorDescriptor component
+            @NotNull LiveViewAccumulatorDescriptor component,
+            @NotNull LiveViewAccumulatorDescriptor functionComponent
     ) {
         if (!isCompatible(component.getFamily(), kind)) {
             throw new IllegalArgumentException("live view accumulator projection does not fit its component family");
+        }
+        final int derivedOffset = component.derivedStateOffset(functionComponent);
+        if (derivedOffset < 0) {
+            // Unreachable from the plan, which folds only where the containment holds.
+            // Stated here anyway: this constructor is what turns the claim into the
+            // offsets a restore feeds a decoder, and a wrong one reads a neighbour's
+            // bytes at a length that looks right.
+            throw new IllegalArgumentException("live view accumulator projection does not fit its component state");
         }
         this.kind = kind;
         this.outputPosition = outputPosition;
         this.componentIndex = componentIndex;
         this.componentStateOffset = componentStateOffset;
         this.componentStateLength = component.getStateLength();
+        this.isDerived = derivedOffset != 0 || component.getStateLength() != functionComponent.getStateLength();
+        this.functionStateOffset = componentStateOffset + derivedOffset;
+        this.functionStateLength = functionComponent.getStateLength();
         this.sumFieldOffset = absoluteFieldOffset(component, componentStateOffset, LiveViewAccumulatorDescriptor.FIELD_SUM);
         this.nonNullCountFieldOffset = absoluteFieldOffset(
                 component,
@@ -135,6 +164,25 @@ public final class LiveViewAccumulatorProjection {
         return componentStateOffset;
     }
 
+    /**
+     * The width of the projecting function's own whole-state image, which equals
+     * {@link #getComponentStateLength()} unless this projection is derived.
+     */
+    public int getFunctionStateLength() {
+        return functionStateLength;
+    }
+
+    /**
+     * Where the projecting function's own whole-state image begins in the fused scalar
+     * payload. A restore hands the function this rather than the component's offset, and
+     * requires its decoder to stop exactly {@link #getFunctionStateLength()} bytes later:
+     * a derived {@code count} reads the host's counter and nothing else, so the slice it
+     * consumes is not the slice the component occupies.
+     */
+    public int getFunctionStateOffset() {
+        return functionStateOffset;
+    }
+
     public int getKind() {
         return kind;
     }
@@ -157,6 +205,16 @@ public final class LiveViewAccumulatorProjection {
      */
     public int getSumFieldOffset() {
         return sumFieldOffset;
+    }
+
+    /**
+     * Whether this projection reads a component wider than the one its own function
+     * persists alone - a {@code count(x)} bound onto the counter inside a
+     * {@code sum(x)}. A derived projection is never a component's contributor: its
+     * function freezes an image narrower than the component, so it cannot write one.
+     */
+    public boolean isDerived() {
+        return isDerived;
     }
 
     private static int absoluteFieldOffset(LiveViewAccumulatorDescriptor component, int componentStateOffset, int field) {

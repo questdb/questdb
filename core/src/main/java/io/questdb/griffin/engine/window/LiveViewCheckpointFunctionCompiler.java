@@ -625,12 +625,14 @@ public final class LiveViewCheckpointFunctionCompiler {
      * <p>
      * Sharing is proved from the component identity alone and never from SQL text.
      * {@code sum(x)} and {@code avg(x)} over one window merge because both declare the
-     * same {@code (family, argument, contribution predicate, codec)}; the HDFC shape's
-     * {@code sum(amt)} and {@code count(acct)} do not, because their arguments differ
-     * and so, on any row where exactly one is null, do their counters.
-     * <p>
-     * Nothing persists the plan yet. The seal still writes one legacy root per
-     * function, and the plan's first durable consumer is the window-state root.
+     * same {@code (family, argument, contribution predicate, codec)}, and a
+     * {@code count(x)} over the same argument folds onto their counter because that
+     * counter is provably the one it would have persisted alone. The HDFC shape's
+     * {@code sum(amt)} and {@code count(acct)} do neither, because their arguments
+     * differ and so, on any row where exactly one is null, do their counters. Which of
+     * the two relations applies is {@link LiveViewWindowStatePlan.Builder}'s to decide;
+     * this method's job is to hand it a component only where every part of the identity
+     * can be named.
      *
      * @param functions                 every SELECT-list function, in output order
      * @param anchorableWindowFunctions the subset the anchor dispatches

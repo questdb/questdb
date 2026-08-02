@@ -64,6 +64,17 @@ import java.util.Arrays;
  * The window, frame and anchor identity are <b>not</b> repeated here: a component
  * lives under exactly one window-state root, and the root carries them, so a
  * component identity is only ever compared against another under the same root.
+ *
+ * <h2>One component may contain another</h2>
+ * Two identities that differ can still describe one durable image, when one family's
+ * state <i>contains</i> the other's verbatim: the counter a {@code count(x)} persists
+ * on its own is the same counter a {@code sum(x)} over the same argument already keeps
+ * beside its sum. {@link #derivedStateOffset} is where that containment is stated, one
+ * proved pair at a time, and it is what lets a fused group persist
+ * {@code sum(x) + avg(x) + count(x)} as one 16-byte component rather than 24 bytes in
+ * two. Containment is strictly narrower than identity and is never assumed from the
+ * arithmetic alone - the argument and the contribution predicate still have to match,
+ * for the same reason two identities do.
  * <p>
  * {@code count(*)} is a row-count component rather than a non-null count and gets no
  * descriptor from this class at all: it has no argument, so it can never be
@@ -258,6 +269,51 @@ public final class LiveViewAccumulatorDescriptor {
             }
         }
         return a.length - b.length;
+    }
+
+    /**
+     * Returns the offset inside this component's state at which {@code other}'s whole
+     * state image appears verbatim, or {@code -1} when it does not appear at all.
+     * <p>
+     * A non-negative answer is the licence for one durable component to serve a
+     * projection whose own function persists {@code other}: the host writes the image,
+     * and the guest's decoder - unchanged, the one it already had - reads its own bytes
+     * out of the host's slice at this offset. That is how {@code count(x)} stops costing
+     * a component of its own beside {@code sum(x)}.
+     * <p>
+     * The table below is deliberately a list of proved pairs rather than a rule derived
+     * from the families' fields. A containment claim is a claim about two <b>codecs</b>:
+     * it says the guest's {@code freezeCheckpointState} image is byte-for-byte a run
+     * inside the host's, which is a fact about the two implementations at their current
+     * versions and not something the field offsets alone establish. Both codec versions
+     * are therefore pinned, so a bump on either side withdraws the claim instead of
+     * silently carrying it onto a layout nobody checked.
+     * <p>
+     * Everything the identity comparison requires still applies to a derivation - the
+     * same argument, the same contribution predicate - because a counter that counts
+     * different rows is a different counter however it is stored. The HDFC shape is the
+     * negative control: {@code count(cod_acct_no)} beside {@code sum(amt_txn)} matches
+     * on family containment and on nothing else, so it gets {@code -1} and keeps its own
+     * component.
+     */
+    public int derivedStateOffset(@NotNull LiveViewAccumulatorDescriptor other) {
+        if (isSameIdentity(other)) {
+            return 0;
+        }
+        if (contributionKind != other.contributionKind
+                || argumentColumnIndex != other.argumentColumnIndex
+                || argumentColumnType != other.argumentColumnType) {
+            return -1;
+        }
+        // The one cross-family containment this build has proved. A DOUBLE sum/avg
+        // freezes (sum, nonNullCount) and a count freezes that same counter alone, so
+        // the count's whole image is the host's second field - and the two count the
+        // same rows, since contributionKind has already been required to match.
+        if (family == FAMILY_DOUBLE_SUM_COUNT && codecVersion == 1
+                && other.family == FAMILY_NON_NULL_COUNT && other.codecVersion == 1) {
+            return getFieldOffset(FIELD_NON_NULL_COUNT);
+        }
+        return -1;
     }
 
     public int getArgumentColumnIndex() {

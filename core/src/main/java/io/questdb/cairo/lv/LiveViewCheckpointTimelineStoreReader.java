@@ -610,6 +610,11 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
      * - so a component several projections read is fanned into each of their maps from
      * the same bytes. That is what makes this the lowest-risk first implementation of
      * disk fusion: one durable tree while the runtime maps stay where they are.
+     * <p>
+     * The fan-out is what a derived projection needs too, and needs nothing more. A
+     * {@code count} folded onto a sum's counter has a map of its own holding a counter
+     * of its own; restoring it is a matter of pointing its unchanged decoder at the
+     * counter's offset inside the host's slice, which the projection carries.
      */
     private void restoreWindowState(@NotNull LiveViewWindow anchorWindow, long baselineGeneration) {
         final LiveViewWindowStatePlan plan = anchorWindow.getCheckpointWindowStatePlan();
@@ -651,16 +656,20 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 if (!value.isNew()) {
                     throw invalid("window state root contains a duplicate partition key");
                 }
+                // The slice is the projecting function's own image, which is the whole
+                // component only while the projection is not derived: a count folded onto
+                // a sum's counter decodes eight bytes at the counter's offset, and handing
+                // it the component's would read the sum as a count.
                 final long consumed = function.restoreCheckpointState(
                         source,
-                        projection.getComponentStateOffset(),
+                        projection.getFunctionStateOffset(),
                         value
                 );
-                if (consumed != projection.getComponentStateOffset() + projection.getComponentStateLength()) {
+                if (consumed != projection.getFunctionStateOffset() + projection.getFunctionStateLength()) {
                     throw invalid("window state component decoder did not consume its slice exactly [consumed=")
                             .put(consumed)
                             .put(", expected=")
-                            .put(projection.getComponentStateOffset() + projection.getComponentStateLength())
+                            .put(projection.getFunctionStateOffset() + projection.getFunctionStateLength())
                             .put(']');
                 }
             }
