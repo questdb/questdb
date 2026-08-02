@@ -40,6 +40,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
@@ -610,7 +611,9 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
         assertMemoryLeak(() -> {
-            createView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
+            // A residual function, because its own dirty map is what this case breaks -
+            // see createUnfusedView.
+            createUnfusedView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 assertDirtySetsClearedByPublish();
@@ -743,7 +746,9 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         // Four rows per boundary, so the seed seals and the batch below is one boundary.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
         assertMemoryLeak(() -> {
-            createView(
+            // A residual function, because the removal branch this case holds to its
+            // contract is the per-function one - see createUnfusedView.
+            createUnfusedView(
                     NOON_ANCHOR,
                     "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
                             + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
@@ -962,8 +967,14 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     /**
-     * Asserts every window function's root at the head boundary names exactly
+     * Asserts every per-partition state root at the head boundary names exactly
      * {@code expected} partitions.
+     * <p>
+     * This view's two calls fuse, so the head's state root is one window root holding
+     * both of them and the function directory is empty. The legacy arm is kept because
+     * the shape is a property of the compiled plan rather than of the assertion: a view
+     * the plan declines still seals one root per function, and the count means the same
+     * thing either way.
      */
     private void assertHeadRootPartitionCount(int expected) {
         final LiveViewInstance instance = viewInstance();
@@ -979,6 +990,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
                     LiveViewCheckpointFunctionDirectory functions = new LiveViewCheckpointFunctionDirectory(configuration);
                     LiveViewCheckpointFunctionRoot functionRoot = new LiveViewCheckpointFunctionRoot(configuration);
+                    LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(configuration);
                     LiveViewCheckpointPartitionMapReader partitions = new LiveViewCheckpointPartitionMapReader(configuration)
             ) {
                 timeline.of(dir);
@@ -988,20 +1000,38 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
                 final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
                 final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
+                final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
                 root.of(dir, head.rootRef);
+                root.getStateRootRef(stateRootRef);
+                int stateRoots = 0;
+                if (!stateRootRef.isNull() && windowRoot.ofIfWindowRoot(dir, stateRootRef)) {
+                    windowRoot.getPartitionMapRootRef(partitionMapRoot);
+                    assertPartitionCount("window state root", expected, partitions, partitionMapRoot);
+                    stateRoots++;
+                }
                 root.getFunctionDirectoryRef(functionDirectoryRef);
                 functions.of(dir, functionDirectoryRef);
-                Assert.assertTrue("the view declares checkpoint-capable functions", functions.size() > 0);
                 for (int i = 0, n = functions.size(); i < n; i++) {
                     functions.getRootRef(i, functionRootRef);
                     functionRoot.of(dir, functionRootRef);
                     functionRoot.getPartitionMapRootRef(partitionMapRoot);
-                    final int[] count = {0};
-                    partitions.iterateAll(partitionMapRoot, partition -> count[0]++);
-                    Assert.assertEquals("function " + i + " root partition count", expected, count[0]);
+                    assertPartitionCount("function " + i + " root", expected, partitions, partitionMapRoot);
+                    stateRoots++;
                 }
+                Assert.assertTrue("the view declares per-partition checkpoint state", stateRoots > 0);
             }
         }
+    }
+
+    private static void assertPartitionCount(
+            String what,
+            int expected,
+            LiveViewCheckpointPartitionMapReader partitions,
+            LiveViewCheckpointPageRef partitionMapRoot
+    ) {
+        final int[] count = {0};
+        partitions.iterateAll(partitionMapRoot, partition -> count[0]++);
+        Assert.assertEquals(what + " partition count", expected, count[0]);
     }
 
     /**
@@ -1205,6 +1235,29 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         execute("insert into tx values " + values);
         drainWalQueue();
         driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * The same view, over an argument the fused window-state plan declines: an
+     * expression is not a direct column reference, and SQL text equality is not a proof
+     * that two expressions are one accumulator.
+     * <p>
+     * A case uses this when what it holds to its contract is the <b>per-function</b>
+     * removal or dirty-set branch. Those still run for every residual function - a ring
+     * window, {@code count(*)}, an expression argument - but a fused group takes its key
+     * domain and its removals from the anchor instead, so poking a function's own
+     * tombstone or eviction bit there describes a state nothing in that path reads.
+     */
+    private void createUnfusedView(String anchorTime, String seedRows) throws Exception {
+        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
+                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("insert into tx values " + seedRows);
+        drainWalQueue();
+        execute("create live view lv flush every 100ms start from beginning as "
+                + "select created_at, cod_acct_no, "
+                + "sum(amt_txn + 0.0) over w as cumulative_sum "
+                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '"
+                + anchorTime + "')");
     }
 
     private void createView(String anchorTime, String seedRows) throws Exception {

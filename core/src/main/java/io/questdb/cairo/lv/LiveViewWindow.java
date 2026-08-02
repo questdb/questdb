@@ -602,6 +602,38 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull ObjList<byte[]> removedKeysOut,
             boolean incremental
     ) {
+        return freezeCheckpointEntries(
+                keyBuffer,
+                keysOut,
+                valuesOut,
+                removedKeysOut,
+                incremental,
+                LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE
+        );
+    }
+
+    /**
+     * As {@link #freezeCheckpointEntries(MemoryCARW, ObjList, LongList, ObjList, boolean)},
+     * but charging {@code entryStateBytes} of state per key rather than the anchor
+     * value's own eight.
+     * <p>
+     * A fused seal writes one entry per key holding the anchor value <b>and</b> every
+     * grouped accumulator component, so that entry is what the window's running logical
+     * total has to describe: the grouped functions no longer charge anything of their
+     * own. The two figures have to be produced by the same walk, because an incremental
+     * freeze adds and subtracts against a total an earlier seal left behind, and a width
+     * that changed between them would leave the running total describing neither root.
+     *
+     * @param entryStateBytes the state bytes one published entry carries for a key
+     */
+    public long freezeCheckpointEntries(
+            @NotNull MemoryCARW keyBuffer,
+            @NotNull ObjList<byte[]> keysOut,
+            @NotNull LongList valuesOut,
+            @NotNull ObjList<byte[]> removedKeysOut,
+            boolean incremental,
+            int entryStateBytes
+    ) {
         keysOut.clear();
         valuesOut.clear();
         removedKeysOut.clear();
@@ -654,7 +686,7 @@ public class LiveViewWindow implements QuietCloseable {
                         // drive the total below what the root actually holds.
                         logicalBytes = checkedAdd(
                                 logicalBytes,
-                                -((long) key.length + LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE)
+                                -((long) key.length + entryStateBytes)
                         );
                     }
                     continue;
@@ -669,10 +701,7 @@ public class LiveViewWindow implements QuietCloseable {
             keysOut.add(key);
             valuesOut.add(anchorValue.getLong(SLOT_ANCHOR_VALUE));
             if (!incremental || isNewSinceCheckpoint) {
-                logicalBytes = checkedAdd(
-                        logicalBytes,
-                        (long) key.length + LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE
-                );
+                logicalBytes = checkedAdd(logicalBytes, (long) key.length + entryStateBytes);
             }
         }
         return logicalBytes;

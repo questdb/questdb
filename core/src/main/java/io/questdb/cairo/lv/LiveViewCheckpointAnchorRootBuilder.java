@@ -176,11 +176,17 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
         mutationCount = 0;
         putKeys.clear();
         segmentUseCounts.clear();
-        oldRootPageSegmentId = oldAnchorRootRef.isNull() ? NO_SEGMENT : oldAnchorRootRef.getSegmentId();
-        if (oldAnchorRootRef.isNull()) {
+        // A predecessor that is not an anchor root at all is the fused window root, and
+        // this build is the conversion away from it: nothing of it can be shared, so the
+        // tree starts empty and every live key is imaged, exactly as the first anchor
+        // root of a timeline does. Its pages are not this root's to release either -
+        // they retire with the boundary that still names them.
+        final boolean hasAnchorPredecessor = !oldAnchorRootRef.isNull()
+                && oldAnchorRoot.ofIfAnchorRoot(checkpointsDir, oldAnchorRootRef);
+        oldRootPageSegmentId = hasAnchorPredecessor ? oldAnchorRootRef.getSegmentId() : NO_SEGMENT;
+        if (!hasAnchorPredecessor) {
             oldPartitionMapRoot.clear();
         } else {
-            oldAnchorRoot.of(checkpointsDir, oldAnchorRootRef);
             if (!Arrays.equals(windowName, oldAnchorRoot.getWindowName())
                     || !Arrays.equals(keySchema, oldAnchorRoot.getKeySchema())
                     || anchorValueType != oldAnchorRoot.getAnchorValueType()) {

@@ -89,6 +89,7 @@ public final class LiveViewWindowStateManifest {
     private final int anchorStateLength;
     private final int anchorStateOffset;
     private final int componentCount;
+    private final int[] componentStateOffsets;
     private final byte[] encoded;
     private final int totalInlineStateBytes;
 
@@ -115,6 +116,10 @@ public final class LiveViewWindowStateManifest {
         this.anchorStateOffset = anchorStateOffset;
         this.anchorStateLength = anchorStateLength;
         this.totalInlineStateBytes = totalInlineStateBytes;
+        this.componentStateOffsets = new int[componentCount];
+        for (int i = 0; i < componentCount; i++) {
+            componentStateOffsets[i] = componentOffsets.getQuick(i);
+        }
         this.encoded = encode(components, componentOffsets);
         LiveViewCheckpointMetadata.validateByteArrayLength(encoded.length, "window state manifest");
     }
@@ -129,6 +134,15 @@ public final class LiveViewWindowStateManifest {
 
     public int getComponentCount() {
         return componentCount;
+    }
+
+    /**
+     * Returns component {@code index}'s offset in the fused scalar payload, in the plan's
+     * canonical identity order. This is where a seal writes that component's whole-state
+     * image and where a restore slices it back out.
+     */
+    public int getComponentStateOffset(int index) {
+        return componentStateOffsets[index];
     }
 
     /**

@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
@@ -40,9 +41,12 @@ import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
+import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewStatePageWriter;
+import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -322,13 +326,25 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
 
     /**
      * Walks every logical boundary the view has published and asserts that every
-     * partition its function root holds carries a whole-state image of exactly
+     * partition carries a whole-state image for {@code function} of exactly
      * {@code expected} bytes, inlined in the leaf and naming no state page.
+     * <p>
+     * Where that image lives is the shape of the boundary rather than of the
+     * declaration: a function the fused plan groups has its image as a slice of the
+     * window root's payload, at the width the manifest lays out for it, and one it
+     * leaves residual has it as the whole scalar of its own function-root entry. The
+     * declared width has to be the same number either way, which is the point of
+     * checking both arms with one expectation.
      */
     private void assertEveryStateImageIsExactly(WindowFunction function, int expected) {
         final LiveViewCheckpointFunctionIdentity identity = function.checkpointFunctionIdentity();
         Assert.assertNotNull(identity);
         final byte[] encodedIdentity = identity.getEncoded();
+        final LiveViewWindow anchorWindow = viewInstance().getAnchorWindow();
+        final LiveViewWindowStatePlan plan = anchorWindow == null
+                ? null
+                : anchorWindow.getCheckpointWindowStatePlan();
+        final LiveViewAccumulatorProjection projection = projectionOf(plan, function);
         int entries = 0;
         try (
                 Path dir = checkpointsDir(viewInstance());
@@ -341,6 +357,7 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
                     LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
                     LiveViewCheckpointFunctionDirectory directory = new LiveViewCheckpointFunctionDirectory(configuration);
                     LiveViewCheckpointFunctionRoot functionRoot = new LiveViewCheckpointFunctionRoot(configuration);
+                    LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(configuration);
                     LiveViewCheckpointPartitionMapReader partitions = new LiveViewCheckpointPartitionMapReader(configuration)
             ) {
                 timeline.of(dir);
@@ -348,9 +365,26 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
                 final LiveViewCheckpointPageRef directoryRef = new LiveViewCheckpointPageRef();
                 final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
                 final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
+                final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
                 final int[] seen = {0};
                 timeline.iterateAll(pin.getTimelineRootRef(), entry -> {
                     root.of(dir, entry.rootRef);
+                    root.getStateRootRef(stateRootRef);
+                    if (projection != null && !stateRootRef.isNull()
+                            && windowRoot.ofIfWindowRoot(dir, stateRootRef)) {
+                        Assert.assertEquals(
+                                "the manifest must lay out " + function.getName() + " at its declared width",
+                                expected,
+                                projection.getComponentStateLength()
+                        );
+                        final int totalInlineStateBytes = windowRoot.getTotalInlineStateBytes();
+                        windowRoot.getPartitionMapRootRef(partitionMapRoot);
+                        partitions.iterateAll(partitionMapRoot, partition -> {
+                            LiveViewCheckpointWindowRoot.readWindowState(partition, totalInlineStateBytes);
+                            seen[0]++;
+                        });
+                        return;
+                    }
                     root.getFunctionDirectoryRef(directoryRef);
                     directory.of(dir, directoryRef);
                     Assert.assertTrue(
@@ -377,6 +411,22 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
             }
         }
         Assert.assertTrue("the view must have sealed partition state for " + function.getName(), entries > 0);
+    }
+
+    /**
+     * Returns the plan's binding for {@code function}, or null when the plan does not
+     * group it and it therefore keeps a root of its own.
+     */
+    private static LiveViewAccumulatorProjection projectionOf(LiveViewWindowStatePlan plan, WindowFunction function) {
+        if (plan == null) {
+            return null;
+        }
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            if (plan.getProjectionFunction(i) == function) {
+                return plan.getProjection(i);
+            }
+        }
+        return null;
     }
 
     private void assertViewMatchesRecompute() throws Exception {

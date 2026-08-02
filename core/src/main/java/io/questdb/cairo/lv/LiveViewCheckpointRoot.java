@@ -77,8 +77,14 @@ public class LiveViewCheckpointRoot implements Closeable {
         reader.close();
     }
 
+    /**
+     * @deprecated the reference is a tagged union of the legacy anchor root and the
+     * fused {@link LiveViewCheckpointWindowRoot}; use {@link #getStateRootRef} and
+     * decode by page kind. Retained for the callers still written in anchor terms.
+     */
+    @Deprecated
     public void getAnchorRootRef(@NotNull LiveViewCheckpointPageRef out) {
-        out.of(anchorRootRef.getSegmentId(), anchorRootRef.getOffset(), anchorRootRef.getLength());
+        getStateRootRef(out);
     }
 
     public long getCheckpointId() {
@@ -99,6 +105,21 @@ public class LiveViewCheckpointRoot implements Closeable {
 
     public long getSegmentId(int index) {
         return segmentIds[index];
+    }
+
+    /**
+     * Returns the root of this boundary's window state, or a null reference when the
+     * view has no anchored window.
+     * <p>
+     * The page it names is a tagged union decoded by page kind: a
+     * {@link LiveViewCheckpointAnchorRoot} selects the legacy anchor plus
+     * function-directory restore, a {@link LiveViewCheckpointWindowRoot} selects the
+     * fused one, and any other kind is corruption. The checkpoint root's own bytes did
+     * not have to change for the second kind to exist, which is what lets a new reader
+     * read every old checkpoint.
+     */
+    public void getStateRootRef(@NotNull LiveViewCheckpointPageRef out) {
+        out.of(anchorRootRef.getSegmentId(), anchorRootRef.getOffset(), anchorRootRef.getLength());
     }
 
     public int getSegmentIdCount() {

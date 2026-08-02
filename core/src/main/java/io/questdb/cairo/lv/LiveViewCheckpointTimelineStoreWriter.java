@@ -37,6 +37,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.BoolList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
@@ -1217,6 +1218,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     checkpointsDir,
                     oldFunctionDirectory,
                     oldDirectoryRoot,
+                    oldAnchorRootRef,
                     previousEntry.maxTimestamp
             ) : null) {
                 // The generation the seal is building on top of. onCheckpointPersisted
@@ -1331,6 +1333,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             if (boundary.anchor != null) {
                 boundary.anchor.window.onCheckpointPersisted(boundary.anchor.logicalStateBytes, generation);
             }
+            if (boundary.windowState != null) {
+                final FrozenWindowState windowState = boundary.windowState;
+                windowState.window.onCheckpointPersisted(windowState.logicalStateBytes, generation);
+                // A grouped projection charges nothing of its own - the fused entry's
+                // whole width is the window's - but it still has to be told the seal
+                // happened, or its dirty set would grow for the life of the view and its
+                // baseline would never reach the generation the next seal builds on.
+                for (int i = 0, n = windowState.plan.getProjectionCount(); i < n; i++) {
+                    windowState.plan.getProjectionFunction(i).onCheckpointPersisted(0, generation);
+                }
+            }
             for (int i = 0, n = boundary.functions.size(); i < n; i++) {
                 final FrozenFunction frozen = boundary.functions.getQuick(i);
                 frozen.function.onCheckpointPersisted(frozen.logicalStateBytes, generation);
@@ -1408,6 +1421,24 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
+     * Whether every contributor the plan names still holds a dirty set recorded against
+     * the generation this seal builds on. One that does not - a sweep whose removals it
+     * declined to record, a publication that moved the generation under it - demotes the
+     * whole fused root to a full scan, because the group's keys are imaged together and
+     * a partial dirty set would leave some of them stale.
+     */
+    private static boolean canFreezeComponentsIncrementally(LiveViewWindowStatePlan plan, long baselineGeneration) {
+        for (int i = 0, n = plan.getComponentCount(); i < n; i++) {
+            final WindowFunction contributor = plan.getContributor(i);
+            if (contributor.isCheckpointFullScanRequired()
+                    || contributor.getCheckpointBaselineGeneration() != baselineGeneration) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Removes {@code segmentId} from a root's referenced-segment list. The
      * segment a publication introduces is registered with its own root count, so
      * it must not also be counted through the per-root reference changes.
@@ -1439,6 +1470,25 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             bytes = checkedAdd(bytes, entry.getStatePageRef(i).getDecodedLength());
         }
         return bytes;
+    }
+
+    /**
+     * Whether {@code plan} carries {@code function} as one of its output projections,
+     * and so holds its state in the fused root rather than in a root of its own.
+     * Identity comparison: the plan holds non-owning references to the very functions
+     * the factory compiled, so two distinct functions are two distinct outputs however
+     * alike their identities read.
+     */
+    private static boolean isGroupedProjection(@Nullable LiveViewWindowStatePlan plan, WindowFunction function) {
+        if (plan == null) {
+            return false;
+        }
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            if (plan.getProjectionFunction(i) == function) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static CairoException missingRedirect(LiveViewCheckpointStatePageRef ref) {
@@ -1647,6 +1697,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         return checkedIntLength(keyBuffer.getAppendOffset(), "partition key");
     }
 
+    /**
+     * Copies one already-encoded partition key into {@link #keyBuffer}, so the grouped
+     * functions' maps can be probed through {@link LiveViewSnapshotKeyCodec#readKey}
+     * with the same key the anchor walk produced.
+     */
+    private void encodeKeyBuffer(byte[] key) {
+        keyBuffer.jumpTo(0);
+        for (int i = 0; i < key.length; i++) {
+            keyBuffer.putByte(key[i]);
+        }
+    }
+
     private void ensureDirectories(Path checkpointsDir) {
         try (Path path = new Path()) {
             LiveViewCheckpointLayout.metaDirPath(path, checkpointsDir).slash();
@@ -1682,6 +1744,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * a key's last row, so a key the replay carried out of a truncated history holds
      * a strictly older floor there and its next row resets it, and a key the replay
      * never carried is simply absent and keeps the entry the old anchor root wrote.
+     * <p>
+     * A view whose anchored window compiled a {@link LiveViewWindowStatePlan} freezes a
+     * {@code FrozenWindowState} in the anchor's place instead, and the functions that
+     * plan groups get no {@code FrozenFunction} at all: their state is components of
+     * that one root rather than a root per SELECT-list call. The exemption above does
+     * not survive fusion - see {@link #freezeWindowState} - because the anchor value and
+     * the components it is fused with are one entry.
      *
      * @param outputKeys         {@code Q}, when the replay describes those keys and no
      *                           others, or null when it describes every live key. A key
@@ -1706,7 +1775,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     ) {
         final FrozenBoundary boundary = new FrozenBoundary();
         long logicalStateBytes = 0;
-        if (anchorWindow != null) {
+        // The compiled fused group, or null for a view that has none. It decides both
+        // halves of this freeze at once: which state root the boundary writes, and which
+        // functions still get a root of their own.
+        final LiveViewWindowStatePlan plan = anchorWindow == null
+                ? null
+                : anchorWindow.getCheckpointWindowStatePlan();
+        if (plan != null) {
+            final FrozenWindowState windowState =
+                    freezeWindowState(anchorWindow, plan, previousBoundary, outputKeys, baselineGeneration);
+            logicalStateBytes = checkedAdd(logicalStateBytes, windowState.logicalStateBytes);
+            boundary.windowState = windowState;
+        } else if (anchorWindow != null) {
             final FrozenAnchor anchor = new FrozenAnchor(
                     anchorWindow,
                     anchorWindow.getWindowName().getBytes(StandardCharsets.UTF_8),
@@ -1714,6 +1794,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     LiveViewCheckpointMetadata.encodeKeySchema(anchorWindow.getPartitionKeyTypes())
             );
             anchor.isIncremental = previousBoundary instanceof RootPreviousBoundary
+                    && previousBoundary.hasAnchorRoot()
                     && anchorWindow.canFreezeCheckpointIncrementally(baselineGeneration);
             anchor.logicalStateBytes = anchorWindow.freezeCheckpointEntries(
                     keyBuffer,
@@ -1728,6 +1809,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction function = functions.getQuick(i);
             if (!function.supportsCheckpointState()) {
+                continue;
+            }
+            if (isGroupedProjection(plan, function)) {
+                // The fused root holds this function's state, so it gets no root of its
+                // own and never reaches the function directory. Its identity is not
+                // persisted anywhere for this boundary, which is the point: the durable
+                // unit is the accumulator component, not the SELECT-list call.
                 continue;
             }
             final LiveViewCheckpointFunctionIdentity identity = function.checkpointFunctionIdentity();
@@ -1789,11 +1877,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         // Incremental only against the root this function's own last publication
         // produced: a repair, truncate or compaction publishing in between moves the
         // generation on, and the untouched keys the seal would leave alone belong to
-        // a root the function never saw.
+        // a root the function never saw. The predecessor must also actually hold a root
+        // for it - a function whose state the previous boundary fused into the window
+        // root has a current baseline and no root of its own, and putting only the
+        // touched keys into a tree built from empty would drop the rest.
         final Map dirtyMap = previousBoundary instanceof RootPreviousBoundary
                 && !isRingShaped
                 && !function.isCheckpointFullScanRequired()
                 && function.getCheckpointBaselineGeneration() == baselineGeneration
+                && previousBoundary.hasFunctionRoot(frozen.identity, frozen.stateFormatVersion)
                 ? function.getCheckpointDirtyPartitionMap()
                 : null;
         final boolean incremental = dirtyMap != null;
@@ -1944,6 +2036,153 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
+     * Freezes one anchored window's fused state: one entry per live key, holding the
+     * anchor value and every grouped accumulator component the plan names, laid out at
+     * the manifest's offsets.
+     * <p>
+     * The anchor map is the authoritative key domain - it is what {@code processRow}
+     * writes first and what the frontier sweep rebuilds - so the walk is the anchor's
+     * own, and each key's component slices are read by probing the contributing
+     * function's map through the same encoded key. The two maps may be different
+     * {@link Map} implementations, which is why the probe goes through the key codec
+     * rather than through either implementation's key.
+     * <p>
+     * {@code outputKeys} applies to the whole entry here, where the legacy anchor path
+     * exempted itself from it. A fused entry is one unit: a key outside {@code Q} has
+     * component state a truncated replay reconstructed, and there is no way to publish a
+     * fresh anchor value for it without publishing those components too. Keeping the
+     * predecessor's whole entry is at least as correct as the exemption's own argument -
+     * a key with no qualifying row in the replaced interval is one whose anchor value did
+     * not move either.
+     */
+    private FrozenWindowState freezeWindowState(
+            LiveViewWindow window,
+            LiveViewWindowStatePlan plan,
+            @Nullable PreviousBoundary previousBoundary,
+            @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
+            long baselineGeneration
+    ) {
+        final FrozenWindowState frozen = new FrozenWindowState(
+                window,
+                plan,
+                plan.getWindowIdentity(),
+                window.getAnchorValueType(),
+                LiveViewCheckpointMetadata.encodeKeySchema(window.getPartitionKeyTypes()),
+                plan.getManifest().getEncoded(),
+                plan.getTotalInlineStateBytes()
+        );
+        // Four things have to match before a seal may build on the predecessor's leaves,
+        // and the manifest is the one nothing else covers: a recompile can change it
+        // without moving definitionTxn, and publishing it over leaves an older manifest
+        // wrote is a silent misread rather than a rejection.
+        final boolean hasCompatiblePredecessor = previousBoundary != null
+                && previousBoundary.isCompatibleWindowRoot(
+                frozen.windowIdentity,
+                frozen.anchorValueType,
+                frozen.keySchema,
+                frozen.manifest
+        );
+        frozen.isIncremental = hasCompatiblePredecessor
+                && previousBoundary instanceof RootPreviousBoundary
+                && window.canFreezeCheckpointIncrementally(baselineGeneration)
+                && canFreezeComponentsIncrementally(plan, baselineGeneration);
+        frozen.logicalStateBytes = window.freezeCheckpointEntries(
+                keyBuffer,
+                frozen.keys,
+                frozen.anchorValues,
+                frozen.removedKeys,
+                frozen.isIncremental,
+                frozen.totalInlineStateBytes
+        );
+        final int componentCount = plan.getComponentCount();
+        final LiveViewWindowStateManifest manifest = plan.getManifest();
+        for (int i = 0, n = frozen.keys.size(); i < n; i++) {
+            final byte[] key = frozen.keys.getQuick(i);
+            if (outputKeys != null && !outputKeys.contains(key)) {
+                frozen.payloads.add(null);
+                frozen.isUnchanged.add(true);
+                continue;
+            }
+            final byte[] payload = new byte[frozen.totalInlineStateBytes];
+            LiveViewCheckpointWindowRoot.encodeAnchorValue(frozen.anchorValues.getQuick(i), payload);
+            encodeKeyBuffer(key);
+            for (int c = 0; c < componentCount; c++) {
+                freezeComponentInto(
+                        payload,
+                        manifest.getComponentStateOffset(c),
+                        plan.getComponent(c),
+                        plan.getContributor(c)
+                );
+            }
+            // The predecessor's payload is already in the decoded leaf entry, so the
+            // elision is a byte compare against bytes this seal holds. The zero-reference
+            // test keeps it honest: skipping the put leaves the predecessor's whole entry
+            // standing, and an entry naming a page beside these bytes is not that entry.
+            final LiveViewCheckpointPartitionMapEntry previous = hasCompatiblePredecessor
+                    ? previousBoundary.findWindowState(key)
+                    : null;
+            frozen.payloads.add(payload);
+            frozen.isUnchanged.add(previous != null
+                    && previous.getStatePageCount() == 0
+                    && Arrays.equals(previous.getScalarState(), payload));
+        }
+        return frozen;
+    }
+
+    /**
+     * Encodes one component's whole-state image into {@code payload} at
+     * {@code stateOffset}, having proved the contributing function emitted exactly the
+     * width its family declares.
+     * <p>
+     * The partition key is read from {@link #keyBuffer}, which the caller images once
+     * per partition through {@link #encodeKeyBuffer}: every component of one entry is
+     * keyed the same way, and the codec only reads the buffer.
+     * <p>
+     * The encode runs through the same scratch buffer and the same verified
+     * {@link LiveViewStatePageWriter#freeze} every other whole-state freeze uses, and
+     * then the manifest's own width is checked on top of it: a leaf holds no length for
+     * an inlined slice, so a component one byte off would be decoded out of its
+     * neighbour's bytes on restore rather than failing here.
+     */
+    private void freezeComponentInto(
+            byte[] payload,
+            int stateOffset,
+            LiveViewAccumulatorDescriptor component,
+            WindowFunction contributor
+    ) {
+        final Map map = contributor.getPartitionMap();
+        if (map == null) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint window state component has no partition map");
+        }
+        final MapKey mapKey = map.withKey();
+        LiveViewSnapshotKeyCodec.readKey(mapKey, keyBuffer, 0, contributor.getCheckpointKeyColumnTypes());
+        final MapValue value = mapKey.findValue();
+        if (value == null) {
+            // The anchor map and every grouped function's map are written by the same
+            // row and swept by the same sweep, so a live anchor key the contributor does
+            // not hold is a broken invariant rather than an empty accumulator. Freezing
+            // identity state for it would publish a partition whose sum silently restarts
+            // at zero, and the wrong result would only surface after a restart.
+            throw CairoException.critical(0)
+                    .put("live view checkpoint window state key is missing from a component's function state");
+        }
+        stateBuffer.jumpTo(0);
+        final LiveViewStatePageWriter pageWriter = statePageWriter.of(stateBuffer);
+        final int bytes = checkedIntLength(pageWriter.freeze(contributor, value), "window state component");
+        if (bytes != component.getStateLength()) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint window state component width does not match the manifest")
+                    .put(" [function=").put(contributor.getName())
+                    .put(", expected=").put(component.getStateLength())
+                    .put(", emitted=").put(bytes).put(']');
+        }
+        for (int i = 0; i < bytes; i++) {
+            payload[stateOffset + i] = stateBuffer.getByte(i);
+        }
+    }
+
+    /**
      * Encodes one whole-state image into the bytes a partition-map leaf carries in
      * place of a state page.
      * <p>
@@ -2072,10 +2311,60 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
+     * One boundary's fused window state: the root identity, plus one complete scalar
+     * payload per live key holding the anchor value and every grouped component
+     * together. {@link #keys}, {@link #payloads} and {@link #isUnchanged} stay
+     * index-aligned; a payload is null exactly when a repair's key domain excluded the
+     * key, in which case the predecessor's whole entry stands.
+     * <p>
+     * The anchor arm of the same boundary is null whenever this one is set: the fused
+     * root replaces the legacy anchor root as the boundary's one state root, and the
+     * functions it groups are omitted from the function directory entirely.
+     */
+    private static final class FrozenWindowState {
+        private final int anchorValueType;
+        private final LongList anchorValues = new LongList();
+        private final BoolList isUnchanged = new BoolList();
+        private final byte[] keySchema;
+        private final ObjList<byte[]> keys = new ObjList<>();
+        private final byte[] manifest;
+        private final ObjList<byte[]> payloads = new ObjList<>();
+        private final LiveViewWindowStatePlan plan;
+        private final ObjList<byte[]> removedKeys = new ObjList<>();
+        private final int totalInlineStateBytes;
+        private final LiveViewWindow window;
+        private final byte[] windowIdentity;
+        private boolean isIncremental;
+        private long logicalStateBytes;
+
+        private FrozenWindowState(
+                LiveViewWindow window,
+                LiveViewWindowStatePlan plan,
+                byte[] windowIdentity,
+                int anchorValueType,
+                byte[] keySchema,
+                byte[] manifest,
+                int totalInlineStateBytes
+        ) {
+            this.window = window;
+            this.plan = plan;
+            this.windowIdentity = windowIdentity;
+            this.anchorValueType = anchorValueType;
+            this.keySchema = keySchema;
+            this.manifest = manifest;
+            this.totalInlineStateBytes = totalInlineStateBytes;
+        }
+    }
+
+    /**
      * One logical boundary's frozen state: the optional anchor map plus one
      * entry per checkpoint-capable function. Function state is held only as page
      * references into an already-written data segment, so a capture that spans a
      * whole replay costs metadata rather than a copy of every state image.
+     * <p>
+     * Exactly one of {@link #anchor} and {@link #windowState} is ever set, and both are
+     * null for a view with no anchored window. They are the two shapes of the same one
+     * state root the boundary publishes.
      */
     private static final class FrozenBoundary {
         private final ObjList<FrozenFunction> functions = new ObjList<>();
@@ -2083,6 +2372,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private FrozenAnchor anchor;
         private long effectiveLvRowPosition;
         private long logicalStateBytes;
+        private FrozenWindowState windowState;
     }
 
     private static final class FrozenFunction {
@@ -2205,7 +2495,43 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         @Nullable
         LiveViewCheckpointStatePageRef findScalarStatePage(byte[] functionIdentity, int stateFormatVersion);
 
+        /**
+         * The previous boundary's fused entry for one key, or null when it holds none
+         * this freeze may compare against. Callable only after
+         * {@link #isCompatibleWindowRoot} has answered true - a manifest the entry was
+         * not written under makes its bytes mean something else.
+         */
+        @Nullable
+        LiveViewCheckpointPartitionMapEntry findWindowState(byte[] key);
+
         long getMaxTimestamp();
+
+        /**
+         * Whether the previous boundary's state root is a legacy anchor root, and so is
+         * one an incremental anchor freeze may put touched keys into.
+         * <p>
+         * A boundary has exactly one state root and it is a tagged union, so a fused
+         * predecessor answers false here: an incremental freeze over it would put the
+         * touched keys into a tree built from empty and silently drop every key the
+         * batch did not touch.
+         */
+        boolean hasAnchorRoot();
+
+        /**
+         * Whether the previous boundary holds a root for this function under this state
+         * layout. An incremental freeze needs one for the same reason: its puts are only
+         * the touched keys, and the untouched ones have to already be somewhere.
+         */
+        boolean hasFunctionRoot(byte[] functionIdentity, int stateFormatVersion);
+
+        /**
+         * Whether the previous boundary's state root is a window root this seal's own
+         * layout may be built on: same window identity, key schema, anchor value type
+         * <b>and</b> manifest, byte for byte. Anything else - a legacy anchor root, a
+         * component codec bump, a reordered component - forces the full-scan conversion
+         * seal.
+         */
+        boolean isCompatibleWindowRoot(byte[] windowIdentity, int anchorValueType, byte[] keySchema, byte[] manifest);
 
         /**
          * Compares the {@code length} freshly encoded bytes at {@code address}
@@ -2265,9 +2591,44 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return function == null ? null : function.scalarStateRef;
         }
 
+        /**
+         * Nothing. A capture re-versions the boundaries a replay produced rather than
+         * appending above the runtime's own last publication, so its fused entries are
+         * never the ones an unchanged-key short-circuit could stand on.
+         */
+        @Override
+        public @Nullable LiveViewCheckpointPartitionMapEntry findWindowState(byte[] key) {
+            return null;
+        }
+
         @Override
         public long getMaxTimestamp() {
             return maxTimestamp;
+        }
+
+        /**
+         * False, like every other incremental affordance a capture declines: it
+         * re-versions boundaries a whole replay produced rather than appending above a
+         * publication, and freezes each of them completely.
+         */
+        @Override
+        public boolean hasAnchorRoot() {
+            return false;
+        }
+
+        @Override
+        public boolean hasFunctionRoot(byte[] functionIdentity, int stateFormatVersion) {
+            return findFunction(functionIdentity, stateFormatVersion) != null;
+        }
+
+        @Override
+        public boolean isCompatibleWindowRoot(
+                byte[] windowIdentity,
+                int anchorValueType,
+                byte[] keySchema,
+                byte[] manifest
+        ) {
+            return false;
         }
 
         @Override
@@ -2994,6 +3355,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * function root once and then probes its persistent partition map per key.
      */
     private final class RootPreviousBoundary implements PreviousBoundary, Closeable {
+        private final LiveViewCheckpointAnchorRoot anchorRoot;
         private final Path checkpointsDir = new Path();
         private final long[] dataReaderSegmentIds = new long[PREVIOUS_DATA_READER_CACHE_SIZE];
         private final LiveViewCheckpointDataSegmentReader[] dataReaders =
@@ -3012,16 +3374,26 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 new LiveViewCheckpointSegmentDirectoryReader(configuration);
         private final LiveViewCheckpointSegmentDirectoryEntry segmentDirectoryEntry =
                 new LiveViewCheckpointSegmentDirectoryEntry();
+        private final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointPartitionMapEntry windowEntry = new LiveViewCheckpointPartitionMapEntry();
+        private final LiveViewCheckpointPageRef windowMapRootRef = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointWindowRoot windowRoot;
         private int dataReaderClock;
+        private boolean isAnchorRoot;
+        private boolean isAnchorRootResolved;
         private boolean isUnreadablePageLogged;
+        private boolean isWindowRootCompatible;
+        private boolean isWindowRootResolved;
         private byte[] resolvedIdentity;
 
         private RootPreviousBoundary(
                 Path checkpointsDir,
                 LiveViewCheckpointFunctionDirectory functionDirectory,
                 LiveViewCheckpointPageRef segmentDirectoryRootRef,
+                LiveViewCheckpointPageRef stateRootRef,
                 long maxTimestamp
         ) {
+            this.anchorRoot = new LiveViewCheckpointAnchorRoot(configuration);
             this.checkpointsDir.of(checkpointsDir);
             this.functionDirectory = functionDirectory;
             this.maxTimestamp = maxTimestamp;
@@ -3029,6 +3401,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // The published catalogue is what bounds every comparison read: a page
             // is only opened against the exact file length its entry records.
             this.segmentDirectory.of(checkpointsDir, segmentDirectoryRootRef);
+            copy(stateRootRef, this.stateRootRef);
+            this.windowRoot = new LiveViewCheckpointWindowRoot(configuration);
             Arrays.fill(dataReaderSegmentIds, -1);
         }
 
@@ -3038,9 +3412,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 dataReaders[i] = Misc.free(dataReaders[i]);
                 dataReaderSegmentIds[i] = -1;
             }
+            Misc.free(anchorRoot);
             Misc.free(functionRoot);
             Misc.free(partitionReader);
             Misc.free(segmentDirectory);
+            Misc.free(windowRoot);
             Misc.free(checkpointsDir);
         }
 
@@ -3068,8 +3444,57 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         @Override
+        public @Nullable LiveViewCheckpointPartitionMapEntry findWindowState(byte[] key) {
+            if (!isWindowRootCompatible) {
+                return null;
+            }
+            return partitionReader.find(windowMapRootRef, key, windowEntry) ? windowEntry : null;
+        }
+
+        @Override
         public long getMaxTimestamp() {
             return maxTimestamp;
+        }
+
+        @Override
+        public boolean hasAnchorRoot() {
+            if (!isAnchorRootResolved) {
+                isAnchorRootResolved = true;
+                isAnchorRoot = !stateRootRef.isNull() && anchorRoot.ofIfAnchorRoot(checkpointsDir, stateRootRef);
+            }
+            return isAnchorRoot;
+        }
+
+        @Override
+        public boolean hasFunctionRoot(byte[] functionIdentity, int stateFormatVersion) {
+            return resolveFunction(functionIdentity, stateFormatVersion);
+        }
+
+        /**
+         * Resolves the predecessor's state root once per seal - a boundary has exactly
+         * one, and the freeze asks about it before it walks a single key.
+         */
+        @Override
+        public boolean isCompatibleWindowRoot(
+                byte[] windowIdentity,
+                int anchorValueType,
+                byte[] keySchema,
+                byte[] manifest
+        ) {
+            if (isWindowRootResolved) {
+                return isWindowRootCompatible;
+            }
+            isWindowRootResolved = true;
+            isWindowRootCompatible = !stateRootRef.isNull()
+                    && windowRoot.ofIfWindowRoot(checkpointsDir, stateRootRef)
+                    && Arrays.equals(windowIdentity, windowRoot.getWindowIdentity())
+                    && Arrays.equals(keySchema, windowRoot.getKeySchema())
+                    && anchorValueType == windowRoot.getAnchorValueType()
+                    && Arrays.equals(manifest, windowRoot.getManifest());
+            if (isWindowRootCompatible) {
+                windowRoot.getPartitionMapRootRef(windowMapRootRef);
+            }
+            return isWindowRootCompatible;
         }
 
         @Override
@@ -3176,6 +3601,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final LiveViewCheckpointPageRef redirectOldFunctionRootRef = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointPageRef redirectPartitionMapRoot = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointStatePageRef redirectScalarRef = new LiveViewCheckpointStatePageRef();
+        private final LiveViewCheckpointWindowRootBuilder windowRootBuilder =
+                new LiveViewCheckpointWindowRootBuilder(configuration);
         /**
          * {@code (segmentId, fileLength)} of every metadata segment the boundary
          * built last wrote, for the caller to catalogue. Reset per boundary, so a
@@ -3347,11 +3774,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         /**
-         * Writes the anchor root, one function root per frozen function, and the
-         * checkpoint root itself. The two old-root arguments are the boundary's
-         * predecessor: the builders start from its anchor/function/partition-map
+         * Writes the boundary's one state root - fused window root or legacy anchor
+         * root, whichever the freeze produced - one function root per frozen function,
+         * and the checkpoint root itself. The two old-root arguments are the boundary's
+         * predecessor: the builders start from its state/function/partition-map
          * paths, so an unchanged entry is reused by reference rather than
          * rewritten. Both are empty for the first root of a timeline.
+         * <p>
+         * {@code oldAnchorRootRef} is the predecessor's state root whichever kind it is.
+         * A window root over a legacy predecessor - or over one whose manifest moved -
+         * simply finds nothing to build on and writes a whole new tree, which is what
+         * the format-conversion seal is.
          * <p>
          * {@code outputKeys} is the repair capture's key domain, and it decides only
          * which of the predecessor's entries this root may retire - the freeze already
@@ -3372,7 +3805,46 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             writtenMetaSegments.clear();
             lastBoundaryPartitionPuts = 0;
             final LiveViewCheckpointPageRef anchorRootRef = new LiveViewCheckpointPageRef();
-            if (boundary.anchor != null) {
+            if (boundary.windowState != null) {
+                final FrozenWindowState windowState = boundary.windowState;
+                windowRootBuilder.of(
+                        checkpointsDir,
+                        oldAnchorRootRef,
+                        windowState.windowIdentity,
+                        windowState.anchorValueType,
+                        windowState.keySchema,
+                        windowState.manifest,
+                        windowState.totalInlineStateBytes,
+                        !windowState.isIncremental,
+                        outputKeys
+                );
+                // Removals first, mirroring the anchor and function paths below. A
+                // complete snapshot carries none - it removes by omission in build() - so
+                // the two rules never name one key twice.
+                for (int i = 0, n = windowState.removedKeys.size(); i < n; i++) {
+                    windowRootBuilder.removePartition(windowState.removedKeys.getQuick(i));
+                }
+                for (int i = 0, n = windowState.keys.size(); i < n; i++) {
+                    final byte[] payload = windowState.payloads.getQuick(i);
+                    if (payload == null) {
+                        // Outside the repair's key domain: the freeze imaged nothing for
+                        // it and the predecessor's entry stands, so it is not put and -
+                        // because the removal pass filters by the same domain - not
+                        // removed either.
+                        continue;
+                    }
+                    final boolean isUnchanged = windowState.isUnchanged.get(i);
+                    windowRootBuilder.putPartition(windowState.keys.getQuick(i), payload, isUnchanged);
+                    if (!isUnchanged) {
+                        lastBoundaryPartitionPuts++;
+                    }
+                }
+                nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+                final long windowSegmentId = nextSegmentId++;
+                windowRootBuilder.build(windowSegmentId, anchorRootRef);
+                metadataBytesAdded = checkedAdd(metadataBytesAdded, windowRootBuilder.getLastSegmentBytes());
+                writtenMetaSegments.add(windowSegmentId, windowRootBuilder.getLastSegmentBytes());
+            } else if (boundary.anchor != null) {
                 final FrozenAnchor anchor = boundary.anchor;
                 anchorRootBuilder.of(
                         checkpointsDir,
@@ -3475,6 +3947,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             Misc.free(oldPartitionReader);
             Misc.free(redirectCheckpointRoot);
             Misc.free(redirectFunctionDirectory);
+            Misc.free(windowRootBuilder);
             Misc.free(checkpointsDir);
         }
 
