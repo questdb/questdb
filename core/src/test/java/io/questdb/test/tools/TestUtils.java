@@ -2153,22 +2153,6 @@ public final class TestUtils {
         return sink.toString();
     }
 
-    public static String readStringFromFile(File file) {
-        try {
-            try (FileInputStream fis = new FileInputStream(file)) {
-                byte[] buffer = new byte[(int) fis.getChannel().size()];
-                int totalRead = 0;
-                int read;
-                while (totalRead < buffer.length && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
-                    totalRead += read;
-                }
-                return new String(buffer, Files.UTF_8);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Cannot read from " + file.getAbsolutePath(), e);
-        }
-    }
-
     /**
      * Reads the {@code seqTxn} stamped into the footer of the {@code _pm}
      * snapshot identified by {@code parquetFileSize} (the MVCC version token
@@ -2197,6 +2181,22 @@ public final class TestUtils {
             if (addr != 0) {
                 ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
+        }
+    }
+
+    public static String readStringFromFile(File file) {
+        try {
+            try (FileInputStream fis = new FileInputStream(file)) {
+                byte[] buffer = new byte[(int) fis.getChannel().size()];
+                int totalRead = 0;
+                int read;
+                while (totalRead < buffer.length && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
+                    totalRead += read;
+                }
+                return new String(buffer, Files.UTF_8);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Cannot read from " + file.getAbsolutePath(), e);
         }
     }
 
@@ -2629,8 +2629,8 @@ public final class TestUtils {
         final WorkerPoolMode mode = WORKER_POOL_MODE_OVERRIDE != null
                 ? WORKER_POOL_MODE_OVERRIDE
                 : ThreadLocalRandom.current().nextBoolean()
-                        ? WorkerPoolMode.FIBER_HOST
-                        : WorkerPoolMode.LEGACY;
+                  ? WorkerPoolMode.FIBER_HOST
+                  : WorkerPoolMode.LEGACY;
         LOG.info().$("test worker pool mode sequence starts with [mode=").$(mode.name()).I$();
         return new AtomicInteger(mode == WorkerPoolMode.FIBER_HOST ? 0 : 1);
     }
