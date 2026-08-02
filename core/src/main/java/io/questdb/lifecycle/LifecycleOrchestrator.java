@@ -12,6 +12,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -90,6 +91,16 @@ public class LifecycleOrchestrator implements QuietCloseable {
     // and writers never race the hashmap's rehash boundary.
     private final ConcurrentHashMap<String, Long> lastTransitionMicros = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ProgressEvent> latestProgress = new ConcurrentHashMap<>();
+    // Runs after the executor drain but before the bounded boot-thread join below. The boot
+    // thread may be parked inside a long-running start() (a PITR restore) whose only shutdown
+    // observer is its own cancel flag; the reverse-topo stop loop that reaches the component's
+    // stop() -> cancel signalling runs only AFTER the join, so without this hook the join burns
+    // its full budget first. The enterprise overlay installs a restore-cancel signaller here.
+    // The hook MUST NOT BLOCK: it runs unbounded on the close thread AHEAD of the bounded join,
+    // so the boundedness of close() rests on the hook being a pure atomic flag write / signal.
+    // Resource teardown belongs in stop().
+    @Nullable
+    private volatile Runnable preJoinCancelHook;
     // Runs after the executor drain but before the reverse-topo stop loop. ServerMain installs
     // a worker-pool halt here: the stop loop frees component resources (e.g. the http dispatcher's
     // native FDSet) dependents-first, and on a boot-failure rollback shared pool workers are still
@@ -160,13 +171,24 @@ public class LifecycleOrchestrator implements QuietCloseable {
                             + "reverse-topo stop loop (in-flight task, if any, must self-terminate at its "
                             + "next closed boundary check)").I$();
         }
+        // Signal cooperative cancellation to any in-flight boot work BEFORE the bounded join
+        // below, so the join is spent unwinding the work rather than waiting it out.
+        final Runnable cancelHook = preJoinCancelHook;
+        if (cancelHook != null) {
+            try {
+                cancelHook.run();
+            } catch (Throwable t) {
+                injectedLog.error().$("pre-join cancel hook failed ").$(t).$();
+            }
+        }
         // Rendezvous with an in-flight BOOT walk before the stop loop frees engine resources. The
         // boot thread runs each component's start() serially (a PITR restore can hold it for the
         // whole boot); a SIGTERM hook firing mid-boot must not let freeOnExit free the engine while
         // an engine.load()/native restore is still running on the boot thread. closed is already
         // true above, so the boot walk's between-components check exits and the in-flight start()
-        // observes shutdown (the restore polls its cancel flag, the SWITCHING/STARTING stop predicate
-        // routes a mid-restore component through stop()->signalRestoreCancel). The join is bounded:
+        // observes shutdown (the restore polls its cancel flag, which the pre-join cancel hook
+        // above has already signalled; the SWITCHING/STARTING stop predicate additionally routes
+        // a mid-restore component through stop() after the join). The join is bounded:
         // a wedged start() that ignores shutdown only delays close() by the budget, after which the
         // stop loop proceeds and the engine's own isClosing() guards keep a late-woken start() from
         // building native state on the closing engine -- ownership, not the race, is the backstop.
@@ -207,9 +229,10 @@ public class LifecycleOrchestrator implements QuietCloseable {
                 // STARTING is included so a SIGTERM that arrives while a long-running start
                 // is in flight (e.g. BackupRestoreEnvelope mid-PITR-restore, which can run for
                 // minutes) still routes through the component's stop() method. The component's
-                // stop() is the only path that invokes signalRestoreCancel + awaitRestoreCancel,
-                // and without this the 30s SIGTERM window hangs until SIGKILL. The transition table
-                // permits STARTING -> STOPPING for this case.
+                // stop() re-signals restore-cancel (the pre-join hook above is the primary
+                // signaller and has already fired once), and without this the 30s SIGTERM
+                // window hangs until SIGKILL. The transition table permits
+                // STARTING -> STOPPING for this case.
                 //
                 // SWITCHING is included for the same reason: a SIGTERM that arrives while an
                 // enterprise role-switch cascade has a component mid-switch leaves that component in
@@ -247,6 +270,14 @@ public class LifecycleOrchestrator implements QuietCloseable {
     @Nullable
     public Component getComponent(String name) {
         return registryByName.get(name);
+    }
+
+    /**
+     * Test-only view of the installed pre-join cancel hook; see {@link #setPreJoinCancelHook(Runnable)}.
+     */
+    @TestOnly
+    public Runnable getPreJoinCancelHookForTest() {
+        return preJoinCancelHook;
     }
 
     public void register(Component component) {
@@ -303,6 +334,19 @@ public class LifecycleOrchestrator implements QuietCloseable {
             }
             throw new LifecycleStartupException("boot-essential component(s) failed");
         }
+    }
+
+    /**
+     * Installs a hook that {@link #close()} runs after the executor drain and BEFORE the bounded
+     * boot-thread join, mirroring {@link #setPreStopHook(Runnable)}. The enterprise overlay
+     * installs a restore-cancel signaller so a SIGTERM landing during a long PITR restore spends
+     * the join budget unwinding the restore instead of waiting it out. The hook MUST NOT block:
+     * it runs unbounded on the close thread ahead of the bounded join, so the boundedness of
+     * close() rests on the hook being a pure atomic signal. It must not free resources either
+     * (that belongs in the component's stop()).
+     */
+    public void setPreJoinCancelHook(@Nullable Runnable hook) {
+        this.preJoinCancelHook = hook;
     }
 
     /**
@@ -488,9 +532,10 @@ public class LifecycleOrchestrator implements QuietCloseable {
             case INIT -> to == State.STARTING;
             // STARTING -> STOPPING is permitted so close() can request cancellation of an
             // in-flight long-running start (e.g. PITR restore inside BackupRestoreEnvelope.start()).
-            // BackupRestoreEnvelope.stop() invokes signalRestoreCancel + awaitRestoreCancel(25_000L)
-            // to unwind a running restore inside the 30s SIGTERM window; without this transition
-            // close() would silently skip the stop() call and the JVM hangs until SIGKILL.
+            // BackupRestoreEnvelope.stop() invokes restore-cancel signalling (a second signal
+            // after the pre-join cancel hook has already signalled once) to unwind a running
+            // restore inside the 30s SIGTERM window; without this transition close() would
+            // silently skip the stop() call and the JVM hangs until SIGKILL.
             case STARTING -> to == State.DEGRADED || to == State.READY || to == State.STOPPING;
             case DEGRADED -> to == State.READY || to == State.SWITCHING || to == State.STOPPING;
             case READY -> to == State.DEGRADED || to == State.SWITCHING || to == State.STOPPING;

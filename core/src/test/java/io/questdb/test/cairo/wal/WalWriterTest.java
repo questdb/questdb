@@ -66,6 +66,7 @@ import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
@@ -4988,6 +4989,23 @@ public class WalWriterTest extends AbstractCairoTest {
             } catch (UnsupportedOperationException ex) {
                 TestUtils.assertContains(ex.getMessage(), "cannot truncate symbol tables on WAL table");
             }
+        });
+    }
+
+    @Test
+    public void testTxnTrackerIfExistsDoesNotCreateOrInstall() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+            // registerTable() eagerly installs a tracker; purge it to reproduce the "no tracker
+            // exists yet" case the same way a completed table drop does.
+            engine.getTableSequencerAPI().purgeTxnTracker(tableToken.getDirName());
+            Assert.assertNull(engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken));
+            // The non-creating accessor must not install one as a side effect of the miss above.
+            Assert.assertNull(engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken));
+
+            final SeqTxnTracker created = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            // Once a tracker exists, the non-creating accessor returns that same instance.
+            Assert.assertSame(created, engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken));
         });
     }
 
