@@ -93,15 +93,23 @@ public final class PartitionStateEvictor {
      * function's partition map in lockstep with the anchor map after a
      * frontier-gated sweep drops partitions whose bucket has fallen behind.
      * <p>
-     * Scope limit worth knowing about: this reclaims MAP entries only. A ROWS or RANGE
-     * frame function also holds one ring slab per partition in its own {@code MemoryARW}
-     * arena, and a dropped partition's slab is not returned to that function's free list -
-     * the survivor-driven walk never visits an evicted entry, and no {@link Map} API
-     * exposes one. The arena therefore keeps growing with the view's LIFETIME partition
-     * cardinality, and since it is charged to the per-view refresh tracker, a long-lived
-     * high-churn anchored view eventually breaches the limit. Fixing it needs a per-class
-     * (startOffset, capacity) value-layout hook plus free-list-aware initial allocation
-     * across every ring function - see the PR notes.
+     * Scope limit worth knowing about: this reclaims MAP entries only, and nothing ever
+     * hands it a function that owns a native ring arena. A ROWS or RANGE frame function
+     * holds one ring slab per partition in its own {@code MemoryARW} arena, and dropping
+     * such a partition here would orphan the slab - the survivor-driven walk never visits
+     * an evicted entry, so nothing would return it to that function's free list, and no
+     * {@link Map} API exposes one either. What keeps that off the table is that every
+     * ring-holding class leaves {@code BasePartitionedWindowFunction.newCompactionScratch()}
+     * at its {@code null} default, so {@code retainPartitions} returns before it reaches
+     * this helper.
+     * <p>
+     * The opt-out has its own cost, which is the other half of the same coin: such a
+     * function keeps EVERY partition it has ever seen, so both its map and its arena grow
+     * with the view's LIFETIME partition cardinality, and since both are charged to the
+     * per-view refresh tracker, a long-lived high-churn anchored view eventually breaches
+     * the limit. Enrolling a ring function in the sweep is therefore not a one-line
+     * override: it needs a per-class (startOffset, capacity) value-layout hook and
+     * free-list-aware initial allocation, landing in the same change as the enrolment.
      */
     public static long rebuildKeepingMembers(Map src, Map dst, Map survivingKeys, RecordSink survivingKeySink) {
         MapRecordCursor cursor = survivingKeys.getCursor();

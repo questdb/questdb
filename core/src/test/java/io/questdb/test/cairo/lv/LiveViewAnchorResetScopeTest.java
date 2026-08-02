@@ -24,7 +24,10 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -239,6 +242,109 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
     }
 
     /**
+     * The frontier sweep and a ring-shaped member of the anchorable subset.
+     * <p>
+     * A ring-shaped function does reach the subset. {@code SqlParser.validateLiveViewAnchors}
+     * refuses an ANCHOR on a non-default frame, but {@code WindowExpression.isNonDefaultFrame()}
+     * reads the framing mode and the two bounds only - it never looks at the exclusion mode -
+     * so {@code RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW} reads
+     * as the default frame there and keeps its ANCHOR. The fold in
+     * {@code WindowContextImpl.getRowsHi()} then moves the frame end below the current row,
+     * which sends {@code avg} to its RANGE-frame implementation: one resizable ring slab per
+     * partition in a {@code MemoryARW} arena, and {@code supportsCheckpointRingState()} true.
+     * <p>
+     * What this pins is that the sweep leaves that function's partition state alone.
+     * {@code LiveViewWindow.compact()} does call {@code retainPartitions} on it, but the
+     * rebuild needs a scratch map of the function's own layout and every ring-holding class
+     * leaves {@code newCompactionScratch()} at its {@code null} default, so the call returns
+     * before touching the map. That is what keeps the arena consistent: the survivor-driven
+     * rebuild never visits an evicted entry, so a ring partition dropped from the map would
+     * leave its slab allocated with nothing naming it and no way back onto the free list.
+     * Enrolling a ring function in the sweep therefore has to hand the slab back in the same
+     * change; this test is what fails if the first half lands without the second.
+     */
+    @Test
+    public void testFrontierSweepLeavesARingShapedAnchoredFunctionsStateIntact() throws Exception {
+        // Four accounts in the seed bucket, so three have to fall behind the frontier before
+        // the trigger's stale-percent arm - half the map at its default - lets a sweep fire.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base (ts, sym, y) VALUES
+                    ('2026-01-01T11:00:00.000000Z', 'a', 1.0),
+                    ('2026-01-01T11:00:01.000000Z', 'b', 2.0),
+                    ('2026-01-01T11:00:02.000000Z', 'c', 3.0),
+                    ('2026-01-01T11:00:03.000000Z', 'd', 4.0)""");
+            drainWalQueue();
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, sym, y, avg(y) OVER w AS a
+                    FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts
+                                 RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW
+                                 ANCHOR DAILY '00:00')""");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' must be registered", instance);
+                final ObjList<WindowFunction> anchorable = anchorableFunctions(instance);
+                Assert.assertEquals("the anchored window carries one call", 1, anchorable.size());
+                final WindowFunction ring = anchorable.getQuick(0);
+                Assert.assertTrue(
+                        "EXCLUDE CURRENT ROW must fold the anchored frame into the ring-shaped avg",
+                        ring.supportsCheckpointRingState()
+                );
+                Assert.assertNotNull("a ring-shaped avg keeps its partitions in a map", ring.getPartitionMap());
+
+                final LiveViewWindow window = instance.getAnchorWindow();
+                Assert.assertNotNull("the view must carry an anchored window", window);
+                Assert.assertEquals(4, window.getAnchorMapSize());
+                Assert.assertEquals(4, ring.getPartitionMap().size());
+
+                // Two bucket advances with only 'a' following the frontier. The second one
+                // puts three accounts a full bucket behind it, which is what fires the sweep.
+                commit("('2026-01-02T01:00:00.000000Z', 'a', 5.0)", job);
+                commit("('2026-01-03T01:00:00.000000Z', 'a', 6.0), "
+                        + "('2026-01-03T02:00:00.000000Z', 'a', 8.0)", job);
+
+                Assert.assertEquals(1, window.getCompactionCount());
+                Assert.assertEquals(
+                        "only the account that followed the frontier survives in the anchor map",
+                        1,
+                        window.getAnchorMapSize()
+                );
+                Assert.assertEquals(
+                        "the sweep must leave a ring-shaped function's partition state alone",
+                        4,
+                        ring.getPartitionMap().size()
+                );
+
+                assertNoRefreshFaults("lv");
+                // The anchor still resets the ring at every bucket crossing, so the first row
+                // of each of a's three buckets sees an empty frame; only the second row of the
+                // last bucket has a predecessor to average.
+                assertQuery("SELECT ts, sym, y, a FROM lv ORDER BY sym, ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\ty\ta
+                                2026-01-01T11:00:00.000000Z\ta\t1.0\tnull
+                                2026-01-02T01:00:00.000000Z\ta\t5.0\tnull
+                                2026-01-03T01:00:00.000000Z\ta\t6.0\tnull
+                                2026-01-03T02:00:00.000000Z\ta\t8.0\t6.0
+                                2026-01-01T11:00:01.000000Z\tb\t2.0\tnull
+                                2026-01-01T11:00:02.000000Z\tc\t3.0\tnull
+                                2026-01-01T11:00:03.000000Z\td\t4.0\tnull
+                                """);
+            }
+        });
+    }
+
+    /**
      * Documents why {@code EXCLUDE CURRENT ROW} is the spelling that reaches the subset
      * unanchored, and pins the neighbouring route closed. An accumulator over a plain
      * {@code ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW} is refused at CREATE by the
@@ -299,5 +405,33 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 );
             }
         });
+    }
+
+    /**
+     * The live compiled subset the ANCHOR runtime dispatches to, read off the registered
+     * view rather than off a standalone compile, so a case can assert what the running
+     * refresh worker actually holds.
+     */
+    private static ObjList<WindowFunction> anchorableFunctions(LiveViewInstance instance) {
+        RecordCursorFactory factory = instance.getCompiledFactory();
+        while (factory != null) {
+            if (factory instanceof WindowRecordCursorFactory windowFactory) {
+                final ObjList<WindowFunction> anchorable = windowFactory.getAnchorableWindowFunctions();
+                Assert.assertNotNull("the anchored window must contribute a function", anchorable);
+                return anchorable;
+            }
+            if (factory instanceof QueryProgress) {
+                factory = factory.getBaseFactory();
+                continue;
+            }
+            break;
+        }
+        throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
+    }
+
+    private void commit(String values, LiveViewRefreshJob job) throws Exception {
+        execute("INSERT INTO base (ts, sym, y) VALUES " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
     }
 }
