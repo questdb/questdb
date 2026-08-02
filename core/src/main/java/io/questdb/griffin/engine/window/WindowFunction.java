@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.arr.ArrayView;
@@ -533,6 +534,28 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Records that the frontier sweep has dropped the partition {@code record} names, so
+     * the next seal can freeze the removal instead of re-deriving the whole live domain
+     * to find it. {@code keySink} reads the partition-by columns off the ANCHOR map's
+     * record, exactly as {@link #retainPartitions(Map, RecordSink)}'s sink does - the
+     * sweep calls the two with the same pair.
+     * <p>
+     * The marker must survive until the seal consumes it and must lose to a later row
+     * on the same key: an implementation writes it into the same dirty set
+     * {@link #getCheckpointDirtyPartitionMap()} exposes, and the ordinary dirty marking
+     * clears it, which turns "evicted, then re-created" back into an upsert.
+     * <p>
+     * Must succeed for every evicted key or the function must full-scan: a partial
+     * record leaves the root holding an entry the runtime has dropped, and a restore
+     * resurrects it. False means this function cannot record the key, and the sweep then
+     * hands {@code false} to {@link #retainPartitions(Map, RecordSink, boolean)}, which
+     * puts the function back on the conservative complete freeze.
+     */
+    default boolean markCheckpointPartitionEvicted(Record record, RecordSink keySink) {
+        return false;
+    }
+
+    /**
      * Clears the per-function tombstone bit for the partition the supplied record
      * belongs to, if currently set. Called once per row by
      * {@link io.questdb.cairo.lv.LiveViewWindow#processRow(Record)} (post-projection,
@@ -696,6 +719,36 @@ public interface WindowFunction extends Function {
      * implementations itself. Default no-op for functions without per-partition state.
      */
     default void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
+    }
+
+    /**
+     * The sweep's own entry point into {@link #retainPartitions(Map, RecordSink)}, carrying
+     * whether {@link #markCheckpointPartitionEvicted(Record, RecordSink)} accepted every key
+     * this sweep dropped.
+     * <p>
+     * A function that keeps an incremental checkpoint baseline may keep it across the sweep
+     * only when {@code checkpointRemovalsRecorded} is true: the seal then freezes the
+     * recorded removals, and the root stops naming the evicted keys. False means the
+     * removals are not in the dirty set, so the implementation must go back to the complete
+     * freeze - only a full scan finds a key the root still holds and the runtime no longer
+     * does.
+     * <p>
+     * The default is fail-safe rather than lenient: a function that keeps a baseline but
+     * implements neither this overload nor the recording hook would silently publish a root
+     * holding evicted keys, so it raises here instead. A function on the complete freeze
+     * already (the interface default, and every function that tracks no dirty set) is
+     * unaffected and delegates.
+     */
+    default void retainPartitions(
+            Map survivingKeys,
+            RecordSink survivingKeySink,
+            boolean checkpointRemovalsRecorded
+    ) {
+        if (!checkpointRemovalsRecorded && !isCheckpointFullScanRequired()) {
+            throw CairoException.critical(0)
+                    .put("window function cannot retain partitions without checkpoint removal tracking");
+        }
+        retainPartitions(survivingKeys, survivingKeySink);
     }
 
     /*

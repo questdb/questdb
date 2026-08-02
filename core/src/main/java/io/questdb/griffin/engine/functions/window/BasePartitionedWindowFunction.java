@@ -151,6 +151,41 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     }
 
     /**
+     * Records the sweep's eviction of {@code record}'s partition in the same dirty map
+     * the ordinary marking writes to, reusing the state layout's tombstone slot as the
+     * per-key eviction marker. Per-key is what makes the seal's relaxed
+     * missing-live-value branch safe: a dirty key that lost its state to anything other
+     * than this sweep still carries a {@code 0} there and still raises.
+     * <p>
+     * Declines - returning false - when the function tracks no tombstone slot or opts out
+     * of the scratch map, which is exactly the population that never freezes incrementally
+     * anyway.
+     */
+    @Override
+    public boolean markCheckpointPartitionEvicted(Record record, RecordSink keySink) {
+        if (tombstoneValueIndex < 0) {
+            return false;
+        }
+        if (checkpointDirtyPartitions == null) {
+            checkpointDirtyPartitions = newCompactionScratch();
+            if (checkpointDirtyPartitions == null) {
+                return false;
+            }
+            if (memoryTracker != null) {
+                checkpointDirtyPartitions.close();
+                checkpointDirtyPartitions.setMemoryTracker(memoryTracker);
+                checkpointDirtyPartitions.reopen();
+            }
+        }
+        // The key columns come off the anchor map's own record, so this writes through
+        // the caller's sink rather than partitionBySink.
+        final MapKey key = checkpointDirtyPartitions.withKey();
+        key.put(record, keySink);
+        key.createValue().putByte(tombstoneValueIndex, (byte) 1);
+        return true;
+    }
+
+    /**
      * Generic markPartitionAlive impl shared across every partitioned window
      * function that carries a tombstone bit. The hot-path early-exit
      * (tombstoneCount == 0) keeps the per-row overhead to a single field load
@@ -226,8 +261,23 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
 
     @Override
     public void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
-        checkpointBaselineGeneration = Numbers.LONG_NULL;
-        isCheckpointFullScanRequired = true;
+        // Every caller other than the frontier sweep removes keys without naming them,
+        // so it gets the conservative complete freeze.
+        retainPartitions(survivingKeys, survivingKeySink, false);
+    }
+
+    @Override
+    public void retainPartitions(
+            Map survivingKeys,
+            RecordSink survivingKeySink,
+            boolean checkpointRemovalsRecorded
+    ) {
+        if (!checkpointRemovalsRecorded) {
+            // The removals are nowhere the seal can read them, so only a complete freeze
+            // finds the keys the root still holds and this map no longer does.
+            checkpointBaselineGeneration = Numbers.LONG_NULL;
+            isCheckpointFullScanRequired = true;
+        }
         if (compactionScratch == null) {
             // First sweep: allocate the reusable second map once. A null factory
             // result means the function opts out of frontier compaction; its map
@@ -344,7 +394,15 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         partitionByRecord.of(record);
         MapKey key = checkpointDirtyPartitions.withKey();
         key.put(partitionByRecord, partitionBySink);
-        key.createValue();
+        final MapValue value = key.createValue();
+        if (tombstoneValueIndex >= 0) {
+            // Unconditionally, including on an entry that already existed: this row is
+            // what turns a key the sweep evicted earlier in the cadence back into an
+            // upsert. Writing it on a fresh entry also keeps the marker off whatever
+            // bytes the map's backing happened to hold - createValue() zero-fills on
+            // no implementation.
+            value.putByte(tombstoneValueIndex, (byte) 0);
+        }
     }
 
     /**

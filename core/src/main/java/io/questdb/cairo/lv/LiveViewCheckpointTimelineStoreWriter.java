@@ -1691,6 +1691,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     keyBuffer,
                     anchor.keys,
                     anchor.anchorValues,
+                    anchor.removedKeys,
                     anchor.isIncremental
             );
             logicalStateBytes = checkedAdd(logicalStateBytes, anchor.logicalStateBytes);
@@ -1786,23 +1787,35 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // test and the predecessor probe below.
             int keyLength = incremental ? encodeCheckpointKey(record, keyTypes, keyStartIndex) : 0;
             final MapValue value;
+            boolean isEvicted = false;
             if (incremental) {
                 final MapKey liveKey = map.withKey();
                 LiveViewSnapshotKeyCodec.readKey(liveKey, keyBuffer, 0, keyTypes);
                 value = liveKey.findValue();
                 if (value == null) {
-                    // Nothing removes a key from a function's state map without first
-                    // forcing a full scan, so a dirty key the live map does not hold is
-                    // a broken invariant rather than a removal. Reading it as one would
-                    // delete live window state from the root, and the wrong result would
-                    // only surface after a restart.
-                    throw CairoException.critical(0)
-                            .put("live view checkpoint dirty partition key is missing from function state");
+                    // The frontier sweep marks the key it drops in this very dirty map,
+                    // reusing the tombstone slot the borrowed state layout already
+                    // carries. The probe above read the state map, which leaves the dirty
+                    // map's own record flyweight where the cursor put it.
+                    final boolean isRecordedEviction = tombstoneIndex >= 0
+                            && record.getValue().getByte(tombstoneIndex) == 1;
+                    if (!isRecordedEviction) {
+                        // The frontier sweep is the only thing that removes a key from a
+                        // function's state map, and it records every key it drops, so a
+                        // dirty key the live map does not hold and that carries no
+                        // eviction marker is a broken invariant rather than a removal.
+                        // Reading it as one would delete live window state from the root,
+                        // and the wrong result would only surface after a restart.
+                        throw CairoException.critical(0)
+                                .put("live view checkpoint dirty partition key is missing from function state");
+                    }
+                    isEvicted = true;
                 }
             } else {
                 value = record.getValue();
             }
-            final boolean isTombstoned = tombstoneIndex >= 0 && value.getByte(tombstoneIndex) == 1;
+            // An evicted key has no live value left, so there is no tombstone bit to read.
+            final boolean isTombstoned = !isEvicted && tombstoneIndex >= 0 && value.getByte(tombstoneIndex) == 1;
             if (isTombstoned && !incremental) {
                 continue;
             }
@@ -1823,9 +1836,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LiveViewCheckpointPartitionMapEntry previous = previousBoundary == null
                     ? null
                     : previousBoundary.find(frozen.identity, frozen.stateFormatVersion, key);
-            if (isTombstoned) {
-                // Incremental only: the key died since the predecessor root, so the
-                // root has to drop the entry it still holds for it.
+            if (isTombstoned || isEvicted) {
+                // Incremental only: the key died since the predecessor root - tombstoned
+                // by a reset no row cancelled, or dropped by the frontier sweep - so the
+                // root has to drop the entry it still holds for it. A null predecessor
+                // means the root never held the key (created and evicted inside one
+                // cadence), so there is nothing to remove and nothing to un-charge.
                 if (previous != null) {
                     frozen.removedPartitions.add(key);
                     logicalBytes = checkedAdd(logicalBytes, -logicalPartitionBytes(previous));
@@ -1954,13 +1970,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
     /**
      * One boundary's anchor map: the window identity the root records, plus the
-     * live {@code (key, last-seen anchor value)} pairs, index-aligned.
+     * live {@code (key, last-seen anchor value)} pairs, index-aligned. An incremental
+     * freeze adds the keys the frontier sweep dropped, which its puts cannot express.
      */
     private static final class FrozenAnchor {
         private final int anchorValueType;
         private final LongList anchorValues = new LongList();
         private final byte[] keySchema;
         private final ObjList<byte[]> keys = new ObjList<>();
+        private final ObjList<byte[]> removedKeys = new ObjList<>();
         private final LiveViewWindow window;
         private final byte[] windowName;
         private boolean isIncremental;
@@ -3281,6 +3299,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         anchor.keySchema,
                         !anchor.isIncremental
                 );
+                // Removals first, mirroring the function path below. A complete snapshot
+                // carries none - it removes by omission in build() - so the two rules
+                // never name one key twice.
+                for (int i = 0, n = anchor.removedKeys.size(); i < n; i++) {
+                    anchorRootBuilder.removePartition(anchor.removedKeys.getQuick(i));
+                }
                 for (int i = 0, n = anchor.keys.size(); i < n; i++) {
                     anchorRootBuilder.putPartition(anchor.keys.getQuick(i), anchor.anchorValues.getQuick(i));
                 }
