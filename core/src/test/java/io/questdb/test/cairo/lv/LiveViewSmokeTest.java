@@ -15979,8 +15979,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainWalQueue();
 
                 Assert.assertEquals("restored day-1 generation is reclaimed on the next advance", 1L, window.getCompactionCount());
+                // One map now: the sum's accumulator is a slice of the window's own
+                // entry, so the sweep reclaims both by reclaiming one.
                 Assert.assertEquals(3L, window.getAnchorMapSize());
-                Assert.assertEquals(3L, window.getFunctions().getQuick(0).getPartitionMap().size());
             }
 
             execute("DROP LIVE VIEW lv");
@@ -16028,7 +16029,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     // Sanity-check the documented payload prefix:
                     //   STR windowName (INT len + len * CHAR), INT keyCount=1,
                     //   INT keyType=STRING, INT anchorValueType=TIMESTAMP,
-                    //   LONG partitionCount=2.
+                    //   INT componentStateBytes, LONG partitionCount=2.
+                    // componentStateBytes is what the fused group's accumulators add per
+                    // entry, and 8 here: the view's one sum(x) is a (sum, nonNullCount)
+                    // component the window owns.
                     // The persisted key column type is STRING (not SYMBOL):
                     // LiveViewWindow.build rewrites SYMBOL partition columns as
                     // STRING in the anchor map's key types so cross-WAL-segment
@@ -16044,6 +16048,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     Assert.assertEquals("key column is STRING (SYMBOL columns route through resolved STRING)", ColumnType.STRING, sink.getInt(off));
                     off += Integer.BYTES;
                     Assert.assertEquals("anchor value type is TIMESTAMP", ColumnType.TIMESTAMP, sink.getInt(off));
+                    off += Integer.BYTES;
+                    Assert.assertEquals(
+                            "the fused (sum, nonNullCount) component rides in the payload",
+                            Double.BYTES + Long.BYTES,
+                            sink.getInt(off)
+                    );
                     off += Integer.BYTES;
                     Assert.assertEquals("partition count is 2", 2L, sink.getLong(off));
 
@@ -16344,7 +16354,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
                 preLastProcessed = instance.getLastProcessedSeqTxn();
-                preFunctionMapSize = instance.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size();
+                // The sum's accumulator is a slice of the window's own entry, so the map
+                // that carries the per-partition state is the window's one map.
+                preFunctionMapSize = instance.getAnchorWindow().getAnchorMapSize();
                 Assert.assertNotEquals("head checkpoint was written before restart", Numbers.LONG_NULL, preHeadLvSeqTxn);
                 Assert.assertEquals("two partitions seeded pre-restart", 2L, preFunctionMapSize);
             }
@@ -16391,9 +16403,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     reloaded.getLastProcessedSeqTxn()
             );
             Assert.assertEquals(
-                    "function partition map rehydrated to its pre-restart size",
+                    "window partition map rehydrated to its pre-restart size",
                     preFunctionMapSize,
-                    reloaded.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size()
+                    reloaded.getAnchorWindow().getAnchorMapSize()
             );
 
             execute("DROP LIVE VIEW lv");

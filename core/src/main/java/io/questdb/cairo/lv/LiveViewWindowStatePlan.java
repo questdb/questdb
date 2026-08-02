@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.map.Map;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -90,8 +91,17 @@ public final class LiveViewWindowStatePlan {
      * read it before it has looked at a single component.
      */
     public static final int ANCHOR_STATE_OFFSET = 0;
+    /**
+     * The window's own value slots - anchor value, initialized flag, tombstone - which
+     * lead the fused runtime map value exactly as the anchor value leads the fused
+     * scalar payload. {@code LiveViewWindow} defines those slots and reads this constant
+     * back for its value layout, so the two cannot disagree about where the components
+     * start.
+     */
+    public static final int WINDOW_VALUE_SLOT_COUNT = 3;
     private static final int WINDOW_IDENTITY_FORMAT_VERSION = 1;
     private static final int WINDOW_IDENTITY_MAGIC = 0x4c565749; // LVWI
+    private final IntList componentSlotBases;
     private final ObjList<LiveViewAccumulatorDescriptor> components;
     /**
      * Per component, the index into {@link #projectionFunctions} of the function that
@@ -113,6 +123,7 @@ public final class LiveViewWindowStatePlan {
             byte[] windowIdentity,
             ColumnTypes keyColumnTypes,
             ObjList<LiveViewAccumulatorDescriptor> components,
+            IntList componentSlotBases,
             IntList contributorIndexes,
             ObjList<LiveViewAccumulatorProjection> projections,
             ObjList<WindowFunction> projectionFunctions,
@@ -123,6 +134,7 @@ public final class LiveViewWindowStatePlan {
         this.windowIdentity = windowIdentity;
         this.keyColumnTypes = keyColumnTypes;
         this.components = components;
+        this.componentSlotBases = componentSlotBases;
         this.contributorIndexes = contributorIndexes;
         this.projections = projections;
         this.projectionFunctions = projectionFunctions;
@@ -160,12 +172,35 @@ public final class LiveViewWindowStatePlan {
         return buffer.array();
     }
 
+    /**
+     * Installs each projection's fused slots on the function that emits it, which is
+     * what turns the group's hot-path state methods into no-ops: from here the window's
+     * one map value carries the accumulators and the functions only read it.
+     */
+    public void bindProjectionFunctions() {
+        for (int i = 0, n = projections.size(); i < n; i++) {
+            final LiveViewAccumulatorProjection projection = projections.getQuick(i);
+            projectionFunctions.getQuick(i).bindWindowStateSlots(
+                    projection.getSumSlot(),
+                    projection.getNonNullCountSlot()
+            );
+        }
+    }
+
     public LiveViewAccumulatorDescriptor getComponent(int index) {
         return components.getQuick(index);
     }
 
     public int getComponentCount() {
         return components.size();
+    }
+
+    /**
+     * Returns component {@code index}'s first slot in the window's fused runtime map
+     * value. The slot counterpart of the manifest's state offset.
+     */
+    public int getComponentSlotBase(int index) {
+        return componentSlotBases.getQuick(index);
     }
 
     /**
@@ -251,6 +286,51 @@ public final class LiveViewWindowStatePlan {
      */
     public boolean isSameWindowIdentity(byte @Nullable [] other) {
         return Arrays.equals(windowIdentity, other);
+    }
+
+    /**
+     * Closes every projection function's private partition map, which is the whole of
+     * what those maps hold once the window owns the group's state.
+     * <p>
+     * Closing rather than clearing: a cleared map keeps its backing, and that backing is
+     * charged to the per-view tracker for the view's life against state nothing writes.
+     * The maps were allocated under the tracker and are freed under it, so the two stay
+     * symmetric.
+     */
+    public void releaseProjectionMaps() {
+        for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
+            final Map map = projectionFunctions.getQuick(i).getPartitionMap();
+            if (map != null && map.isOpen()) {
+                map.close();
+            }
+        }
+    }
+
+    /**
+     * Opens and empties every projection function's private partition map, so state can
+     * be put back into it - the legacy-checkpoint adapter reads a per-function root into
+     * one before hoisting it into the fused value, and declining the plan hands the
+     * group's state back the same way.
+     */
+    public void reopenProjectionMaps() {
+        for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
+            final Map map = projectionFunctions.getQuick(i).getPartitionMap();
+            if (map != null) {
+                map.reopen();
+                map.clear();
+            }
+        }
+    }
+
+    /**
+     * Takes the fused slots off every projection's function, putting each one back on
+     * the private map and the per-row accumulator update it owns outside a fused group.
+     * The state itself is the caller's to move; this only changes who is asked for it.
+     */
+    public void unbindProjectionFunctions() {
+        for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
+            projectionFunctions.getQuick(i).bindWindowStateSlots(-1, -1);
+        }
     }
 
     private static boolean isSameLayout(@Nullable ColumnTypes a, @Nullable ColumnTypes b) {
@@ -380,10 +460,17 @@ public final class LiveViewWindowStatePlan {
             final int componentCount = components.size();
             sortComponentsByIdentity();
             final IntList componentOffsets = new IntList(componentCount);
+            // The runtime slot layout follows the durable one exactly: same components,
+            // same order, so a component's slot base and its state offset are two
+            // readings of one decision and neither can drift from the other.
+            final IntList componentSlotBases = new IntList(componentCount);
             int offset = ANCHOR_STATE_OFFSET + ANCHOR_STATE_BYTES;
+            int slot = WINDOW_VALUE_SLOT_COUNT;
             for (int i = 0; i < componentCount; i++) {
                 componentOffsets.add(offset);
+                componentSlotBases.add(slot);
                 offset += components.getQuick(i).getStateLength();
+                slot += components.getQuick(i).getSlotCount();
             }
             if (offset > LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES) {
                 // The whole group falls back rather than part of it: a window root is
@@ -399,6 +486,7 @@ public final class LiveViewWindowStatePlan {
                         projectionOutputPositions.getQuick(i),
                         componentIndex,
                         componentOffsets.getQuick(componentIndex),
+                        componentSlotBases.getQuick(componentIndex),
                         components.getQuick(componentIndex),
                         projectionFunctionComponents.getQuick(i)
                 ));
@@ -407,6 +495,7 @@ public final class LiveViewWindowStatePlan {
                     windowIdentity,
                     keyColumnTypes,
                     components,
+                    componentSlotBases,
                     componentContributors,
                     projections,
                     projectionFunctions,

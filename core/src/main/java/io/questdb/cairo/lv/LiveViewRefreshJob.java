@@ -1114,12 +1114,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             wf.getWindowFunctions(),
                             anchoredFunctions
                     ),
+                    wf.getCheckpointWindowStatePlan(),
                     instance.getMemoryTracker()
             );
             // The plan is compiled against the factory's window functions and keyed by
             // their partition-by layout; the window is what decides whether that layout is
-            // the anchor map's, so binding is where the two meet. A declined plan leaves
-            // every function on its legacy root, which is where they all are today anyway.
+            // the anchor map's, so binding is where the two meet. Adopting it moves the
+            // group's runtime state into the window's own map value and leaves each
+            // grouped function a read-only projection of it; a declined plan leaves every
+            // function on the private map and the legacy root it has outside a group.
             window.bindCheckpointWindowStatePlan(wf.getCheckpointWindowStatePlan());
             // Commit the anchor Function and window together, only after the full
             // machinery builds. A failure before this point must not leave a
@@ -4069,10 +4072,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // inside LiveViewWindow.restore() (it clears before
                             // reinserting), so no explicit wipe is needed here.
                             // Order matters: function maps clear -> restore root.
+                            // isOpen() rather than a null test: a function whose state the
+                            // window owns keeps a closed map, and its accumulator is
+                            // cleared with the anchor map's own entry instead.
                             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
                             for (int i = 0, n = functions.size(); i < n; i++) {
                                 Map m = functions.getQuick(i).getPartitionMap();
-                                if (m != null) {
+                                if (m != null && m.isOpen()) {
                                     m.clear();
                                 }
                             }
@@ -6206,7 +6212,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
             for (int i = 0, n = functions.size(); i < n; i++) {
                 final Map map = functions.getQuick(i).getPartitionMap();
-                if (map != null) {
+                if (map != null && map.isOpen()) {
                     map.clear();
                 }
             }

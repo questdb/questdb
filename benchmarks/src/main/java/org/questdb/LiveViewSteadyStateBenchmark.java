@@ -32,6 +32,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -552,6 +553,31 @@ public class LiveViewSteadyStateBenchmark {
                 sweptSealCount,
                 unsweptSealCount > 0 ? unsweptSealMs / unsweptSealCount : 0.0,
                 unsweptSealCount
+        );
+        reportWindowState(window);
+    }
+
+    /**
+     * The fused group's shape and the {@link io.questdb.cairo.map.Map} implementation it
+     * landed on.
+     * <p>
+     * The implementation is the line to watch when the partition key is an INT: fusing the
+     * accumulators into the window's value takes {@code keySize + valueSize} past
+     * {@code cairo.sql.unordered.map.max.entry.size} and moves the map from
+     * {@code Unordered4Map} to {@code OrderedMap}, trading a probe on the fastest shape
+     * for one on a slower one - against four fewer probes per row. A LONG key was already
+     * past the limit before fusing and a SYMBOL or STRING key was never eligible, so this
+     * only ever moves for the INT-keyed control.
+     */
+    private static void reportWindowState(LiveViewWindow window) {
+        final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
+        System.out.printf(
+                Locale.ROOT,
+                "# window_state map=%s components=%d projections=%d entry_state_bytes=%d%n",
+                window.getAnchorMapImplementation(),
+                plan == null ? 0 : plan.getComponentCount(),
+                plan == null ? 0 : plan.getProjectionCount(),
+                plan == null ? Long.BYTES : plan.getTotalInlineStateBytes()
         );
     }
 

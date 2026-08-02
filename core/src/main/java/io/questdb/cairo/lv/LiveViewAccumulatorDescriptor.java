@@ -24,7 +24,9 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.MapValue;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -316,6 +318,28 @@ public final class LiveViewAccumulatorDescriptor {
         return -1;
     }
 
+    /**
+     * Returns the relative slot inside this component's own runtime state at which
+     * {@code other}'s whole state begins, or {@code -1} when it does not appear at all.
+     * The slot counterpart of {@link #derivedStateOffset}, and it answers for the same
+     * pairs: the two express one containment, once in the durable image's bytes and once
+     * in the fused map value's slots.
+     */
+    public int derivedSlotOffset(@NotNull LiveViewAccumulatorDescriptor other) {
+        final int byteOffset = derivedStateOffset(other);
+        if (byteOffset < 0) {
+            return -1;
+        }
+        int slot = 0;
+        int offset = 0;
+        final int slotCount = getSlotCount();
+        while (offset < byteOffset && slot < slotCount) {
+            offset += ColumnType.sizeOf(getSlotColumnType(slot));
+            slot++;
+        }
+        return offset == byteOffset ? slot : -1;
+    }
+
     public int getArgumentColumnIndex() {
         return argumentColumnIndex;
     }
@@ -362,8 +386,142 @@ public final class LiveViewAccumulatorDescriptor {
         }
     }
 
+    /**
+     * Returns {@code field}'s slot inside this component's own runtime state, or
+     * {@code -1} when the family does not carry it. The slot counterpart of
+     * {@link #getFieldOffset(int)}: the durable image and the fused map value lay the
+     * same fields out in the same order, one in bytes and one in value slots.
+     */
+    public int getFieldSlot(int field) {
+        switch (family) {
+            case FAMILY_DOUBLE_SUM_COUNT:
+                if (field == FIELD_SUM) {
+                    return 0;
+                }
+                return field == FIELD_NON_NULL_COUNT ? 1 : -1;
+            case FAMILY_NON_NULL_COUNT:
+                return field == FIELD_NON_NULL_COUNT ? 0 : -1;
+            default:
+                return -1;
+        }
+    }
+
+    /**
+     * Returns how many {@link MapValue} slots this component occupies in the window's
+     * fused runtime map value.
+     */
+    public int getSlotCount() {
+        switch (family) {
+            case FAMILY_DOUBLE_SUM_COUNT:
+                return 2;
+            case FAMILY_NON_NULL_COUNT:
+                return 1;
+            default:
+                return 0;
+        }
+    }
+
+    /**
+     * Returns the column type of one of this component's runtime slots. The widths must
+     * add up to {@link #getStateLength()}, because the durable image is those same
+     * fields in that same order.
+     */
+    public int getSlotColumnType(int slot) {
+        switch (family) {
+            case FAMILY_DOUBLE_SUM_COUNT:
+                if (slot == 0) {
+                    return ColumnType.DOUBLE;
+                }
+                if (slot == 1) {
+                    return ColumnType.LONG;
+                }
+                break;
+            case FAMILY_NON_NULL_COUNT:
+                if (slot == 0) {
+                    return ColumnType.LONG;
+                }
+                break;
+            default:
+                break;
+        }
+        throw new IndexOutOfBoundsException();
+    }
+
     public int getStateLength() {
         return stateLength;
+    }
+
+    /**
+     * Copies this component's slots from one map value to another, so a runtime whose
+     * ownership is moving - the window adopting the plan, or handing the state back -
+     * carries the accumulator across without going through the durable encoding.
+     */
+    public void copyState(@NotNull MapValue src, int srcSlotBase, @NotNull MapValue dst, int dstSlotBase) {
+        for (int i = 0, n = getSlotCount(); i < n; i++) {
+            if (getSlotColumnType(i) == ColumnType.DOUBLE) {
+                dst.putDouble(dstSlotBase + i, src.getDouble(srcSlotBase + i));
+            } else {
+                dst.putLong(dstSlotBase + i, src.getLong(srcSlotBase + i));
+            }
+        }
+    }
+
+    /**
+     * Writes this component's whole-state image into {@code payload} at {@code offset},
+     * reading the fields out of the fused map value's slots.
+     * <p>
+     * The bytes are the contributing function's own {@code freezeCheckpointState} image:
+     * the same fields in the same order, little-endian, which is what
+     * {@link LiveViewStatePageWriter} produces through {@code MemoryA}. That equality is
+     * the whole of the component codec's contract with the implementations that declare
+     * the family, and it is held to it directly by test rather than inferred - a leaf
+     * carries no length for an inlined slice, so a divergence would be decoded at the
+     * right width out of the wrong bytes.
+     */
+    public void freezeStateInto(@NotNull MapValue value, int slotBase, byte @NotNull [] payload, int offset) {
+        checkPayloadBounds(payload, offset);
+        int at = offset;
+        for (int i = 0, n = getSlotCount(); i < n; i++) {
+            final int slotType = getSlotColumnType(i);
+            final long bits = slotType == ColumnType.DOUBLE
+                    ? Double.doubleToRawLongBits(value.getDouble(slotBase + i))
+                    : value.getLong(slotBase + i);
+            putLongLE(payload, at, bits);
+            at += Long.BYTES;
+        }
+    }
+
+    /**
+     * Fills the fused map value's slots for this component from a whole-state image, the
+     * exact inverse of {@link #freezeStateInto}.
+     */
+    public void restoreStateFrom(byte @NotNull [] payload, int offset, @NotNull MapValue value, int slotBase) {
+        checkPayloadBounds(payload, offset);
+        int at = offset;
+        for (int i = 0, n = getSlotCount(); i < n; i++) {
+            final long bits = getLongLE(payload, at);
+            if (getSlotColumnType(i) == ColumnType.DOUBLE) {
+                value.putDouble(slotBase + i, Double.longBitsToDouble(bits));
+            } else {
+                value.putLong(slotBase + i, bits);
+            }
+            at += Long.BYTES;
+        }
+    }
+
+    /**
+     * Puts this component's slots back to the identity an anchor crossing leaves behind,
+     * which is also what a brand-new partition needs: a map value's slots are not
+     * zero-filled by {@code createValue()} on any implementation.
+     */
+    public void resetState(@NotNull MapValue value, int slotBase) {
+        for (int i = 0, n = getSlotCount(); i < n; i++) {
+            if (getSlotColumnType(i) == ColumnType.DOUBLE) {
+                value.putDouble(slotBase + i, 0.0);
+            } else {
+                value.putLong(slotBase + i, 0L);
+            }
+        }
     }
 
     /**
@@ -372,6 +530,35 @@ public final class LiveViewAccumulatorDescriptor {
      */
     public boolean isSameIdentity(@NotNull LiveViewAccumulatorDescriptor other) {
         return Arrays.equals(encoded, other.encoded);
+    }
+
+    private static long getLongLE(byte[] payload, int offset) {
+        long value = 0;
+        for (int i = Long.BYTES - 1; i >= 0; i--) {
+            value = (value << 8) | (payload[offset + i] & 0xffL);
+        }
+        return value;
+    }
+
+    private static void putLongLE(byte[] payload, int offset, long value) {
+        for (int i = 0; i < Long.BYTES; i++) {
+            payload[offset + i] = (byte) (value >>> (i * Byte.SIZE));
+        }
+    }
+
+    /**
+     * Proves the slice this component is about to read or write is inside
+     * {@code payload}. The fused leaf carries no per-component length, so an offset the
+     * manifest and the payload disagree about would otherwise be a silent read of a
+     * neighbouring component's bytes.
+     */
+    private void checkPayloadBounds(byte[] payload, int offset) {
+        if (offset < 0 || offset + stateLength > payload.length) {
+            throw CairoException.critical(0)
+                    .put("live view accumulator component slice is outside its payload [offset=")
+                    .put(offset).put(", length=").put(stateLength)
+                    .put(", payload=").put(payload.length).put(']');
+        }
     }
 
     /**

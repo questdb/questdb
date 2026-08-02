@@ -280,7 +280,11 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         // and the fourth is what seals.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
         assertMemoryLeak(() -> {
-            createView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
+            // What this holds to its contract is the per-function missing-state branch,
+            // which a fused group has no state to reach: emptying a grouped function's
+            // private map describes nothing the seal reads, because the accumulator is a
+            // slice of the window's own entry. The branch still runs for every residual.
+            createUnfusedView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 assertDirtySetsClearedByPublish();
@@ -911,6 +915,10 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
      * {@code expected} eviction markers - the record the sweep leaves behind and the seal
      * turns into removals. A sweep that recorded nothing still leaves correct results in
      * memory, so without this the omission would only surface on a restart.
+     * <p>
+     * A fused group records nothing of its own: the sweep drops one entry carrying the
+     * anchor value and every component together, so the anchor's marker above is the
+     * whole record and the tracked-count guard applies only to the residual functions.
      */
     private void assertEvictionMarkerCount(int expected) {
         Assert.assertEquals(
@@ -920,8 +928,13 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         );
         final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
         int tracked = 0;
+        boolean fused = false;
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction function = functions.getQuick(i);
+            if (function.isWindowStateOwned()) {
+                fused = true;
+                continue;
+            }
             final Map dirty = function.getCheckpointDirtyPartitionMap();
             final int tombstoneIndex = function.getTombstoneValueIndex();
             if (dirty == null || tombstoneIndex < 0) {
@@ -938,19 +951,43 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
             }
             Assert.assertEquals("function " + i + " eviction marker count", expected, marked);
         }
-        Assert.assertTrue("no window function tracks dirty partitions", tracked > 0);
+        Assert.assertTrue("no window function tracks dirty partitions", fused || tracked > 0);
     }
 
+    /**
+     * Asserts every function that keeps a dirty set of its own holds exactly
+     * {@code expected} keys.
+     * <p>
+     * A function the window has fused keeps none: the group's touched keys are the
+     * anchor's, marked once for the whole entry. The helper then asserts that one set
+     * instead of passing vacuously, which is what the tracked-count guard is for - a
+     * view where nothing at all tracked would mean the seal had lost its incremental
+     * path rather than moved it.
+     */
     private void assertFunctionDirtySize(long expected) {
         final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
         int tracked = 0;
+        boolean fused = false;
         for (int i = 0, n = functions.size(); i < n; i++) {
-            final Map dirty = functions.getQuick(i).getCheckpointDirtyPartitionMap();
+            final WindowFunction function = functions.getQuick(i);
+            if (function.isWindowStateOwned()) {
+                fused = true;
+                continue;
+            }
+            final Map dirty = function.getCheckpointDirtyPartitionMap();
             if (dirty == null) {
                 continue;
             }
             tracked++;
             Assert.assertEquals("function " + i + " dirty key count", expected, dirty.size());
+        }
+        if (fused) {
+            Assert.assertEquals(
+                    "the fused group's dirty keys are the anchor's",
+                    expected,
+                    anchorWindow().getCheckpointDirtyAnchorMapSize()
+            );
+            return;
         }
         Assert.assertTrue("no window function tracks dirty partitions", tracked > 0);
     }
@@ -958,12 +995,32 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     private void assertFunctionStateSize(long expected) {
         final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
         for (int i = 0, n = functions.size(); i < n; i++) {
-            final Map state = functions.getQuick(i).getPartitionMap();
+            final WindowFunction function = functions.getQuick(i);
+            if (function.isWindowStateOwned()) {
+                // Its accumulator is a slice of the window's own entry, so the live key
+                // count for it is the window's.
+                Assert.assertEquals(
+                        "function " + i + " live key count",
+                        expected,
+                        anchorWindow().getAnchorMapSize()
+                );
+                continue;
+            }
+            final Map state = function.getPartitionMap();
             if (state == null) {
                 continue;
             }
             Assert.assertEquals("function " + i + " live key count", expected, state.size());
         }
+    }
+
+    /**
+     * Whether the view's anchored window has adopted a fused plan, and so owns the state
+     * the grouped functions would otherwise each keep. The per-function assertions below
+     * have nothing to read for such a function; the window's own are what carry them.
+     */
+    private boolean isWindowStateFused() {
+        return anchorWindow().getCheckpointWindowStatePlan() != null;
     }
 
     /**
@@ -1061,6 +1118,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction function = functions.getQuick(i);
             if (!function.supportsCheckpointState()
+                    || function.isWindowStateOwned()
                     || function.getPartitionMap() == null
                     || function.supportsCheckpointRingState()) {
                 continue;
@@ -1081,7 +1139,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     dirty == null || dirty.size() == 0
             );
         }
-        Assert.assertTrue("no window function carries partition state", checked > 0);
+        Assert.assertTrue("no window function carries partition state", isWindowStateFused() || checked > 0);
     }
 
     /**
@@ -1103,7 +1161,9 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         int checked = 0;
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction function = functions.getQuick(i);
-            if (function.getCheckpointDirtyPartitionMap() == null || function.supportsCheckpointRingState()) {
+            if (function.isWindowStateOwned()
+                    || function.getCheckpointDirtyPartitionMap() == null
+                    || function.supportsCheckpointRingState()) {
                 continue;
             }
             checked++;
@@ -1117,7 +1177,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     function.getCheckpointBaselineGeneration()
             );
         }
-        Assert.assertTrue("no window function tracks dirty partitions", checked > 0);
+        Assert.assertTrue("no window function tracks dirty partitions", isWindowStateFused() || checked > 0);
     }
 
     /**
@@ -1154,7 +1214,9 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         int checked = 0;
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction function = functions.getQuick(i);
-            if (!function.supportsCheckpointState() || function.getPartitionMap() == null) {
+            if (!function.supportsCheckpointState()
+                    || function.isWindowStateOwned()
+                    || function.getPartitionMap() == null) {
                 continue;
             }
             checked++;
@@ -1168,7 +1230,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     function.getCheckpointBaselineGeneration()
             );
         }
-        Assert.assertTrue("no window function carries partition state", checked > 0);
+        Assert.assertTrue("no window function carries partition state", isWindowStateFused() || checked > 0);
     }
 
     private void assertViewMatchesRecompute(String anchorTime) throws Exception {
@@ -1347,13 +1409,17 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         out.add(anchorWindow().getCheckpointDirtyAnchorMapKeyCapacity());
         final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
         for (int i = 0, n = functions.size(); i < n; i++) {
-            final Map dirty = functions.getQuick(i).getCheckpointDirtyPartitionMap();
+            final WindowFunction function = functions.getQuick(i);
+            if (function.isWindowStateOwned()) {
+                continue;
+            }
+            final Map dirty = function.getCheckpointDirtyPartitionMap();
             if (dirty == null) {
                 continue;
             }
             out.add(dirty.getKeyCapacity());
         }
-        Assert.assertTrue("no window function tracks dirty partitions", out.size() > 1);
+        Assert.assertTrue("no window function tracks dirty partitions", isWindowStateFused() || out.size() > 1);
         return out;
     }
 
@@ -1367,12 +1433,14 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction function = functions.getQuick(i);
-            if (function.getPartitionMap() == null || function.supportsCheckpointRingState()) {
+            if (function.isWindowStateOwned()
+                    || function.getPartitionMap() == null
+                    || function.supportsCheckpointRingState()) {
                 continue;
             }
             out.add(function.getCheckpointLogicalStateBytes());
         }
-        Assert.assertTrue("no window function carries partition state", out.size() > 1);
+        Assert.assertTrue("no window function carries partition state", isWindowStateFused() || out.size() > 1);
         return out;
     }
 

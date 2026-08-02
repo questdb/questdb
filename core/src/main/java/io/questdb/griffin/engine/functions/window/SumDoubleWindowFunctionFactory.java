@@ -537,7 +537,21 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final double d = arg.getDouble(record);
+            if (Numbers.isFinite(d)) {
+                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + d);
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+            }
+        }
+
+        @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The window absorbed this row into the group's one accumulator and
+                // materialized the projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -584,6 +598,13 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public void projectWindowState(MapValue value) {
+            sum = value.getLong(windowStateNonNullCountSlot) != 0
+                    ? value.getDouble(windowStateSumSlot)
+                    : Double.NaN;
+        }
+
+        @Override
         public Map getPartitionMap() {
             return map;
         }
@@ -620,6 +641,11 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void resetPartition(Record record) {
+            if (isWindowStateOwned()) {
+                // The window zeroes the component in the fused value it has already
+                // loaded, so the crossing costs no probe of this function's own.
+                return;
+            }
             // ANCHOR-driven reset. Zero the [sum, count] slots; next
             // computeNext re-anchors on the post-reset row.
             partitionByRecord.of(record);

@@ -87,6 +87,13 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     // Single-writer (refresh worker), not volatile.
     protected long tombstoneCount;
     protected int tombstoneValueIndex = -1;
+    // The fused window-state slots this function reads out of LiveViewWindow's one map
+    // value, or -1 when it owns its state as it always has. The counter is present in
+    // every accumulator family a plan admits, so it doubles as the "am I fused" answer;
+    // the sum is -1 for a bare-counter component. Installed by the plan through
+    // bindWindowStateSlots and cleared the same way, both on the refresh worker.
+    protected int windowStateNonNullCountSlot = -1;
+    protected int windowStateSumSlot = -1;
 
     public BasePartitionedWindowFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
         super(arg);
@@ -101,6 +108,12 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         if (map != null) {
             map.close();
         }
+    }
+
+    @Override
+    public void bindWindowStateSlots(int sumSlot, int nonNullCountSlot) {
+        this.windowStateSumSlot = sumSlot;
+        this.windowStateNonNullCountSlot = nonNullCountSlot;
     }
 
     @Override
@@ -154,6 +167,11 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         return isCheckpointFullScanRequired;
     }
 
+    @Override
+    public boolean isWindowStateOwned() {
+        return windowStateNonNullCountSlot >= 0;
+    }
+
     /**
      * Records the sweep's eviction of {@code record}'s partition in the same dirty map
      * the ordinary marking writes to, reusing the state layout's tombstone slot as the
@@ -167,6 +185,13 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
      */
     @Override
     public boolean markCheckpointPartitionEvicted(Record record, RecordSink keySink) {
+        if (isWindowStateOwned()) {
+            // The window holds this function's state in its own map, so the sweep drops
+            // the accumulator by dropping the fused entry and records the removal in the
+            // window's one dirty set. There is nothing of this function's left to record,
+            // and true is the honest answer: the removal is tracked, just not here.
+            return true;
+        }
         if (tombstoneValueIndex < 0) {
             return false;
         }
@@ -205,6 +230,12 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
      */
     @Override
     public void markPartitionAlive(Record record) {
+        if (isWindowStateOwned()) {
+            // Nothing of this function's is tombstoned or marked dirty any more: the
+            // window loads the one value this row touches, keeps it alive and marks it
+            // once, for the group.
+            return;
+        }
         markCheckpointPartitionDirty(record);
         if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
             return;
@@ -254,7 +285,11 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
 
     @Override
     public void reopen() {
-        if (map != null) {
+        // A fused function's map stays closed: the window allocated one value layout for
+        // the whole group and reopening this one would charge the per-view tracker for a
+        // map no row ever writes to. The legacy-checkpoint adapter is the one path that
+        // reopens it, and it closes it again as soon as it has hoisted the state across.
+        if (map != null && !isWindowStateOwned()) {
             map.reopen();
         }
         tombstoneCount = 0;
@@ -273,6 +308,11 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
             RecordSink survivingKeySink,
             boolean checkpointRemovalsRecorded
     ) {
+        if (isWindowStateOwned()) {
+            // The sweep rebuilt the window's fused map, and this function's accumulator
+            // rode across inside the entries it kept. There is no second map to prune.
+            return;
+        }
         if (!checkpointRemovalsRecorded) {
             // The removals are nowhere the seal can read them, so only a complete freeze
             // finds the keys the root still holds and this map no longer does.
@@ -350,7 +390,12 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     @Override
     public void toTop() {
         super.toTop();
-        Misc.clear(map);
+        // isOpen() rather than a null test: a fused function's map is closed for the
+        // whole of its life, and clearing a closed map would walk backing it no longer
+        // holds.
+        if (map != null && map.isOpen()) {
+            map.clear();
+        }
         clearCheckpointDirtyPartitions();
         tombstoneCount = 0;
         checkpointBaselineGeneration = Numbers.LONG_NULL;

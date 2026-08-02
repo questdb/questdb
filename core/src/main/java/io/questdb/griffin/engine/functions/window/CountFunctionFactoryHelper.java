@@ -1562,7 +1562,19 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            if (isRecordNotNull.isNotNull(arg, record)) {
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+            }
+        }
+
+        @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The window absorbed this row into the group's one accumulator and
+                // materialized the projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -1593,6 +1605,17 @@ public class CountFunctionFactoryHelper {
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        /**
+         * Reads the counter the window keeps, which is this function's own component only
+         * while the plan did not fold it onto a wider one: a {@code count(x)} beside a
+         * {@code sum(x)} projects the counter inside that sum's accumulator, and the slot
+         * the plan bound is what says which.
+         */
+        @Override
+        public void projectWindowState(MapValue value) {
+            count = value.getLong(windowStateNonNullCountSlot);
         }
 
         @Override
@@ -1632,6 +1655,11 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void resetPartition(Record record) {
+            if (isWindowStateOwned()) {
+                // The window zeroes the component in the fused value it has already
+                // loaded, so the crossing costs no probe of this function's own.
+                return;
+            }
             // ANCHOR-driven reset. Zero the count slot.
             partitionByRecord.of(record);
             MapKey key = map.withKey();

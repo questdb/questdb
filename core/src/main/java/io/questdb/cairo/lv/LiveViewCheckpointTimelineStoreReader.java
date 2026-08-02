@@ -534,8 +534,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
 
         validateState(anchorWindow);
         validateFunctions(functions, anchorWindow);
-        restoreFunctions(functions, anchorWindow, baselineGeneration);
-        restoreState(anchorWindow, baselineGeneration);
+        restoreRuntime(functions, anchorWindow, baselineGeneration);
 
         final long effectiveLvRowPosition = deltaReader.effectivePosition(
                 pin.getRowPositionDeltaRootRef(),
@@ -603,85 +602,31 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     }
 
     /**
-     * Rehydrates one fused window root: the anchor map and every grouped function's
-     * partition map, from a single walk of a single tree.
+     * Rehydrates one fused window root: the anchor value and every grouped accumulator
+     * component, from a single walk of a single tree into the one map the window owns.
      * <p>
-     * Runtime ownership is unchanged - each projection still keeps the map it has today
-     * - so a component several projections read is fanned into each of their maps from
-     * the same bytes. That is what makes this the lowest-risk first implementation of
-     * disk fusion: one durable tree while the runtime maps stay where they are.
-     * <p>
-     * The fan-out is what a derived projection needs too, and needs nothing more. A
-     * {@code count} folded onto a sum's counter has a map of its own holding a counter
-     * of its own; restoring it is a matter of pointing its unchanged decoder at the
-     * counter's offset inside the host's slice, which the projection carries.
+     * There is no fan-out any more, and a derived projection needs none: the
+     * {@code count} folded onto a sum's counter reads the host's slot rather than
+     * keeping a copy of it, so restoring the component restores every output that reads
+     * it. What the entry has to be checked against is the manifest, which
+     * {@code validateWindowState} has already done for the whole root.
      */
     private void restoreWindowState(@NotNull LiveViewWindow anchorWindow, long baselineGeneration) {
-        final LiveViewWindowStatePlan plan = anchorWindow.getCheckpointWindowStatePlan();
         final int totalInlineStateBytes = windowRoot.getTotalInlineStateBytes();
         final LiveViewCheckpointPageRef windowMapRootRef = new LiveViewCheckpointPageRef();
         windowRoot.getPartitionMapRootRef(windowMapRootRef);
         anchorWindow.beginCheckpointRestore();
-        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
-            plan.getProjectionFunction(i).onCheckpointRestoreBegin();
-        }
         restoredLogicalStateBytes = 0;
         partitionReader.iterateAll(windowMapRootRef, entry -> {
             final byte[] encodedKey = entry.getKey();
             final byte[] scalarState = LiveViewCheckpointWindowRoot.readWindowState(entry, totalInlineStateBytes);
-            anchorWindow.restoreCheckpointEntry(
-                    openKeyPage(encodedKey),
-                    LiveViewCheckpointWindowRoot.readAnchorValue(scalarState)
-            );
-            // One bounded reader over the whole payload, sliced per projection at the
-            // manifest's offsets. Each decoder is the one the function already had, so
-            // a component's bytes mean the same thing inlined in a fused leaf as they
-            // did in the state page a legacy root named.
-            final LiveViewStatePageReader source = openInlineStatePage(scalarState);
-            for (int p = 0, n = plan.getProjectionCount(); p < n; p++) {
-                final LiveViewAccumulatorProjection projection = plan.getProjection(p);
-                final WindowFunction function = plan.getProjectionFunction(p);
-                final Map map = function.getPartitionMap();
-                final MapKey key = map.withKey();
-                final long keyBytes = LiveViewSnapshotKeyCodec.readKey(
-                        key,
-                        openKeyPage(encodedKey),
-                        0,
-                        function.getCheckpointKeyColumnTypes()
-                );
-                if (keyBytes != encodedKey.length) {
-                    throw invalid("partition key decoder did not consume reference exactly");
-                }
-                final MapValue value = key.createValue();
-                if (!value.isNew()) {
-                    throw invalid("window state root contains a duplicate partition key");
-                }
-                // The slice is the projecting function's own image, which is the whole
-                // component only while the projection is not derived: a count folded onto
-                // a sum's counter decodes eight bytes at the counter's offset, and handing
-                // it the component's would read the sum as a count.
-                final long consumed = function.restoreCheckpointState(
-                        source,
-                        projection.getFunctionStateOffset(),
-                        value
-                );
-                if (consumed != projection.getFunctionStateOffset() + projection.getFunctionStateLength()) {
-                    throw invalid("window state component decoder did not consume its slice exactly [consumed=")
-                            .put(consumed)
-                            .put(", expected=")
-                            .put(projection.getFunctionStateOffset() + projection.getFunctionStateLength())
-                            .put(']');
-                }
-            }
+            anchorWindow.restoreCheckpointWindowEntry(openKeyPage(encodedKey), scalarState);
             // The fused entry charges its whole payload once, exactly as the freeze
             // charged it: the grouped projections account for nothing of their own.
             restoredLogicalStateBytes += encodedKey.length + scalarState.length;
         });
         if (baselineGeneration != Numbers.LONG_NULL) {
             anchorWindow.onCheckpointPersisted(restoredLogicalStateBytes, baselineGeneration);
-            for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
-                plan.getProjectionFunction(i).onCheckpointPersisted(0, baselineGeneration);
-            }
         }
     }
 
@@ -769,6 +714,14 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         }
     }
 
+    /**
+     * Restores every function that has a root of its own under this state root.
+     * <p>
+     * Under a fused root the grouped projections are skipped: their state came out of the
+     * window walk. Under a <b>legacy</b> root they are not, however the runtime compiled,
+     * because the checkpoint holds one root per function and that is where their state
+     * is; {@link #restoreRuntime} is what then moves it to whoever owns it now.
+     */
     private void restoreFunctions(
             @NotNull ObjList<WindowFunction> functions,
             @Nullable LiveViewWindow anchorWindow,
@@ -782,6 +735,37 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             }
             functionDirectory.find(function.checkpointFunctionIdentity().getEncoded(), functionRootRef);
             restoreFunction(function, functionRootRef, baselineGeneration);
+        }
+    }
+
+    /**
+     * Rehydrates the whole runtime from this boundary: every function root, then the
+     * state root, and - on the upgrade path - the hoist that joins the two.
+     * <p>
+     * A <b>legacy</b> root read into a runtime that has adopted a fused plan is the case
+     * the ordering exists for. The checkpoint predates the fused shape and still holds
+     * one root per function, so each grouped function restores into the private map it
+     * owns outside a group, through the decoder it always had, and only once the state
+     * root has rebuilt the window's own entries does the window hoist those accumulators
+     * into them and close the private maps again. Hoisting before the state root ran
+     * would fill entries the anchor restore is about to clear. That is the whole upgrade:
+     * no re-seed, and the next seal publishes the converted root.
+     */
+    private void restoreRuntime(
+            @NotNull ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow,
+            long baselineGeneration
+    ) {
+        final boolean hoistLegacyComponents = !isFusedStateRoot
+                && anchorWindow != null
+                && anchorWindow.beginLegacyComponentRestore();
+        try {
+            restoreFunctions(functions, anchorWindow, baselineGeneration);
+            restoreState(anchorWindow, baselineGeneration);
+        } finally {
+            if (hoistLegacyComponents) {
+                anchorWindow.endLegacyComponentRestore();
+            }
         }
     }
 

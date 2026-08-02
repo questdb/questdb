@@ -1421,24 +1421,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
-     * Whether every contributor the plan names still holds a dirty set recorded against
-     * the generation this seal builds on. One that does not - a sweep whose removals it
-     * declined to record, a publication that moved the generation under it - demotes the
-     * whole fused root to a full scan, because the group's keys are imaged together and
-     * a partial dirty set would leave some of them stale.
-     */
-    private static boolean canFreezeComponentsIncrementally(LiveViewWindowStatePlan plan, long baselineGeneration) {
-        for (int i = 0, n = plan.getComponentCount(); i < n; i++) {
-            final WindowFunction contributor = plan.getContributor(i);
-            if (contributor.isCheckpointFullScanRequired()
-                    || contributor.getCheckpointBaselineGeneration() != baselineGeneration) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
      * Removes {@code segmentId} from a root's referenced-segment list. The
      * segment a publication introduces is registered with its own root count, so
      * it must not also be counted through the per-root reference changes.
@@ -1695,18 +1677,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         keyBuffer.jumpTo(0);
         LiveViewSnapshotKeyCodec.writeKey(keyBuffer, record, keyTypes, keyStartIndex);
         return checkedIntLength(keyBuffer.getAppendOffset(), "partition key");
-    }
-
-    /**
-     * Copies one already-encoded partition key into {@link #keyBuffer}, so the grouped
-     * functions' maps can be probed through {@link LiveViewSnapshotKeyCodec#readKey}
-     * with the same key the anchor walk produced.
-     */
-    private void encodeKeyBuffer(byte[] key) {
-        keyBuffer.jumpTo(0);
-        for (int i = 0; i < key.length; i++) {
-            keyBuffer.putByte(key[i]);
-        }
     }
 
     private void ensureDirectories(Path checkpointsDir) {
@@ -2084,35 +2054,26 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         );
         frozen.isIncremental = hasCompatiblePredecessor
                 && previousBoundary instanceof RootPreviousBoundary
-                && window.canFreezeCheckpointIncrementally(baselineGeneration)
-                && canFreezeComponentsIncrementally(plan, baselineGeneration);
+                && window.canFreezeCheckpointIncrementally(baselineGeneration);
+        // One walk of one map produces the keys, the anchor values and the whole fused
+        // payloads together: the window owns the group's runtime state, so a component's
+        // bytes come off the same loaded value the anchor value does rather than out of a
+        // probe per component.
         frozen.logicalStateBytes = window.freezeCheckpointEntries(
                 keyBuffer,
                 frozen.keys,
                 frozen.anchorValues,
                 frozen.removedKeys,
                 frozen.isIncremental,
-                frozen.totalInlineStateBytes
+                frozen.totalInlineStateBytes,
+                frozen.payloads
         );
-        final int componentCount = plan.getComponentCount();
-        final LiveViewWindowStateManifest manifest = plan.getManifest();
         for (int i = 0, n = frozen.keys.size(); i < n; i++) {
             final byte[] key = frozen.keys.getQuick(i);
             if (outputKeys != null && !outputKeys.contains(key)) {
-                frozen.payloads.add(null);
+                frozen.payloads.setQuick(i, null);
                 frozen.isUnchanged.add(true);
                 continue;
-            }
-            final byte[] payload = new byte[frozen.totalInlineStateBytes];
-            LiveViewCheckpointWindowRoot.encodeAnchorValue(frozen.anchorValues.getQuick(i), payload);
-            encodeKeyBuffer(key);
-            for (int c = 0; c < componentCount; c++) {
-                freezeComponentInto(
-                        payload,
-                        manifest.getComponentStateOffset(c),
-                        plan.getComponent(c),
-                        plan.getContributor(c)
-                );
             }
             // The predecessor's payload is already in the decoded leaf entry, so the
             // elision is a byte compare against bytes this seal holds. The zero-reference
@@ -2121,65 +2082,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LiveViewCheckpointPartitionMapEntry previous = hasCompatiblePredecessor
                     ? previousBoundary.findWindowState(key)
                     : null;
-            frozen.payloads.add(payload);
             frozen.isUnchanged.add(previous != null
                     && previous.getStatePageCount() == 0
-                    && Arrays.equals(previous.getScalarState(), payload));
+                    && Arrays.equals(previous.getScalarState(), frozen.payloads.getQuick(i)));
         }
         return frozen;
-    }
-
-    /**
-     * Encodes one component's whole-state image into {@code payload} at
-     * {@code stateOffset}, having proved the contributing function emitted exactly the
-     * width its family declares.
-     * <p>
-     * The partition key is read from {@link #keyBuffer}, which the caller images once
-     * per partition through {@link #encodeKeyBuffer}: every component of one entry is
-     * keyed the same way, and the codec only reads the buffer.
-     * <p>
-     * The encode runs through the same scratch buffer and the same verified
-     * {@link LiveViewStatePageWriter#freeze} every other whole-state freeze uses, and
-     * then the manifest's own width is checked on top of it: a leaf holds no length for
-     * an inlined slice, so a component one byte off would be decoded out of its
-     * neighbour's bytes on restore rather than failing here.
-     */
-    private void freezeComponentInto(
-            byte[] payload,
-            int stateOffset,
-            LiveViewAccumulatorDescriptor component,
-            WindowFunction contributor
-    ) {
-        final Map map = contributor.getPartitionMap();
-        if (map == null) {
-            throw CairoException.critical(0)
-                    .put("live view checkpoint window state component has no partition map");
-        }
-        final MapKey mapKey = map.withKey();
-        LiveViewSnapshotKeyCodec.readKey(mapKey, keyBuffer, 0, contributor.getCheckpointKeyColumnTypes());
-        final MapValue value = mapKey.findValue();
-        if (value == null) {
-            // The anchor map and every grouped function's map are written by the same
-            // row and swept by the same sweep, so a live anchor key the contributor does
-            // not hold is a broken invariant rather than an empty accumulator. Freezing
-            // identity state for it would publish a partition whose sum silently restarts
-            // at zero, and the wrong result would only surface after a restart.
-            throw CairoException.critical(0)
-                    .put("live view checkpoint window state key is missing from a component's function state");
-        }
-        stateBuffer.jumpTo(0);
-        final LiveViewStatePageWriter pageWriter = statePageWriter.of(stateBuffer);
-        final int bytes = checkedIntLength(pageWriter.freeze(contributor, value), "window state component");
-        if (bytes != component.getStateLength()) {
-            throw CairoException.critical(0)
-                    .put("live view checkpoint window state component width does not match the manifest")
-                    .put(" [function=").put(contributor.getName())
-                    .put(", expected=").put(component.getStateLength())
-                    .put(", emitted=").put(bytes).put(']');
-        }
-        for (int i = 0; i < bytes; i++) {
-            payload[stateOffset + i] = stateBuffer.getByte(i);
-        }
     }
 
     /**

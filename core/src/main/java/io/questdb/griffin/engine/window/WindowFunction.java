@@ -135,6 +135,46 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Absorbs one row into this function's accumulator, which lives in the window's
+     * fused map value rather than in a map of its own.
+     * <p>
+     * Called once per row by {@link io.questdb.cairo.lv.LiveViewWindow#processRow},
+     * and only on the one function the plan chose as a component's <b>contributor</b>.
+     * Every other projection on the same component reads the state this call updates
+     * and writes nothing, which is what stops {@code sum(x)} beside {@code avg(x)}
+     * counting the row twice.
+     *
+     * @param record the current base row
+     * @param value  the partition's fused window-state value, already loaded and reset
+     *               for the current anchor bucket
+     */
+    default void accumulateWindowState(Record record, MapValue value) {
+        throw CairoException.critical(0)
+                .put("window function does not contribute a fused accumulator [function=")
+                .put(getName()).put(']');
+    }
+
+    /**
+     * Adopts the fused slots this output reads out of the window's map value, or clears
+     * them when both are {@code -1}.
+     * <p>
+     * A bound function is one whose per-partition state the window owns: its
+     * {@code computeNext}, {@code resetPartition}, {@code markPartitionAlive},
+     * {@code retainPartitions} and per-function freeze/restore participation all become
+     * no-ops, and its getters return whatever {@link #projectWindowState} last
+     * materialized. Binding is the plan's to do - see
+     * {@code LiveViewWindowStatePlan.bindProjectionFunctions} - because the plan is the
+     * single owner of which accumulator is whose.
+     *
+     * @param sumSlot          the running sum's slot, or {@code -1} when the component
+     *                         carries none
+     * @param nonNullCountSlot the contributing-row counter's slot, which every family
+     *                         carries, so {@code -1} here means "not fused"
+     */
+    default void bindWindowStateSlots(int sumSlot, int nonNullCountSlot) {
+    }
+
+    /**
      * Returns the compiler-produced localized-repair dependency descriptor, or
      * {@code null} outside a live-view compile / for a function that does not
      * support checkpoint state.
@@ -587,6 +627,22 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Reports whether the anchored window owns this function's per-partition state, so
+     * every walk of the runtime has to read it off the window's fused map rather than
+     * off this function.
+     * <p>
+     * True only between {@link #bindWindowStateSlots} adopting a plan and the window
+     * handing the state back. It is deliberately not the same question as
+     * {@link #isCheckpointStateless()}: a fused projection still depends on every row
+     * its component absorbed, and still carries its real
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointDependency} for repair planning. What
+     * it no longer has is state of its own to freeze, restore or capture.
+     */
+    default boolean isWindowStateOwned() {
+        return false;
+    }
+
+    /**
      * Records that the frontier sweep has dropped the partition {@code record} names, so
      * the next seal can freeze the removal instead of re-deriving the whole live domain
      * to find it. {@code keySink} reads the partition-by columns off the ANCHOR map's
@@ -690,6 +746,22 @@ public interface WindowFunction extends Function {
      * {@link #getPassCount()} is greater than {@link #ONE_PASS}.
      */
     default void pass2(Record record, long recordOffset, WindowSPI spi) {
+    }
+
+    /**
+     * Materializes this output's current value from the window's fused map value, so the
+     * getters can answer without a map probe of their own.
+     * <p>
+     * Called once per row by {@link io.questdb.cairo.lv.LiveViewWindow#processRow}, on
+     * every projection of the group and after every contributor has run. Running it
+     * there rather than from {@code computeNext} is what removes the ordering dependency
+     * on the SELECT list: the accumulators are whole before the first output reads one,
+     * however the outputs happen to be ordered.
+     */
+    default void projectWindowState(MapValue value) {
+        throw CairoException.critical(0)
+                .put("window function does not project a fused accumulator [function=")
+                .put(getName()).put(']');
     }
 
     /**

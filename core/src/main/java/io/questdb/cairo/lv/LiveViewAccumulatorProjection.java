@@ -70,16 +70,22 @@ public final class LiveViewAccumulatorProjection {
      * {@code sum}, or SQL NULL for an empty component.
      */
     public static final int PROJECTION_SUM = 3;
+    private final LiveViewAccumulatorDescriptor component;
     private final int componentIndex;
+    private final int componentSlotBase;
     private final int componentStateLength;
     private final int componentStateOffset;
+    private final LiveViewAccumulatorDescriptor functionComponent;
+    private final int functionSlotBase;
     private final int functionStateLength;
     private final int functionStateOffset;
     private final boolean isDerived;
     private final int kind;
     private final int nonNullCountFieldOffset;
+    private final int nonNullCountSlot;
     private final int outputPosition;
     private final int sumFieldOffset;
+    private final int sumSlot;
 
     /**
      * @param kind                 one of the {@code PROJECTION_*} constants
@@ -89,6 +95,8 @@ public final class LiveViewAccumulatorProjection {
      *                             recompile may move it without changing the state
      * @param componentIndex       index into the plan's ordered component list
      * @param componentStateOffset the component's offset in the fused scalar payload
+     * @param componentSlotBase    the component's first slot in the window's fused
+     *                             runtime map value
      * @param component            the component this projection reads
      * @param functionComponent    the component the projecting function persists on its
      *                             own, which is {@code component} unless the plan folded
@@ -99,6 +107,7 @@ public final class LiveViewAccumulatorProjection {
             int outputPosition,
             int componentIndex,
             int componentStateOffset,
+            int componentSlotBase,
             @NotNull LiveViewAccumulatorDescriptor component,
             @NotNull LiveViewAccumulatorDescriptor functionComponent
     ) {
@@ -115,16 +124,26 @@ public final class LiveViewAccumulatorProjection {
         }
         this.kind = kind;
         this.outputPosition = outputPosition;
+        this.component = component;
+        this.functionComponent = functionComponent;
         this.componentIndex = componentIndex;
         this.componentStateOffset = componentStateOffset;
+        this.componentSlotBase = componentSlotBase;
         this.componentStateLength = component.getStateLength();
         this.isDerived = derivedOffset != 0 || component.getStateLength() != functionComponent.getStateLength();
         this.functionStateOffset = componentStateOffset + derivedOffset;
         this.functionStateLength = functionComponent.getStateLength();
+        this.functionSlotBase = componentSlotBase + component.derivedSlotOffset(functionComponent);
         this.sumFieldOffset = absoluteFieldOffset(component, componentStateOffset, LiveViewAccumulatorDescriptor.FIELD_SUM);
         this.nonNullCountFieldOffset = absoluteFieldOffset(
                 component,
                 componentStateOffset,
+                LiveViewAccumulatorDescriptor.FIELD_NON_NULL_COUNT
+        );
+        this.sumSlot = absoluteFieldSlot(component, componentSlotBase, LiveViewAccumulatorDescriptor.FIELD_SUM);
+        this.nonNullCountSlot = absoluteFieldSlot(
+                component,
+                componentSlotBase,
                 LiveViewAccumulatorDescriptor.FIELD_NON_NULL_COUNT
         );
     }
@@ -152,8 +171,22 @@ public final class LiveViewAccumulatorProjection {
         }
     }
 
+    /**
+     * The component this projection reads. Several projections may return the same one.
+     */
+    public LiveViewAccumulatorDescriptor getComponent() {
+        return component;
+    }
+
     public int getComponentIndex() {
         return componentIndex;
+    }
+
+    /**
+     * The component's first slot in the window's fused runtime map value.
+     */
+    public int getComponentSlotBase() {
+        return componentSlotBase;
     }
 
     public int getComponentStateLength() {
@@ -162,6 +195,24 @@ public final class LiveViewAccumulatorProjection {
 
     public int getComponentStateOffset() {
         return componentStateOffset;
+    }
+
+    /**
+     * The component the projecting function would persist on its own, which is
+     * {@link #getComponent()} unless the plan folded it into a wider host.
+     */
+    public LiveViewAccumulatorDescriptor getFunctionComponent() {
+        return functionComponent;
+    }
+
+    /**
+     * Where the projecting function's own state begins in the fused runtime map value.
+     * The slot counterpart of {@link #getFunctionStateOffset()}, and it is what a
+     * runtime handing the state back to the function's own map reads from: a derived
+     * {@code count} takes the host's counter slot and nothing else.
+     */
+    public int getFunctionSlotBase() {
+        return functionSlotBase;
     }
 
     /**
@@ -195,6 +246,15 @@ public final class LiveViewAccumulatorProjection {
         return nonNullCountFieldOffset;
     }
 
+    /**
+     * Returns the contributing-row counter's slot in the window's fused runtime map
+     * value. Present for every family this class binds, which is why a bound function
+     * uses it as its "am I fused" answer.
+     */
+    public int getNonNullCountSlot() {
+        return nonNullCountSlot;
+    }
+
     public int getOutputPosition() {
         return outputPosition;
     }
@@ -205,6 +265,14 @@ public final class LiveViewAccumulatorProjection {
      */
     public int getSumFieldOffset() {
         return sumFieldOffset;
+    }
+
+    /**
+     * Returns the running sum's slot in the window's fused runtime map value, or
+     * {@code -1} when the component carries none.
+     */
+    public int getSumSlot() {
+        return sumSlot;
     }
 
     /**
@@ -220,5 +288,10 @@ public final class LiveViewAccumulatorProjection {
     private static int absoluteFieldOffset(LiveViewAccumulatorDescriptor component, int componentStateOffset, int field) {
         final int relative = component.getFieldOffset(field);
         return relative < 0 ? -1 : componentStateOffset + relative;
+    }
+
+    private static int absoluteFieldSlot(LiveViewAccumulatorDescriptor component, int componentSlotBase, int field) {
+        final int relative = component.getFieldSlot(field);
+        return relative < 0 ? -1 : componentSlotBase + relative;
     }
 }

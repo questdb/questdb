@@ -907,7 +907,9 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         }
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction function = functions.getQuick(i);
-            if (!function.supportsCheckpointState()) {
+            // A function whose state the window owns has no map of its own to snapshot -
+            // its accumulator is already in the window payload above.
+            if (!function.supportsCheckpointState() || function.isWindowStateOwned()) {
                 continue;
             }
             try (MemoryCARW sink = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
