@@ -31,6 +31,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
+import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
@@ -1652,6 +1654,33 @@ public class CountFunctionFactoryHelper {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        /**
+         * Null for {@code count(*)}, which this class also serves: that call counts rows
+         * rather than an argument's non-null values, so it has no argument key and can never
+         * be interchangeable with a {@code count(x)}. The plan reads the null and leaves it
+         * on its own legacy root until the row-count family exists.
+         */
+        @Override
+        public Function checkpointAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * One contributing-row counter. Which rows contribute is the argument type's own
+         * business - {@code Numbers.isFinite} for DOUBLE, a null test elsewhere - and the
+         * component identity carries it, because two counters over the same window disagree
+         * on exactly the rows where one argument is null and the other is not.
+         */
+        @Override
+        public int checkpointAccumulatorFamily() {
+            return LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT;
+        }
+
+        @Override
+        public int checkpointAccumulatorProjection() {
+            return LiveViewAccumulatorProjection.PROJECTION_COUNT;
         }
 
         /**

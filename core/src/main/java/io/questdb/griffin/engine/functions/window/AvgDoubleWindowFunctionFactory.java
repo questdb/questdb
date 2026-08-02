@@ -31,6 +31,8 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
+import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
@@ -1911,6 +1913,26 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        @Override
+        public Function checkpointAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The running {@code (sum, nonNullCount)} pair, which is the same accumulator a
+         * DOUBLE {@code sum} over the same window and argument maintains. The two differ
+         * only in what they project out of it.
+         */
+        @Override
+        public int checkpointAccumulatorFamily() {
+            return LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT;
+        }
+
+        @Override
+        public int checkpointAccumulatorProjection() {
+            return LiveViewAccumulatorProjection.PROJECTION_AVG;
         }
 
         /**

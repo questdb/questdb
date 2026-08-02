@@ -29,6 +29,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
+import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
@@ -79,6 +81,57 @@ public interface WindowFunction extends Function {
      */
     static long restoredRingCapacity(long size, long initialBufferSize) {
         return Math.max(size + (size >> 1), initialBufferSize);
+    }
+
+    /**
+     * The compiled argument whose value this function's accumulator absorbs, or
+     * {@code null} when it has none - {@code count(*)} being the shape that
+     * deliberately answers null even though it does maintain a counter.
+     * <p>
+     * The reference is <b>non-owning</b>: the window function owns its argument and
+     * frees it, and the compiler only reads the argument's identity off it. Only a
+     * direct compiled column reference produces a usable argument key today; an
+     * expression - including an implicit cast a signature match inserted - is not one,
+     * because there is no canonical type-resolved fingerprint that would prove two
+     * expressions equivalent, and SQL text equality is not that proof.
+     *
+     * @see #checkpointAccumulatorFamily()
+     */
+    @Nullable
+    default Function checkpointAccumulatorArgument() {
+        return null;
+    }
+
+    /**
+     * The accumulator family this function's per-partition state belongs to, as one of
+     * the {@link LiveViewAccumulatorDescriptor} {@code FAMILY_*} constants, or
+     * {@link LiveViewAccumulatorDescriptor#FAMILY_NONE} when the function keeps state
+     * a fused window cannot share.
+     * <p>
+     * The family names the <b>mathematics</b>, not the SELECT-list call: a DOUBLE
+     * {@code sum} and a DOUBLE {@code avg} both report
+     * {@link LiveViewAccumulatorDescriptor#FAMILY_DOUBLE_SUM_COUNT} because both
+     * maintain exactly {@code (sum, nonNullCount)}. Declaring a family is a claim about
+     * the whole-state image, so it may only be made where
+     * {@link #checkpointStateFixedLength()} declares the family's own width - the plan
+     * checks the two against each other and declines the projection when they disagree.
+     */
+    default int checkpointAccumulatorFamily() {
+        return LiveViewAccumulatorDescriptor.FAMILY_NONE;
+    }
+
+    /**
+     * Which value this output reads off its family's state, as one of the
+     * {@link LiveViewAccumulatorProjection} {@code PROJECTION_*} constants.
+     * <p>
+     * Separate from {@link #checkpointAccumulatorFamily()} because the two answer
+     * different questions: the family says what state exists, the projection says what
+     * this particular call emits from it. {@code sum} and {@code avg} share the first
+     * and differ in the second, which is the whole reason one durable component can
+     * serve both.
+     */
+    default int checkpointAccumulatorProjection() {
+        return LiveViewAccumulatorProjection.PROJECTION_NONE;
     }
 
     /**

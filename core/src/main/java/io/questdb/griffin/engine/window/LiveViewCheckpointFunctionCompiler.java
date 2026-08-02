@@ -31,7 +31,10 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
+import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorPlan;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.DependencyKind;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency.NumericConvergence;
@@ -40,12 +43,14 @@ import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
@@ -591,6 +596,71 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
+     * Compiles the fused window-state plan for a live view: the accumulator components
+     * its durable state is made of, the projections that read them, and the residual
+     * functions that keep their own legacy roots. Returns null when nothing in the
+     * factory can join a fused group, which is an ordinary answer and leaves every
+     * function exactly where it is today.
+     * <p>
+     * Six things have to hold of a function before it may contribute a component, and
+     * each is a separate way of not being fusible:
+     * <ul>
+     *     <li>it is one of the functions the anchor resets. {@code SqlCodeGenerator}
+     *     has already collected that subset on the frame shape plus the anchor's
+     *     ownership of it, so membership here is both tests at once, read off the same
+     *     list the runtime dispatches through;</li>
+     *     <li>its dependency is the anchor segment and its per-partition state is one
+     *     the anchor can put back to identity;</li>
+     *     <li>it holds whole-state, non-ring checkpoint state - a ring-backed function's
+     *     root names chunk pages rather than an image, and a stateless one has no image
+     *     at all;</li>
+     *     <li>that image is fixed width and fits the per-component inline budget;</li>
+     *     <li>it declares an accumulator family and a projection off it;</li>
+     *     <li>its argument is a direct compiled column reference of a type whose
+     *     contribution predicate {@link LiveViewAccumulatorDescriptor} can name.</li>
+     * </ul>
+     * Anything else is a residual. In particular {@code count(*)} has no argument and
+     * so never joins a {@code count(x)} component, and an argument reached through an
+     * implicit cast is not a direct column reference.
+     * <p>
+     * Sharing is proved from the component identity alone and never from SQL text.
+     * {@code sum(x)} and {@code avg(x)} over one window merge because both declare the
+     * same {@code (family, argument, contribution predicate, codec)}; the HDFC shape's
+     * {@code sum(amt)} and {@code count(acct)} do not, because their arguments differ
+     * and so, on any row where exactly one is null, do their counters.
+     * <p>
+     * Nothing persists the plan yet. The seal still writes one legacy root per
+     * function, and the plan's first durable consumer is the window-state root.
+     *
+     * @param functions                 every SELECT-list function, in output order
+     * @param anchorableWindowFunctions the subset the anchor dispatches
+     *                                  {@code resetPartition} to, or null for a factory
+     *                                  with no anchored window
+     * @param baseMetadata              the metadata the window functions and their
+     *                                  arguments were compiled against
+     */
+    public static @Nullable LiveViewWindowStatePlan windowStatePlan(
+            @NotNull ObjList<Function> functions,
+            @Nullable ObjList<WindowFunction> anchorableWindowFunctions,
+            @NotNull RecordMetadata baseMetadata
+    ) {
+        if (anchorableWindowFunctions == null || anchorableWindowFunctions.size() == 0) {
+            return null;
+        }
+        final LiveViewWindowStatePlan.Builder builder = new LiveViewWindowStatePlan.Builder();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final Function function = functions.getQuick(i);
+            if (!(function instanceof WindowFunction windowFunction)) {
+                continue;
+            }
+            if (!addAccumulatorProjection(builder, windowFunction, i, anchorableWindowFunctions, baseMetadata)) {
+                builder.addResidual(windowFunction);
+            }
+        }
+        return builder.build();
+    }
+
+    /**
      * Validates the ordering domain of a {@code RANGE W PRECEDING} frame ending at or below
      * the current row - the RANGE shapes whose forward influence boundary {@code H} follows
      * from timestamp arithmetic, and therefore the only ones this phase plans a localized
@@ -615,6 +685,69 @@ public final class LiveViewCheckpointFunctionCompiler {
         if (dependencyKind(functionName, window) == DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI) {
             validateRangeOrder(functionName, window, baseMetadata);
         }
+    }
+
+    /**
+     * Offers {@code function} to the fused group, and reports whether it joined. Every
+     * rejection below is an ordinary answer: the caller records the function as a
+     * residual and it keeps the legacy root it has today.
+     */
+    private static boolean addAccumulatorProjection(
+            LiveViewWindowStatePlan.Builder builder,
+            WindowFunction function,
+            int outputPosition,
+            ObjList<WindowFunction> anchorableWindowFunctions,
+            RecordMetadata baseMetadata
+    ) {
+        if (anchorableWindowFunctions.indexOf(function) < 0) {
+            return false;
+        }
+        final LiveViewCheckpointDependency dependency = function.checkpointDependency();
+        if (dependency == null
+                || dependency.getKind() != DependencyKind.FIXED_ANCHOR_SEGMENT
+                || !dependency.supportsKeyReset()) {
+            return false;
+        }
+        if (!function.supportsCheckpointState()
+                || function.supportsCheckpointRingState()
+                || function.isCheckpointStateless()) {
+            return false;
+        }
+        if (!LiveViewCheckpointContracts.isInlineableStateLength(function.checkpointStateFixedLength())) {
+            return false;
+        }
+        final int projectionKind = function.checkpointAccumulatorProjection();
+        if (projectionKind == LiveViewAccumulatorProjection.PROJECTION_NONE) {
+            return false;
+        }
+        final int argumentColumnIndex = directColumnIndex(function.checkpointAccumulatorArgument(), baseMetadata);
+        if (argumentColumnIndex < 0) {
+            return false;
+        }
+        final LiveViewAccumulatorDescriptor component = LiveViewAccumulatorDescriptor.of(
+                function.checkpointAccumulatorFamily(),
+                argumentColumnIndex,
+                baseMetadata.getColumnType(argumentColumnIndex)
+        );
+        if (component == null) {
+            return false;
+        }
+        final LiveViewCheckpointFunctionIdentity identity = function.checkpointFunctionIdentity();
+        if (identity == null) {
+            return false;
+        }
+        return builder.addProjection(
+                function,
+                component,
+                projectionKind,
+                outputPosition,
+                LiveViewWindowStatePlan.encodeWindowIdentity(
+                        identity.getCanonicalWindowName(),
+                        identity.getPartitionSignature(),
+                        identity.getOrderSignature()
+                ),
+                function.getCheckpointKeyColumnTypes()
+        );
     }
 
     /**
@@ -706,6 +839,28 @@ public final class LiveViewCheckpointFunctionCompiler {
      */
     private static long effectiveRowsHi(WindowExpression window) {
         return effectiveRowsHi(window, window.getRowsHi());
+    }
+
+    /**
+     * Resolves {@code argument} to the base column it reads, or {@code -1} when it is
+     * not a direct compiled column reference of that column's own type.
+     * <p>
+     * The type check is not redundant with the {@code instanceof}. A signature match
+     * can hand a narrower column straight to a wider factory without wrapping it in a
+     * cast - a LONG column reaching {@code count(D)}, say - and the contribution
+     * predicate then belongs to the factory's type rather than the column's. Requiring
+     * the two to agree keeps the argument key's type the one the runtime actually
+     * evaluates the predicate against.
+     */
+    private static int directColumnIndex(@Nullable Function argument, RecordMetadata baseMetadata) {
+        if (!(argument instanceof ColumnFunction columnFunction)) {
+            return -1;
+        }
+        final int index = columnFunction.getColumnIndex();
+        if (index < 0 || index >= baseMetadata.getColumnCount()) {
+            return -1;
+        }
+        return argument.getType() == baseMetadata.getColumnType(index) ? index : -1;
     }
 
     /**

@@ -179,6 +179,12 @@ public class LiveViewWindow implements QuietCloseable {
     // until the tracker trips.
     private Map checkpointDirtyAnchorMap;
     private long checkpointLogicalStateBytes;
+    // The fused window-state plan the compiler produced for this view, or null when the
+    // factory carries no fusible group or when the plan's key layout is not this
+    // window's. Non-owning: the compiled factory owns the plan and every function named
+    // by it, exactly as it owns `functions`. Nothing reads it on the hot path yet - the
+    // seal still writes one legacy root per function - so an absent plan changes nothing.
+    private @Nullable LiveViewWindowStatePlan checkpointWindowStatePlan;
     private boolean isCheckpointFullScanRequired = true;
     // Frontier-gated compaction state. All mutated only on the refresh-worker
     // thread (processRow / compact / restore / toTop); not volatile.
@@ -502,6 +508,25 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * Adopts the compiler's fused window-state plan, or declines it. Declining is the
+     * fail-safe direction and costs the view only the fused root: every function stays
+     * on the legacy root it has today.
+     * <p>
+     * The one thing checked here rather than at compile time is the key layout. The
+     * fused entry is keyed by the anchor map - that map is the authoritative key domain
+     * a seal walks - so a plan whose components are keyed differently describes state
+     * this window cannot address, however well-formed the plan is on its own. The
+     * compiler cannot make the check: it sees the window functions' own key types and
+     * not the layout {@code build} derives from the persisted anchor spec.
+     *
+     * @return true when the plan was adopted
+     */
+    public boolean bindCheckpointWindowStatePlan(@Nullable LiveViewWindowStatePlan plan) {
+        checkpointWindowStatePlan = plan != null && plan.isKeyLayoutCompatible(partitionKeyTypes) ? plan : null;
+        return checkpointWindowStatePlan != null;
+    }
+
+    /**
      * @param generation the checkpoint generation the seal is freezing on top of
      * @return true when the seal may freeze only the keys
      * {@link #freezeCheckpointEntries} would name from the dirty map. False forces a
@@ -707,6 +732,15 @@ public class LiveViewWindow implements QuietCloseable {
     @TestOnly
     public int getCheckpointDirtyAnchorMapKeyCapacity() {
         return checkpointDirtyAnchorMap == null ? 0 : checkpointDirtyAnchorMap.getKeyCapacity();
+    }
+
+    /**
+     * @return the fused window-state plan this window adopted, or null when it holds
+     * none. Read by tests and by the window-state root; the runtime hot path does not
+     * consult it
+     */
+    public @Nullable LiveViewWindowStatePlan getCheckpointWindowStatePlan() {
+        return checkpointWindowStatePlan;
     }
 
     /**

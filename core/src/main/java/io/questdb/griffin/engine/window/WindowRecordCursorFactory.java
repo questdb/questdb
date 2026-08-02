@@ -30,6 +30,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
+import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -66,6 +67,11 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     // the functions of its own kind - and the repair takes their union. This factory owns
     // the plan, because an expression-keyed projector holds compiled key functions.
     private final LiveViewCheckpointRowsPlan checkpointRowsPlan;
+    // The fused window-state plan: which accumulator components this live view's durable
+    // state is made of and which outputs project them. Null when the factory is not a
+    // live-view compile or when nothing in it can join a fused group. Holds only
+    // non-owning references into this factory's own functions, so it needs no cleanup.
+    private final LiveViewWindowStatePlan checkpointWindowStatePlan;
     private final ObjList<WindowFunction> windowFunctions;
     private final int windowFunctionsCount;
     private RecordCursorFactory base;
@@ -78,7 +84,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             GenericRecordMetadata metadata,
             ObjList<Function> functions
     ) {
-        this(base, metadata, functions, null, null, null);
+        this(base, metadata, functions, null, null, null, null);
     }
 
     public WindowRecordCursorFactory(
@@ -87,7 +93,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             ObjList<Function> functions,
             ObjList<WindowFunction> anchorableWindowFunctions
     ) {
-        this(base, metadata, functions, anchorableWindowFunctions, null, null);
+        this(base, metadata, functions, anchorableWindowFunctions, null, null, null);
     }
 
     public WindowRecordCursorFactory(
@@ -96,7 +102,8 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             ObjList<Function> functions,
             ObjList<WindowFunction> anchorableWindowFunctions,
             LiveViewCheckpointRangePlan checkpointRangePlan,
-            LiveViewCheckpointRowsPlan checkpointRowsPlan
+            LiveViewCheckpointRowsPlan checkpointRowsPlan,
+            LiveViewWindowStatePlan checkpointWindowStatePlan
     ) {
         super(metadata);
         this.base = base;
@@ -104,6 +111,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         this.anchorableWindowFunctions = anchorableWindowFunctions;
         this.checkpointRangePlan = checkpointRangePlan;
         this.checkpointRowsPlan = checkpointRowsPlan;
+        this.checkpointWindowStatePlan = checkpointWindowStatePlan;
 
         windowFunctions = new ObjList<>();
         for (int i = 0, n = functions.size(); i < n; i++) {
@@ -154,6 +162,16 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
      */
     public @Nullable LiveViewCheckpointRowsPlan getCheckpointRowsPlan() {
         return checkpointRowsPlan;
+    }
+
+    /**
+     * Returns the fused window-state plan, or null when this factory carries no group
+     * that can share one durable tree. Nothing persists it yet: the seal still writes
+     * one legacy root per function, and the plan's first durable consumer is the
+     * window-state root.
+     */
+    public @Nullable LiveViewWindowStatePlan getCheckpointWindowStatePlan() {
+        return checkpointWindowStatePlan;
     }
 
     /**

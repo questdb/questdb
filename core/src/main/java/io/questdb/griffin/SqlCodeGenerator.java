@@ -10083,7 +10083,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         functions,
                         anchorableWindowFunctions,
                         lvCompile ? LiveViewCheckpointFunctionCompiler.rangePlan(functions, columns) : null,
-                        checkpointRowsPlan
+                        checkpointRowsPlan,
+                        // The fused window-state plan holds only non-owning references into
+                        // `functions`, so unlike the ROWS plan it needs no local the outer
+                        // catch has to free.
+                        lvCompile
+                                ? LiveViewCheckpointFunctionCompiler.windowStatePlan(
+                                functions,
+                                anchorableWindowFunctions,
+                                baseMetadata
+                        )
+                                : null
                 );
                 checkpointRowsPlan = null;
                 return windowFactory;

@@ -29,6 +29,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
+import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -644,6 +646,26 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        @Override
+        public Function checkpointAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The running {@code (sum, nonNullCount)} pair, which is the same accumulator a
+         * DOUBLE {@code avg} over the same window and argument maintains. The state is the
+         * component; this call is the projection that reads its sum.
+         */
+        @Override
+        public int checkpointAccumulatorFamily() {
+            return LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT;
+        }
+
+        @Override
+        public int checkpointAccumulatorProjection() {
+            return LiveViewAccumulatorProjection.PROJECTION_SUM;
         }
 
         /**
