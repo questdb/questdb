@@ -135,9 +135,14 @@ public class LiveViewWindow implements QuietCloseable {
     // dropped?", indexed by position in functions. Allocated with the window and
     // rewritten per sweep, so the sweep keeps its no-allocation property.
     private final BoolList checkpointRemovalsRecorded = new BoolList();
-    // Anchor-map size above which a frontier sweep is attempted (mirrors
-    // cairo.live.view.partition.compact.threshold). The sweep itself is gated on
-    // the anchor having advanced since the last sweep, so it fires at most once
+    // Share of the anchor map, in percent, a sweep must be able to reclaim before it
+    // fires (mirrors cairo.live.view.partition.compact.stale.percent). The only arm of
+    // the trigger that scales with the map, so it is the one that binds once the map is
+    // large; 0 turns it off and leaves the two count arms to decide.
+    private final int compactStalePercent;
+    // Anchor-map size above which a frontier sweep is attempted, and the stale count it
+    // needs (mirrors cairo.live.view.partition.compact.threshold). The sweep itself is
+    // gated on the anchor having advanced since the last sweep, so it fires at most once
     // per bucket boundary rather than per row.
     private final int compactThreshold;
     private final ObjList<WindowFunction> functions;
@@ -246,6 +251,7 @@ public class LiveViewWindow implements QuietCloseable {
         this.isAnchorMonotone = isAnchorMonotone;
         this.checkpointAnchorPlan = checkpointAnchorPlan;
         this.memoryTracker = memoryTracker;
+        this.compactStalePercent = cairoConfiguration.getLiveViewPartitionCompactStalePercent();
         this.compactThreshold = cairoConfiguration.getLiveViewPartitionCompactThreshold();
         // Frontier compaction is sound only when the anchor advances monotonically
         // with the WAL stream. A TIMESTAMP anchor derived from the ascending
@@ -1206,10 +1212,11 @@ public class LiveViewWindow implements QuietCloseable {
      * putters instead of casting to a concrete implementation's key, so it never has to
      * reconcile the two implementations.
      * <p>
-     * Wired into {@link #processRow(Record)} via {@link #maybeCompact()} once the
-     * anchor advances past a bucket boundary and the map exceeds
-     * {@code cairo.live.view.partition.compact.threshold}. Also directly callable
-     * from tests.
+     * Wired into {@link #processRow(Record)} via {@link #maybeCompact()} once the anchor
+     * advances past a bucket boundary, the map exceeds
+     * {@code cairo.live.view.partition.compact.threshold} and the stale partitions are
+     * both that many and {@code cairo.live.view.partition.compact.stale.percent} of the
+     * map. Also directly callable from tests.
      */
     public void compact() {
         if (!compactionViable || prevFrontier == Long.MIN_VALUE) {
@@ -1410,13 +1417,16 @@ public class LiveViewWindow implements QuietCloseable {
 
     private void maybeCompact() {
         final long mapSize = anchorMap.size();
-        final long halfMapSize = mapSize - mapSize / 2;
+        // Integer arithmetic on both sides rather than a rounded entry count: at the 50
+        // default this is exactly the ceil(mapSize / 2) the arm has always used, and every
+        // other setting stays exact too. mapSize is bounded by the anchor map's entry
+        // count, so the multiply cannot overflow a long.
         if (compactionViable
                 && prevFrontier != Long.MIN_VALUE
                 && maxAnchorValue > lastCompactedFrontier
                 && mapSize > compactThreshold
                 && stalePartitionCount >= compactThreshold
-                && stalePartitionCount >= halfMapSize) {
+                && stalePartitionCount * 100L >= mapSize * compactStalePercent) {
             compact();
         }
     }

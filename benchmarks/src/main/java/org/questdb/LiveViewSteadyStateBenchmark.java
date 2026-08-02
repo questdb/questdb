@@ -67,7 +67,13 @@ import java.util.Locale;
  * bucket, so older accounts age out and {@code LiveViewWindow.compact()} runs repeatedly.
  * The per-batch {@code sweeps} / {@code evicted} / {@code sweep_ms} columns and the
  * closing {@code # sweeps} line report what that costs, including the seal that follows
- * a sweep against one that does not - the sweep demotes the next seal to a full scan.
+ * a sweep against one that does not - the seal stays incremental across a sweep, but has
+ * to carry one removal per evicted key on top of the keys the batch touched.
+ * <p>
+ * {@code --compact-threshold} and {@code --compact-stale-percent} move the two arms of the
+ * trigger. The threshold is an absolute count and stops binding once the map is large; the
+ * stale percent scales with the map and is what decides at that point. Lowering it sweeps
+ * more often and evicts less each time.
  * <p>
  * Build and run:
  * <pre>
@@ -109,6 +115,7 @@ public class LiveViewSteadyStateBenchmark {
         int recycleAccounts = 0; // 0 = every row a brand new account
         long accountWindow = 0; // 0 = no rolling window, so nothing ages out
         String anchorPeriod = DAILY_ANCHOR_PERIOD;
+        int compactStalePercent = -1; // -1 = leave the configuration default alone
         int compactThreshold = -1; // -1 = leave the configuration default alone
         for (String arg : args) {
             if (arg.startsWith("--restart=")) {
@@ -137,6 +144,8 @@ public class LiveViewSteadyStateBenchmark {
                 anchorPeriod = arg.substring(16);
             } else if (arg.startsWith("--compact-threshold=")) {
                 compactThreshold = Integer.parseInt(arg.substring(20));
+            } else if (arg.startsWith("--compact-stale-percent=")) {
+                compactStalePercent = Integer.parseInt(arg.substring(24));
             } else {
                 throw new IllegalArgumentException("unknown argument: " + arg);
             }
@@ -157,6 +166,7 @@ public class LiveViewSteadyStateBenchmark {
         final long finalCheckpointRows = checkpointRows;
         final long finalCheckpointDuration = checkpointDurationMicros;
         final int finalCompactThreshold = compactThreshold;
+        final int finalCompactStalePercent = compactStalePercent;
         try {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(dbRoot.toString()) {
                 @Override
@@ -167,6 +177,13 @@ public class LiveViewSteadyStateBenchmark {
                 @Override
                 public long getLiveViewCheckpointRows() {
                     return finalCheckpointRows;
+                }
+
+                @Override
+                public int getLiveViewPartitionCompactStalePercent() {
+                    return finalCompactStalePercent >= 0
+                            ? finalCompactStalePercent
+                            : super.getLiveViewPartitionCompactStalePercent();
                 }
 
                 @Override
@@ -184,10 +201,12 @@ public class LiveViewSteadyStateBenchmark {
             System.out.printf(
                     Locale.ROOT,
                     "# seed=%d batch=%d batches=%d checkpointRows=%d preSizeSymbol=%s index=%s recycleAccounts=%d "
-                            + "anchorPeriod=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d%n",
+                            + "anchorPeriod=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d "
+                            + "compactStalePercent=%d%n",
                     seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
                     anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
-                    configuration.getLiveViewPartitionCompactThreshold()
+                    configuration.getLiveViewPartitionCompactThreshold(),
+                    configuration.getLiveViewPartitionCompactStalePercent()
             );
 
             engine = new CairoEngine(configuration);
