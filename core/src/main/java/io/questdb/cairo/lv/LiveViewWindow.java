@@ -202,6 +202,10 @@ public class LiveViewWindow implements QuietCloseable {
     private long previousBucketPartitionCount;
     private long stalePartitionCount;
     private boolean frontierInitialized;
+    // True once a sweep has put evicted keys into the dirty anchor map and the seal has
+    // not consumed them yet. What it decides is whether dropping the dirty set also hands
+    // the backing memory back - see clearCheckpointDirtyAnchorMap.
+    private boolean hasCheckpointEvictionsRecorded;
     private long lastCompactedFrontier = Long.MIN_VALUE;
     // Highest anchor value seen (the current bucket); prevFrontier is the bucket
     // before it. A sweep keeps partitions whose last anchor value is >= prevFrontier
@@ -485,9 +489,7 @@ public class LiveViewWindow implements QuietCloseable {
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         isCheckpointFullScanRequired = true;
         checkpointLogicalStateBytes = 0;
-        if (checkpointDirtyAnchorMap != null) {
-            checkpointDirtyAnchorMap.clear();
-        }
+        clearCheckpointDirtyAnchorMap();
         anchorMap.clear();
         tombstoneCount = 0;
         resetFrontier();
@@ -691,6 +693,17 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * @return the dirty anchor map's current key capacity, or 0 when it holds none. What
+     * it exposes is the map's retained backing rather than what it holds: a publication
+     * empties the map but a plain clear keeps the capacity, so this is where a sweep's
+     * inflated peak would stay visible if nothing handed it back
+     */
+    @TestOnly
+    public int getCheckpointDirtyAnchorMapKeyCapacity() {
+        return checkpointDirtyAnchorMap == null ? 0 : checkpointDirtyAnchorMap.getKeyCapacity();
+    }
+
+    /**
      * @return how many dirty anchor keys currently carry the frontier sweep's eviction
      * marker, which is what the next seal turns into removals
      */
@@ -831,9 +844,7 @@ public class LiveViewWindow implements QuietCloseable {
         checkpointBaselineGeneration = generation;
         checkpointLogicalStateBytes = logicalStateBytes;
         isCheckpointFullScanRequired = false;
-        if (checkpointDirtyAnchorMap != null) {
-            checkpointDirtyAnchorMap.clear();
-        }
+        clearCheckpointDirtyAnchorMap();
     }
 
     /**
@@ -937,9 +948,7 @@ public class LiveViewWindow implements QuietCloseable {
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         isCheckpointFullScanRequired = true;
         checkpointLogicalStateBytes = 0;
-        if (checkpointDirtyAnchorMap != null) {
-            checkpointDirtyAnchorMap.clear();
-        }
+        clearCheckpointDirtyAnchorMap();
         final long payloadStart = offset;
         final CharSequence storedName = source.getStrA(offset);
         if (storedName == null || !storedName.toString().equals(windowName)) {
@@ -1147,9 +1156,7 @@ public class LiveViewWindow implements QuietCloseable {
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         isCheckpointFullScanRequired = true;
         checkpointLogicalStateBytes = 0;
-        if (checkpointDirtyAnchorMap != null) {
-            checkpointDirtyAnchorMap.clear();
-        }
+        clearCheckpointDirtyAnchorMap();
         anchorMap.clear();
         tombstoneCount = 0;
         resetFrontier();
@@ -1286,6 +1293,35 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * Empties the checkpoint dirty set, handing its backing memory back when the frontier
+     * sweep is what grew it.
+     * <p>
+     * {@link Map#clear()} keeps the capacity, which is what a cadence wants: the dirty set
+     * holds roughly the same touched-key count every time, so re-growing it per cadence
+     * would be pure churn. A sweep breaks that - it adds one entry per evicted key on top
+     * of the touched ones, and the trigger fires only when at least half the anchor map is
+     * reclaimable, so the peak is a multiple of the steady state and then stays resident
+     * against {@code cairo.live.view.refresh.memory.limit.bytes} for the view's lifetime.
+     * {@link Map#restoreInitialCapacity()} is the only primitive that gives it back -
+     * {@code setKeyCapacity} grows only - so the sweep-inflated cadence pays a re-grow next
+     * time and every other cadence keeps today's behaviour exactly.
+     */
+    private void clearCheckpointDirtyAnchorMap() {
+        if (checkpointDirtyAnchorMap == null) {
+            return;
+        }
+        if (hasCheckpointEvictionsRecorded && checkpointDirtyAnchorMap.isOpen()) {
+            checkpointDirtyAnchorMap.restoreInitialCapacity();
+        }
+        // Unconditionally, and after the shrink rather than instead of it: OrderedMap's
+        // restoreInitialCapacity() clears only as a side effect of actually reallocating,
+        // so a map already at its initial capacity would keep every entry and the next
+        // seal would freeze the same removals a second time.
+        checkpointDirtyAnchorMap.clear();
+        hasCheckpointEvictionsRecorded = false;
+    }
+
+    /**
      * Adds one partition key to the checkpoint dirty set and records whether it was new
      * relative to the last durable checkpoint. The marker keeps logical-size accounting
      * exact without probing the persistent anchor root.
@@ -1324,6 +1360,7 @@ public class LiveViewWindow implements QuietCloseable {
      * change it.
      */
     private void markCheckpointPartitionEvicted(Record record) {
+        hasCheckpointEvictionsRecorded = true;
         if (checkpointDirtyAnchorMap == null) {
             checkpointDirtyAnchorMap = createTrackedDirtyAnchorMap(
                     cairoConfiguration,

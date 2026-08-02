@@ -65,6 +65,10 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     // sweep never allocates. Null until the first sweep, or for functions that opt
     // out (newCompactionScratch returns null).
     protected Map compactionScratch;
+    // True once a sweep has put evicted keys into checkpointDirtyPartitions and the seal
+    // has not consumed them yet. What it decides is whether dropping the dirty set also
+    // hands the backing memory back - see clearCheckpointDirtyPartitions.
+    protected boolean hasCheckpointEvictionsRecorded;
     protected boolean isCheckpointFullScanRequired = true;
     // Non-final so retainPartitions can swap the partition state Map during
     // the anchor-driven frontier sweep.
@@ -166,6 +170,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         if (tombstoneValueIndex < 0) {
             return false;
         }
+        hasCheckpointEvictionsRecorded = true;
         if (checkpointDirtyPartitions == null) {
             checkpointDirtyPartitions = newCompactionScratch();
             if (checkpointDirtyPartitions == null) {
@@ -219,9 +224,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         checkpointBaselineGeneration = generation;
         checkpointLogicalStateBytes = logicalStateBytes;
         isCheckpointFullScanRequired = false;
-        if (checkpointDirtyPartitions != null) {
-            checkpointDirtyPartitions.clear();
-        }
+        clearCheckpointDirtyPartitions();
     }
 
     /**
@@ -246,9 +249,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         checkpointLogicalStateBytes = 0;
         isCheckpointFullScanRequired = true;
-        if (checkpointDirtyPartitions != null) {
-            checkpointDirtyPartitions.clear();
-        }
+        clearCheckpointDirtyPartitions();
     }
 
     @Override
@@ -308,6 +309,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         Misc.free(map);
         compactionScratch = Misc.free(compactionScratch);
         checkpointDirtyPartitions = Misc.free(checkpointDirtyPartitions);
+        hasCheckpointEvictionsRecorded = false;
         tombstoneCount = 0;
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         checkpointLogicalStateBytes = 0;
@@ -349,9 +351,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     public void toTop() {
         super.toTop();
         Misc.clear(map);
-        if (checkpointDirtyPartitions != null) {
-            checkpointDirtyPartitions.clear();
-        }
+        clearCheckpointDirtyPartitions();
         tombstoneCount = 0;
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         checkpointLogicalStateBytes = 0;
@@ -421,6 +421,35 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         compactionScratch.close();
         compactionScratch.setMemoryTracker(memoryTracker);
         compactionScratch.reopen();
+    }
+
+    /**
+     * Empties the checkpoint dirty set, handing its backing memory back when the frontier
+     * sweep is what grew it.
+     * <p>
+     * {@link Map#clear()} keeps the capacity, which is what a cadence wants: the dirty set
+     * holds roughly the same touched-key count every time, so re-growing it per cadence
+     * would be pure churn. A sweep breaks that - it adds one entry per evicted key on top
+     * of the touched ones, and the trigger fires only when at least half the anchor map is
+     * reclaimable, so the peak is a multiple of the steady state and then stays resident
+     * against {@code cairo.live.view.refresh.memory.limit.bytes} for the view's lifetime.
+     * {@link Map#restoreInitialCapacity()} is the only primitive that gives it back -
+     * {@code setKeyCapacity} grows only - so the sweep-inflated cadence pays a re-grow next
+     * time and every other cadence keeps today's behaviour exactly.
+     */
+    private void clearCheckpointDirtyPartitions() {
+        if (checkpointDirtyPartitions == null) {
+            return;
+        }
+        if (hasCheckpointEvictionsRecorded && checkpointDirtyPartitions.isOpen()) {
+            checkpointDirtyPartitions.restoreInitialCapacity();
+        }
+        // Unconditionally, and after the shrink rather than instead of it: OrderedMap's
+        // restoreInitialCapacity() clears only as a side effect of actually reallocating,
+        // so a map already at its initial capacity would keep every entry and the next
+        // seal would freeze the same removals a second time.
+        checkpointDirtyPartitions.clear();
+        hasCheckpointEvictionsRecorded = false;
     }
 
     /**

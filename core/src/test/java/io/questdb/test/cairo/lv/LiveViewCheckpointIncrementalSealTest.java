@@ -97,6 +97,9 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     // Four accounts in one anchor bucket. Every sweep case starts here: the trigger
     // demands at least half the map be reclaimable, so three of these have to fall
     // behind the frontier before anything fires.
+    // Enough accounts that a sweep's evicted set dwarfs what one cadence touches, which is
+    // the only shape in which the dirty sets' retained capacity is observable at all.
+    private static final int SWEEP_CAPACITY_ACCOUNTS = 2_000;
     private static final String SEED_FOUR_ACCOUNTS =
             "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
                     + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
@@ -221,6 +224,51 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 assertViewMatchesRecompute(NOON_ANCHOR);
                 commit("('2026-01-01T11:00:07.000000Z', 'acct-1', 7.0)", job);
                 assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
+    public void testASweepInflatedDirtySetGivesItsCapacityBackOnPublish() throws Exception {
+        // One boundary per row, so the seed's accounts arrive over many small cadences and
+        // the dirty sets never grow to hold more than a couple of keys at a time. That is
+        // the steady state the sweep then breaks: it puts every evicted key into those same
+        // maps at once, and a plain clear() on publish would leave the peak resident for
+        // the view's lifetime.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            createViewWithGeneratedSeed(MIDNIGHT_ANCHOR, SWEEP_CAPACITY_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+                Assert.assertEquals(SWEEP_CAPACITY_ACCOUNTS, anchorWindow().getAnchorMapSize());
+                final LongList capacityBefore = readDirtySetKeyCapacities();
+
+                // Two bucket advances with one account following along, so the sweep drops
+                // every other account into the dirty sets at once. At one boundary per row
+                // the same cadence seals, which is where the capacity has to come back.
+                commit("('2026-01-02T01:00:00.000000Z', 'acct-1', 1.0)", job);
+                commit("('2026-01-03T01:00:00.000000Z', 'acct-1', 2.0)", job);
+                Assert.assertEquals(1, anchorWindow().getCompactionCount());
+                Assert.assertEquals(
+                        SWEEP_CAPACITY_ACCOUNTS - 1,
+                        anchorWindow().getCompactedPartitionCount()
+                );
+                assertDirtySetsClearedByPublish();
+
+                final LongList capacityAfter = readDirtySetKeyCapacities();
+                for (int i = 0, n = capacityBefore.size(); i < n; i++) {
+                    Assert.assertTrue(
+                            "dirty set " + i + " kept the sweep's capacity: before="
+                                    + capacityBefore.getQuick(i) + " after=" + capacityAfter.getQuick(i),
+                            capacityAfter.getQuick(i) <= capacityBefore.getQuick(i)
+                    );
+                }
+
+                // Handing the backing back must not have cost the seal its baseline, nor
+                // the view its results.
+                assertViewMatchesRecompute(MIDNIGHT_ANCHOR);
             }
         });
     }
@@ -1172,6 +1220,26 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 + anchorTime + "')");
     }
 
+    /**
+     * Seeds {@code accounts} distinct accounts into one anchor bucket through a generated
+     * insert, rather than the literal row list {@link #createView} takes. The rows sit a
+     * millisecond apart so the whole seed stays inside the 2026-01-01 bucket however many
+     * accounts a case asks for.
+     */
+    private void createViewWithGeneratedSeed(String anchorTime, int accounts) throws Exception {
+        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
+                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("INSERT INTO tx SELECT ('2026-01-01T11:00:00.000000Z'::timestamp + x * 1_000)::timestamp, "
+                + "('acct-' || x)::symbol, x * 1.0 FROM long_sequence(" + accounts + ")");
+        drainWalQueue();
+        execute("create live view lv flush every 100ms start from beginning as "
+                + "select created_at, cod_acct_no, "
+                + "sum(amt_txn) over w as cumulative_sum, "
+                + "count(cod_acct_no) over w as cumulative_count "
+                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '"
+                + anchorTime + "')");
+    }
+
     private long publishedGeneration() {
         final LiveViewInstance instance = viewInstance();
         try (
@@ -1213,6 +1281,27 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 );
             }
         }
+    }
+
+    /**
+     * The key capacity the anchor's dirty set and every dirty-tracking function's
+     * currently retain, in a fixed order so two readings compare directly. Capacity, not
+     * size: a publication empties these maps either way, and what the sweep leaves behind
+     * is the backing they hold on to.
+     */
+    private LongList readDirtySetKeyCapacities() {
+        final LongList out = new LongList();
+        out.add(anchorWindow().getCheckpointDirtyAnchorMapKeyCapacity());
+        final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final Map dirty = functions.getQuick(i).getCheckpointDirtyPartitionMap();
+            if (dirty == null) {
+                continue;
+            }
+            out.add(dirty.getKeyCapacity());
+        }
+        Assert.assertTrue("no window function tracks dirty partitions", out.size() > 1);
+        return out;
     }
 
     /**
