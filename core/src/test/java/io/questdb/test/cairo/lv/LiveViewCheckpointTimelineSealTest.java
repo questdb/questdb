@@ -267,7 +267,13 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     @Test
     public void testNormalCadenceAppendsPermanentRootsAndPublishesCompleteState() throws Exception {
         assertMemoryLeak(() -> {
-            createView(true);
+            // The shape this case describes is the legacy one - an anchor root beside a
+            // per-function root whose state is a data page - so its window function has to
+            // be one the fused plan leaves residual and one that writes a page rather than
+            // inlining. ksum's Kahan accumulator is both: it declares no fixed width, so
+            // its whole image goes to a data segment, which is what the reference counting
+            // below is about.
+            createPageBackedAnchoredView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 appendAndRefresh(job, 10, 1);
                 appendAndRefresh(job, 20, 2);
@@ -929,6 +935,21 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             ") s FROM base"
             );
         }
+    }
+
+    /**
+     * An anchored view whose one window function keeps a page-backed root of its own:
+     * ksum declares no fixed checkpoint width, so it is neither inlined into the leaf nor
+     * fused into the window state, and the seal writes the legacy anchor-root plus
+     * function-root plus data-segment shape.
+     */
+    private void createPageBackedAnchoredView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute(
+                "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                        "SELECT ts, sym, ksum(x) OVER w s FROM base " +
+                        "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')"
+        );
     }
 
     private LiveViewCheckpointMetaStore openStore(LiveViewInstance instance) {

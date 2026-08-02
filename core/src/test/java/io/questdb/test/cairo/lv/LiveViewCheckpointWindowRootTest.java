@@ -297,17 +297,20 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
     public void testAResidualFunctionKeepsItsOwnRootBesideTheFusedTree() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();
-            // count(*) counts rows rather than an argument's non-null values, so it has
-            // no argument key and cannot join a count(x) component. "One B-tree per
-            // window" is therefore one tree for the group plus its own root for this.
+            // A bounded ROWS frame keeps the live rows behind its scalar tail in its
+            // image, so it is not fixed width and cannot be inlined beside the anchor.
+            // "One B-tree per window" is therefore one tree for the group plus its own
+            // root for this.
             execute("create live view lv flush every 100ms start from beginning as "
-                    + "select created_at, cod_acct_no, sum(amt_txn) over w as s, count(*) over w as c "
+                    + "select created_at, cod_acct_no, sum(amt_txn) over w as s, "
+                    + "sum(amt_txn) over (partition by cod_acct_no order by created_at "
+                    + "rows between 3 preceding and current row) as b "
                     + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 insertAccount(job, "2026-01-01T09:00:00.000000Z", "acct-1", 5.0);
                 Assert.assertTrue(isFusedHead());
-                Assert.assertEquals("count(*) keeps the root it has today", 1, headFunctionRootCount());
+                Assert.assertEquals("the bounded frame keeps the root it has today", 1, headFunctionRootCount());
                 Assert.assertEquals(ANCHOR_BYTES + SUM_STATE_BYTES, headWindowPayloadBytes());
                 assertHeadRestoresRuntime(instance());
                 assertNoRefreshFaults("lv");

@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
+import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -110,10 +112,19 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         }
     }
 
+    /**
+     * Caches the two slots every family this base class serves has a name for. A
+     * subclass whose family carries more - Welford's mean and m2 - overrides, calls
+     * super and reads its own fields off the same projection.
+     */
     @Override
-    public void bindWindowStateSlots(int sumSlot, int nonNullCountSlot) {
-        this.windowStateSumSlot = sumSlot;
-        this.windowStateNonNullCountSlot = nonNullCountSlot;
+    public void bindWindowStateSlots(@Nullable LiveViewAccumulatorProjection projection) {
+        this.windowStateSumSlot = projection == null
+                ? -1
+                : projection.getFieldSlot(LiveViewAccumulatorDescriptor.FIELD_SUM);
+        this.windowStateNonNullCountSlot = projection == null
+                ? -1
+                : projection.getFieldSlot(LiveViewAccumulatorDescriptor.FIELD_NON_NULL_COUNT);
     }
 
     @Override

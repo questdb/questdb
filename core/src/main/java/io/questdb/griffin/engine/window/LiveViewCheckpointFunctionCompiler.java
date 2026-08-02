@@ -617,11 +617,15 @@ public final class LiveViewCheckpointFunctionCompiler {
      *     <li>that image is fixed width and fits the per-component inline budget;</li>
      *     <li>it declares an accumulator family and a projection off it;</li>
      *     <li>its argument is a direct compiled column reference of a type whose
-     *     contribution predicate {@link LiveViewAccumulatorDescriptor} can name.</li>
+     *     contribution predicate {@link LiveViewAccumulatorDescriptor} can name - or,
+     *     for a family that takes no argument, it has no argument at all.</li>
      * </ul>
-     * Anything else is a residual. In particular {@code count(*)} has no argument and
-     * so never joins a {@code count(x)} component, and an argument reached through an
-     * implicit cast is not a direct column reference.
+     * Anything else is a residual. In particular an argument reached through an implicit
+     * cast is not a direct column reference. {@code count(*)} joins as a
+     * {@link LiveViewAccumulatorDescriptor#FAMILY_ROW_COUNT row count} rather than as a
+     * {@code count(x)}, and the two never merge: one counts rows and the other counts a
+     * column's non-null values, which agree only on data where that column is never
+     * null.
      * <p>
      * Sharing is proved from the component identity alone and never from SQL text.
      * {@code sum(x)} and {@code avg(x)} over one window merge because both declare the
@@ -722,14 +726,30 @@ public final class LiveViewCheckpointFunctionCompiler {
         if (projectionKind == LiveViewAccumulatorProjection.PROJECTION_NONE) {
             return false;
         }
-        final int argumentColumnIndex = directColumnIndex(function.checkpointAccumulatorArgument(), baseMetadata);
-        if (argumentColumnIndex < 0) {
-            return false;
+        final int family = function.checkpointAccumulatorFamily();
+        final int argumentColumnIndex;
+        final int argumentColumnType;
+        if (LiveViewAccumulatorDescriptor.familyTakesArgument(family)) {
+            argumentColumnIndex = directColumnIndex(function.checkpointAccumulatorArgument(), baseMetadata);
+            if (argumentColumnIndex < 0) {
+                return false;
+            }
+            argumentColumnType = baseMetadata.getColumnType(argumentColumnIndex);
+        } else {
+            // A row-count component counts rows and nothing about a column, so its
+            // identity has no argument to carry. A function that declares the family and
+            // still holds an argument is describing state the identity does not, and is
+            // turned away rather than fused under a key that omits it.
+            if (function.checkpointAccumulatorArgument() != null) {
+                return false;
+            }
+            argumentColumnIndex = LiveViewAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX;
+            argumentColumnType = ColumnType.UNDEFINED;
         }
         final LiveViewAccumulatorDescriptor component = LiveViewAccumulatorDescriptor.of(
-                function.checkpointAccumulatorFamily(),
+                family,
                 argumentColumnIndex,
-                baseMetadata.getColumnType(argumentColumnIndex)
+                argumentColumnType
         );
         if (component == null) {
             return false;

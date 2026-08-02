@@ -53,7 +53,10 @@ import java.util.Arrays;
  *     <li>the <b>argument</b>, as a {@code (base column index, column type)} pair.
  *     Only a direct compiled column reference gets a key at all - a canonical,
  *     type-resolved fingerprint for arbitrary expressions does not exist yet, and
- *     rendering the SQL text is not a proof of expression equivalence;</li>
+ *     rendering the SQL text is not a proof of expression equivalence. A family
+ *     {@link #familyTakesArgument} says takes none carries the fixed
+ *     {@code (NO_ARGUMENT_COLUMN_INDEX, UNDEFINED)} pair instead, so its identity is
+ *     one exact value rather than an absence;</li>
  *     <li>the <b>contribution predicate</b>, because two counters over the same
  *     window can still diverge on which rows they count. {@code sum(amt)} counts
  *     finite {@code amt} values and {@code count(acct)} counts non-null {@code acct}
@@ -71,19 +74,27 @@ import java.util.Arrays;
  * Two identities that differ can still describe one durable image, when one family's
  * state <i>contains</i> the other's verbatim: the counter a {@code count(x)} persists
  * on its own is the same counter a {@code sum(x)} over the same argument already keeps
- * beside its sum. {@link #derivedStateOffset} is where that containment is stated, one
- * proved pair at a time, and it is what lets a fused group persist
+ * beside its sum, and equally the one Welford's accumulator keeps behind its running
+ * mean. {@link #derivedStateOffset} is where that containment is stated, one proved
+ * pair at a time, and it is what lets a fused group persist
  * {@code sum(x) + avg(x) + count(x)} as one 16-byte component rather than 24 bytes in
  * two. Containment is strictly narrower than identity and is never assumed from the
  * arithmetic alone - the argument and the contribution predicate still have to match,
  * for the same reason two identities do.
  * <p>
- * {@code count(*)} is a row-count component rather than a non-null count and gets no
- * descriptor from this class at all: it has no argument, so it can never be
- * interchangeable with a {@code count(x)}, and admitting it would need the row-count
- * family the later work adds.
+ * {@code count(*)} is a {@link #FAMILY_ROW_COUNT row-count} component rather than a
+ * non-null count, and the two are never interchangeable: a row count has no argument,
+ * so nothing about it could make it agree with a counter that skips the rows where some
+ * column is null. What it does share is {@code row_number()}, which keeps the very same
+ * counter over the very same rows.
  */
 public final class LiveViewAccumulatorDescriptor {
+    /**
+     * Every row contributes. The predicate of a row-count component, and the reason
+     * such a component is never interchangeable with a counter over an argument: a
+     * {@code count(x)} skips the rows where {@code x} is absent and this one does not.
+     */
+    public static final int CONTRIBUTION_EVERY_ROW = 3;
     /**
      * {@code Numbers.isFinite(arg.getDouble(record))} - the predicate a DOUBLE
      * {@code sum}/{@code avg} contributes under and, deliberately, the one
@@ -109,6 +120,15 @@ public final class LiveViewAccumulatorDescriptor {
      */
     public static final int FAMILY_DOUBLE_SUM_COUNT = 1;
     /**
+     * State {@code [mean: DOUBLE, m2: DOUBLE, nonNullCount: LONG]} - Welford's online
+     * accumulator - contributed by any of {@code stddev_samp}, {@code stddev_pop},
+     * {@code var_samp} and {@code var_pop} over an unbounded partitioned frame. The four
+     * differ only in the arithmetic they read off {@code (m2, nonNullCount)}, so a view
+     * naming several of them over one column persists one 24-byte component rather than
+     * one per call.
+     */
+    public static final int FAMILY_DOUBLE_WELFORD = 4;
+    /**
      * Not an accumulator component. The default a window function reports when it
      * does not participate in a fused window state.
      */
@@ -119,6 +139,27 @@ public final class LiveViewAccumulatorDescriptor {
      */
     public static final int FAMILY_NON_NULL_COUNT = 2;
     /**
+     * State {@code [rowCount: LONG]}, contributed by {@code count(*)} or by a
+     * partitioned {@code row_number()} over an unbounded partitioned frame. Both keep
+     * the same counter of rows since the partition's last anchor crossing, and after
+     * {@code n} rows both read {@code n} off it.
+     * <p>
+     * It takes no argument at all, which is what keeps it apart from
+     * {@link #FAMILY_NON_NULL_COUNT}: a row count and a non-null count agree only on
+     * data where the counted column is never null, and the identity must not depend on
+     * the data.
+     */
+    public static final int FAMILY_ROW_COUNT = 3;
+    /**
+     * The running sum of squared deviations from the running mean. Present only in
+     * {@link #FAMILY_DOUBLE_WELFORD}.
+     */
+    public static final int FIELD_M2 = 3;
+    /**
+     * The running mean. Present only in {@link #FAMILY_DOUBLE_WELFORD}.
+     */
+    public static final int FIELD_MEAN = 2;
+    /**
      * The count of contributing rows. Present in every family.
      */
     public static final int FIELD_NON_NULL_COUNT = 1;
@@ -126,6 +167,12 @@ public final class LiveViewAccumulatorDescriptor {
      * The running sum. Present only in {@link #FAMILY_DOUBLE_SUM_COUNT}.
      */
     public static final int FIELD_SUM = 0;
+    /**
+     * The argument key of a family that takes no argument. Paired with
+     * {@link ColumnType#UNDEFINED} as the type, so an argumentless identity is one exact
+     * pair rather than a range of them.
+     */
+    public static final int NO_ARGUMENT_COLUMN_INDEX = -1;
     private static final int FORMAT_VERSION = 1;
     private static final int MAGIC = 0x4c564143; // LVAC
     private final int argumentColumnIndex;
@@ -167,10 +214,18 @@ public final class LiveViewAccumulatorDescriptor {
      */
     public static int contributionKindFor(int family, int argumentColumnType) {
         switch (family) {
+            case FAMILY_ROW_COUNT:
+                // No argument to predicate on, and the caller must not have supplied one:
+                // a row count that quietly accepted an argument type would be a second
+                // identity for the same state, and the two would not merge.
+                return argumentColumnType == ColumnType.UNDEFINED
+                        ? CONTRIBUTION_EVERY_ROW
+                        : CONTRIBUTION_NONE;
             case FAMILY_DOUBLE_SUM_COUNT:
-                // sum(D)/avg(D) exist only over DOUBLE. Anything else reaches the same
-                // factory through an implicit cast, which is not a direct column
-                // reference and has already been turned away by the caller.
+            case FAMILY_DOUBLE_WELFORD:
+                // sum(D)/avg(D) and the Welford families exist only over DOUBLE. Anything
+                // else reaches the same factory through an implicit cast, which is not a
+                // direct column reference and has already been turned away by the caller.
                 return ColumnType.tagOf(argumentColumnType) == ColumnType.DOUBLE
                         ? CONTRIBUTION_FINITE_DOUBLE
                         : CONTRIBUTION_NONE;
@@ -197,11 +252,27 @@ public final class LiveViewAccumulatorDescriptor {
     public static int familyCodecVersion(int family) {
         switch (family) {
             case FAMILY_DOUBLE_SUM_COUNT:
+            case FAMILY_DOUBLE_WELFORD:
             case FAMILY_NON_NULL_COUNT:
+            case FAMILY_ROW_COUNT:
                 return 1;
             default:
                 return -1;
         }
+    }
+
+    /**
+     * Whether {@code family}'s identity includes an argument. A family that takes none
+     * is identified by its family and codec alone, and its descriptor carries
+     * {@link #NO_ARGUMENT_COLUMN_INDEX} with {@link ColumnType#UNDEFINED}.
+     * <p>
+     * The compiler reads this before it looks for an argument key: a {@code count(*)}
+     * has no argument to resolve and would otherwise be declined for the absence, while
+     * a function that declares an argumentless family and then hands over an argument is
+     * declining itself.
+     */
+    public static boolean familyTakesArgument(int family) {
+        return family != FAMILY_ROW_COUNT;
     }
 
     /**
@@ -212,11 +283,16 @@ public final class LiveViewAccumulatorDescriptor {
      *
      * @param family              one of the {@code FAMILY_*} constants
      * @param argumentColumnIndex the argument's index in the base metadata the window
-     *                            functions were compiled against
-     * @param argumentColumnType  the argument's compiled column type
+     *                            functions were compiled against, or
+     *                            {@link #NO_ARGUMENT_COLUMN_INDEX} for an argumentless
+     *                            family
+     * @param argumentColumnType  the argument's compiled column type, or
+     *                            {@link ColumnType#UNDEFINED} for an argumentless family
      */
     public static @Nullable LiveViewAccumulatorDescriptor of(int family, int argumentColumnIndex, int argumentColumnType) {
-        if (argumentColumnIndex < 0) {
+        if (familyTakesArgument(family)
+                ? argumentColumnIndex < 0
+                : argumentColumnIndex != NO_ARGUMENT_COLUMN_INDEX) {
             return null;
         }
         final int contributionKind = contributionKindFor(family, argumentColumnType);
@@ -248,7 +324,10 @@ public final class LiveViewAccumulatorDescriptor {
         switch (family) {
             case FAMILY_DOUBLE_SUM_COUNT:
                 return Double.BYTES + Long.BYTES;
+            case FAMILY_DOUBLE_WELFORD:
+                return 2 * Double.BYTES + Long.BYTES;
             case FAMILY_NON_NULL_COUNT:
+            case FAMILY_ROW_COUNT:
                 return Long.BYTES;
             default:
                 return -1;
@@ -307,11 +386,21 @@ public final class LiveViewAccumulatorDescriptor {
                 || argumentColumnType != other.argumentColumnType) {
             return -1;
         }
-        // The one cross-family containment this build has proved. A DOUBLE sum/avg
-        // freezes (sum, nonNullCount) and a count freezes that same counter alone, so
-        // the count's whole image is the host's second field - and the two count the
-        // same rows, since contributionKind has already been required to match.
+        // A DOUBLE sum/avg freezes (sum, nonNullCount) and a count freezes that same
+        // counter alone, so the count's whole image is the host's second field - and the
+        // two count the same rows, since contributionKind has already been required to
+        // match.
         if (family == FAMILY_DOUBLE_SUM_COUNT && codecVersion == 1
+                && other.family == FAMILY_NON_NULL_COUNT && other.codecVersion == 1) {
+            return getFieldOffset(FIELD_NON_NULL_COUNT);
+        }
+        // Welford's accumulator ends with the same counter, and increments it under the
+        // same isFinite test the DOUBLE families use, so a count(x) beside a stddev(x)
+        // costs nothing either. It is stated as its own pair rather than derived from
+        // "the families both end in a counter": containment is a claim about the two
+        // freeze implementations, and Welford's happens to write (mean, m2, count) in an
+        // order that puts the counter last.
+        if (family == FAMILY_DOUBLE_WELFORD && codecVersion == 1
                 && other.family == FAMILY_NON_NULL_COUNT && other.codecVersion == 1) {
             return getFieldOffset(FIELD_NON_NULL_COUNT);
         }
@@ -379,7 +468,16 @@ public final class LiveViewAccumulatorDescriptor {
                     return 0;
                 }
                 return field == FIELD_NON_NULL_COUNT ? Double.BYTES : -1;
+            case FAMILY_DOUBLE_WELFORD:
+                if (field == FIELD_MEAN) {
+                    return 0;
+                }
+                if (field == FIELD_M2) {
+                    return Double.BYTES;
+                }
+                return field == FIELD_NON_NULL_COUNT ? 2 * Double.BYTES : -1;
             case FAMILY_NON_NULL_COUNT:
+            case FAMILY_ROW_COUNT:
                 return field == FIELD_NON_NULL_COUNT ? 0 : -1;
             default:
                 return -1;
@@ -399,7 +497,16 @@ public final class LiveViewAccumulatorDescriptor {
                     return 0;
                 }
                 return field == FIELD_NON_NULL_COUNT ? 1 : -1;
+            case FAMILY_DOUBLE_WELFORD:
+                if (field == FIELD_MEAN) {
+                    return 0;
+                }
+                if (field == FIELD_M2) {
+                    return 1;
+                }
+                return field == FIELD_NON_NULL_COUNT ? 2 : -1;
             case FAMILY_NON_NULL_COUNT:
+            case FAMILY_ROW_COUNT:
                 return field == FIELD_NON_NULL_COUNT ? 0 : -1;
             default:
                 return -1;
@@ -414,7 +521,10 @@ public final class LiveViewAccumulatorDescriptor {
         switch (family) {
             case FAMILY_DOUBLE_SUM_COUNT:
                 return 2;
+            case FAMILY_DOUBLE_WELFORD:
+                return 3;
             case FAMILY_NON_NULL_COUNT:
+            case FAMILY_ROW_COUNT:
                 return 1;
             default:
                 return 0;
@@ -436,7 +546,16 @@ public final class LiveViewAccumulatorDescriptor {
                     return ColumnType.LONG;
                 }
                 break;
+            case FAMILY_DOUBLE_WELFORD:
+                if (slot == 0 || slot == 1) {
+                    return ColumnType.DOUBLE;
+                }
+                if (slot == 2) {
+                    return ColumnType.LONG;
+                }
+                break;
             case FAMILY_NON_NULL_COUNT:
+            case FAMILY_ROW_COUNT:
                 if (slot == 0) {
                     return ColumnType.LONG;
                 }

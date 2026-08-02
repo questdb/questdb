@@ -179,11 +179,7 @@ public final class LiveViewWindowStatePlan {
      */
     public void bindProjectionFunctions() {
         for (int i = 0, n = projections.size(); i < n; i++) {
-            final LiveViewAccumulatorProjection projection = projections.getQuick(i);
-            projectionFunctions.getQuick(i).bindWindowStateSlots(
-                    projection.getSumSlot(),
-                    projection.getNonNullCountSlot()
-            );
+            projectionFunctions.getQuick(i).bindWindowStateSlots(projections.getQuick(i));
         }
     }
 
@@ -329,7 +325,7 @@ public final class LiveViewWindowStatePlan {
      */
     public void unbindProjectionFunctions() {
         for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
-            projectionFunctions.getQuick(i).bindWindowStateSlots(-1, -1);
+            projectionFunctions.getQuick(i).bindWindowStateSlots(null);
         }
     }
 

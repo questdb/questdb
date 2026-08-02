@@ -1686,9 +1686,8 @@ public class CountFunctionFactoryHelper {
 
         /**
          * Null for {@code count(*)}, which this class also serves: that call counts rows
-         * rather than an argument's non-null values, so it has no argument key and can never
-         * be interchangeable with a {@code count(x)}. The plan reads the null and leaves it
-         * on its own legacy root until the row-count family exists.
+         * rather than an argument's non-null values, so its component is keyed by nothing
+         * but the row-count family it declares below.
          */
         @Override
         public Function checkpointAccumulatorArgument() {
@@ -1696,14 +1695,21 @@ public class CountFunctionFactoryHelper {
         }
 
         /**
-         * One contributing-row counter. Which rows contribute is the argument type's own
-         * business - {@code Numbers.isFinite} for DOUBLE, a null test elsewhere - and the
-         * component identity carries it, because two counters over the same window disagree
-         * on exactly the rows where one argument is null and the other is not.
+         * One contributing-row counter, under the family that says which rows contribute.
+         * <p>
+         * {@code count(*)} keeps a row count, shared with anything else that counts every
+         * row of the same window - a partitioned {@code row_number()} being the other one
+         * today. {@code count(x)} keeps a non-null count, and which rows that admits is the
+         * argument type's own business ({@code Numbers.isFinite} for DOUBLE, a null test
+         * elsewhere), so the component identity carries the argument too: two counters over
+         * one window disagree on exactly the rows where one argument is null and the other
+         * is not.
          */
         @Override
         public int checkpointAccumulatorFamily() {
-            return LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT;
+            return arg == null
+                    ? LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT
+                    : LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT;
         }
 
         @Override

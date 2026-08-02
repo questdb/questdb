@@ -94,6 +94,12 @@ public interface WindowFunction extends Function {
      * expression - including an implicit cast a signature match inserted - is not one,
      * because there is no canonical type-resolved fingerprint that would prove two
      * expressions equivalent, and SQL text equality is not that proof.
+     * <p>
+     * Null is <b>required</b> rather than merely permitted of a function declaring a
+     * family {@link LiveViewAccumulatorDescriptor#familyTakesArgument} says takes none:
+     * such a family's identity has no room for an argument, so a function that both
+     * declared it and handed one over would be persisting state under an identity that
+     * does not describe it. The compiler declines that combination.
      *
      * @see #checkpointAccumulatorFamily()
      */
@@ -111,7 +117,10 @@ public interface WindowFunction extends Function {
      * The family names the <b>mathematics</b>, not the SELECT-list call: a DOUBLE
      * {@code sum} and a DOUBLE {@code avg} both report
      * {@link LiveViewAccumulatorDescriptor#FAMILY_DOUBLE_SUM_COUNT} because both
-     * maintain exactly {@code (sum, nonNullCount)}. Declaring a family is a claim about
+     * maintain exactly {@code (sum, nonNullCount)}, and {@code count(*)} beside
+     * {@code row_number()} both report
+     * {@link LiveViewAccumulatorDescriptor#FAMILY_ROW_COUNT} because both maintain one
+     * counter of rows. Declaring a family is a claim about
      * the whole-state image, so it may only be made where
      * {@link #checkpointStateFixedLength()} declares the family's own width - the plan
      * checks the two against each other and declines the projection when they disagree.
@@ -156,7 +165,7 @@ public interface WindowFunction extends Function {
 
     /**
      * Adopts the fused slots this output reads out of the window's map value, or clears
-     * them when both are {@code -1}.
+     * them when {@code projection} is null.
      * <p>
      * A bound function is one whose per-partition state the window owns: its
      * {@code computeNext}, {@code resetPartition}, {@code markPartitionAlive},
@@ -165,13 +174,18 @@ public interface WindowFunction extends Function {
      * materialized. Binding is the plan's to do - see
      * {@code LiveViewWindowStatePlan.bindProjectionFunctions} - because the plan is the
      * single owner of which accumulator is whose.
+     * <p>
+     * The whole projection rather than a pair of slots, because a family's field set is
+     * the family's business: {@code (sum, nonNullCount)} covers the DOUBLE accumulators
+     * and the counters, and Welford's {@code (mean, m2, nonNullCount)} does not. An
+     * implementation reads the fields it needs through
+     * {@link LiveViewAccumulatorProjection#getFieldSlot(int)} and caches them, so the
+     * per-row path still touches plain int fields.
      *
-     * @param sumSlot          the running sum's slot, or {@code -1} when the component
-     *                         carries none
-     * @param nonNullCountSlot the contributing-row counter's slot, which every family
-     *                         carries, so {@code -1} here means "not fused"
+     * @param projection this output's binding onto its component, or null to hand the
+     *                   state back to the map this function owns outside a fused group
      */
-    default void bindWindowStateSlots(int sumSlot, int nonNullCountSlot) {
+    default void bindWindowStateSlots(@Nullable LiveViewAccumulatorProjection projection) {
     }
 
     /**

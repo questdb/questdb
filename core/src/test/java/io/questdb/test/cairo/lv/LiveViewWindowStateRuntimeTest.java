@@ -268,7 +268,14 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
             // function's own freezeCheckpointState would have written into a state page.
             // The two are separate implementations of one codec, and a leaf carries no
             // length that would catch them diverging.
-            createTargetView();
+            createBaseTable();
+            // One view naming every family the plan admits, so each new family is held to
+            // the claim rather than only the two the target shape happens to use.
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, cod_acct_no, sum(amt_txn) over w as s, "
+                    + "count(cod_acct_no) over w as c, count(*) over w as r, "
+                    + "stddev_samp(amt_txn) over w as sd "
+                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 insertAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", 5.0);
@@ -276,9 +283,112 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
 
                 final LiveViewWindowStatePlan plan = window().getCheckpointWindowStatePlan();
                 Assert.assertNotNull(plan);
+                Assert.assertEquals(
+                        "the view must produce one component per family",
+                        4,
+                        plan.getComponentCount()
+                );
                 for (int c = 0, n = plan.getComponentCount(); c < n; c++) {
-                    assertComponentCodecMatchesContributor(plan, c, 17.5, 3);
+                    assertComponentCodecMatchesContributor(plan, c);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testARowCountServesCountStarAndRowNumberFromOneSlot() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, cod_acct_no, count(*) over w as c, row_number() over w as rn "
+                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", 5.0);
+                insertAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-2", 7.0);
+                insertAccount(job, DAILY_ANCHOR + "09:00:20.000000Z", "acct-1", 11.0);
+                // A null argument still counts: neither call reads the column at all.
+                insertAccount(job, DAILY_ANCHOR + "09:00:30.000000Z", "acct-1", null);
+                // Two rows of one account at one timestamp. This is where a peer-inclusive
+                // count would run ahead of the row number and the shared counter would be
+                // wrong for one of them; QuestDB's count over an unbounded frame stops at
+                // the current row instead, which is what makes the two one accumulator.
+                insertAccount(job, DAILY_ANCHOR + "09:00:35.000000Z", "acct-1", 1.0);
+                insertAccount(job, DAILY_ANCHOR + "09:00:35.000000Z", "acct-1", 2.0);
+                // A bucket crossing, so the counter is reset in place under a new anchor
+                // and row_number starts over at 1 with it.
+                insertAccount(job, "2026-01-02T09:00:00.000000Z", "acct-1", 3.0);
+
+                final LiveViewWindowStatePlan plan = window().getCheckpointWindowStatePlan();
+                Assert.assertNotNull(plan);
+                Assert.assertEquals("one counter serves both calls", 1, plan.getComponentCount());
+                Assert.assertEquals(2, plan.getProjectionCount());
+                for (int i = 0; i < 2; i++) {
+                    final WindowFunction function = plan.getProjectionFunction(i);
+                    Assert.assertTrue("projection " + i + " must be fused", function.isWindowStateOwned());
+                    Assert.assertFalse(
+                            "a fused projection must never allocate its private map",
+                            function.getPartitionMap().isOpen()
+                    );
+                }
+                assertRowCountViewMatchesRecompute();
+                assertRowCountsAgree();
+
+                // And the head that seals it restores on its own.
+                final byte[] before = snapshotWindow(window());
+                restoreHead();
+                Assert.assertArrayEquals(before, snapshotWindow(window()));
+                assertRowCountViewMatchesRecompute();
+                assertRowCountsAgree();
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testOneWelfordAccumulatorServesEveryDispersionCall() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, cod_acct_no, stddev_samp(amt_txn) over w as ss, "
+                    + "stddev_pop(amt_txn) over w as sp, var_samp(amt_txn) over w as vs, "
+                    + "var_pop(amt_txn) over w as vp, count(amt_txn) over w as c "
+                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", 5.0);
+                insertAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-2", 7.0);
+                insertAccount(job, DAILY_ANCHOR + "09:00:20.000000Z", "acct-1", 11.0);
+                // A single-row partition, where the sample forms are NULL and the
+                // population ones are zero - the arithmetic that separates the four.
+                insertAccount(job, DAILY_ANCHOR + "09:00:25.000000Z", "acct-3", 4.0);
+                // A null contributes to neither the dispersion nor the counter, which is
+                // what lets the folded count read Welford's own.
+                insertAccount(job, DAILY_ANCHOR + "09:00:30.000000Z", "acct-1", null);
+                insertAccount(job, DAILY_ANCHOR + "09:00:40.000000Z", "acct-1", 2.0);
+                // A bucket crossing, so the accumulator is reset in place under a new
+                // anchor rather than carried across it.
+                insertAccount(job, "2026-01-02T09:00:00.000000Z", "acct-1", 3.0);
+
+                final LiveViewWindowStatePlan plan = window().getCheckpointWindowStatePlan();
+                Assert.assertNotNull(plan);
+                Assert.assertEquals("one accumulator serves all five calls", 1, plan.getComponentCount());
+                Assert.assertEquals(5, plan.getProjectionCount());
+                for (int i = 0; i < 5; i++) {
+                    final WindowFunction function = plan.getProjectionFunction(i);
+                    Assert.assertTrue("projection " + i + " must be fused", function.isWindowStateOwned());
+                    Assert.assertFalse(
+                            "a fused projection must never allocate its private map",
+                            function.getPartitionMap().isOpen()
+                    );
+                }
+                assertWelfordViewMatchesRecompute();
+
+                final byte[] before = snapshotWindow(window());
+                restoreHead();
+                Assert.assertArrayEquals(before, snapshotWindow(window()));
+                assertWelfordViewMatchesRecompute();
+                assertNoRefreshFaults("lv");
             }
         });
     }
@@ -321,21 +431,21 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     }
 
     /**
-     * Fills one scratch map value with {@code sum} and {@code count}, freezes it twice -
+     * Fills every one of a component's slots with a distinct value, freezes it twice -
      * once through the component descriptor's payload codec and once through the
      * contributing function's own state-page writer - and requires the two images to be
-     * identical.
+     * identical, then round-trips the descriptor's own decoder over them.
+     * <p>
+     * Slot by slot rather than field by field, so a family this case has never heard of
+     * is still covered the day it is added: the two implementations have to agree on
+     * every byte of the image, not only on the ones a named getter reaches.
      */
-    private void assertComponentCodecMatchesContributor(
-            LiveViewWindowStatePlan plan,
-            int componentIndex,
-            double sum,
-            long count
-    ) {
+    private void assertComponentCodecMatchesContributor(LiveViewWindowStatePlan plan, int componentIndex) {
         final LiveViewAccumulatorDescriptor component = plan.getComponent(componentIndex);
         final WindowFunction contributor = plan.getContributor(componentIndex);
+        final int slotCount = component.getSlotCount();
         final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-        for (int i = 0, n = component.getSlotCount(); i < n; i++) {
+        for (int i = 0; i < slotCount; i++) {
             valueTypes.add(component.getSlotColumnType(i));
         }
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
@@ -345,11 +455,15 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
             final MapKey key = scratch.withKey();
             key.putLong(1);
             final MapValue value = key.createValue();
-            final int sumSlot = component.getFieldSlot(LiveViewAccumulatorDescriptor.FIELD_SUM);
-            if (sumSlot >= 0) {
-                value.putDouble(sumSlot, sum);
+            // Distinct per slot, so a codec that transposed two fields of the same width
+            // would fail rather than pass on equal bytes.
+            for (int i = 0; i < slotCount; i++) {
+                if (component.getSlotColumnType(i) == ColumnType.DOUBLE) {
+                    value.putDouble(i, 17.5 + i);
+                } else {
+                    value.putLong(i, 3L + i);
+                }
             }
-            value.putLong(component.getFieldSlot(LiveViewAccumulatorDescriptor.FIELD_NON_NULL_COUNT), count);
 
             final byte[] fromDescriptor = new byte[component.getStateLength()];
             component.freezeStateInto(value, 0, fromDescriptor, 0);
@@ -370,19 +484,22 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                     fromDescriptor
             );
 
-            // And the inverse puts the same numbers back into the slots.
-            value.putLong(component.getFieldSlot(LiveViewAccumulatorDescriptor.FIELD_NON_NULL_COUNT), 0);
-            if (sumSlot >= 0) {
-                value.putDouble(sumSlot, 0);
+            // And the inverse puts the same numbers back into the same slots.
+            for (int i = 0; i < slotCount; i++) {
+                if (component.getSlotColumnType(i) == ColumnType.DOUBLE) {
+                    value.putDouble(i, 0.0);
+                } else {
+                    value.putLong(i, 0L);
+                }
             }
             component.restoreStateFrom(fromDescriptor, 0, value, 0);
-            if (sumSlot >= 0) {
-                Assert.assertEquals(sum, value.getDouble(sumSlot), 0.0);
+            for (int i = 0; i < slotCount; i++) {
+                if (component.getSlotColumnType(i) == ColumnType.DOUBLE) {
+                    Assert.assertEquals(17.5 + i, value.getDouble(i), 0.0);
+                } else {
+                    Assert.assertEquals(3L + i, value.getLong(i));
+                }
             }
-            Assert.assertEquals(
-                    count,
-                    value.getLong(component.getFieldSlot(LiveViewAccumulatorDescriptor.FIELD_NON_NULL_COUNT))
-            );
         } finally {
             Misc.free(scratch);
         }
@@ -401,6 +518,66 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 "(select created_at, cod_acct_no, "
                         + "sum(amt_txn) " + frame + " as s, "
                         + "avg(amt_txn) " + frame + " as a, "
+                        + "count(amt_txn) " + frame + " as c "
+                        + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)"
+                        + ") order by 2, 1",
+                "(lv) order by 2, 1",
+                LOG,
+                true
+        );
+    }
+
+    /**
+     * The claim the shared row counter rests on, read off the view itself: every row's
+     * {@code count(*)} equals its {@code row_number()}. Comparing the two output columns
+     * to each other rather than to an oracle is what makes the check independent of which
+     * of two rows at one timestamp came first - and tied timestamps are the only place the
+     * two could ever have disagreed.
+     */
+    private void assertRowCountsAgree() throws Exception {
+        assertQuery("select count(*) as disagreeing from lv where c != rn")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("disagreeing\n0\n");
+    }
+
+    /**
+     * The {@link #assertViewMatchesRecompute()} counterpart for the row-count shape.
+     */
+    private void assertRowCountViewMatchesRecompute() throws Exception {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
+        final String frame = "over (partition by cod_acct_no, bucket order by created_at "
+                + "rows between unbounded preceding and current row)";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(select created_at, cod_acct_no, "
+                        + "count(*) " + frame + " as c, "
+                        + "row_number() over (partition by cod_acct_no, bucket order by created_at) as rn "
+                        + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)"
+                        + ") order by 2, 1",
+                "(lv) order by 2, 1",
+                LOG,
+                true
+        );
+    }
+
+    /**
+     * The {@link #assertViewMatchesRecompute()} counterpart for the Welford shape.
+     */
+    private void assertWelfordViewMatchesRecompute() throws Exception {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
+        final String frame = "over (partition by cod_acct_no, bucket order by created_at "
+                + "rows between unbounded preceding and current row)";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(select created_at, cod_acct_no, "
+                        + "stddev_samp(amt_txn) " + frame + " as ss, "
+                        + "stddev_pop(amt_txn) " + frame + " as sp, "
+                        + "var_samp(amt_txn) " + frame + " as vs, "
+                        + "var_pop(amt_txn) " + frame + " as vp, "
                         + "count(amt_txn) " + frame + " as c "
                         + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)"
                         + ") order by 2, 1",

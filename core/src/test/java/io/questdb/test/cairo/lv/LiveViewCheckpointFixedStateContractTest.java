@@ -90,6 +90,7 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
 
     private static final int COUNT_STATE_BYTES = Long.BYTES;
     private static final int SUM_STATE_BYTES = Double.BYTES + Long.BYTES;
+    private static final int WELFORD_STATE_BYTES = 2 * Double.BYTES + Long.BYTES;
 
     /**
      * The customer shape the fused root is aimed at - an anchored window carrying an
@@ -177,8 +178,8 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
             assertDeclinesFixedWidth("select ts, sym, count(x) over (partition by sym order by ts "
                     + "rows between 3 preceding and current row) c from base");
             // An unpartitioned cumulative sum holds one scalar field and no map at all. It is
-            // fixed width in principle, but it is not one of the three implementations this
-            // step covers, so it declines like everything else that has not opted in.
+            // fixed width in principle, but it is not one of the implementations that have
+            // opted in, so it declines like everything else that has not.
             assertDeclinesFixedWidth("select ts, sum(x) over (order by ts "
                     + "rows between unbounded preceding and current row) s from base");
         });
@@ -230,6 +231,16 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
                     + "rows between unbounded preceding and current row) a from base", SUM_STATE_BYTES);
             assertDeclaredWidth("select ts, sym, count(x) over (partition by sym order by ts "
                     + "rows between unbounded preceding and current row) c from base", COUNT_STATE_BYTES);
+            // One counter for the row-count pair, and Welford's (mean, m2, count) for
+            // every dispersion call, whichever of the four is written.
+            assertDeclaredWidth("select ts, sym, count(*) over (partition by sym order by ts "
+                    + "rows between unbounded preceding and current row) c from base", COUNT_STATE_BYTES);
+            assertDeclaredWidth("select ts, sym, row_number() over (partition by sym order by ts) rn "
+                    + "from base", COUNT_STATE_BYTES);
+            assertDeclaredWidth("select ts, sym, stddev_samp(x) over (partition by sym order by ts "
+                    + "rows between unbounded preceding and current row) s from base", WELFORD_STATE_BYTES);
+            assertDeclaredWidth("select ts, sym, var_pop(x) over (partition by sym order by ts "
+                    + "rows between unbounded preceding and current row) v from base", WELFORD_STATE_BYTES);
             // The RANGE spelling of the same unbounded frame compiles to the same
             // implementations, so it must declare the same widths.
             assertDeclaredWidth("select ts, sym, sum(x) over (partition by sym order by ts "

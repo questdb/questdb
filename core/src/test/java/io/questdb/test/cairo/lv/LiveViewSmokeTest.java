@@ -1395,6 +1395,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 assertNoRefreshFaults("lv");
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                // The subject here is the function's own snapshot codec, and a function
+                // the fused plan groups no longer runs it - the window owns that state.
+                // Hand it back first: the codec is still what a residual function and the
+                // legacy-head upgrade adapter both go through, and declining migrates the
+                // accumulators into the private maps rather than dropping them. A no-op
+                // for every shape the plan does not group.
+                lv.getAnchorWindow().bindCheckpointWindowStatePlan(null);
                 WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
                 Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
@@ -16968,6 +16975,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         "2026-08-01T01:00:00.000000Z\tb\t2\n");
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                // row_number() joins the fused row-count component, so the window owns
+                // the counters and this function keeps no map. Hand them back: the codec
+                // under test is the function's own, which the legacy-head upgrade adapter
+                // still reads every partition through.
+                lv.getAnchorWindow().bindCheckpointWindowStatePlan(null);
                 WindowFunction rnFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
                 Assert.assertTrue(rnFunc.supportsCheckpointState());
                 Map fnMap = rnFunc.getPartitionMap();
@@ -17039,10 +17051,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         Numbers.LONG_NULL,
                         preHeadLvSeqTxn
                 );
+                // The counters live in the window's one fused value now, so the count of
+                // partitions holding them is the window's.
                 Assert.assertEquals(
                         "two partition keys seeded pre-restart",
                         2L,
-                        instance.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size()
+                        instance.getAnchorWindow().getAnchorMapSize()
                 );
             }
 
@@ -17064,6 +17078,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             );
             Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
 
+            // The restore filled the window's fused value; handing the plan back lowers
+            // each counter into the map row_number owns outside a group, which is where
+            // this case reads them and what the same numbers coming out proves.
+            reloaded.getAnchorWindow().bindCheckpointWindowStatePlan(null);
             Map fnMap = reloaded.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap();
             Assert.assertEquals("row_number's partition map rehydrates its partition count", 2L, fnMap.size());
             MapRecordCursor mc = fnMap.getCursor();

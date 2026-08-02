@@ -73,6 +73,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     private static final int ANCHOR_BYTES = Long.BYTES;
     private static final int COUNT_STATE_BYTES = Long.BYTES;
     private static final int SUM_STATE_BYTES = Double.BYTES + Long.BYTES;
+    private static final int WELFORD_STATE_BYTES = 2 * Double.BYTES + Long.BYTES;
 
     @Test
     public void testBoundedWindowBesideTheAnchoredOneStaysResidual() throws Exception {
@@ -290,20 +291,47 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testCountStarAndExpressionArgumentsStayResidual() throws Exception {
+    public void testCountStarJoinsAsARowCountAndNeverMergesWithACountOverAColumn() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();
-            // count(*) counts rows rather than an argument's non-null values, so it has no
-            // argument key and can never join a count(x) component.
+            // count(*) counts rows rather than an argument's non-null values. It has its
+            // own family and joins the group under it, but the two counters stay apart:
+            // they disagree on every row where the counted column is null, and an identity
+            // that merged them would depend on the data rather than on the query.
+            assertPlan(
+                    "select ts, sym, count(*) over w as r, count(x) over w as c "
+                            + "from base window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(2, plan.getComponentCount());
+                        Assert.assertEquals(2, plan.getProjectionCount());
+                        Assert.assertEquals(0, plan.getResidualFunctions().size());
+                        Assert.assertEquals(
+                                ANCHOR_BYTES + 2 * COUNT_STATE_BYTES,
+                                plan.getTotalInlineStateBytes()
+                        );
+                        Assert.assertFalse(plan.getProjection(0).isDerived());
+                        Assert.assertFalse(plan.getProjection(1).isDerived());
+                        Assert.assertNotEquals(
+                                "a row count must not read a non-null count's counter",
+                                plan.getProjection(0).getComponentIndex(),
+                                plan.getProjection(1).getComponentIndex()
+                        );
+                    }
+            );
+            // Nor with the counter inside a sum, for the same reason and at the same
+            // eight bytes: the fold needs containment, and a row count is not contained
+            // in a counter that skips rows.
             assertPlan(
                     "select ts, sym, sum(x) over w as s, count(*) over w as c "
                             + "from base window w as (partition by sym order by ts anchor daily '00:00')",
                     plan -> {
                         Assert.assertNotNull(plan);
-                        Assert.assertEquals(1, plan.getComponentCount());
-                        Assert.assertEquals(1, plan.getProjectionCount());
-                        Assert.assertEquals(1, plan.getResidualFunctions().size());
-                        Assert.assertEquals("count", plan.getResidualFunctions().getQuick(0).getName());
+                        Assert.assertEquals(2, plan.getComponentCount());
+                        Assert.assertEquals(
+                                ANCHOR_BYTES + SUM_STATE_BYTES + COUNT_STATE_BYTES,
+                                plan.getTotalInlineStateBytes()
+                        );
                     }
             );
             // An expression argument is not a direct column reference, and SQL text equality
@@ -315,6 +343,187 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                     Assert::assertNull
             );
         });
+    }
+
+    @Test
+    public void testCountStarAndRowNumberShareOneRowCounter() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // Both keep the count of rows since the partition's last anchor crossing, and
+            // after n rows both read n off it. One component, eight inline bytes, and the
+            // second call costs nothing.
+            assertPlan(
+                    "select ts, sym, count(*) over w as c, row_number() over w as rn "
+                            + "from base window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(2, plan.getProjectionCount());
+                        Assert.assertEquals(0, plan.getResidualFunctions().size());
+                        Assert.assertEquals(
+                                LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(ANCHOR_BYTES + COUNT_STATE_BYTES, plan.getTotalInlineStateBytes());
+                        // Neither is derived - each persists the whole component - so the
+                        // contributor is decided by output position, and only it updates.
+                        Assert.assertFalse(plan.getProjection(0).isDerived());
+                        Assert.assertFalse(plan.getProjection(1).isDerived());
+                        Assert.assertSame(plan.getProjectionFunction(0), plan.getContributor(0));
+                    }
+            );
+            // A row_number() beside a count(x) is two components: one counts rows and the
+            // other counts a column's non-null values.
+            assertPlan(
+                    "select ts, sym, row_number() over w as rn, count(x) over w as c "
+                            + "from base window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(2, plan.getComponentCount());
+                        Assert.assertEquals(
+                                ANCHOR_BYTES + 2 * COUNT_STATE_BYTES,
+                                plan.getTotalInlineStateBytes()
+                        );
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testTheFourWelfordCallsShareOneAccumulatorAndACountFoldsOntoIt() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // stddev_samp, stddev_pop, var_samp and var_pop are one implementation with two
+            // flags flipped, and the flags decide only what is read off the state. Five
+            // calls, one 24-byte accumulator, a 32-byte fused entry: the count folds onto
+            // Welford's counter, which increments under the same isFinite test it would
+            // have counted with on its own.
+            assertPlan(
+                    "select ts, sym, stddev_samp(x) over w as ss, stddev_pop(x) over w as sp, "
+                            + "var_samp(x) over w as vs, var_pop(x) over w as vp, count(x) over w as c "
+                            + "from base window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(5, plan.getProjectionCount());
+                        Assert.assertEquals(0, plan.getResidualFunctions().size());
+                        Assert.assertEquals(
+                                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(
+                                ANCHOR_BYTES + WELFORD_STATE_BYTES,
+                                plan.getTotalInlineStateBytes()
+                        );
+                        for (int i = 0; i < 5; i++) {
+                            Assert.assertEquals(
+                                    "every projection reads the one accumulator",
+                                    0,
+                                    plan.getProjection(i).getComponentIndex()
+                            );
+                        }
+                        Assert.assertEquals(
+                                LiveViewAccumulatorProjection.PROJECTION_STDDEV_SAMP,
+                                plan.getProjection(0).getKind()
+                        );
+                        Assert.assertEquals(
+                                LiveViewAccumulatorProjection.PROJECTION_VAR_POP,
+                                plan.getProjection(3).getKind()
+                        );
+                        // Only the count is derived, and its slice is the counter at the
+                        // end of Welford's image rather than the whole of it.
+                        final LiveViewAccumulatorProjection count = plan.getProjection(4);
+                        Assert.assertFalse(plan.getProjection(0).isDerived());
+                        Assert.assertTrue(count.isDerived());
+                        Assert.assertEquals(COUNT_STATE_BYTES, count.getFunctionStateLength());
+                        Assert.assertEquals(count.getNonNullCountFieldOffset(), count.getFunctionStateOffset());
+                        Assert.assertEquals(
+                                count.getComponentStateOffset() + 2 * Double.BYTES,
+                                count.getFunctionStateOffset()
+                        );
+                        // The count freezes eight bytes and the component is twenty-four,
+                        // so it could never write the image it reads.
+                        Assert.assertSame(plan.getProjectionFunction(0), plan.getContributor(0));
+                    }
+            );
+            // A Welford accumulator over one column and a sum over the same column stay two
+            // components: a mean is not a sum, so neither contains the other.
+            assertPlan(
+                    "select ts, sym, stddev_samp(x) over w as ss, sum(x) over w as s "
+                            + "from base window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(2, plan.getComponentCount());
+                        Assert.assertEquals(
+                                ANCHOR_BYTES + WELFORD_STATE_BYTES + SUM_STATE_BYTES,
+                                plan.getTotalInlineStateBytes()
+                        );
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testAnArgumentlessFamilyIsIdentifiedByNothingElse() {
+        Assert.assertFalse(LiveViewAccumulatorDescriptor.familyTakesArgument(
+                LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT
+        ));
+        Assert.assertTrue(LiveViewAccumulatorDescriptor.familyTakesArgument(
+                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD
+        ));
+        // A row count declared with an argument, and an argument-taking family declared
+        // without one, are both incoherent rather than merely unusual.
+        Assert.assertNull(LiveViewAccumulatorDescriptor.of(
+                LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                2,
+                ColumnType.DOUBLE
+        ));
+        Assert.assertNull(LiveViewAccumulatorDescriptor.of(
+                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                LiveViewAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX,
+                ColumnType.UNDEFINED
+        ));
+
+        final LiveViewAccumulatorDescriptor rowCount = rowCountComponent();
+        Assert.assertEquals(
+                LiveViewAccumulatorDescriptor.CONTRIBUTION_EVERY_ROW,
+                rowCount.getContributionKind()
+        );
+        Assert.assertEquals(COUNT_STATE_BYTES, rowCount.getStateLength());
+        // Two row counts under one window are the same component whatever named them.
+        Assert.assertTrue(rowCount.isSameIdentity(rowCountComponent()));
+        // And a row count neither is, nor contains, nor sits inside a counter over a
+        // column - in either direction, at the same eight bytes.
+        final LiveViewAccumulatorDescriptor count = component(
+                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        Assert.assertFalse(rowCount.isSameIdentity(count));
+        Assert.assertEquals(-1, rowCount.derivedStateOffset(count));
+        Assert.assertEquals(-1, count.derivedStateOffset(rowCount));
+
+        // Welford ends with the counter a count(x) over the same argument would keep, and
+        // increments it under the same predicate, so the count's whole image is that field.
+        final LiveViewAccumulatorDescriptor welford = component(
+                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                2,
+                ColumnType.DOUBLE
+        );
+        Assert.assertEquals(WELFORD_STATE_BYTES, welford.getStateLength());
+        Assert.assertEquals(
+                welford.getFieldOffset(LiveViewAccumulatorDescriptor.FIELD_NON_NULL_COUNT),
+                welford.derivedStateOffset(count)
+        );
+        Assert.assertEquals(2, welford.derivedSlotOffset(count));
+        // A sum's image is not a run inside Welford's, however alike the two families
+        // read: the second holds a running mean where the first holds a running sum.
+        Assert.assertEquals(-1, welford.derivedStateOffset(component(
+                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                2,
+                ColumnType.DOUBLE
+        )));
+        Assert.assertEquals(-1, rowCount.derivedStateOffset(welford));
     }
 
     @Test
@@ -442,6 +651,29 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                 LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                 LiveViewAccumulatorProjection.PROJECTION_AVG
         ));
+        // Every family carries a counter, so a count reads any of them - subject, again,
+        // to the identity test the plan applies first.
+        Assert.assertTrue(LiveViewAccumulatorProjection.isCompatible(
+                LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                LiveViewAccumulatorProjection.PROJECTION_COUNT
+        ));
+        Assert.assertTrue(LiveViewAccumulatorProjection.isCompatible(
+                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                LiveViewAccumulatorProjection.PROJECTION_COUNT
+        ));
+        // A dispersion needs the squared deviations only Welford's state holds.
+        Assert.assertTrue(LiveViewAccumulatorProjection.isCompatible(
+                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                LiveViewAccumulatorProjection.PROJECTION_VAR_SAMP
+        ));
+        Assert.assertFalse(LiveViewAccumulatorProjection.isCompatible(
+                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                LiveViewAccumulatorProjection.PROJECTION_STDDEV_POP
+        ));
+        Assert.assertFalse(LiveViewAccumulatorProjection.isCompatible(
+                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                LiveViewAccumulatorProjection.PROJECTION_SUM
+        ));
 
         // A contributor whose declared image is not its family's width is declined
         // outright: the manifest would name a slice the runtime image does not fill, and
@@ -555,6 +787,16 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
             ));
         }
         return builder.build();
+    }
+
+    private static LiveViewAccumulatorDescriptor rowCountComponent() {
+        final LiveViewAccumulatorDescriptor component = LiveViewAccumulatorDescriptor.of(
+                LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                LiveViewAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX,
+                ColumnType.UNDEFINED
+        );
+        Assert.assertNotNull(component);
+        return component;
     }
 
     private static LiveViewAccumulatorDescriptor component(int family, int argumentColumnIndex, int argumentColumnType) {

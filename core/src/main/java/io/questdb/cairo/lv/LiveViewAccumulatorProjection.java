@@ -59,7 +59,10 @@ public final class LiveViewAccumulatorProjection {
      */
     public static final int PROJECTION_AVG = 1;
     /**
-     * {@code nonNullCount}, which is exact and never NULL.
+     * The contributing-row counter, which is exact and never NULL. It is what a
+     * {@code count} emits, and equally what a partitioned {@code row_number()} emits off
+     * a row-count component: after {@code n} rows the running number and the running
+     * count are the same number.
      */
     public static final int PROJECTION_COUNT = 2;
     /**
@@ -67,9 +70,25 @@ public final class LiveViewAccumulatorProjection {
      */
     public static final int PROJECTION_NONE = 0;
     /**
+     * {@code sqrt(m2 / n)}, the population standard deviation.
+     */
+    public static final int PROJECTION_STDDEV_POP = 4;
+    /**
+     * {@code sqrt(m2 / (n - 1))}, the sample standard deviation.
+     */
+    public static final int PROJECTION_STDDEV_SAMP = 5;
+    /**
      * {@code sum}, or SQL NULL for an empty component.
      */
     public static final int PROJECTION_SUM = 3;
+    /**
+     * {@code m2 / n}, the population variance.
+     */
+    public static final int PROJECTION_VAR_POP = 6;
+    /**
+     * {@code m2 / (n - 1)}, the sample variance.
+     */
+    public static final int PROJECTION_VAR_SAMP = 7;
     private final LiveViewAccumulatorDescriptor component;
     private final int componentIndex;
     private final int componentSlotBase;
@@ -164,11 +183,42 @@ public final class LiveViewAccumulatorProjection {
             case PROJECTION_AVG:
                 return family == LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT;
             case PROJECTION_COUNT:
+                // Every family carries a counter, and the Welford one is here because a
+                // count(x) folded onto a stddev(x) reads that stddev's counter. Which
+                // counter a given call may read is still the component identity's answer,
+                // not this one's.
                 return family == LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT
-                        || family == LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT;
+                        || family == LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD
+                        || family == LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT
+                        || family == LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT;
+            case PROJECTION_STDDEV_POP:
+            case PROJECTION_STDDEV_SAMP:
+            case PROJECTION_VAR_POP:
+            case PROJECTION_VAR_SAMP:
+                return family == LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD;
             default:
                 return false;
         }
+    }
+
+    /**
+     * Returns {@code field}'s offset in the fused scalar payload, or {@code -1} when the
+     * component this projection reads carries no such field. The absolute counterpart of
+     * {@link LiveViewAccumulatorDescriptor#getFieldOffset(int)}.
+     */
+    public int getFieldOffset(int field) {
+        return absoluteFieldOffset(component, componentStateOffset, field);
+    }
+
+    /**
+     * Returns {@code field}'s slot in the window's fused runtime map value, or {@code -1}
+     * when the component this projection reads carries no such field. This is what a
+     * bound function reads its state through, and it is generic in the field because a
+     * family wider than {@code (sum, count)} - Welford's, say - has fields no named
+     * getter here would cover.
+     */
+    public int getFieldSlot(int field) {
+        return absoluteFieldSlot(component, componentSlotBase, field);
     }
 
     /**
