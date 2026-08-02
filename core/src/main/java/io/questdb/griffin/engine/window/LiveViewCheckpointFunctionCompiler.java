@@ -631,7 +631,7 @@ public final class LiveViewCheckpointFunctionCompiler {
      * {@code sum(x)} and {@code avg(x)} over one window merge because both declare the
      * same {@code (family, argument, contribution predicate, codec)}, and a
      * {@code count(x)} over the same argument folds onto their counter because that
-     * counter is provably the one it would have persisted alone. The HDFC shape's
+     * counter is provably the one it would have persisted alone. The target shape's
      * {@code sum(amt)} and {@code count(acct)} do neither, because their arguments
      * differ and so, on any row where exactly one is null, do their counters. Which of
      * the two relations applies is {@link LiveViewWindowStatePlan.Builder}'s to decide;

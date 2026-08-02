@@ -372,7 +372,7 @@ public final class LiveViewAccumulatorDescriptor {
      * <p>
      * Everything the identity comparison requires still applies to a derivation - the
      * same argument, the same contribution predicate - because a counter that counts
-     * different rows is a different counter however it is stored. The HDFC shape is the
+     * different rows is a different counter however it is stored. The target shape is the
      * negative control: {@code count(cod_acct_no)} beside {@code sum(amt_txn)} matches
      * on family containment and on nothing else, so it gets {@code -1} and keeps its own
      * component.

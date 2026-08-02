@@ -56,7 +56,7 @@ import java.util.Arrays;
  * {@link LiveViewAccumulatorDescriptor#derivedStateOffset} is what proves. The second
  * is what takes {@code sum(x) + avg(x) + count(x)} to one component and a 24-byte
  * fused entry. Neither ever applies across arguments or contribution predicates, so
- * the HDFC shape's {@code sum(amt)} and {@code count(acct)} remain two components.
+ * the target shape's {@code sum(amt)} and {@code count(acct)} remain two components.
  *
  * <h2>Scalar layout</h2>
  * <pre>

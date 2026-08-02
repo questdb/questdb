@@ -57,7 +57,7 @@ import org.junit.Test;
  *     <li><b>sharing is proved, not guessed.</b> Two calls collapse onto one component
  *     when their identities match outright, and a third folds onto that component when
  *     its whole image is provably a slice of it - but never across arguments or
- *     contribution predicates, whichever of the two relations is in play. The HDFC
+ *     contribution predicates, whichever of the two relations is in play. The target
  *     shape is the required negative control: {@code count(cod_acct_no)} must not read
  *     the counter inside {@code sum(amt_txn)}, because the two disagree on every row
  *     where exactly one column is null;</li>
@@ -141,8 +141,8 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                 ColumnType.DOUBLE
         );
         Assert.assertFalse(sumCount.isSameIdentity(count));
-        // And so is the same family over two different columns - the HDFC negative
-        // control, in its smallest form.
+        // And so is the same family over two different columns - the target shape's
+        // negative control, in its smallest form.
         Assert.assertFalse(count.isSameIdentity(component(
                 LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                 1,
@@ -573,10 +573,10 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testHdfcShapeFusesTwoComponentsWithoutSharingACounter() throws Exception {
+    public void testTheTargetShapeFusesTwoComponentsWithoutSharingACounter() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();
-            assertPlan(hdfcSelect(), plan -> {
+            assertPlan(targetSelect(), plan -> {
                 Assert.assertNotNull(plan);
                 Assert.assertEquals(2, plan.getComponentCount());
                 Assert.assertEquals(2, plan.getProjectionCount());
@@ -729,7 +729,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testTheAnchorWindowAdoptsThePlanForTheHdfcShape() throws Exception {
+    public void testTheAnchorWindowAdoptsThePlanForTheTargetShape() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
                     + "amt_txn double) timestamp(created_at) partition by hour wal");
@@ -832,7 +832,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         }
     }
 
-    private static String hdfcSelect() {
+    private static String targetSelect() {
         return "select ts, sym, sum(x) over w as cumulative_sum, count(sym) over w as cumulative_count "
                 + "from base window w as (partition by sym order by ts anchor daily '00:00')";
     }
