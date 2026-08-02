@@ -1914,8 +1914,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     ) {
         stateBuffer.jumpTo(0);
         final LiveViewStatePageWriter pageWriter = statePageWriter.of(stateBuffer);
-        function.freezeCheckpointState(pageWriter, value);
-        final int bytes = checkedIntLength(pageWriter.size(), "function state");
+        final int bytes = checkedIntLength(pageWriter.freeze(function, value), "function state");
         // After the encode: an extending put moves the buffer.
         final long address = stateBuffer.addressOf(0);
         if (previousBoundary != null

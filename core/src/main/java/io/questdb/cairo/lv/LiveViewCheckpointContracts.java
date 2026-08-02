@@ -150,7 +150,51 @@ public final class LiveViewCheckpointContracts {
      */
     public static final double FLOATING_RELATIVE_TOLERANCE = 1e-9;
 
+    /**
+     * Widest fixed-width state one accumulator component may carry in a
+     * partition-map leaf's scalar slot instead of a data page it names with a
+     * 40-byte reference. A component declaring more than this keeps the
+     * page-backed shape.
+     * <p>
+     * This is a <b>format constant</b>, deliberately not configuration. A
+     * configurable threshold would let two nodes compile the same live view into
+     * different durable layouts, so the same checkpoint would be inline on one
+     * and page-backed on the other with nothing in the entry to say which.
+     *
+     * @see io.questdb.griffin.engine.window.WindowFunction#checkpointStateFixedLength()
+     */
+    public static final int MAX_INLINE_COMPONENT_STATE_BYTES = 32;
+
+    /**
+     * Widest complete scalar payload one leaf entry may inline, anchor value
+     * included. A component group whose whole layout does not fit keeps its
+     * legacy page-backed roots.
+     * <p>
+     * The B-tree splits on entry count rather than encoded byte size, so an
+     * unbounded "fixed width means inline" rule would build very large 64-entry
+     * leaves and make every CRC and decode along the path more expensive. 64 is
+     * not an arbitrary pick either: it is what a RANGE ring entry already inlines
+     * at its widest ({@code LiveViewCheckpointRangeRingStateReader.scalarStateBytes(4)}),
+     * so the budget admits nothing the leaf format has not carried already.
+     */
+    public static final int MAX_INLINE_LEAF_STATE_BYTES = 64;
+
     private LiveViewCheckpointContracts() {
+    }
+
+    /**
+     * Returns whether a window function's declared
+     * {@link io.questdb.griffin.engine.window.WindowFunction#checkpointStateFixedLength()
+     * fixed state width} may be inlined into a partition-map leaf.
+     * <p>
+     * A declining function reports {@code -1} and lands here as false, as does a
+     * fixed width past {@link #MAX_INLINE_COMPONENT_STATE_BYTES}. Zero is
+     * excluded on purpose: a function holding no state at all declares that
+     * through {@code isCheckpointStateless()}, and an empty scalar beside no page
+     * reference is the one leaf shape that cannot be told from a corrupt entry.
+     */
+    public static boolean isInlineableStateLength(int fixedStateLength) {
+        return fixedStateLength > 0 && fixedStateLength <= MAX_INLINE_COMPONENT_STATE_BYTES;
     }
 
     /**

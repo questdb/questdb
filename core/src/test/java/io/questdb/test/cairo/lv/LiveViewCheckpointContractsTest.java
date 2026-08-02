@@ -131,6 +131,34 @@ public class LiveViewCheckpointContractsTest {
         Assert.assertNotNull(HighBoundTag.valueOf("EOF"));
     }
 
+    /**
+     * The inline budgets are format constants, not tuning. Widening either one
+     * changes which live views compile to which durable layout, so it has to be a
+     * deliberate edit here rather than a number someone raised to make a state fit.
+     */
+    @Test
+    public void testInlineStateBudgetsAreFrozen() {
+        Assert.assertEquals(32, LiveViewCheckpointContracts.MAX_INLINE_COMPONENT_STATE_BYTES);
+        Assert.assertEquals(64, LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES);
+        // One component can never be wider than the whole leaf it would sit in.
+        Assert.assertTrue(
+                LiveViewCheckpointContracts.MAX_INLINE_COMPONENT_STATE_BYTES
+                        <= LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES
+        );
+
+        Assert.assertTrue(LiveViewCheckpointContracts.isInlineableStateLength(1));
+        Assert.assertTrue(LiveViewCheckpointContracts.isInlineableStateLength(
+                LiveViewCheckpointContracts.MAX_INLINE_COMPONENT_STATE_BYTES
+        ));
+        // A declining function (-1), an empty image, and a state past the budget all
+        // stay page-backed.
+        Assert.assertFalse(LiveViewCheckpointContracts.isInlineableStateLength(-1));
+        Assert.assertFalse(LiveViewCheckpointContracts.isInlineableStateLength(0));
+        Assert.assertFalse(LiveViewCheckpointContracts.isInlineableStateLength(
+                LiveViewCheckpointContracts.MAX_INLINE_COMPONENT_STATE_BYTES + 1
+        ));
+    }
+
     @Test
     public void testRepairPublicationStageOrderingIsFrozen() {
         // Ordinal order is the required happens-before order.

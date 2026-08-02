@@ -862,6 +862,36 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * The exact byte length {@link #freezeCheckpointState(LiveViewStatePageWriter, MapValue)}
+     * emits for <b>every</b> partition of this function, or {@code -1} when the image is not
+     * fixed width. The default declines.
+     * <p>
+     * A fixed width is what lets the checkpoint seal carry the image in the partition-map
+     * leaf's scalar slot instead of writing a data page and naming it with a 40-byte
+     * reference. The leaf holds no per-entry length of its own beyond the scalar's, so a
+     * decoder has only the declaration to size a slice by, and the declaration is therefore a
+     * hard invariant rather than a hint: the framework verifies every frozen image against it
+     * and treats a mismatch as a critical implementation failure
+     * ({@link LiveViewStatePageWriter#freeze(WindowFunction, MapValue)}).
+     * <p>
+     * Declare it only where the <b>complete</b> image is fixed. An unbounded partitioned
+     * accumulator qualifies - a DOUBLE {@code sum}/{@code avg} freezes
+     * {@code (sum, nonNullCount)} and nothing else, a {@code count} freezes one counter - and
+     * a bounded ring or ROWS-buffer variant does not, however fixed its scalar tail is: its
+     * image carries the live rows behind that tail. A
+     * {@link #supportsCheckpointRingState() ring-shaped} function never declares one at all,
+     * since its root entry names chunk pages rather than a whole-state image.
+     * <p>
+     * Declaring a width does not by itself mean the state gets inlined. The seal admits a
+     * declaration into the leaf only within
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointContracts#MAX_INLINE_COMPONENT_STATE_BYTES},
+     * and a wider fixed state keeps the page-backed shape.
+     */
+    default int checkpointStateFixedLength() {
+        return -1;
+    }
+
+    /**
      * @return the checkpoint state layout version this build writes. The compiler folds it into
      * the function's state codec identity, and the checkpoint timeline records it in the function
      * root. Bump on any state-layout change: the bump changes the identity, so a root written under

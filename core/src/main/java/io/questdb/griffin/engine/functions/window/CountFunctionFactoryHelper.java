@@ -1654,6 +1654,15 @@ public class CountFunctionFactoryHelper {
             return offset;
         }
 
+        /**
+         * The whole image is the one counter - the frame start is unbounded, so there are no
+         * live rows behind it to carry.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Long.BYTES;
+        }
+
         @Override
         public int checkpointStateFormatVersion() {
             return 1;
