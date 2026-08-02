@@ -428,6 +428,11 @@ public class LiveViewWindow implements QuietCloseable {
      * restore can rehydrate the map through {@link #restoreCheckpointEntry}. The
      * caller validates the complete root first, so a framing failure cannot
      * leave the window with a half-restored map.
+     * <p>
+     * The window is left on the full scan, which is what a restore that abandons
+     * midway or reads a root other than the timeline head needs. A restore from the
+     * head calls {@link #onCheckpointPersisted(long, long)} once the map is whole to
+     * put the window back on the incremental path.
      */
     public void beginCheckpointRestore() {
         checkpointBaselineGeneration = Numbers.LONG_NULL;
@@ -629,13 +634,30 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
-     * Adopts the state the seal just published as this window's incremental
-     * baseline. Called only after the checkpoint superblock is durably published, so
-     * a seal that fails anywhere before that leaves the dirty map and the previous
-     * baseline intact and the next seal repeats the work.
+     * @return whether the next seal must freeze every live anchor entry rather than
+     * the touched ones. {@link #canFreezeCheckpointIncrementally(long)} is the seal's
+     * own gate and additionally demands the dirty map, which the first processed row
+     * allocates; this reads the flag on its own
+     */
+    @TestOnly
+    public boolean isCheckpointFullScanRequired() {
+        return isCheckpointFullScanRequired;
+    }
+
+    /**
+     * Adopts a durable root's state as this window's incremental baseline. Two
+     * callers reach it:
+     * <ul>
+     *     <li>the seal, only after the checkpoint superblock is durably published, so
+     *     a seal that fails anywhere before that leaves the dirty map and the previous
+     *     baseline intact and the next seal repeats the work;</li>
+     *     <li>the restore, once it has rehydrated the anchor map from the generation's
+     *     head root - the map then equals that root entry for entry, which is the same
+     *     position a seal leaves it in.</li>
+     * </ul>
      *
-     * @param logicalStateBytes what the published root charges for the anchor map
-     * @param generation        the generation the publication produced. The next seal
+     * @param logicalStateBytes what the root charges for the anchor map
+     * @param generation        the generation the root belongs to. The next seal
      *                          freezes incrementally only when it is sealing on top of
      *                          exactly this generation
      */

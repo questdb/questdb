@@ -554,13 +554,19 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * Adopts the state the seal just published as this function's incremental
-     * baseline. Called only after the checkpoint superblock is durably published, so
-     * a seal that fails anywhere before that leaves the dirty set and the previous
-     * baseline intact and the next seal repeats the work.
+     * Adopts a durable root's state as this function's incremental baseline. Two
+     * callers reach it:
+     * <ul>
+     *     <li>the seal, only after the checkpoint superblock is durably published, so
+     *     a seal that fails anywhere before that leaves the dirty set and the previous
+     *     baseline intact and the next seal repeats the work;</li>
+     *     <li>the restore, once it has rehydrated this function's partition map from
+     *     the generation's head root - the map then equals that root entry for entry,
+     *     which is the same position a seal leaves it in.</li>
+     * </ul>
      *
-     * @param logicalStateBytes what the published root charges for this function
-     * @param generation        the generation the publication produced. The next seal
+     * @param logicalStateBytes what the root charges for this function
+     * @param generation        the generation the root belongs to. The next seal
      *                          freezes incrementally only when it is sealing on top of
      *                          exactly this generation
      */
@@ -583,6 +589,11 @@ public interface WindowFunction extends Function {
      * in again - a full re-grow per replay on the live-view refresh loop.
      * Rewinding leaves stale bytes above the append offset, which is safe because
      * every restore path writes each slot before reading it.
+     * <p>
+     * The function is left on the full scan, which is what a restore that abandons
+     * midway or reads a root other than the timeline head needs. A restore from the
+     * head calls {@link #onCheckpointPersisted(long, long)} once the map is whole to
+     * put the function back on the incremental path.
      */
     default void onCheckpointRestoreBegin() {
     }

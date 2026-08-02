@@ -238,10 +238,13 @@ public class LiveViewSteadyStateBenchmark {
                         final long restoreStart = System.nanoTime();
                         drainLiveView(engine, restarted, restartJob);
                         final long restoreNanos = System.nanoTime() - restoreStart;
-                        // A restore raises checkpointFullScanRequired, so any seal the
-                        // resumed view performs in this window is a full-state scan,
-                        // not a touched-key one. Report it separately: it is a distinct
-                        // cost from reading the checkpoint back.
+                        // The seal the resumed view performs in this window is reported
+                        // separately: it is a distinct cost from reading the checkpoint
+                        // back, and whether it full-scans the restored state or freezes
+                        // only the probe's keys is what dominates a restart. state_bytes
+                        // is the head root's logical size after that seal - it must still
+                        // account for every restored key, which is what tells an
+                        // incremental reseal apart from one that dropped state.
                         final boolean isCheckpointWritten = restarted.getHeadCheckpointRootId() != checkpointRootIdBefore;
                         final double checkpointMs = isCheckpointWritten ? restarted.getHeadCheckpointWriteMicros() / 1e3 : 0.0;
                         final long expected = stateRows + RESTART_PROBE_ROWS;
@@ -251,12 +254,14 @@ public class LiveViewSteadyStateBenchmark {
                         }
                         System.out.printf(
                                 Locale.ROOT,
-                                "# restore state_rows=%d window_ms=%.3f reseal_ms=%.3f read_back_ms=%.3f probe_rows=%d lookup_depth=%d faults=%d%n",
+                                "# restore state_rows=%d window_ms=%.3f reseal_ms=%.3f read_back_ms=%.3f probe_rows=%d "
+                                        + "state_bytes=%d lookup_depth=%d faults=%d%n",
                                 stateRows,
                                 restoreNanos / 1e6,
                                 checkpointMs,
                                 restoreNanos / 1e6 - checkpointMs,
                                 RESTART_PROBE_ROWS,
+                                restarted.getHeadCheckpointStateBytes(),
                                 restarted.getCheckpointLastLookupDepth(),
                                 restarted.getRefreshFaultCount()
                         );

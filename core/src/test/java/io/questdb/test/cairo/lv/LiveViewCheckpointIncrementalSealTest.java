@@ -35,6 +35,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -64,6 +65,12 @@ import org.junit.Test;
  * Every case here therefore pairs the from-base recompute oracle with a direct
  * reading of the runtime's dirty set, so a key that stopped being tracked is a
  * failure at the seal rather than a failure a restart happens to expose.
+ * <p>
+ * A restore is the other way onto that path: reading the generation's head root back
+ * leaves the runtime holding exactly what the root holds, which is the same position
+ * a publication leaves it in, so the seal that follows may stay incremental. The two
+ * restore cases below hold that to the same standard - the head root seeds the
+ * baseline and any other root does not.
  * <p>
  * The view is the customer shape the optimization was written for: an anchored
  * WINDOW carrying an unbounded cumulative sum and count per account, which is
@@ -269,6 +276,106 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     @Test
+    public void testRestoreFromANonHeadRootDoesNotAdoptAnIncrementalBaseline() throws Exception {
+        // One boundary per commit, so the timeline below holds several of them and the
+        // head has a predecessor to restore instead.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit("('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0)", job);
+                assertDirtySetsClearedByPublish();
+            }
+
+            final LiveViewCheckpointTimelineEntry head = new LiveViewCheckpointTimelineEntry();
+            final LiveViewCheckpointTimelineEntry predecessor = new LiveViewCheckpointTimelineEntry();
+            readHeadBoundaries(head, predecessor);
+
+            // A cadence seal always builds on the timeline head, so state restored from
+            // any other root does not describe the entries an incremental seal would
+            // leave alone. Restoring the predecessor must therefore leave the runtime on
+            // the full scan even though the generation is the one a seal would name.
+            final long generation = restoreRoot(predecessor.maxTimestamp, predecessor.checkpointId);
+            Assert.assertFalse(
+                    "restoring a predecessor must leave the seal's own gate shut",
+                    anchorWindow().canFreezeCheckpointIncrementally(generation)
+            );
+            assertPinnedToFullScan();
+
+            // The same reader, the same runtime, the same generation - only the root
+            // differs, and that is what decides it.
+            Assert.assertEquals(generation, restoreRoot(head.maxTimestamp, head.checkpointId));
+            assertIncrementalBaseline(generation);
+        });
+    }
+
+    @Test
+    public void testRestoreFromTheHeadRootLeavesTheNextSealIncremental() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
+                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
+                            + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+                assertHeadRootPartitionCount(4);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+            final long restoredGeneration = publishedGeneration();
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                // Reading a root back publishes nothing, so the generation the restore
+                // stamped on the runtime is still the one the next seal builds on.
+                Assert.assertEquals(
+                        "a restore must not publish a generation of its own",
+                        restoredGeneration,
+                        publishedGeneration()
+                );
+                assertIncrementalBaseline(restoredGeneration);
+
+                // The first seal after the resume therefore freezes the one key this
+                // commit touches. The other three accounts keep the entries the restored
+                // root already holds - so the root must still name all four, and their
+                // accumulators must survive the next read-back.
+                driveRefreshToQuiescence(job);
+                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0)", job);
+                assertDirtySetsClearedByPublish();
+                assertHeadRootPartitionCount(4);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+
+                // Rows for the accounts the incremental seal left alone. A root that
+                // dropped or staled their entries shows up here as a restarted or
+                // inflated accumulator rather than as a missing key.
+                commit("('2026-01-01T11:00:05.000000Z', 'acct-2', 2.0), "
+                        + "('2026-01-01T11:00:06.000000Z', 'acct-3', 3.0), "
+                        + "('2026-01-01T11:00:07.000000Z', 'acct-4', 4.0)", job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
     public void testTombstonedTouchedKeyIsRemovedFromTheRoot() throws Exception {
         // Four rows per boundary, so the seed seals and the batch below is one boundary.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
@@ -348,17 +455,17 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 assertViewMatchesRecompute(NOON_ANCHOR);
             }
 
+            final long restoredGeneration = publishedGeneration();
             restartCycle();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
                 Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
                 driveRefreshToQuiescence(job);
                 assertViewMatchesRecompute(NOON_ANCHOR);
-                // A restore removes keys wholesale, so the seal after it must full-scan
-                // even though the dirty set is empty and the generation would otherwise
-                // line up.
+                // The restore rehydrated the head root, so the runtime holds exactly what
+                // that root holds and the seal after it stays on the touched-key path.
                 Assert.assertEquals(
-                        Numbers.LONG_NULL,
+                        restoredGeneration,
                         anchorWindow().getCheckpointBaselineGeneration()
                 );
             }
@@ -499,6 +606,92 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         }
     }
 
+    /**
+     * Asserts the anchor window and every partition-mapped window function hold
+     * {@code generation} as their incremental baseline, carry no dirty keys and are off
+     * the full scan. Unlike {@link #assertDirtySetsClearedByPublish()} it tolerates a
+     * function whose dirty map is still null, which is the state a restart leaves
+     * behind: the first row the resumed view processes is what creates it.
+     */
+    private void assertIncrementalBaseline(long generation) {
+        Assert.assertEquals(
+                "the anchor window must hold the restored root's generation as its baseline",
+                generation,
+                anchorWindow().getCheckpointBaselineGeneration()
+        );
+        Assert.assertFalse(
+                "the anchor window must not be pinned to a full scan after a head restore",
+                anchorWindow().isCheckpointFullScanRequired()
+        );
+        Assert.assertEquals(
+                "a freshly restored anchor map must carry no dirty keys",
+                0,
+                anchorWindow().getCheckpointDirtyAnchorMapSize()
+        );
+        final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
+        int checked = 0;
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final WindowFunction function = functions.getQuick(i);
+            if (!function.supportsCheckpointState()
+                    || function.getPartitionMap() == null
+                    || function.supportsCheckpointRingState()) {
+                continue;
+            }
+            checked++;
+            Assert.assertFalse(
+                    "function " + i + " must not be pinned to a full scan after a head restore",
+                    function.isCheckpointFullScanRequired()
+            );
+            Assert.assertEquals(
+                    "function " + i + " must hold the restored root's generation as its baseline",
+                    generation,
+                    function.getCheckpointBaselineGeneration()
+            );
+            final Map dirty = function.getCheckpointDirtyPartitionMap();
+            Assert.assertTrue(
+                    "function " + i + " must carry no dirty keys",
+                    dirty == null || dirty.size() == 0
+            );
+        }
+        Assert.assertTrue("no window function carries partition state", checked > 0);
+    }
+
+    /**
+     * Asserts the anchor window and every partition-mapped window function still demand
+     * a complete freeze, which is where a restore that cannot vouch for its root has to
+     * leave them.
+     */
+    private void assertPinnedToFullScan() {
+        Assert.assertTrue(
+                "the anchor window must still demand a complete freeze",
+                anchorWindow().isCheckpointFullScanRequired()
+        );
+        Assert.assertEquals(
+                "the anchor window must hold no baseline generation",
+                Numbers.LONG_NULL,
+                anchorWindow().getCheckpointBaselineGeneration()
+        );
+        final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
+        int checked = 0;
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final WindowFunction function = functions.getQuick(i);
+            if (!function.supportsCheckpointState() || function.getPartitionMap() == null) {
+                continue;
+            }
+            checked++;
+            Assert.assertTrue(
+                    "function " + i + " must still demand a complete freeze",
+                    function.isCheckpointFullScanRequired()
+            );
+            Assert.assertEquals(
+                    "function " + i + " must hold no baseline generation",
+                    Numbers.LONG_NULL,
+                    function.getCheckpointBaselineGeneration()
+            );
+        }
+        Assert.assertTrue("no window function carries partition state", checked > 0);
+    }
+
     private void assertViewMatchesRecompute(String anchorTime) throws Exception {
         TestUtils.assertSqlCursors(
                 engine,
@@ -543,6 +736,37 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     /**
+     * Copies the two newest logical boundaries of the published generation into
+     * {@code headOut} and {@code predecessorOut}, so a case can name a root the
+     * refresh job would never select on its own.
+     */
+    private void readHeadBoundaries(
+            LiveViewCheckpointTimelineEntry headOut,
+            LiveViewCheckpointTimelineEntry predecessorOut
+    ) {
+        final LiveViewInstance instance = viewInstance();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration);
+                LiveViewCheckpointTimelineReader timeline = new LiveViewCheckpointTimelineReader(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the view must have published a generation", metaStore.isValid());
+            timeline.of(dir);
+            try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
+                Assert.assertTrue(
+                        "the view must have sealed a boundary",
+                        timeline.last(pin.getTimelineRootRef(), headOut)
+                );
+                Assert.assertTrue(
+                        "the view must have sealed at least two boundaries",
+                        timeline.predecessor(pin.getTimelineRootRef(), headOut.maxTimestamp, predecessorOut)
+                );
+            }
+        }
+    }
+
+    /**
      * The oracle: the anchored view's semantics restated for the plain window engine.
      * {@code ANCHOR DAILY 'HH:MM'} desugars (SqlParser.desugarDailyAnchor) into
      * exactly this {@code timestamp_floor}, so folding that bucket into the PARTITION
@@ -564,6 +788,32 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     private void restartCycle() {
         engine.getLiveViewRegistry().clear();
         engine.buildViewGraphs();
+    }
+
+    /**
+     * Rehydrates the live runtime from one exact checkpoint root, the way the restart
+     * path does, and returns the generation the restore ran under.
+     */
+    private long restoreRoot(long maxTimestamp, long checkpointId) {
+        final LiveViewInstance instance = viewInstance();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointTimelineStoreReader reader =
+                        new LiveViewCheckpointTimelineStoreReader(configuration)
+        ) {
+            reader.of(dir);
+            try {
+                return reader.restore(
+                        maxTimestamp,
+                        checkpointId,
+                        instance.getLiveViewToken().getTableId(),
+                        windowFunctions(instance),
+                        instance.getAnchorWindow()
+                ).generation;
+            } finally {
+                reader.detach();
+            }
+        }
     }
 
     /**
