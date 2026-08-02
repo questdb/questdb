@@ -66,4 +66,11 @@ public class SharedRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.type("(Shared)");
         sink.child(primaryFactory);
     }
+
+    // Shares a single underlying factory without exposing it through getBaseFactory(), so the
+    // external-source property is propagated explicitly.
+    @Override
+    public boolean usesExternalDataSource() {
+        return primaryFactory.usesExternalDataSource();
+    }
 }
