@@ -466,7 +466,8 @@ public class LiveViewSteadyStateBenchmark {
             case 'm' -> Micros.MINUTE_MICROS;
             case 'h' -> Micros.HOUR_MICROS;
             case 'd' -> Micros.DAY_MICROS;
-            default -> throw new IllegalArgumentException("--anchor-period unit must be one of s, m, h, d: " + anchorPeriod);
+            default ->
+                    throw new IllegalArgumentException("--anchor-period unit must be one of s, m, h, d: " + anchorPeriod);
         };
         final long count = Long.parseLong(anchorPeriod.substring(0, length - 1));
         if (count < 1) {

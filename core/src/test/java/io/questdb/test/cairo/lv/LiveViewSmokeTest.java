@@ -1568,14 +1568,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertNoRefreshFaults("lv");
     }
 
-    // Differential oracle for the throw-then-retry idempotency test: the LV must
-    // equal its running-sum window recomputed straight over the base table.
-    // A persist failure mid-flush that neither dropped nor duplicated a row keeps
-    // this equality; a double-emit or a lost row breaks it. ORDER BY sym, ts is a
-    // total order (timestamps are unique per sym).
-    // The live view TABLE's own durable row count, read straight off a reader rather than
-    // through a query. A query over the view routes through the in-mem tier, whose seam can
-    // mask rows the table actually holds - which is exactly what a re-flushed lead produces.
     /**
      * Drives the fixture both stale-percent cases share and asserts what the trigger did with
      * it. Eight partitions open in day 1, five follow the frontier into day 2, and one day-3 row
@@ -1648,12 +1640,20 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         });
     }
 
+    // The live view TABLE's own durable row count, read straight off a reader rather than
+    // through a query. A query over the view routes through the in-mem tier, whose seam can
+    // mask rows the table actually holds - which is exactly what a re-flushed lead produces.
     private void assertLvTableRowCount(LiveViewInstance instance, long expected) {
         try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
             Assert.assertEquals("live view table row count", expected, reader.size());
         }
     }
 
+    // Differential oracle for the throw-then-retry idempotency test: the LV must
+    // equal its running-sum window recomputed straight over the base table.
+    // A persist failure mid-flush that neither dropped nor duplicated a row keeps
+    // this equality; a double-emit or a lost row breaks it. ORDER BY sym, ts is a
+    // total order (timestamps are unique per sym).
     private void assertRunningSumLvMatchesRecompute() throws SqlException {
         TestUtils.assertSqlCursors(
                 engine,
