@@ -244,6 +244,11 @@ public class WorkerPool implements Closeable {
         }
     }
 
+    @TestOnly
+    public void haltAndAssertCleanForTest(long timeoutNanos) {
+        halt(timeoutNanos, true);
+    }
+
     /**
      * Halts the pool, bounding how long it blocks waiting for worker threads.
      * <p>
@@ -254,6 +259,7 @@ public class WorkerPool implements Closeable {
      * <p>
      * Every pool retains its object graph when carrier shutdown misses the deadline.
      * <p>
+     *
      * @param timeoutNanos upper bound on the combined wait for started and halted, a RELATIVE
      *                     duration in nanoseconds measured from the call
      * @return true when the pool released all owned resources, false when the pool retained its
@@ -263,18 +269,13 @@ public class WorkerPool implements Closeable {
         return halt(timeoutNanos, false);
     }
 
-    @TestOnly
-    public void haltAndAssertCleanForTest(long timeoutNanos) {
-        halt(timeoutNanos, true);
+    public boolean isFiberHost() {
+        return mode == WorkerPoolMode.FIBER_HOST;
     }
 
     @TestOnly
     public boolean isHaltTerminalSuccessfulForTesting(long timeoutNanos) {
         return halt(timeoutNanos, false);
-    }
-
-    public boolean isFiberHost() {
-        return mode == WorkerPoolMode.FIBER_HOST;
     }
 
     @TestOnly
