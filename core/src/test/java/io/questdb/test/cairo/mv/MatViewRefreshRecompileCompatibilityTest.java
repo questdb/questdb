@@ -25,12 +25,18 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.std.Files;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -56,6 +62,11 @@ import java.util.Collection;
  * CREATE accepts must keep recompiling under the refresh context, and the shapes the guard rejects
  * must be rejected visibly at CREATE with a stable message, because a stored definition that stops
  * compiling after an upgrade is a deterministic view outage.
+ * <p>
+ * The external-source case pins the other half of that contract for a break this PR does intend:
+ * a definition over {@code read_parquet()} persisted by an older binary must fail <em>closed</em>
+ * at its first post-upgrade refresh — {@code invalid=true} with the same stable message CREATE
+ * surfaces, base table untouched, view still droppable — rather than crash, leak, or retry-loop.
  */
 @RunWith(Parameterized.class)
 public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest {
@@ -142,6 +153,92 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
                 "base.n",
                 "LIMIT referencing an outer column is not supported over a scalar count"
         );
+    }
+
+    @Test
+    public void testRefreshFailsClosedForPersistedExternalSourceDefinition() throws Exception {
+        // Upgrade-break regression (intended break): older binaries accepted an external-source
+        // sub-query (read_parquet) in a materialized-view definition; this binary rejects it, so
+        // the stored SQL cannot be recreated through CREATE. Install it the way the ALTER apply
+        // path does -- swap the definition object in both the graph and the state store -- and
+        // drive the first cold refresh over it. Cold matters: the view has never refreshed, so
+        // the state holds no cached factory, exactly like the first refresh after the upgrade
+        // restart. The refresh must fail closed: invalid=true with the stable guard message as
+        // the invalidation reason, no crash, no native leak, base table unaffected, view
+        // droppable.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE ext AS (SELECT '2024-01-01T00:00:00.000000Z'::TIMESTAMP AS value FROM long_sequence(3))");
+            encodeParquet("ext", "ext.parquet");
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE cfg (ts TIMESTAMP, k SYMBOL, lim TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO cfg VALUES ('2024-01-01T00:00:00Z', 'a', '2024-01-01T00:00:00Z')");
+            execute("INSERT INTO base VALUES ('2024-01-02T00:00:00Z', 'a', 1.0)");
+            drainWalQueue();
+
+            // MANUAL DEFERRED: no refresh runs at CREATE, keeping the factory cache cold.
+            execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS ("
+                    + "SELECT ts, sum(v) AS s FROM base WHERE ts > (SELECT max(lim) FROM cfg) SAMPLE BY 1h"
+                    + ") PARTITION BY DAY");
+            drainWalQueue();
+
+            // The SQL an older binary would have persisted; same column shape as the benign
+            // definition above, so only the guard can make the refresh fail.
+            final String legacySql = "SELECT ts, sum(v) AS s FROM base "
+                    + "WHERE ts > (SELECT max(value) FROM read_parquet('ext.parquet')) SAMPLE BY 1h";
+            final TableToken viewToken = engine.verifyTableName("mv");
+            final MatViewDefinition current = engine.getMatViewGraph().getViewDefinition(viewToken);
+            final MatViewDefinition legacy = new MatViewDefinition();
+            legacy.init(
+                    current.getRefreshType(),
+                    current.isDeferred(),
+                    ColumnType.TIMESTAMP_MICRO,
+                    viewToken,
+                    legacySql,
+                    current.getBaseTableName(),
+                    current.getSamplingInterval(),
+                    current.getSamplingIntervalUnit(),
+                    current.getTimeZone(),
+                    current.getTimeZoneOffset(),
+                    current.getRefreshLimitHoursOrMonths(),
+                    current.getTimerInterval(),
+                    current.getTimerUnit(),
+                    current.getTimerStartUs(),
+                    current.getTimerTimeZone(),
+                    current.getPeriodLength(),
+                    current.getPeriodLengthUnit(),
+                    current.getPeriodDelay(),
+                    current.getPeriodDelayUnit()
+            );
+            // Mirror TableWriter's definition-swap: both the graph and the state store, so the
+            // refresh job (which reads viewState.getViewDefinition()) sees the legacy SQL.
+            engine.getMatViewGraph().updateViewDefinition(viewToken, legacy);
+            engine.getMatViewStateStore().updateViewDefinition(viewToken, legacy);
+
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+
+            // SqlException.toSink renders "[position]: message"; the position points at the
+            // rejected sub-query in the stored SQL.
+            final int subQueryPos = legacySql.indexOf("(SELECT max(value)") + 1;
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_name\tview_status\tinvalidation_reason\n"
+                            + "mv\tinvalid\t[" + subQueryPos
+                            + "]: non-deterministic function cannot be used in materialized view: sub-query\n");
+
+            // The failure is contained: the base table keeps working and the view drops cleanly.
+            assertQuery("select count() from base").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            execute("DROP MATERIALIZED VIEW mv");
+            drainWalQueue();
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_name\tview_status\tinvalidation_reason\n");
+        });
     }
 
     @Test
@@ -378,6 +475,20 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
 
             recompileAsRefreshJobWould(predicate);
         });
+    }
+
+    private static void encodeParquet(CharSequence tableName, CharSequence fileName) {
+        try (
+                Path path = new Path();
+                PartitionDescriptor descriptor = new PartitionDescriptor();
+                TableReader reader = engine.getReader(tableName)
+        ) {
+            path.of(root).concat(fileName);
+            engine.getConfiguration().getFilesFacade().remove(path.$());
+            PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+            PartitionEncoder.encode(descriptor, path);
+            Assert.assertTrue(Files.exists(path.$()));
+        }
     }
 
     private void createLateralTables() throws Exception {
