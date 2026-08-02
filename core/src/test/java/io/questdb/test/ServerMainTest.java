@@ -36,6 +36,7 @@ import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -275,6 +276,69 @@ public class ServerMainTest extends AbstractBootstrapTest {
 
                 Assert.assertEquals(0, errorCount.get());
             }
+        });
+    }
+
+    @Test
+    public void testCreateMethods() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                Assert.assertEquals(
+                        new File(root, "db").getAbsolutePath(),
+                        serverMain.getConfiguration().getCairoConfiguration().getDbRoot()
+                );
+            }
+
+            final Map<String, String> env = new HashMap<>();
+            env.put(PropertyKey.HTTP_ENABLED.getEnvVarName(), "false");
+            try (final ServerMain serverMain = ServerMain.create(root, env)) {
+                Assert.assertFalse(serverMain.getConfiguration().getHttpServerConfiguration().isEnabled());
+            }
+
+            env.put(PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false");
+            env.put(PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false");
+            env.put(PropertyKey.PG_ENABLED.getEnvVarName(), "false");
+            env.put(PropertyKey.WAL_APPLY_WORKER_COUNT.getEnvVarName(), "1");
+            try (final ServerMain serverMain = ServerMain.createWithoutWalApplyJob(root, env)) {
+                serverMain.start();
+                Assert.assertTrue(serverMain.hasStarted());
+                Assert.assertNotNull(serverMain.getWorkerPoolManager());
+            }
+        });
+    }
+
+    @Test
+    public void testHttpServerAccessorsAndLifecycle() throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(
+                    "QDB_CAIRO_SQL_COPY_ROOT",
+                    ServerMain.propertyPathToEnvVarName("cairo.sql.copy.root")
+            );
+
+            final ServerMain serverMain = new ServerMain(getServerMainArgs());
+            try {
+                Assert.assertEquals(
+                        0,
+                        serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_JSON)
+                );
+                try {
+                    serverMain.getHttpServerPort();
+                    Assert.fail();
+                } catch (CairoException ex) {
+                    assertContains(ex.getFlyweightMessage(), "http server is not running");
+                }
+
+                serverMain.start();
+                Assert.assertEquals(HTTP_PORT, serverMain.getHttpServerPort());
+                Assert.assertEquals(
+                        0,
+                        serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_JSON)
+                );
+                Assert.assertTrue(serverMain.hasStarted());
+            } finally {
+                serverMain.close();
+            }
+            Assert.assertTrue(serverMain.hasBeenClosed());
         });
     }
 
