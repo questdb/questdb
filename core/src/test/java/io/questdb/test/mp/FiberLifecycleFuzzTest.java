@@ -258,6 +258,7 @@ public class FiberLifecycleFuzzTest {
         final AtomicBoolean isCarriersDone = new AtomicBoolean();
         final AtomicBoolean isStopRequested = new AtomicBoolean();
         final AtomicLong opCount = new AtomicLong();
+        final CountDownLatch firstTaskStep = new CountDownLatch(1);
 
         final ObjList<FuzzTask> tasks = new ObjList<>(taskCount);
         for (int i = 0; i < taskCount; i++) {
@@ -265,7 +266,8 @@ public class FiberLifecycleFuzzTest {
                     new Rnd(masterRnd.nextLong(), masterRnd.nextLong()),
                     waitQueue,
                     new FiberCancellationSignal(),
-                    firstError
+                    firstError,
+                    firstTaskStep
             ));
         }
 
@@ -332,10 +334,12 @@ public class FiberLifecycleFuzzTest {
         try {
             Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new QuiesceProbeTask()));
             Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(tasks.getQuick(0)));
             for (int i = 0, n = threads.size(); i < n; i++) {
                 threads.getQuick(i).start();
             }
             awaitLatch(started, firstError, "fuzz threads failed to start");
+            awaitLatch(firstTaskStep, firstError, "fuzz task failed to execute");
 
             if (isQuiesceUnderLoad) {
                 awaitLatch(quiesceReady, firstError, "drivers failed to reach quiesce checkpoint");
@@ -451,6 +455,7 @@ public class FiberLifecycleFuzzTest {
         final AtomicLong stepCount = new AtomicLong();
         final AtomicInteger unmountedStepViolationCount = new AtomicInteger();
         private final AtomicReference<Throwable> firstError;
+        private final CountDownLatch firstTaskStep;
         private final AtomicBoolean isRunning = new AtomicBoolean();
         private final Rnd rnd;
         private final FiberEventWaitQueue waitQueue;
@@ -459,10 +464,12 @@ public class FiberLifecycleFuzzTest {
                 Rnd rnd,
                 FiberEventWaitQueue waitQueue,
                 FiberCancellationSignal cancellationSignal,
-                AtomicReference<Throwable> firstError
+                AtomicReference<Throwable> firstError,
+                CountDownLatch firstTaskStep
         ) {
             this.cancellationSignal = cancellationSignal;
             this.firstError = firstError;
+            this.firstTaskStep = firstTaskStep;
             this.rnd = rnd;
             this.waitQueue = waitQueue;
         }
@@ -520,6 +527,7 @@ public class FiberLifecycleFuzzTest {
             }
             try {
                 stepCount.incrementAndGet();
+                firstTaskStep.countDown();
                 final int dice = rnd.nextInt(10);
                 if (dice < 3) {
                     return true;
