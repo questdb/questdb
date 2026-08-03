@@ -31,7 +31,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
-import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
@@ -1585,7 +1584,7 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
-        public void bindWindowStateSlots(@Nullable LiveViewAccumulatorProjection projection) {
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
             super.bindWindowStateSlots(projection);
             this.isWindowStatePartitionKeyGuarded = projection != null && projection.isPartitionKeyGuarded();
         }
@@ -1720,7 +1719,7 @@ public class CountFunctionFactoryHelper {
          * but the row-count family it declares below.
          */
         @Override
-        public Function checkpointAccumulatorArgument() {
+        public Function windowAccumulatorArgument() {
             return arg;
         }
 
@@ -1736,14 +1735,14 @@ public class CountFunctionFactoryHelper {
          * is not.
          */
         @Override
-        public int checkpointAccumulatorFamily() {
+        public int windowAccumulatorFamily() {
             return arg == null
                     ? WindowAccumulatorDescriptor.FAMILY_ROW_COUNT
                     : WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT;
         }
 
         @Override
-        public int checkpointAccumulatorProjection() {
+        public int windowAccumulatorProjection() {
             return WindowAccumulatorProjection.PROJECTION_COUNT;
         }
 

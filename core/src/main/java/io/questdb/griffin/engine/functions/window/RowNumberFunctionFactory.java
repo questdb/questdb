@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
-import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
@@ -190,7 +189,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void bindWindowStateSlots(@Nullable LiveViewAccumulatorProjection projection) {
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
             windowStateRowCountSlot = projection == null
                     ? -1
                     : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT);
@@ -216,12 +215,12 @@ public class RowNumberFunctionFactory implements FunctionFactory {
          * change to it has to withdraw this declaration with it.
          */
         @Override
-        public int checkpointAccumulatorFamily() {
+        public int windowAccumulatorFamily() {
             return WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;
         }
 
         @Override
-        public int checkpointAccumulatorProjection() {
+        public int windowAccumulatorProjection() {
             return WindowAccumulatorProjection.PROJECTION_COUNT;
         }
 

@@ -396,14 +396,22 @@ public class LiveViewWindow implements QuietCloseable {
      * component's, in the plan's canonical order.
      * <p>
      * The layout widens the value, and {@code MapFactory.createUnorderedMap} selects on
-     * {@code keySize + valueSize <= cairo.sql.unordered.map.max.entry.size} (default 16),
-     * so an INT-keyed view sitting on {@code Unordered4Map} at {@code 4 + 10 = 14} moves
-     * to {@code OrderedMap} once a 16-byte accumulator joins it. A LONG key was already
-     * past the limit at {@code 8 + 10 = 18} and a SYMBOL or STRING key was never eligible,
-     * so the transition is an INT-keyed anchored view's alone - and even there the
-     * function maps it replaces were themselves {@code OrderedMap} at
+     * {@code keySize + valueSize <= cairo.sql.unordered.map.max.entry.size}. That limit
+     * is <b>not one number</b>: {@link io.questdb.cairo.DefaultCairoConfiguration} returns
+     * 16, which embedded use and the benchmarks take, while
+     * {@code PropServerConfiguration} defaults the property to 32. The arithmetic below
+     * is the 16 reading, and the fused shape sits precisely in the gap between the two.
+     * <p>
+     * At 16, an INT-keyed view sitting on {@code Unordered4Map} at {@code 4 + 10 = 14}
+     * moves to {@code OrderedMap} once a 16-byte accumulator joins it at
+     * {@code 4 + 26 = 30}; at 32 that same shape stays on {@code Unordered4Map}. A LONG
+     * key was already past 16 at {@code 8 + 10 = 18} and a SYMBOL or STRING key was never
+     * eligible, so the transition is an INT-keyed anchored view's alone - and even there
+     * the function maps it replaces were themselves {@code OrderedMap} at
      * {@code 4 + 17 = 21}. One value layout is therefore the whole group's, and the
-     * benchmark's INT-keyed control is what would reopen the question.
+     * benchmark's INT-keyed control is what would reopen the question - which is why a
+     * measurement has to report the configured limit alongside the {@link Map} class it
+     * observed, rather than either alone.
      */
     private static ColumnTypes fusedMapValueTypes(@NotNull LiveViewWindowStatePlan plan) {
         final ArrayColumnTypes types = new ArrayColumnTypes();

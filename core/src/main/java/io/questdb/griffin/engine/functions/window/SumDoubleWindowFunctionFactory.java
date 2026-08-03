@@ -675,7 +675,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public Function checkpointAccumulatorArgument() {
+        public Function windowAccumulatorArgument() {
             return arg;
         }
 
@@ -685,12 +685,12 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
          * component; this call is the projection that reads its sum.
          */
         @Override
-        public int checkpointAccumulatorFamily() {
+        public int windowAccumulatorFamily() {
             return WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT;
         }
 
         @Override
-        public int checkpointAccumulatorProjection() {
+        public int windowAccumulatorProjection() {
             return WindowAccumulatorProjection.PROJECTION_SUM;
         }
 

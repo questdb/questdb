@@ -188,10 +188,14 @@ public final class LiveViewWindowStatePlan {
      * Installs each projection's fused slots on the function that emits it, which is
      * what turns the group's hot-path state methods into no-ops: from here the window's
      * one map value carries the accumulators and the functions only read it.
+     * <p>
+     * A function is handed the {@link LiveViewAccumulatorProjection#getRuntime() runtime}
+     * half of the binding, which is the slots alone: where the same component's image sits
+     * in a persisted payload is this plan's business and the seal's, never the row loop's.
      */
     public void bindProjectionFunctions() {
         for (int i = 0, n = projections.size(); i < n; i++) {
-            projectionFunctions.getQuick(i).bindWindowStateSlots(projections.getQuick(i));
+            projectionFunctions.getQuick(i).bindWindowStateSlots(projections.getQuick(i).getRuntime());
         }
     }
 

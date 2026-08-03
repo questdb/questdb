@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
@@ -100,10 +99,10 @@ public interface WindowFunction extends Function {
      * declared it and handed one over would be persisting state under an identity that
      * does not describe it. The compiler declines that combination.
      *
-     * @see #checkpointAccumulatorFamily()
+     * @see #windowAccumulatorFamily()
      */
     @Nullable
-    default Function checkpointAccumulatorArgument() {
+    default Function windowAccumulatorArgument() {
         return null;
     }
 
@@ -111,7 +110,7 @@ public interface WindowFunction extends Function {
      * The accumulator family this function's per-partition state belongs to, as one of
      * the {@link WindowAccumulatorDescriptor} {@code FAMILY_*} constants, or
      * {@link WindowAccumulatorDescriptor#FAMILY_NONE} when the function keeps state
-     * a fused window cannot share.
+     * a fused group cannot share.
      * <p>
      * The family names the <b>mathematics</b>, not the SELECT-list call: a DOUBLE
      * {@code sum} and a DOUBLE {@code avg} both report
@@ -124,7 +123,7 @@ public interface WindowFunction extends Function {
      * {@link #checkpointStateFixedLength()} declares the family's own width - the plan
      * checks the two against each other and declines the projection when they disagree.
      */
-    default int checkpointAccumulatorFamily() {
+    default int windowAccumulatorFamily() {
         return WindowAccumulatorDescriptor.FAMILY_NONE;
     }
 
@@ -132,29 +131,29 @@ public interface WindowFunction extends Function {
      * Which value this output reads off its family's state, as one of the
      * {@link WindowAccumulatorProjection} {@code PROJECTION_*} constants.
      * <p>
-     * Separate from {@link #checkpointAccumulatorFamily()} because the two answer
+     * Separate from {@link #windowAccumulatorFamily()} because the two answer
      * different questions: the family says what state exists, the projection says what
      * this particular call emits from it. {@code sum} and {@code avg} share the first
-     * and differ in the second, which is the whole reason one durable component can
-     * serve both.
+     * and differ in the second, which is the whole reason one component can serve both.
      */
-    default int checkpointAccumulatorProjection() {
+    default int windowAccumulatorProjection() {
         return WindowAccumulatorProjection.PROJECTION_NONE;
     }
 
     /**
-     * Absorbs one row into this function's accumulator, which lives in the window's
+     * Absorbs one row into this function's accumulator, which lives in the group's
      * fused map value rather than in a map of its own.
      * <p>
-     * Called once per row by {@link io.questdb.cairo.lv.LiveViewWindow#processRow},
-     * and only on the one function the plan chose as a component's <b>contributor</b>.
+     * Called once per row by whichever runtime owns the group's map -
+     * {@link io.questdb.cairo.lv.LiveViewWindow#processRow} is the only one today - and
+     * only on the one function the plan chose as a component's <b>contributor</b>.
      * Every other projection on the same component reads the state this call updates
      * and writes nothing, which is what stops {@code sum(x)} beside {@code avg(x)}
      * counting the row twice.
      *
      * @param record the current base row
      * @param value  the partition's fused window-state value, already loaded and reset
-     *               for the current anchor bucket
+     *               for the current bucket
      */
     default void accumulateWindowState(Record record, MapValue value) {
         throw CairoException.critical(0)
@@ -163,10 +162,10 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * Adopts the fused slots this output reads out of the window's map value, or clears
+     * Adopts the fused slots this output reads out of the group's map value, or clears
      * them when {@code projection} is null.
      * <p>
-     * A bound function is one whose per-partition state the window owns: its
+     * A bound function is one whose per-partition state the group's owner holds: its
      * {@code computeNext}, {@code resetPartition}, {@code markPartitionAlive},
      * {@code retainPartitions} and per-function freeze/restore participation all become
      * no-ops, and its getters return whatever {@link #projectWindowState} last
@@ -174,18 +173,22 @@ public interface WindowFunction extends Function {
      * {@code LiveViewWindowStatePlan.bindProjectionFunctions} - because the plan is the
      * single owner of which accumulator is whose.
      * <p>
+     * The parameter is the runtime projection rather than the durable one a live view
+     * persists: a bound function reads map value slots, and where a component's image
+     * sits in a persisted payload is no business of the hot path.
+     * <p>
      * The whole projection rather than a pair of slots, because a family's field set is
      * the family's business: {@code (sum, nonNullCount)} covers the DOUBLE accumulators
      * and the counters, and Welford's {@code (mean, m2, nonNullCount)} does not. An
      * implementation reads the fields it needs through
-     * {@link LiveViewAccumulatorProjection#getFieldSlot(int)} - naming the field with a
+     * {@link WindowAccumulatorProjection#getFieldSlot(int)} - naming the field with a
      * {@link WindowAccumulatorDescriptor} {@code FIELD_*} constant - and caches them, so
      * the per-row path still touches plain int fields.
      *
      * @param projection this output's binding onto its component, or null to hand the
      *                   state back to the map this function owns outside a fused group
      */
-    default void bindWindowStateSlots(@Nullable LiveViewAccumulatorProjection projection) {
+    default void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
     }
 
     /**
@@ -211,7 +214,7 @@ public interface WindowFunction extends Function {
      * null when it keeps no keyed state.
      * <p>
      * The reference is <b>non-owning</b>, exactly as
-     * {@link #checkpointAccumulatorArgument()}'s is: the window function owns its
+     * {@link #windowAccumulatorArgument()}'s is: the window function owns its
      * partition-by functions and frees them, and the compiler only reads their identity.
      * What it reads them for is the one relation that holds between a call's argument and
      * the window rather than between two calls - a {@code count(k)} over the column its
@@ -660,12 +663,12 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * Reports whether the anchored window owns this function's per-partition state, so
-     * every walk of the runtime has to read it off the window's fused map rather than
+     * Reports whether a window-state group owns this function's per-partition state, so
+     * every walk of the runtime has to read it off the group's fused map rather than
      * off this function.
      * <p>
-     * True only between {@link #bindWindowStateSlots} adopting a plan and the window
-     * handing the state back. It is deliberately not the same question as
+     * True only between {@link #bindWindowStateSlots} adopting a plan and the group's
+     * owner handing the state back. It is deliberately not the same question as
      * {@link #isCheckpointStateless()}: a fused projection still depends on every row
      * its component absorbed, and still carries its real
      * {@link io.questdb.cairo.lv.LiveViewCheckpointDependency} for repair planning. What
@@ -782,10 +785,11 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * Materializes this output's current value from the window's fused map value, so the
+     * Materializes this output's current value from the group's fused map value, so the
      * getters can answer without a map probe of their own.
      * <p>
-     * Called once per row by {@link io.questdb.cairo.lv.LiveViewWindow#processRow}, on
+     * Called once per row by whichever runtime owns the group's map -
+     * {@link io.questdb.cairo.lv.LiveViewWindow#processRow} is the only one today - on
      * every projection of the group and after every contributor has run. Running it
      * there rather than from {@code computeNext} is what removes the ordering dependency
      * on the SELECT list: the accumulators are whole before the first output reads one,
@@ -793,7 +797,7 @@ public interface WindowFunction extends Function {
      * <p>
      * {@code record} is the base row the value was loaded for. Almost every projection
      * ignores it and reads the slots alone; the one that does not is a
-     * {@link LiveViewAccumulatorProjection#isPartitionKeyGuarded() guarded} count, whose
+     * {@link WindowAccumulatorProjection#isPartitionKeyGuarded() guarded} count, whose
      * output is the component's counter corrected by a test on the partition key. The
      * key is constant across a partition, so reading it off the current row answers for
      * the whole of it and the result stays independent of SELECT-list order.

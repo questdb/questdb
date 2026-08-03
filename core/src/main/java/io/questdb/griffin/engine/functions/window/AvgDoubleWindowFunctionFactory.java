@@ -1941,7 +1941,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public Function checkpointAccumulatorArgument() {
+        public Function windowAccumulatorArgument() {
             return arg;
         }
 
@@ -1951,12 +1951,12 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
          * only in what they project out of it.
          */
         @Override
-        public int checkpointAccumulatorFamily() {
+        public int windowAccumulatorFamily() {
             return WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT;
         }
 
         @Override
-        public int checkpointAccumulatorProjection() {
+        public int windowAccumulatorProjection() {
             return WindowAccumulatorProjection.PROJECTION_AVG;
         }
 

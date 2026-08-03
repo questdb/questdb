@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
-import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -1446,7 +1445,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
          * Takes the counter off the base class and Welford's own two fields beside it.
          */
         @Override
-        public void bindWindowStateSlots(@Nullable LiveViewAccumulatorProjection projection) {
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
             super.bindWindowStateSlots(projection);
             windowStateMeanSlot = projection == null
                     ? -1
@@ -1457,7 +1456,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         }
 
         @Override
-        public Function checkpointAccumulatorArgument() {
+        public Function windowAccumulatorArgument() {
             return arg;
         }
 
@@ -1468,12 +1467,12 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
          * decide only what is read off the state, never what goes into it.
          */
         @Override
-        public int checkpointAccumulatorFamily() {
+        public int windowAccumulatorFamily() {
             return WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD;
         }
 
         @Override
-        public int checkpointAccumulatorProjection() {
+        public int windowAccumulatorProjection() {
             if (isSqrt) {
                 return isSample
                         ? WindowAccumulatorProjection.PROJECTION_STDDEV_SAMP

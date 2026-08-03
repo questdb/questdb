@@ -727,16 +727,16 @@ public final class LiveViewCheckpointFunctionCompiler {
         if (!isFusibleAccumulator(function, anchorableWindowFunctions)) {
             return false;
         }
-        int projectionKind = function.checkpointAccumulatorProjection();
+        int projectionKind = function.windowAccumulatorProjection();
         if (projectionKind == WindowAccumulatorProjection.PROJECTION_NONE) {
             return false;
         }
-        int family = function.checkpointAccumulatorFamily();
+        int family = function.windowAccumulatorFamily();
         int argumentColumnIndex;
         int argumentColumnType;
         if (WindowAccumulatorDescriptor.familyTakesArgument(family)) {
             argumentColumnIndex = WindowAccumulatorDescriptor.directColumnIndex(
-                    function.checkpointAccumulatorArgument(),
+                    function.windowAccumulatorArgument(),
                     baseMetadata
             );
             if (argumentColumnIndex < 0) {
@@ -762,7 +762,7 @@ public final class LiveViewCheckpointFunctionCompiler {
             // identity has no argument to carry. A function that declares the family and
             // still holds an argument is describing state the identity does not, and is
             // turned away rather than fused under a key that omits it.
-            if (function.checkpointAccumulatorArgument() != null) {
+            if (function.windowAccumulatorArgument() != null) {
                 return false;
             }
             argumentColumnIndex = WindowAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX;
@@ -1426,9 +1426,9 @@ public final class LiveViewCheckpointFunctionCompiler {
             final Function function = functions.getQuick(i);
             if (!(function instanceof WindowFunction windowFunction)
                     || !isFusibleAccumulator(windowFunction, anchorableWindowFunctions)
-                    || windowFunction.checkpointAccumulatorFamily() != WindowAccumulatorDescriptor.FAMILY_ROW_COUNT
-                    || windowFunction.checkpointAccumulatorArgument() != null
-                    || windowFunction.checkpointAccumulatorProjection() == WindowAccumulatorProjection.PROJECTION_NONE
+                    || windowFunction.windowAccumulatorFamily() != WindowAccumulatorDescriptor.FAMILY_ROW_COUNT
+                    || windowFunction.windowAccumulatorArgument() != null
+                    || windowFunction.windowAccumulatorProjection() == WindowAccumulatorProjection.PROJECTION_NONE
                     || windowFunction.checkpointFunctionIdentity() == null) {
                 continue;
             }

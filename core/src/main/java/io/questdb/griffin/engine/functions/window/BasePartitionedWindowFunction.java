@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
-import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -38,6 +37,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -119,7 +119,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
      * super and reads its own fields off the same projection.
      */
     @Override
-    public void bindWindowStateSlots(@Nullable LiveViewAccumulatorProjection projection) {
+    public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
         this.windowStateSumSlot = projection == null
                 ? -1
                 : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_SUM);
