@@ -931,10 +931,7 @@ public class PostingIndexWriter implements IndexWriter {
         // cover count > 0). A non-covering POSTING head is also format 0 but has
         // cover count 0, so it is correctly NOT flagged. Such a head must reseal
         // (O3) to format 1 rather than be extended in place.
-        return keyMem != null && keyMem.isOpen()
-                && chain.hasHead()
-                && headStoredCoveringFormat() == PostingIndexUtils.COVERING_FORMAT_LEGACY
-                && headStoredCoverCount() > 0;
+        return keyMem.isOpen() && chain.hasHead() && headStoredCoveringFormat() == PostingIndexUtils.COVERING_FORMAT_LEGACY && headStoredCoverCount() > 0;
     }
 
     // The head entry's OWN cover count. A format-1 head reports the count it was
@@ -961,7 +958,6 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         LongList values = new LongList();
-        long headEntryOffset = chain.getHeadEntryOffset();
         for (int gen = 0; gen < genCount; gen++) {
             long dirOffset = resolveHeadGenDirOffset(gen);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);

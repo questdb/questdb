@@ -281,8 +281,7 @@ public final class PostingIndexChainWriter {
                         newGenCount,
                         c,
                         newCoverEndOffsets.getQuick(c),
-                        coveringFormat,
-                        coverCount
+                        coveringFormat
                 );
             }
         }
@@ -517,8 +516,8 @@ public final class PostingIndexChainWriter {
 
         // Cover footer: source trailing (entry+56+genCount*44) -> dest fixed
         // (entry+56). Values are byte-identical; only the location moves.
-        long sourceFooter = PostingIndexChainEntry.resolveCoverFooterOffset(sourceOffset, genCount, PostingIndexUtils.COVERING_FORMAT_LEGACY, coverCount);
-        long destFooter = PostingIndexChainEntry.resolveCoverFooterOffset(destOffset, genCount, PostingIndexUtils.COVERING_FORMAT_DEALIASED, coverCount);
+        long sourceFooter = PostingIndexChainEntry.resolveCoverFooterOffset(sourceOffset, genCount, PostingIndexUtils.COVERING_FORMAT_LEGACY);
+        long destFooter = PostingIndexChainEntry.resolveCoverFooterOffset(destOffset, genCount, PostingIndexUtils.COVERING_FORMAT_DEALIASED);
         for (int c = 0; c < coverCount; c++) {
             keyMem.putLong(destFooter + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE,
                     keyMem.getLong(sourceFooter + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE));
@@ -675,7 +674,7 @@ public final class PostingIndexChainWriter {
         if (coverCount <= 0) {
             return;
         }
-        long footerOffset = PostingIndexChainEntry.resolveCoverFooterOffset(headOffset, genCount, coveringFormat, coverCount);
+        long footerOffset = PostingIndexChainEntry.resolveCoverFooterOffset(headOffset, genCount, coveringFormat);
         for (int c = 0; c < coverCount; c++) {
             out.add(keyMem.getLong(footerOffset + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE));
         }
@@ -956,8 +955,8 @@ public final class PostingIndexChainWriter {
         }
 
         if (coverCount > 0) {
-            long sourceFooterOffset = PostingIndexChainEntry.resolveCoverFooterOffset(sourceOffset, oldGenCount, coveringFormat, coverCount);
-            long destFooterOffset = PostingIndexChainEntry.resolveCoverFooterOffset(destOffset, keepGenCount, coveringFormat, coverCount);
+            long sourceFooterOffset = PostingIndexChainEntry.resolveCoverFooterOffset(sourceOffset, oldGenCount, coveringFormat);
+            long destFooterOffset = PostingIndexChainEntry.resolveCoverFooterOffset(destOffset, keepGenCount, coveringFormat);
             for (int c = 0; c < coverCount; c++) {
                 keyMem.putLong(destFooterOffset + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE,
                         keyMem.getLong(sourceFooterOffset + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE));

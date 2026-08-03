@@ -524,11 +524,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * budget-guarded, so a redundant call (or one over budget) is a safe no-op.
      *
      * @param key             column key (>= 0)
-     * @param maxValueClamped inclusive clamp the cursor uses; reserved for symmetry with
-     *                        {@link #selectKthMatch} — the cache predicate is value-independent,
-     *                        so it does not currently affect which gens are cached
      */
-    public void populateCacheForKey(int key, long maxValueClamped) {
+    public void populateCacheForKey(int key) {
         if (key < 0 || !genLookup.anySparseGen()) {
             return;
         }
@@ -1744,13 +1741,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         // the genLookup cache is only committed (putCacheEntries) when the gen walk
         // reaches its end, so we must not stop early. Closing the cursor returns it
         // to the reader's free list, which is safe because warming is single-threaded.
-        RowCursor cursor = getCursor(key, 0, Long.MAX_VALUE, requiredCoverColumns);
-        try {
+        try (RowCursor cursor = getCursor(key, 0, Long.MAX_VALUE, requiredCoverColumns)) {
             while (cursor.hasNext()) {
                 cursor.next();
             }
-        } finally {
-            cursor.close();
         }
     }
 
