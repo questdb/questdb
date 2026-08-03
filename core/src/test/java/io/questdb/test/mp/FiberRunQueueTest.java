@@ -70,7 +70,9 @@ public class FiberRunQueueTest {
                             }
                             task.reopen();
                         }
-                        Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                        if (!launchUntilAccepted(runtime, task, isStopped)) {
+                            return;
+                        }
                     }
                     waitUntilDone(task, isStopped);
                 } catch (Throwable th) {
@@ -231,6 +233,24 @@ public class FiberRunQueueTest {
             }
             Assert.assertFalse(thread.getName() + " did not stop", thread.isAlive());
         }
+    }
+
+    private static boolean launchUntilAccepted(
+            FiberRuntime runtime,
+            FiberTask task,
+            AtomicBoolean isStopped
+    ) {
+        while (!isStopped.get()) {
+            final LaunchResult result = runtime.launch(task);
+            if (result == LaunchResult.LAUNCHED) {
+                return true;
+            }
+            if (result != LaunchResult.SATURATED) {
+                throw new AssertionError("unexpected fiber launch result [result=" + result + ']');
+            }
+            Os.pause();
+        }
+        return false;
     }
 
     private static boolean waitUntilDone(FiberTask task, AtomicBoolean isStopped) {

@@ -584,9 +584,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                         .$(", frameIndex=").$(frameIndex)
                         .$(", frameCount=").$(frameCount)
                         .I$();
-                // Record the error on the sequence and let dispatchAndAwait surface it
-                // via buildError(). Re-throwing here would propagate through the owner
-                // thread and bypass the kind-aware rebuild, losing the original class.
+                // Record the error so dispatchAndAwait applies the same normalization as queued reducers.
                 setError(th);
             }
         } finally {

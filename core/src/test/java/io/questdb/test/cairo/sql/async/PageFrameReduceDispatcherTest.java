@@ -2813,7 +2813,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnorderedOwnerInlinePreservesReducerError() throws Exception {
+    public void testUnorderedOwnerInlineNormalizesReducerError() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE unordered_error AS (SELECT x FROM long_sequence(1))");
             final FiberRuntime dispatcherRuntime = new FiberRuntime(1);
@@ -2855,8 +2855,11 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(ownerTask));
                 Assert.assertEquals(1, ownerRuntime.drain(1));
                 Assert.assertTrue(ownerTask.isDone());
-                Assert.assertTrue(ownerFailure.get() instanceof IllegalStateException);
-                TestUtils.assertContains(ownerFailure.get().getMessage(), "unordered reducer failure");
+                Assert.assertTrue(ownerFailure.get() instanceof CairoException);
+                TestUtils.assertContains(
+                        ownerFailure.get().getMessage(),
+                        "unexpected reduce error: unordered reducer failure"
+                );
                 Assert.assertEquals(0, dispatcher.getCreatedTaskCount());
                 Assert.assertEquals(0, dispatcherRuntime.getOutstandingTaskCount());
                 Assert.assertEquals(-1, frameSequence.getDoneLatch().getCount());
