@@ -102,6 +102,10 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
         } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, targetType).position(position);
         }
+        // NaN and Infinity parse to null
+        if (decimal.isNull()) {
+            return DecimalUtil.createNullDecimalConstant(targetPrecision, targetScale);
+        }
         return DecimalUtil.createDecimalConstant(decimal, targetPrecision, targetScale);
     }
 
@@ -199,7 +203,8 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, type).position(position);
             }
-            return true;
+            // NaN and Infinity parse to null
+            return !decimal.isNull();
         }
     }
 }

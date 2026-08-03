@@ -29,6 +29,11 @@ import org.junit.Test;
 
 public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
+    // one type per decimal storage width
+    private static final String[] ALL_WIDTHS = {
+            "DECIMAL(2,1)", "DECIMAL(4,2)", "DECIMAL(9,2)", "DECIMAL(18,2)", "DECIMAL(38,2)", "DECIMAL(40,2)"
+    };
+
     @Test
     public void testCastExplains() throws Exception {
         assertMemoryLeak(
@@ -203,6 +208,35 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
                     assertQuery("select cast('-1' as DECIMAL(2,2))")
                             .fails(12, "inconvertible value: `-1` [STRING -> DECIMAL(2,2)]");
+                }
+        );
+    }
+
+    @Test
+    public void testCastInfinityAndNaN() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    for (String value : new String[]{"NaN", "Infinity", "-Infinity", "+Infinity"}) {
+                        for (String type : ALL_WIDTHS) {
+                            assertQuery("select cast('" + value + "' as " + type + ") v, cast('" + value + "' as " + type + ") is null n")
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .returns("v\tn\n\ttrue\n");
+
+                            assertQuery("WITH data AS (SELECT '" + value + "' value) " +
+                                    "SELECT cast(value as " + type + ") v, cast(value as " + type + ") is null n FROM data")
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .returns("v\tn\n\ttrue\n");
+                        }
+                    }
+
+                    // only the canonical spellings are recognised
+                    assertQuery("select cast('nan' as DECIMAL(10,2))")
+                            .fails(12, "inconvertible value: `nan` [STRING -> DECIMAL(10,2)]");
+
+                    assertQuery("select cast('INFINITY' as DECIMAL(10,2))")
+                            .fails(12, "inconvertible value: `INFINITY` [STRING -> DECIMAL(10,2)]");
                 }
         );
     }
