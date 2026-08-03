@@ -528,6 +528,8 @@ public class DecimalBinaryFormatParserTest {
                 return null;
             }
             return decimal;
+        } finally {
+            Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
         }
     }
 }
