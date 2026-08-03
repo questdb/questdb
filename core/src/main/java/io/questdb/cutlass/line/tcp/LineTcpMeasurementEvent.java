@@ -701,6 +701,9 @@ public class LineTcpMeasurementEvent implements Closeable {
                     offset = buffer.addNull(offset);
                     break;
                 case LineTcpParser.ENTITY_TYPE_DECIMAL:
+                    if (!ColumnType.isDecimal(colType)) {
+                        throw castError(tud.getTableNameUtf16(), "decimal", colType, entity.getName());
+                    }
                     final int scale = ColumnType.getDecimalScale(colType);
                     decimal256.copyFrom(entity.getDecimalValue());
                     if (decimal256.getScale() != scale) {

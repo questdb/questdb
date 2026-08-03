@@ -532,6 +532,9 @@ public class LineWalAppender implements QuietCloseable {
                         }
                         break;
                     case LineTcpParser.ENTITY_TYPE_DECIMAL:
+                        if (!ColumnType.isDecimal(colType)) {
+                            throw castError(tud.getTableNameUtf16(), "DECIMAL", colType, ent.getName());
+                        }
                         Decimal256 decimal = ent.getDecimalValue();
                         if (decimal.isNull()) {
                             DecimalUtil.storeNull(r, columnIndex, colType);
