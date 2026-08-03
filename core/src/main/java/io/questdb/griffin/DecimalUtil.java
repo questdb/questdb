@@ -107,6 +107,18 @@ public final class DecimalUtil {
     }
 
     /**
+     * Returns the storage size, as a power of two, of the narrowest decimal that holds both operand
+     * types. Comparing operands of different scales stays within that width: {@code compareTo}
+     * short-circuits on the ordering when aligning the scales would leave the width's range.
+     */
+    public static int getComparisonStorageSizePow2(int leftType, int rightType) {
+        return Decimals.getStorageSizePow2(Math.max(
+                ColumnType.getDecimalPrecision(leftType),
+                ColumnType.getDecimalPrecision(rightType)
+        ));
+    }
+
+    /**
      * Returns a decimal instance from a sqlExecutionContext that can fit any number of {@code precision} digits.
      *
      * @param executionContext to retrieve an instance of the decimal

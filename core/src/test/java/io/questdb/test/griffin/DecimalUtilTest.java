@@ -1237,6 +1237,18 @@ public class DecimalUtilTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStoreNonNullNonDecimalType() {
+        assertStoreNonNullFails(ColumnType.INT, "cannot store decimal into column type: INT");
+        assertStoreNonNullFails(ColumnType.DOUBLE, "cannot store decimal into column type: DOUBLE");
+    }
+
+    @Test
+    public void testStoreNonNullSurrogateDecimalType() {
+        // DECIMAL is a surrogate tag, it passes ColumnType.isDecimal() but has no storage width
+        assertStoreNonNullFails(ColumnType.DECIMAL, "cannot store decimal into column type: DECIMAL");
+    }
+
+    @Test
     public void testStoreNullNonDecimalType() {
         assertStoreNullFails(ColumnType.INT, "cannot store decimal into column type: INT");
         assertStoreNullFails(ColumnType.DOUBLE, "cannot store decimal into column type: DOUBLE");
@@ -1350,6 +1362,18 @@ public class DecimalUtilTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), message);
             }
             Assert.assertEquals(0, mem.getAppendOffset());
+        }
+    }
+
+    private void assertStoreNonNullFails(int type, CharSequence message) {
+        Decimal256 value = new Decimal256();
+        value.ofLong(42, 0);
+        try {
+            // RowAsserter fails the test on any put, so a silent write is caught too
+            DecimalUtil.storeNonNull(value, new RowAsserter(), 0, type);
+            Assert.fail("expected store to be rejected");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), message);
         }
     }
 
