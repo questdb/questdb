@@ -24,11 +24,13 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlException;
@@ -1219,6 +1221,44 @@ public class DecimalUtilTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStoreMemoryNullUnsupportedType() {
+        Decimal256 value = new Decimal256();
+        value.ofNull();
+        assertStoreMemoryFails(value, ColumnType.INT, "cannot store decimal into column type: INT");
+        assertStoreMemoryFails(value, ColumnType.DECIMAL, "cannot store decimal into column type: DECIMAL");
+    }
+
+    @Test
+    public void testStoreMemoryValueUnsupportedType() {
+        Decimal256 value = new Decimal256();
+        value.ofLong(42, 0);
+        assertStoreMemoryFails(value, ColumnType.INT, "cannot store decimal into column type: INT");
+        assertStoreMemoryFails(value, ColumnType.DECIMAL, "cannot store decimal into column type: DECIMAL");
+    }
+
+    @Test
+    public void testStoreNullNonDecimalType() {
+        assertStoreNullFails(ColumnType.INT, "cannot store decimal into column type: INT");
+        assertStoreNullFails(ColumnType.DOUBLE, "cannot store decimal into column type: DOUBLE");
+    }
+
+    @Test
+    public void testStoreNullSurrogateDecimalType() {
+        // DECIMAL is a surrogate tag, it passes ColumnType.isDecimal() but has no storage width
+        assertStoreNullFails(ColumnType.DECIMAL, "cannot store decimal into column type: DECIMAL");
+    }
+
+    @Test
+    public void testStoreNullWidths() {
+        assertStoreNull(ColumnType.DECIMAL8, 2, Byte.BYTES);
+        assertStoreNull(ColumnType.DECIMAL16, 4, Short.BYTES);
+        assertStoreNull(ColumnType.DECIMAL32, 9, Integer.BYTES);
+        assertStoreNull(ColumnType.DECIMAL64, 18, Long.BYTES);
+        assertStoreNull(ColumnType.DECIMAL128, 38, Decimal128.BYTES);
+        assertStoreNull(ColumnType.DECIMAL256, 76, Decimal256.BYTES);
+    }
+
+    @Test
     public void testStoreRow() {
         Decimal256 value = new Decimal256();
         value.ofNull();
@@ -1301,6 +1341,63 @@ public class DecimalUtilTest extends AbstractCairoTest {
         }
     }
 
+    private void assertStoreMemoryFails(Decimal256 value, int type, CharSequence message) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(Decimal256.BYTES, 1, MemoryTag.NATIVE_DEFAULT)) {
+            try {
+                DecimalUtil.store(value, mem, type);
+                Assert.fail("expected store to be rejected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), message);
+            }
+            Assert.assertEquals(0, mem.getAppendOffset());
+        }
+    }
+
+    private void assertStoreNull(short expectedTag, int precision, int expectedSize) {
+        final int type = ColumnType.getDecimalType(precision, 0);
+        Assert.assertEquals(expectedTag, ColumnType.tagOf(type));
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(Decimal256.BYTES, 1, MemoryTag.NATIVE_DEFAULT)) {
+            DecimalUtil.storeNull(new MemoryRow(mem, 7), 7, type);
+            Assert.assertEquals(expectedSize, mem.getAppendOffset());
+            switch (expectedTag) {
+                case ColumnType.DECIMAL8:
+                    Assert.assertEquals(Decimals.DECIMAL8_NULL, mem.getByte(0));
+                    break;
+                case ColumnType.DECIMAL16:
+                    Assert.assertEquals(Decimals.DECIMAL16_NULL, mem.getShort(0));
+                    break;
+                case ColumnType.DECIMAL32:
+                    Assert.assertEquals(Decimals.DECIMAL32_NULL, mem.getInt(0));
+                    break;
+                case ColumnType.DECIMAL64:
+                    Assert.assertEquals(Decimals.DECIMAL64_NULL, mem.getLong(0));
+                    break;
+                case ColumnType.DECIMAL128:
+                    Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, mem.getLong(0));
+                    Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, mem.getLong(Long.BYTES));
+                    break;
+                case ColumnType.DECIMAL256:
+                    Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, mem.getLong(0));
+                    Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, mem.getLong(Long.BYTES));
+                    Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, mem.getLong(2 * Long.BYTES));
+                    Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, mem.getLong(3 * Long.BYTES));
+                    break;
+                default:
+                    Assert.fail("unexpected tag: " + expectedTag);
+            }
+        }
+    }
+
+    private void assertStoreNullFails(int type, CharSequence message) {
+        try {
+            // RowAsserter fails the test on any put, so a silent write is caught too
+            DecimalUtil.storeNull(new RowAsserter(), 0, type);
+            Assert.fail("expected store to be rejected");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), message);
+        }
+    }
+
     private void assertStoreRow(Decimal256 value, int precision) {
         int type = ColumnType.getDecimalType(precision, value.getScale());
         TableWriter.Row row = getRowAsserter(type, -1, value);
@@ -1310,6 +1407,55 @@ public class DecimalUtilTest extends AbstractCairoTest {
     @FunctionalInterface
     public interface MemLongGetter {
         long run(MemoryCR mem);
+    }
+
+    /**
+     * Writes the row values into memory, so that the exact byte count can be asserted.
+     */
+    private static class MemoryRow extends RowAsserter {
+        private final int expectedColumnIndex;
+        private final MemoryA mem;
+
+        private MemoryRow(MemoryA mem, int expectedColumnIndex) {
+            this.mem = mem;
+            this.expectedColumnIndex = expectedColumnIndex;
+        }
+
+        @Override
+        public void putByte(int columnIndex, byte value) {
+            Assert.assertEquals(expectedColumnIndex, columnIndex);
+            mem.putByte(value);
+        }
+
+        @Override
+        public void putDecimal128(int columnIndex, long high, long low) {
+            Assert.assertEquals(expectedColumnIndex, columnIndex);
+            mem.putDecimal128(high, low);
+        }
+
+        @Override
+        public void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll) {
+            Assert.assertEquals(expectedColumnIndex, columnIndex);
+            mem.putDecimal256(hh, hl, lh, ll);
+        }
+
+        @Override
+        public void putInt(int columnIndex, int value) {
+            Assert.assertEquals(expectedColumnIndex, columnIndex);
+            mem.putInt(value);
+        }
+
+        @Override
+        public void putLong(int columnIndex, long value) {
+            Assert.assertEquals(expectedColumnIndex, columnIndex);
+            mem.putLong(value);
+        }
+
+        @Override
+        public void putShort(int columnIndex, short value) {
+            Assert.assertEquals(expectedColumnIndex, columnIndex);
+            mem.putShort(value);
+        }
     }
 
     private static class TestNonConstantDecimalFunction extends Decimal8Function {

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Function;
@@ -489,7 +490,8 @@ public final class DecimalUtil {
                     );
                     break;
                 default:
-                    assert false;
+                    throw CairoException.critical(0)
+                            .put("cannot store decimal into column type: ").put(ColumnType.nameOf(targetType));
             }
             return;
         }
@@ -509,7 +511,7 @@ public final class DecimalUtil {
             case ColumnType.DECIMAL128:
                 mem.putDecimal128(decimal.getLh(), decimal.getLl());
                 break;
-            default:
+            case ColumnType.DECIMAL256:
                 mem.putDecimal256(
                         decimal.getHh(),
                         decimal.getHl(),
@@ -517,6 +519,9 @@ public final class DecimalUtil {
                         decimal.getLl()
                 );
                 break;
+            default:
+                throw CairoException.critical(0)
+                        .put("cannot store decimal into column type: ").put(ColumnType.nameOf(targetType));
         }
     }
 
@@ -551,7 +556,7 @@ public final class DecimalUtil {
             case ColumnType.DECIMAL128:
                 row.putDecimal128(columnIndex, decimal.getLh(), decimal.getLl());
                 break;
-            default:
+            case ColumnType.DECIMAL256:
                 row.putDecimal256(
                         columnIndex,
                         decimal.getHh(),
@@ -560,6 +565,9 @@ public final class DecimalUtil {
                         decimal.getLl()
                 );
                 break;
+            default:
+                throw CairoException.critical(0)
+                        .put("cannot store decimal into column type: ").put(ColumnType.nameOf(targetType));
         }
     }
 
@@ -583,7 +591,7 @@ public final class DecimalUtil {
             case ColumnType.DECIMAL128:
                 row.putDecimal128(columnIndex, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
                 break;
-            default:
+            case ColumnType.DECIMAL256:
                 row.putDecimal256(
                         columnIndex,
                         Decimals.DECIMAL256_HH_NULL,
@@ -592,6 +600,9 @@ public final class DecimalUtil {
                         Decimals.DECIMAL256_LL_NULL
                 );
                 break;
+            default:
+                throw CairoException.critical(0)
+                        .put("cannot store decimal into column type: ").put(ColumnType.nameOf(targetType));
         }
     }
 }
