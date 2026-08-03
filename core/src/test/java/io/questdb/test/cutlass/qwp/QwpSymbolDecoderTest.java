@@ -218,6 +218,24 @@ public class QwpSymbolDecoderTest {
     }
 
     @Test
+    public void testClientAndServerAgreeOnTheSymbolDictionaryCap() {
+        // The client refuses the 1,000,001st distinct symbol at registration precisely so
+        // everything it has already buffered references ids this decoder will accept:
+        // parseDeltaSymbolDict rejects deltaStartId + deltaCount > MAX_SYMBOL_DICTIONARY_SIZE
+        // as a parse error, which the sender treats as terminal, stranding a
+        // store-and-forward backlog no drainer can deliver.
+        //
+        // The client pins its own constant against a literal, which only catches the
+        // CLIENT moving. Lowering the server's constant would leave that green while the
+        // client over-admitted, so pin the two against each other from the side that can
+        // see both -- the client is on this module's test classpath.
+        Assert.assertEquals(
+                "client and server symbol-dictionary caps must move together",
+                MAX_SYMBOL_DICTIONARY_SIZE,
+                io.questdb.client.cutlass.qwp.protocol.QwpConstants.MAX_SYMBOL_DICTIONARY_SIZE);
+    }
+
+    @Test
     public void testDeltaSymbolDictIntegerOverflow() throws Exception {
         assertMemoryLeak(() -> {
             long deltaStartId = Integer.MAX_VALUE;
