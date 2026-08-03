@@ -539,6 +539,7 @@ public class RecordToRowCopierUtils {
         int wPutVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
         int wPutArray = asm.poolInterfaceMethod(TableWriter.Row.class, "putArray", "(ILio/questdb/cairo/arr/ArrayView;)V");
         int wPutDecimalStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putDecimalStr", "(ILjava/lang/CharSequence;)V");
+        int wPutDecimalChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putDecimalChar", "(IC)V");
         int wPutDecimalVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putDecimalVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
 
         int implicitCastCharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastCharAsByte", "(CI)B");
@@ -1176,6 +1177,14 @@ public class RecordToRowCopierUtils {
                                 asm.invokeStatic(implicitCastCharAsGeoHash);
                                 asm.invokeInterface(wPutByte, 2);
                                 break;
+                            case ColumnType.DECIMAL8:
+                            case ColumnType.DECIMAL16:
+                            case ColumnType.DECIMAL32:
+                            case ColumnType.DECIMAL64:
+                            case ColumnType.DECIMAL128:
+                            case ColumnType.DECIMAL256:
+                                asm.invokeInterface(wPutDecimalChar, 2);
+                                break;
                             default:
                                 assert false;
                                 break;
@@ -1693,6 +1702,7 @@ public class RecordToRowCopierUtils {
         int wPutVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
         int wPutArray = asm.poolInterfaceMethod(TableWriter.Row.class, "putArray", "(ILio/questdb/cairo/arr/ArrayView;)V");
         int wPutDecimalStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putDecimalStr", "(ILjava/lang/CharSequence;)V");
+        int wPutDecimalChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putDecimalChar", "(IC)V");
         int wPutDecimalVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putDecimalVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
 
         int implicitCastCharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastCharAsByte", "(CI)B");
@@ -2367,6 +2377,14 @@ public class RecordToRowCopierUtils {
                             asm.ldc(toColumnType_0 + i * 2);
                             asm.invokeStatic(implicitCastCharAsGeoHash);
                             asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.DECIMAL8:
+                        case ColumnType.DECIMAL16:
+                        case ColumnType.DECIMAL32:
+                        case ColumnType.DECIMAL64:
+                        case ColumnType.DECIMAL128:
+                        case ColumnType.DECIMAL256:
+                            asm.invokeInterface(wPutDecimalChar, 2);
                             break;
                         default:
                             assert false;

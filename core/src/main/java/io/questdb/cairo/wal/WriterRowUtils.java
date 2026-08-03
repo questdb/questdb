@@ -59,6 +59,26 @@ public class WriterRowUtils {
         putDecimal0(index, value, tag, row);
     }
 
+    public static void putDecimalChar(int index, Decimal256 decimalSink, char decimalValue, int columnType, TableWriter.Row row) {
+        if (decimalValue == 0) {
+            putNullDecimal(row, index, columnType);
+            return;
+        }
+        if (decimalValue < '0' || decimalValue > '9') {
+            throw ImplicitCastException.inconvertibleValue(decimalValue, ColumnType.CHAR, columnType);
+        }
+        decimalSink.ofLong(decimalValue - '0', 0);
+        try {
+            decimalSink.rescale(ColumnType.getDecimalScale(columnType));
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(decimalValue, ColumnType.CHAR, columnType);
+        }
+        if (!decimalSink.comparePrecision(ColumnType.getDecimalPrecision(columnType))) {
+            throw ImplicitCastException.inconvertibleValue(decimalValue, ColumnType.CHAR, columnType);
+        }
+        putDecimal0(index, decimalSink, ColumnType.tagOf(columnType), row);
+    }
+
     /**
      * Puts decimal value into a row column. The Decimal should already have the right scale and precision.
      *
