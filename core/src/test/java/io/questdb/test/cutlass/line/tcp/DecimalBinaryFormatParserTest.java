@@ -34,7 +34,18 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.util.Arrays;
+
 public class DecimalBinaryFormatParserTest {
+    // precisions of DECIMAL8 to DECIMAL256
+    private static final int[] ALL_PRECISIONS = {2, 4, 9, 18, 38, Decimals.MAX_PRECISION};
+    // largest unscaled value a DECIMAL256 can hold
+    private static final BigInteger MAX_UNSCALED = BigInteger.TEN.pow(Decimals.MAX_PRECISION).subtract(BigInteger.ONE);
+    // precisions of DECIMAL8 to DECIMAL128
+    private static final int[] NARROW_PRECISIONS = {2, 4, 9, 18, 38};
+
     @Test
     public void testBasic() throws DecimalBinaryFormatParser.ParseException {
         Decimal256 decimal256 = parse(new byte[]{
@@ -216,32 +227,21 @@ public class DecimalBinaryFormatParserTest {
 
     @Test
     public void testMaximumDecimal256() throws DecimalBinaryFormatParser.ParseException {
-        // Test maximum 256-bit value (32 bytes)
-        byte[] bytes = new byte[34]; // 1 scale + 1 length + 32 data
-        bytes[0] = 0; // Scale
-        bytes[1] = 32; // Length
-        bytes[2] = 0x7F; // Positive sign bit
-        for (int i = 3; i < 34; i++) {
-            bytes[i] = (byte) 0xFF;
-        }
-        Decimal256 decimal256 = parse(bytes);
+        // largest representable magnitude, 32 bytes
+        Decimal256 decimal256 = parse(payload(0, MAX_UNSCALED.toByteArray()));
         Assert.assertNotNull(decimal256);
         Assert.assertEquals(0, decimal256.getScale());
+        Assert.assertEquals(MAX_UNSCALED.toString(), decimal256.toString());
     }
 
     @Test
     public void testMinimumDecimal256() throws DecimalBinaryFormatParser.ParseException {
-        // Test minimum 256-bit value (negative)
-        byte[] bytes = new byte[34]; // 1 scale + 1 length + 32 data
-        bytes[0] = 0; // Scale
-        bytes[1] = 32; // Length
-        bytes[2] = (byte) 0x80; // Negative sign bit
-        for (int i = 3; i < 34; i++) {
-            bytes[i] = 0x00;
-        }
-        Decimal256 decimal256 = parse(bytes);
+        // smallest representable magnitude, 32 bytes
+        BigInteger min = MAX_UNSCALED.negate();
+        Decimal256 decimal256 = parse(payload(0, min.toByteArray()));
         Assert.assertNotNull(decimal256);
         Assert.assertEquals(0, decimal256.getScale());
+        Assert.assertEquals(min.toString(), decimal256.toString());
     }
 
     @Test
@@ -349,6 +349,161 @@ public class DecimalBinaryFormatParserTest {
                 Unsafe.free(mem, 10, MemoryTag.NATIVE_DEFAULT);
             }
         }
+    }
+
+    @Test
+    public void testNonZeroPaddingIsRejected() throws DecimalBinaryFormatParser.ParseException {
+        // 2²⁵⁶, the smallest value the padding byte cannot absorb
+        byte[] unscaled = new byte[33];
+        unscaled[0] = 1;
+        Assert.assertNull(parse(payload(0, unscaled)));
+
+        // padding byte set in the middle of the discarded region
+        unscaled = new byte[40];
+        unscaled[3] = 2;
+        Assert.assertNull(parse(payload(0, unscaled)));
+
+        // sign extension of a negative value is not accepted as padding
+        unscaled = new byte[33];
+        Arrays.fill(unscaled, (byte) 0xFF);
+        Assert.assertNull(parse(payload(0, unscaled)));
+    }
+
+    @Test
+    public void testRoundTripAgainstBigInteger() throws DecimalBinaryFormatParser.ParseException {
+        BigInteger[] values = {
+                BigInteger.ZERO,
+                BigInteger.ONE,
+                BigInteger.valueOf(-1),
+                BigInteger.valueOf(127),
+                BigInteger.valueOf(-128),
+                BigInteger.valueOf(0xFFFFFFFFL), // zero padded by toByteArray
+                BigInteger.ONE.shiftLeft(32),
+                BigInteger.ONE.shiftLeft(63).negate(),
+                BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE), // zero padded by toByteArray
+                BigInteger.ONE.shiftLeft(127),
+                BigInteger.ONE.shiftLeft(127).negate(),
+                BigInteger.ONE.shiftLeft(200).add(BigInteger.valueOf(12345)),
+                BigInteger.ONE.shiftLeft(200).negate(),
+                MAX_UNSCALED,
+                MAX_UNSCALED.negate(),
+        };
+        for (BigInteger value : values) {
+            Decimal256 decimal256 = parse(payload(0, value.toByteArray()));
+            Assert.assertNotNull(value.toString(), decimal256);
+            Assert.assertEquals(value.toString(), decimal256.toString());
+        }
+    }
+
+    @Test
+    public void testZeroPaddedMaximumDecimal256() throws DecimalBinaryFormatParser.ParseException {
+        // 33 bytes: one padding byte plus the full 32 byte magnitude
+        Decimal256 decimal256 = parse(payload(0, zeroPad(MAX_UNSCALED, 33)));
+        Assert.assertNotNull(decimal256);
+        Assert.assertEquals(0, decimal256.getScale());
+        Assert.assertEquals(MAX_UNSCALED.toString(), decimal256.toString());
+    }
+
+    @Test
+    public void testZeroPaddedSmallValueIsNotTruncated() throws DecimalBinaryFormatParser.ParseException {
+        BigInteger value = BigInteger.ONE.shiftLeft(32);
+        Decimal256 decimal256 = parse(payload(0, zeroPad(value, 33)));
+        Assert.assertNotNull(decimal256);
+        Assert.assertEquals(value.toString(), decimal256.toString());
+    }
+
+    @Test
+    public void testZeroPaddedValueExceedingSignedRangeIsRejected() throws DecimalBinaryFormatParser.ParseException {
+        // 2²⁵⁵ and 2²⁵⁶-1 are zero padded but do not fit a signed 256-bit value
+        Assert.assertNull(parse(payload(0, zeroPad(BigInteger.ONE.shiftLeft(255), 33))));
+        Assert.assertNull(parse(payload(0, zeroPad(BigInteger.ONE.shiftLeft(256).subtract(BigInteger.ONE), 33))));
+    }
+
+    @Test
+    public void testZeroPaddedValuesAcrossAllLengths() throws DecimalBinaryFormatParser.ParseException {
+        BigInteger value = MAX_UNSCALED.shiftRight(3).add(BigInteger.valueOf(9876543210L));
+        for (int len = 32; len <= 255; len++) {
+            Decimal256 decimal256 = parse(payload(3, zeroPad(value, len)));
+            Assert.assertNotNull("len=" + len, decimal256);
+            Assert.assertEquals("len=" + len, 3, decimal256.getScale());
+            Assert.assertEquals("len=" + len, new BigDecimal(value, 3).toPlainString(), decimal256.toString());
+        }
+    }
+
+    @Test
+    public void testAboveNarrowWidthMaximumIsAccepted() throws DecimalBinaryFormatParser.ParseException {
+        // the parser has no target column, magnitudes above a narrow width are rejected later, on column precision
+        for (int precision : NARROW_PRECISIONS) {
+            BigInteger value = BigInteger.TEN.pow(precision);
+            Decimal256 decimal256 = parse(payload(0, value.toByteArray()));
+            Assert.assertNotNull(value.toString(), decimal256);
+            Assert.assertEquals(value.toString(), decimal256.toString());
+        }
+    }
+
+    @Test
+    public void testMagnitudeAboveMaximumPrecisionIsRejected() throws DecimalBinaryFormatParser.ParseException {
+        BigInteger[] values = {
+                MAX_UNSCALED.add(BigInteger.ONE),
+                MAX_UNSCALED.add(BigInteger.ONE).negate(),
+                BigInteger.ONE.shiftLeft(255).subtract(BigInteger.ONE), // 2²⁵⁵-1
+                BigInteger.ONE.shiftLeft(255).subtract(BigInteger.ONE).negate(),
+                BigInteger.ONE.shiftLeft(255).negate(), // -2²⁵⁵, the NULL sentinel
+        };
+        for (BigInteger value : values) {
+            Assert.assertNull(value.toString(), parse(payload(0, value.toByteArray())));
+        }
+    }
+
+    @Test
+    public void testNarrowWidthNullSentinelsAreOrdinaryValues() throws DecimalBinaryFormatParser.ParseException {
+        // the DECIMAL8 to DECIMAL128 sentinels are representable magnitudes here, only their column rejects them
+        for (int len = 1; len <= 16; len <<= 1) {
+            byte[] sentinel = new byte[len];
+            sentinel[0] = (byte) 0x80;
+            BigInteger expected = BigInteger.ONE.shiftLeft(8 * len - 1).negate();
+            Decimal256 decimal256 = parse(payload(0, sentinel));
+            Assert.assertNotNull("len=" + len, decimal256);
+            Assert.assertFalse("len=" + len, decimal256.isNull());
+            Assert.assertEquals("len=" + len, expected.toString(), decimal256.toString());
+        }
+    }
+
+    @Test
+    public void testNullSentinelIsRejected() throws DecimalBinaryFormatParser.ParseException {
+        // -2²⁵⁵ decodes to the DECIMAL256 NULL sentinel, it must not be accepted as a value
+        byte[] sentinel = new byte[32];
+        sentinel[0] = (byte) 0x80;
+        Assert.assertNull(parse(payload(0, sentinel)));
+        Assert.assertNull(parse(payload(Decimals.MAX_SCALE, sentinel)));
+    }
+
+    @Test
+    public void testWidthMaximumMagnitudesDecodeExactly() throws DecimalBinaryFormatParser.ParseException {
+        for (int precision : ALL_PRECISIONS) {
+            BigInteger max = BigInteger.TEN.pow(precision).subtract(BigInteger.ONE);
+            for (BigInteger value : new BigInteger[]{max, max.negate()}) {
+                Decimal256 decimal256 = parse(payload(2, value.toByteArray()));
+                Assert.assertNotNull(value.toString(), decimal256);
+                Assert.assertEquals(value.toString(), 2, decimal256.getScale());
+                Assert.assertEquals(value.toString(), new BigDecimal(value, 2).toPlainString(), decimal256.toString());
+            }
+        }
+    }
+
+    private static byte[] zeroPad(BigInteger value, int len) {
+        byte[] magnitude = value.toByteArray();
+        byte[] unscaled = new byte[len];
+        System.arraycopy(magnitude, 0, unscaled, len - magnitude.length, magnitude.length);
+        return unscaled;
+    }
+
+    private static byte[] payload(int scale, byte[] unscaled) {
+        byte[] bytes = new byte[unscaled.length + 2];
+        bytes[0] = (byte) scale;
+        bytes[1] = (byte) unscaled.length;
+        System.arraycopy(unscaled, 0, bytes, 2, unscaled.length);
+        return bytes;
     }
 
     private @Nullable Decimal256 parse(byte[] bytes) throws DecimalBinaryFormatParser.ParseException {
