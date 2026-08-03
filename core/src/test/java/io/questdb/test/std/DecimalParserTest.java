@@ -44,6 +44,18 @@ public class DecimalParserTest {
     }
 
     @Test
+    public void testExponentZeroFitsFullScale() throws NumericException {
+        // the exponent of a zero mantissa shifts nothing, it must not inflate the precision either
+        assertParsed("0", 1, 0, "0e5", -1, -1);
+        assertParsed("0", 1, 0, "0.0e10", -1, -1);
+        assertParsed("0.00000", 5, 5, "0e-5", -1, -1);
+        assertParsed("0.000", 3, 3, "0e5", 3, 3);
+        assertParsed("0.000", 3, 3, "0.0e10", 3, 3);
+        assertParsed("0.000", 3, 3, "0e-3", 3, 3);
+        assertParsed("0.000", 3, 3, "-0e5", 3, 3);
+    }
+
+    @Test
     public void testFullScaleAcceptsValueBelowOne() throws NumericException {
         assertParsed("0.5", 1, 1, "0.5", 1, 1);
         assertParsed("0.5", 1, 1, ".5", 1, 1);
@@ -78,6 +90,30 @@ public class DecimalParserTest {
         assertNotParsed("decimal '9.999' requires precision of 4 but is limited to 3", "9.999", 3, 3);
         // integer digits are counted even when the fraction is shorter than the scale
         assertNotParsed("decimal '12' requires precision of 5 but is limited to 3", "12", 3, 3);
+        assertNotParsed("decimal '10' requires precision of 5 but is limited to 3", "10", 3, 3);
+        assertNotParsed("decimal '1' requires precision of 2 but is limited to 1", "1", 1, 1);
+        // a value below one still has to fit the scale
+        assertNotParsed("decimal '0.0001' has 4 decimal places but scale is limited to 3", "0.0001", 3, 3);
+    }
+
+    @Test
+    public void testLeadingZeroesAreNotSignificant() throws NumericException {
+        // the exponent lifts the digits past the leading zeroes, which stop counting towards the precision
+        assertParsed("1", 1, 0, "0.01e2", -1, -1);
+        assertParsed("0.5", 1, 1, "0.05e1", -1, -1);
+        assertParsed("0.001", 3, 3, "0.1e-2", -1, -1);
+        assertParsed("123", 3, 0, "00.123e3", -1, -1);
+        // without an exponent the scale already accounts for them
+        assertParsed("0.001", 3, 3, "0.001", -1, -1);
+        assertParsed("0.050", 3, 3, "0.05", 3, 3);
+    }
+
+    @Test
+    public void testNanAndInfinityParseToNull() throws NumericException {
+        assertNullParsed("NaN", 3, 3);
+        assertNullParsed("-NaN", 1, 1);
+        assertNullParsed("Infinity", 76, 76);
+        assertNullParsed("-Infinity", -1, -1);
     }
 
     @Test
@@ -116,6 +152,34 @@ public class DecimalParserTest {
         // lossy truncation drops the digits beyond the target scale
         assertParsed("0.12", 2, 2, "0.129", 2, 2, false, true);
         assertParsed("0", 1, 0, "0.5", 1, 0, false, true);
+        // truncation can cut into the leading zeroes, leaving no significant digit at all
+        assertParsed("0.00", 2, 2, "0.0001", 2, 2, false, true);
+        assertParsed("0.0", 1, 1, "0.0999", 1, 1, false, true);
+    }
+
+    @Test
+    public void testZeroFitsEveryFullScale() throws NumericException {
+        // zero has no significant digit, so its text form fits a DECIMAL(p,p) of any width
+        assertParsed("0.0", 1, 1, "0", 1, 1);
+        assertParsed("0.0", 1, 1, "-0", 1, 1);
+        assertParsed("0.000", 3, 3, "0", 3, 3);
+        assertParsed("0.000", 3, 3, "-0", 3, 3);
+        assertParsed("0.000", 3, 3, "+0", 3, 3);
+        assertParsed("0.000", 3, 3, "0.", 3, 3);
+        assertParsed("0.000", 3, 3, ".0", 3, 3);
+        assertParsed("0.000", 3, 3, "000", 3, 3);
+        assertParsed("0.000", 3, 3, "00.00", 3, 3);
+        assertParsed("0.000", 3, 3, "0.000", 3, 3);
+        assertParsed("0.000", 3, 3, "0.0", 3, 3, false, false);
+        assertParsed("0.000", 3, 3, "0m", 3, 3, false, false);
+
+        final String z38 = "0." + "0".repeat(38);
+        assertParsed(z38, 38, 38, "0", 38, 38);
+        assertParsed(z38, 38, 38, "-0", 38, 38);
+        final String z76 = "0." + "0".repeat(76);
+        assertParsed(z76, 76, 76, "0", 76, 76);
+        assertParsed(z76, 76, 76, "-0", 76, 76);
+        assertParsed(z76, 76, 76, "000", 76, 76);
     }
 
     private static void assertNotParsed(String expectedMessage, String value, int precision, int scale) {
@@ -125,6 +189,12 @@ public class DecimalParserTest {
         } catch (NumericException e) {
             TestUtils.assertContains(e.getMessage(), expectedMessage);
         }
+    }
+
+    private static void assertNullParsed(String value, int precision, int scale) throws NumericException {
+        Decimal256 decimal256 = new Decimal256();
+        Assert.assertEquals(0, decimal256.ofString(value, 0, value.length(), precision, scale, true, false));
+        Assert.assertTrue(decimal256.isNull());
     }
 
     private static void assertParsed(
