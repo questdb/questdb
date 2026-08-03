@@ -63,6 +63,11 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
         };
     }
 
+    // out of the float range yields NULL, same as cast(double as float)
+    private static float narrow(double value) {
+        return Numbers.isNull(value) || value > Float.MAX_VALUE || value < -Float.MAX_VALUE ? Float.NaN : (float) value;
+    }
+
     private static class Func extends AbstractCastToFloatFunction {
         private final Decimal256 decimal256 = new Decimal256();
         private final int fromPrecision;
@@ -76,22 +81,13 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             fromPrecision = ColumnType.getDecimalPrecision(type);
         }
 
+        @Override
         public float getFloat(Record rec) {
             arg.getDecimal256(rec, decimal256);
             if (decimal256.isNull()) {
                 return Float.NaN;
             }
-            sink.clear();
-            Decimal256.toSink(
-                    sink,
-                    decimal256.getHh(),
-                    decimal256.getHl(),
-                    decimal256.getLh(),
-                    decimal256.getLl(),
-                    fromScale,
-                    fromPrecision
-            );
-            return Numbers.parseFloat(sink);
+            return narrow(CastDecimalToDoubleFunctionFactory.toDouble(sink, decimal256, fromScale, fromPrecision));
         }
 
         @Override
@@ -113,14 +109,13 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             this.fromPrecision = ColumnType.getDecimalPrecision(type);
         }
 
+        @Override
         public float getFloat(Record rec) {
             arg.getDecimal128(rec, decimal128);
             if (decimal128.isNull()) {
                 return Float.NaN;
             }
-            sink.clear();
-            Decimal128.toSink(sink, decimal128.getHigh(), decimal128.getLow(), fromScale, fromPrecision);
-            return Numbers.parseFloat(sink);
+            return narrow(CastDecimalToDoubleFunctionFactory.toDouble(sink, decimal128, fromScale, fromPrecision));
         }
 
         @Override
@@ -141,14 +136,13 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             this.fromScale = ColumnType.getDecimalScale(type);
         }
 
+        @Override
         public float getFloat(Record rec) {
             long v = arg.getDecimal64(rec);
             if (Decimal64.isNull(v)) {
                 return Float.NaN;
             }
-            sink.clear();
-            Decimal64.toSink(sink, v, fromScale, fromPrecision);
-            return Numbers.parseFloat(sink);
+            return narrow(CastDecimalToDoubleFunctionFactory.toDouble(sink, v, fromScale, fromPrecision));
         }
 
         @Override

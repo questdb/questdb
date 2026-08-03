@@ -24,10 +24,31 @@
 
 package io.questdb.test.griffin.engine.functions.cast;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Random;
+
 public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
+    // one entry per storage width, plus scales straddling the exact-division limit of 22
+    static final int[][] DECIMAL_TYPES = {
+            {2, 0}, {2, 2},
+            {4, 0}, {4, 3},
+            {9, 0}, {9, 4},
+            {18, 0}, {18, 6}, {18, 18},
+            {38, 0}, {38, 21}, {38, 22}, {38, 23}, {38, 38},
+            {76, 0}, {76, 21}, {76, 22}, {76, 23}, {76, 40}, {76, 76},
+    };
+    private static final long MAX_EXACT_UNSCALED = 1L << 53;
 
     @Test
     public void testCastDecimalWithScale() throws Exception {
@@ -615,6 +636,120 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastLargestDecimal256Magnitudes() throws Exception {
+        assertMemoryLeak(
+                () -> assertQuery("select cast(9999999999999999999999999999999999999999999999999999999999999999999999999999m as double) maxDecimal, " +
+                        "cast(-9999999999999999999999999999999999999999999999999999999999999999999999999999m as double) minDecimal, " +
+                        "cast(340282400000000000000000000000000000000m as double) aboveFloatRange, " +
+                        "cast(-340282400000000000000000000000000000000m as double) belowFloatRange, " +
+                        "cast(cast(null as DECIMAL(39,0)) as double) nullDecimal")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                maxDecimal\tminDecimal\taboveFloatRange\tbelowFloatRange\tnullDecimal
+                                1.0E76\t-1.0E76\t3.402824E38\t-3.402824E38\tnull
+                                """)
+        );
+    }
+
+    @Test
+    public void testCastLargestDecimal256MagnitudesFromColumn() throws Exception {
+        assertMemoryLeak(
+                () -> assertQuery("select v, cast(v as double) double_value from y")
+                        .ddl(
+                                "create table y (v DECIMAL(76,2))",
+                                "insert into y values (340282400000000000000000000000000000000.00m), " +
+                                        "(-340282400000000000000000000000000000000.00m), " +
+                                        "(123.45m), (-0.25m), (null)"
+                        )
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                v\tdouble_value
+                                340282400000000000000000000000000000000.00\t3.402824E38
+                                -340282400000000000000000000000000000000.00\t-3.402824E38
+                                123.45\t123.45
+                                -0.25\t-0.25
+                                \tnull
+                                """)
+        );
+    }
+
+    @Test
+    public void testCastSmallestMagnitudes() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertQuery("select cast(0.00000000000000000000000000000000000001m as double) smallest, " +
+                            "cast(-0.00000000000000000000000000000000000001m as double) smallestNeg")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    smallest\tsmallestNeg
+                                    1.0E-38\t-1.0E-38
+                                    """);
+
+                    assertQuery("WITH data AS (SELECT 0.00000000000000000000000000000000000001m value " +
+                            "UNION ALL SELECT -0.00000000000000000000000000000000000001m " +
+                            "UNION ALL SELECT cast(null as DECIMAL(39,38))) " +
+                            "SELECT cast(value as double) double_value FROM data")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    double_value
+                                    1.0E-38
+                                    -1.0E-38
+                                    null
+                                    """);
+                }
+        );
+    }
+
+    @Test
+    public void testCastMatchesBigDecimalBitForBit() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] pathCounts = new int[2];
+            for (int[] decimalType : DECIMAL_TYPES) {
+                final int precision = decimalType[0];
+                final int scale = decimalType[1];
+                final List<BigInteger> values = unscaledValues(precision);
+                final String tableName = "d" + precision + "_" + scale;
+
+                execute("create table " + tableName + " (v DECIMAL(" + precision + "," + scale + "))");
+                final StringBuilder insert = new StringBuilder("insert into ").append(tableName).append(" values ");
+                for (int i = 0, n = values.size(); i < n; i++) {
+                    if (i > 0) {
+                        insert.append(',');
+                    }
+                    insert.append('(').append(new BigDecimal(values.get(i)).movePointLeft(scale).toPlainString()).append("m)");
+                }
+                execute(insert);
+
+                try (
+                        RecordCursorFactory factory = select("select cast(v as double) from " + tableName);
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    final Record record = cursor.getRecord();
+                    for (int i = 0, n = values.size(); i < n; i++) {
+                        final BigInteger unscaled = values.get(i);
+                        Assert.assertTrue(cursor.hasNext());
+                        final double expected = new BigDecimal(unscaled).movePointLeft(scale).doubleValue();
+                        Assert.assertEquals(
+                                "DECIMAL(" + precision + "," + scale + ") unscaled=" + unscaled,
+                                Double.doubleToRawLongBits(expected),
+                                Double.doubleToRawLongBits(record.getDouble(0))
+                        );
+                        pathCounts[usesExactShortcut(unscaled, scale) ? 0 : 1]++;
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+            Assert.assertTrue(pathCounts[0] > 0);
+            Assert.assertTrue(pathCounts[1] > 0);
+        });
+    }
+
+    @Test
     public void testCastZeroValues() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -651,5 +786,37 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
                                     """);
                 }
         );
+    }
+
+    /**
+     * Values that straddle the exact-division limits in both directions, so that every decimal
+     * type exercises both the exact shortcut and the decimal text fallback.
+     */
+    static List<BigInteger> unscaledValues(int precision) {
+        final BigInteger max = BigInteger.TEN.pow(precision).subtract(BigInteger.ONE);
+        final LinkedHashSet<BigInteger> values = new LinkedHashSet<>();
+        values.add(BigInteger.ZERO);
+        values.add(max);
+        values.add(max.negate());
+        for (long seed : new long[]{1, 7, 99, 123456789, MAX_EXACT_UNSCALED - 1, MAX_EXACT_UNSCALED, MAX_EXACT_UNSCALED + 1, Long.MAX_VALUE}) {
+            final BigInteger value = BigInteger.valueOf(seed);
+            if (value.compareTo(max) <= 0) {
+                values.add(value);
+                values.add(value.negate());
+            }
+        }
+        final Random rnd = new Random(precision);
+        for (int i = 0; i < 12; i++) {
+            BigInteger value = new BigInteger(1 + rnd.nextInt(max.bitLength()), rnd);
+            if (value.compareTo(max) > 0) {
+                continue;
+            }
+            values.add(rnd.nextBoolean() ? value : value.negate());
+        }
+        return new ArrayList<>(values);
+    }
+
+    static boolean usesExactShortcut(BigInteger unscaled, int scale) {
+        return scale <= 22 && unscaled.abs().compareTo(BigInteger.valueOf(MAX_EXACT_UNSCALED)) <= 0;
     }
 }

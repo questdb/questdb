@@ -24,8 +24,17 @@
 
 package io.questdb.test.griffin.engine.functions.cast;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.util.List;
 
 public class CastDecimalToFloatFunctionFactoryTest extends AbstractCairoTest {
 
@@ -612,6 +621,127 @@ public class CastDecimalToFloatFunctionFactoryTest extends AbstractCairoTest {
                                 \tnull
                                 """)
         );
+    }
+
+    @Test
+    public void testCastOutOfFloatRangeReturnsNull() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertQuery("select cast(340282400000000000000000000000000000000m as float) above, " +
+                            "cast(-340282400000000000000000000000000000000m as float) below, " +
+                            "cast(340282000000000000000000000000000000000m as float) inRange, " +
+                            "cast(-340282000000000000000000000000000000000m as float) inRangeNeg, " +
+                            "cast(9999999999999999999999999999999999999999999999999999999999999999999999999999m as float) maxDecimal, " +
+                            "cast(cast(null as DECIMAL(39,0)) as float) nullDecimal")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    above\tbelow\tinRange\tinRangeNeg\tmaxDecimal\tnullDecimal
+                                    null\tnull\t3.40282E38\t-3.40282E38\tnull\tnull
+                                    """);
+                }
+        );
+    }
+
+    @Test
+    public void testCastOutOfFloatRangeReturnsNullFromColumn() throws Exception {
+        assertMemoryLeak(
+                () -> assertQuery("select v, cast(v as float) float_value from x")
+                        .ddl(
+                                "create table x (v DECIMAL(76,2))",
+                                "insert into x values (340282400000000000000000000000000000000.00m), " +
+                                        "(-340282400000000000000000000000000000000.00m), " +
+                                        "(340282000000000000000000000000000000000.00m), " +
+                                        "(123.45m), (-0.25m), (null)"
+                        )
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                v\tfloat_value
+                                340282400000000000000000000000000000000.00\tnull
+                                -340282400000000000000000000000000000000.00\tnull
+                                340282000000000000000000000000000000000.00\t3.40282E38
+                                123.45\t123.45
+                                -0.25\t-0.25
+                                \tnull
+                                """)
+        );
+    }
+
+    @Test
+    public void testCastSmallestMagnitudes() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertQuery("select cast(0.00000000000000000000000000000000000001m as float) smallest, " +
+                            "cast(-0.00000000000000000000000000000000000001m as float) smallestNeg")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    smallest\tsmallestNeg
+                                    1.0E-38\t-1.0E-38
+                                    """);
+
+                    assertQuery("WITH data AS (SELECT 0.00000000000000000000000000000000000001m value " +
+                            "UNION ALL SELECT -0.00000000000000000000000000000000000001m " +
+                            "UNION ALL SELECT cast(null as DECIMAL(39,38))) " +
+                            "SELECT cast(value as float) float_value FROM data")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    float_value
+                                    1.0E-38
+                                    -1.0E-38
+                                    null
+                                    """);
+                }
+        );
+    }
+
+    @Test
+    public void testCastMatchesBigDecimalBitForBit() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] pathCounts = new int[2];
+            for (int[] decimalType : CastDecimalToDoubleFunctionFactoryTest.DECIMAL_TYPES) {
+                final int precision = decimalType[0];
+                final int scale = decimalType[1];
+                final List<BigInteger> values = CastDecimalToDoubleFunctionFactoryTest.unscaledValues(precision);
+                final String tableName = "f" + precision + "_" + scale;
+
+                execute("create table " + tableName + " (v DECIMAL(" + precision + "," + scale + "))");
+                final StringBuilder insert = new StringBuilder("insert into ").append(tableName).append(" values ");
+                for (int i = 0, n = values.size(); i < n; i++) {
+                    if (i > 0) {
+                        insert.append(',');
+                    }
+                    insert.append('(').append(new BigDecimal(values.get(i)).movePointLeft(scale).toPlainString()).append("m)");
+                }
+                execute(insert);
+
+                try (
+                        RecordCursorFactory factory = select("select cast(v as float) from " + tableName);
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    final Record record = cursor.getRecord();
+                    for (int i = 0, n = values.size(); i < n; i++) {
+                        final BigInteger unscaled = values.get(i);
+                        Assert.assertTrue(cursor.hasNext());
+                        final double value = new BigDecimal(unscaled).movePointLeft(scale).doubleValue();
+                        final float expected = Numbers.isNull(value) || value > Float.MAX_VALUE || value < -Float.MAX_VALUE
+                                ? Float.NaN : (float) value;
+                        Assert.assertEquals(
+                                "DECIMAL(" + precision + "," + scale + ") unscaled=" + unscaled,
+                                Float.floatToRawIntBits(expected),
+                                Float.floatToRawIntBits(record.getFloat(0))
+                        );
+                        pathCounts[CastDecimalToDoubleFunctionFactoryTest.usesExactShortcut(unscaled, scale) ? 0 : 1]++;
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+            Assert.assertTrue(pathCounts[0] > 0);
+            Assert.assertTrue(pathCounts[1] > 0);
+        });
     }
 
     @Test
