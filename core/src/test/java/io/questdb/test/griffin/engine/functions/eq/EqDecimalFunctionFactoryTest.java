@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions.eq;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.columns.DecimalColumn;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
@@ -991,7 +992,9 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEqScaleAlignmentMaxPrecisionNoWiderType() throws Exception {
+    public void testEqScaleAlignmentMaxPrecisionRescaleOverflow() throws Exception {
+        // scaling a 76-digit operand up by one leaves the Decimal256 range, so the ordering
+        // comes from compareTo's guard rather than from the aligned values
         execute("create table eq_max (id int, a decimal(76,0), b decimal(76,1))");
         execute("insert into eq_max values " +
                 "(1, " + nines(76) + "m, " + nines(75) + ".9m)," +
@@ -1018,6 +1021,14 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
                         "false\ttrue\n" +
                         "false\ttrue\n" +
                         "true\tfalse\n");
+    }
+
+    @Test
+    public void testEqSlowPathComparatorWidth() {
+        // the comparator width follows the wider operand; mixed scales never widen it
+        assertSelectedFunction(ColumnType.getDecimalType(18, 0), ColumnType.getDecimalType(18, 1), "Decimal64Func");
+        assertSelectedFunction(ColumnType.getDecimalType(38, 0), ColumnType.getDecimalType(38, 1), "Decimal128Func");
+        assertSelectedFunction(ColumnType.getDecimalType(76, 0), ColumnType.getDecimalType(76, 1), "Decimal256Func");
     }
 
     private static String nines(int count) {
@@ -1067,6 +1078,20 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
         try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
             ((NegatableBooleanFunction) func).setNegated();
             Assert.assertEquals(expected, func.getBool(null));
+        }
+    }
+
+    /**
+     * Pins the implementation the factory picks for a type pair, in both operand orders.
+     */
+    private void assertSelectedFunction(int leftType, int rightType, String expectedFunc) {
+        for (int swap = 0; swap < 2; swap++) {
+            args.clear();
+            args.add(DecimalColumn.newInstance(0, swap == 0 ? leftType : rightType));
+            args.add(DecimalColumn.newInstance(1, swap == 0 ? rightType : leftType));
+            try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
+                Assert.assertEquals(expectedFunc, func.getClass().getSimpleName());
+            }
         }
     }
 
