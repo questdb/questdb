@@ -66,12 +66,13 @@ import java.util.Arrays;
  * </pre>
  * Components are ordered by their encoded identity, so two nodes compiling the same
  * view - and one node recompiling it after the projections were reordered - lay the
- * state out identically. The complete payload must fit
+ * state out identically. The payload must fit
  * {@link LiveViewCheckpointContracts#MAX_INLINE_LEAF_STATE_BYTES}: the B-tree splits
  * on entry count rather than encoded size, so an unbounded "fixed width means inline"
  * rule would build very large 64-entry leaves and make every CRC and decode along the
- * path more expensive. A group that does not fit gets no plan at all and every one of
- * its functions stays on its legacy root.
+ * path more expensive. A group that overflows keeps the prefix of that order which
+ * fits and turns the rest into residuals, so it degrades one component at a time
+ * rather than losing the fusion whole.
  *
  * <h2>Status</h2>
  * The plan compiles and validates today but nothing persists it yet: the checkpoint
@@ -243,11 +244,14 @@ public final class LiveViewWindowStatePlan {
     }
 
     /**
-     * Returns the window functions this plan does not group, in SELECT-list order.
-     * Each keeps its own legacy function root - a ring-backed RANGE function, a
-     * bounded ROWS accumulator, {@code count(*)}, an expression argument. "One B-tree
-     * per window" therefore means one tree for the grouped components plus independent
-     * roots for these.
+     * Returns the window functions this plan does not group. Each keeps its own legacy
+     * function root - a ring-backed RANGE function, a bounded ROWS accumulator, an
+     * expression argument, a DECIMAL {@code sum}. "One B-tree per window" therefore
+     * means one tree for the grouped components plus independent roots for these.
+     * <p>
+     * The ones the compiler declined come first, in SELECT-list order, followed by any
+     * whose component fell past the leaf budget. Nothing reads the order today; it is
+     * SELECT-list order for the common case because that is the order they arrived in.
      */
     public ObjList<WindowFunction> getResidualFunctions() {
         return residualFunctions;
@@ -445,16 +449,20 @@ public final class LiveViewWindowStatePlan {
         }
 
         /**
-         * Assembles the plan, or returns null when the group is empty or its complete
-         * scalar layout does not fit the leaf budget.
+         * Assembles the plan, or returns null when the group is empty or not even its
+         * first component fits the leaf budget.
          */
         public @Nullable LiveViewWindowStatePlan build() {
             if (components.size() == 0) {
                 return null;
             }
             foldDerivedComponents();
-            final int componentCount = components.size();
             sortComponentsByIdentity();
+            dropComponentsPastTheLeafBudget();
+            final int componentCount = components.size();
+            if (componentCount == 0) {
+                return null;
+            }
             final IntList componentOffsets = new IntList(componentCount);
             // The runtime slot layout follows the durable one exactly: same components,
             // same order, so a component's slot base and its state offset are two
@@ -467,12 +475,6 @@ public final class LiveViewWindowStatePlan {
                 componentSlotBases.add(slot);
                 offset += components.getQuick(i).getStateLength();
                 slot += components.getQuick(i).getSlotCount();
-            }
-            if (offset > LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES) {
-                // The whole group falls back rather than part of it: a window root is
-                // complete or absent, and a half-fused group would need the combined
-                // overflow page the format does not have yet.
-                return null;
             }
             final ObjList<LiveViewAccumulatorProjection> projections = new ObjList<>(projectionKinds.size());
             for (int i = 0, n = projectionKinds.size(); i < n; i++) {
@@ -505,6 +507,84 @@ public final class LiveViewWindowStatePlan {
                     ),
                     offset
             );
+        }
+
+        /**
+         * Keeps the longest prefix of the canonical component order whose layout fits
+         * {@link LiveViewCheckpointContracts#MAX_INLINE_LEAF_STATE_BYTES}, and turns every
+         * projection reading a component past it into a residual.
+         * <p>
+         * A group that overflows therefore degrades rather than falling off a cliff. It
+         * used to decline whole, and what that cost is measurable: over 1M retained keys
+         * a four-component group declining seals in 359 ms and publishes 8 metadata
+         * segments per seal, against 79 ms and 4 for the same group fused. Keeping the
+         * part that fits keeps most of that, and the components left out are exactly the
+         * ones that would have needed a storage kind the leaf does not have.
+         * <p>
+         * The prefix is taken in encoded-identity order, which is the order the layout is
+         * assigned in, so the answer does not depend on the SELECT list. It is a prefix
+         * rather than a greedy pack because a prefix is what makes the persisted manifest
+         * readable as "the components the leaf carries, in order" - a packed subset would
+         * describe the same layout while leaving nothing in the ordering to say why one
+         * component is in and a narrower later one is out.
+         * <p>
+         * A projection whose component was folded onto a host that then falls past the
+         * budget becomes a residual too, and persists its own narrower component on its
+         * own root. Nothing tries to un-fold it back into the leaf: the fold is what
+         * decided the layout the budget was measured against, and re-deciding it here
+         * would make the manifest depend on the order the two passes ran in.
+         */
+        private void dropComponentsPastTheLeafBudget() {
+            int kept = 0;
+            int offset = ANCHOR_STATE_OFFSET + ANCHOR_STATE_BYTES;
+            for (int i = 0, n = components.size(); i < n; i++) {
+                offset += components.getQuick(i).getStateLength();
+                if (offset > LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES) {
+                    break;
+                }
+                kept++;
+            }
+            if (kept == components.size()) {
+                return;
+            }
+            for (int i = projectionComponents.size() - 1; i >= 0; i--) {
+                if (projectionComponents.getQuick(i) < kept) {
+                    continue;
+                }
+                residualFunctions.add(projectionFunctions.getQuick(i));
+                projectionComponents.removeIndex(i);
+                projectionFunctionComponents.remove(i);
+                projectionFunctions.remove(i);
+                projectionKinds.removeIndex(i);
+                projectionOutputPositions.removeIndex(i);
+            }
+            while (components.size() > kept) {
+                final int last = components.size() - 1;
+                components.remove(last);
+                componentContributors.removeIndex(last);
+                componentContributorOutputPositions.removeIndex(last);
+            }
+            // Removing projections renumbered nothing above the prefix, but it did move the
+            // contributor indexes the kept components point at, so they are re-derived from
+            // the projections that survived.
+            for (int c = 0; c < kept; c++) {
+                componentContributors.setQuick(c, -1);
+                componentContributorOutputPositions.setQuick(c, Integer.MAX_VALUE);
+            }
+            for (int i = 0, n = projectionComponents.size(); i < n; i++) {
+                final int c = projectionComponents.getQuick(i);
+                if (!projectionFunctionComponents.getQuick(i).isSameIdentity(components.getQuick(c))) {
+                    // Derived: its function's image is a slice of the component rather than
+                    // the whole of it, so it could not write one. A component always has a
+                    // projection that is not, because a component only exists where one
+                    // created it.
+                    continue;
+                }
+                if (projectionOutputPositions.getQuick(i) < componentContributorOutputPositions.getQuick(c)) {
+                    componentContributors.setQuick(c, i);
+                    componentContributorOutputPositions.setQuick(c, projectionOutputPositions.getQuick(i));
+                }
+            }
         }
 
         /**

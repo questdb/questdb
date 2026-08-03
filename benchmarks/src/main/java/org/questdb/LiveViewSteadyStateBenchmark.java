@@ -104,7 +104,7 @@ public class LiveViewSteadyStateBenchmark {
     private static final long DAILY_ANCHOR_OFFSET_MICROS = 12L * Micros.HOUR_MICROS;
     private static final String DAILY_ANCHOR_PERIOD = "daily";
     private static final String DAILY_ANCHOR_TIME = "12:00";
-    private static final int MAX_SUM_COLUMNS = 8;
+    private static final int MAX_SUM_COLUMNS = 24;
     private static final int RESTART_PROBE_ROWS = 1_000;
     private static final long START_TS = 1_785_496_035_000_000L;
     private static final long TS_STEP_MICROS = 444L;

@@ -868,19 +868,34 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testLeafBudgetDeclinesAGroupThatDoesNotFit() {
+    public void testLeafBudgetKeepsThePrefixThatFitsAndResidualizesTheRest() {
         // The budget is derived from the constant rather than written out, so a later
-        // measurement can move it without rewriting the case - what the case is about is
-        // that the last group inside it fuses and the first group past it declines whole,
-        // because a window root is complete or absent and the format has no combined
-        // overflow page yet.
+        // measurement can move it without rewriting the case. What the case is about is
+        // the shape of the overflow: the group keeps the prefix of the canonical order
+        // that fits and hands the rest back as residuals, rather than losing the fusion
+        // whole and sending every function to a root of its own.
         final int widest = (LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES - ANCHOR_BYTES) / SUM_STATE_BYTES;
-        Assert.assertNotNull(buildSumGroup(widest));
+        final LiveViewWindowStatePlan exact = buildSumGroup(widest);
+        Assert.assertNotNull(exact);
+        Assert.assertEquals(widest, exact.getComponentCount());
+        Assert.assertEquals(0, exact.getResidualFunctions().size());
+        Assert.assertEquals(ANCHOR_BYTES + widest * SUM_STATE_BYTES, exact.getTotalInlineStateBytes());
+
+        final LiveViewWindowStatePlan overflowing = buildSumGroup(widest + 3);
+        Assert.assertNotNull(overflowing);
+        Assert.assertEquals(widest, overflowing.getComponentCount());
+        Assert.assertEquals(widest, overflowing.getProjectionCount());
+        Assert.assertEquals(3, overflowing.getResidualFunctions().size());
         Assert.assertEquals(
-                ANCHOR_BYTES + widest * SUM_STATE_BYTES,
-                buildSumGroup(widest).getTotalInlineStateBytes()
+                "the payload the leaf carries must not move when a group overflows",
+                exact.getTotalInlineStateBytes(),
+                overflowing.getTotalInlineStateBytes()
         );
-        Assert.assertNull(buildSumGroup(widest + 1));
+        // Every kept component still has a contributor, and it is one of the projections
+        // that survived - the removal renumbers them.
+        for (int i = 0; i < widest; i++) {
+            Assert.assertNotNull(overflowing.getContributor(i));
+        }
     }
 
     @Test

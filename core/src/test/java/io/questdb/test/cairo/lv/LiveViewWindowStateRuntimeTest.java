@@ -262,6 +262,62 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAGroupPastTheLeafBudgetFusesThePrefixAndResidualizesTheRest() throws Exception {
+        assertMemoryLeak(() -> {
+            // One more (sum, nonNullCount) component than the leaf budget carries beside
+            // the anchor. The group used to lose the fusion whole at this point and send
+            // every function back to a root of its own; it now keeps the prefix of the
+            // canonical order that fits and hands one function back.
+            final int fitting =
+                    (LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES - Long.BYTES) / (Double.BYTES + Long.BYTES);
+            final int columns = fitting + 1;
+            final StringBuilder ddl = new StringBuilder();
+            final StringBuilder projections = new StringBuilder();
+            for (int i = 1; i <= columns; i++) {
+                ddl.append(", q").append(i).append(" double");
+                projections.append(", sum(q").append(i).append(") over w as s").append(i);
+            }
+            execute("create table tx (created_at timestamp, cod_acct_no symbol" + ddl + ") "
+                    + "timestamp(created_at) partition by hour wal");
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, cod_acct_no" + projections + " from tx "
+                    + "window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertWideAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", columns);
+                insertWideAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-2", columns);
+                insertWideAccount(job, DAILY_ANCHOR + "09:00:20.000000Z", "acct-1", columns);
+                // A bucket crossing, so the fused prefix resets in place and the residual
+                // resets through its own map.
+                insertWideAccount(job, "2026-01-02T09:00:00.000000Z", "acct-1", columns);
+
+                final LiveViewWindowStatePlan plan = window().getCheckpointWindowStatePlan();
+                Assert.assertNotNull(plan);
+                Assert.assertEquals(fitting, plan.getComponentCount());
+                Assert.assertEquals(fitting, plan.getProjectionCount());
+                Assert.assertEquals(1, plan.getResidualFunctions().size());
+                Assert.assertEquals(
+                        Long.BYTES + fitting * (Double.BYTES + Long.BYTES),
+                        plan.getTotalInlineStateBytes()
+                );
+                for (int i = 0; i < fitting; i++) {
+                    Assert.assertTrue(plan.getProjectionFunction(i).isWindowStateOwned());
+                }
+                Assert.assertFalse(plan.getResidualFunctions().getQuick(0).isWindowStateOwned());
+                assertWideViewMatchesRecompute(columns);
+
+                // And the head that seals a truncated group beside its residual restores
+                // on its own.
+                final byte[] before = snapshotWindow(window());
+                restoreHead();
+                Assert.assertArrayEquals(before, snapshotWindow(window()));
+                assertWideViewMatchesRecompute(columns);
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
     public void testADecimalArgumentFusesItsCountAndLeavesItsSumOnItsOwnRoot() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL has window factories of its own and never widens into the DOUBLE
@@ -754,6 +810,29 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Compares the first fused output and the residual one against a from-base recompute.
+     * The two are the ends of the truncated group: one is read off the window's own value
+     * and one off the function's private map, and both have to agree with the unfused
+     * implementation.
+     */
+    private void assertWideViewMatchesRecompute(int columns) throws Exception {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
+        final String frame = "over (partition by cod_acct_no, bucket order by created_at "
+                + "rows between unbounded preceding and current row)";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(select created_at, cod_acct_no, "
+                        + "sum(q1) " + frame + " as s1, "
+                        + "sum(q" + columns + ") " + frame + " as sn "
+                        + "from (select *, " + bucket + " as bucket from tx)) order by 2, 1",
+                "(select created_at, cod_acct_no, s1, s" + columns + " as sn from lv) order by 2, 1",
+                LOG,
+                true
+        );
+    }
+
+    /**
      * Inserts one row whose amount is a DECIMAL. A bare numeric literal is a DOUBLE and
      * does not convert into a DECIMAL column, so the value carries its own cast.
      */
@@ -761,6 +840,21 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
             throws Exception {
         execute("insert into tx values ('" + timestamp + "', '" + account + "', "
                 + (amount == null ? "null" : amount) + "::decimal(38,2))");
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * Inserts one row into the wide base table, giving column {@code qk} the value
+     * {@code k} so a partition's running sums are predictable and distinct per column.
+     */
+    private void insertWideAccount(LiveViewRefreshJob job, String timestamp, String account, int columns)
+            throws Exception {
+        final StringBuilder values = new StringBuilder();
+        for (int i = 1; i <= columns; i++) {
+            values.append(", ").append(i).append(".0");
+        }
+        execute("insert into tx values ('" + timestamp + "', '" + account + "'" + values + ")");
         drainWalQueue();
         driveRefreshToQuiescence(job);
     }
