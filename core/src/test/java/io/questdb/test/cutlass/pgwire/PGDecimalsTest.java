@@ -37,30 +37,6 @@ import java.sql.Statement;
 
 public class PGDecimalsTest extends BasePGTest {
 
-    // Test boundary values for each decimal type
-    @Test
-    public void testBoundaryValues() throws Exception {
-        // DECIMAL8 max (precision 2)
-        assertDecimalConversion("99", 2, 0);
-        assertDecimalConversion("-99", 2, 0);
-
-        // DECIMAL16 max (precision 4)
-        assertDecimalConversion("9999", 4, 0);
-        assertDecimalConversion("-9999", 4, 0);
-
-        // DECIMAL32 max (precision 9)
-        assertDecimalConversion("999999999", 9, 0);
-        assertDecimalConversion("-999999999", 9, 0);
-
-        // DECIMAL64 max (precision 18)
-        assertDecimalConversion("999999999999999999", 18, 0);
-        assertDecimalConversion("-999999999999999999", 18, 0);
-
-        // DECIMAL128 max (precision 38)
-        assertDecimalConversion("99999999999999999999999999999999999999", 38, 0);
-        assertDecimalConversion("-99999999999999999999999999999999999999", 38, 0);
-    }
-
     @Test
     public void testBinaryResultSpansSendBuffer() throws Exception {
         assertWithPgServerExtendedBinaryOnly(
@@ -69,12 +45,12 @@ public class PGDecimalsTest extends BasePGTest {
                             """
                                     select x,
                                         lpad('', 600, 'x')::varchar,
-                                        cast(decimal_value as decimal(18, 4)),
-                                        cast(decimal_value as decimal(2, 1)),
-                                        cast(decimal_value as decimal(4, 2)),
-                                        cast(decimal_value as decimal(9, 4)),
-                                        cast(decimal_value as decimal(38, 18)),
-                                        cast(decimal_value as decimal(76, 38))
+                                        decimal_value::decimal(18, 4),
+                                        decimal_value::decimal(2, 1),
+                                        decimal_value::decimal(4, 2),
+                                        decimal_value::decimal(9, 4),
+                                        decimal_value::decimal(38, 18),
+                                        decimal_value::decimal(76, 38)
                                     from (
                                         select x,
                                             case
@@ -108,6 +84,120 @@ public class PGDecimalsTest extends BasePGTest {
                 },
                 () -> sendBufferSize = 512
         );
+    }
+
+    @Test
+    public void testBinaryResultSpansSendBufferAtBase10000Boundaries() throws Exception {
+        assertWithPgServerExtendedBinaryOnly(
+                (connection, _, _, _) -> {
+                    try (PreparedStatement statement = connection.prepareStatement(
+                            """
+                                    SELECT
+                                        lpad('', 600, 'x')::VARCHAR,
+                                        '9999'::DECIMAL(18, 0),
+                                        '10000'::DECIMAL(18, 0),
+                                        '0.00010'::DECIMAL(18, 5),
+                                        '0.00001'::DECIMAL(18, 5),
+                                        '9999'::DECIMAL(38, 0),
+                                        '10000'::DECIMAL(38, 0),
+                                        '0.00010'::DECIMAL(38, 5),
+                                        '0.00001'::DECIMAL(38, 5),
+                                        '99999999999999999999999999999999999999'::DECIMAL(38, 0),
+                                        '0.0000000000000000000000000000000000001'::DECIMAL(38, 37),
+                                        '9999'::DECIMAL(76, 0),
+                                        '10000'::DECIMAL(76, 0),
+                                        '0.00010'::DECIMAL(76, 5),
+                                        '0.00001'::DECIMAL(76, 5),
+                                        '9999999999999999999999999999999999999999999999999999999999999999999999999999'::DECIMAL(76, 0),
+                                        '0.000000000000000000000000000000000000000000000000000000000000000000000000001'::DECIMAL(76, 75),
+                                        x + 1000
+                                    FROM long_sequence(1)
+                                    """
+                    )) {
+                        try (ResultSet resultSet = statement.executeQuery()) {
+                            final String[] expected = {
+                                    "9999",
+                                    "10000",
+                                    "0.00010",
+                                    "0.00001",
+                                    "9999",
+                                    "10000",
+                                    "0.00010",
+                                    "0.00001",
+                                    "99999999999999999999999999999999999999",
+                                    "0.0000000000000000000000000000000000001",
+                                    "9999",
+                                    "10000",
+                                    "0.00010",
+                                    "0.00001",
+                                    "9999999999999999999999999999999999999999999999999999999999999999999999999999",
+                                    "0.000000000000000000000000000000000000000000000000000000000000000000000000001"
+                            };
+                            Assert.assertTrue(resultSet.next());
+                            Assert.assertEquals(600, resultSet.getString(1).length());
+                            for (int i = 0; i < expected.length; i++) {
+                                Assert.assertEquals(new BigDecimal(expected[i]), resultSet.getBigDecimal(i + 2));
+                            }
+                            Assert.assertEquals(1001, resultSet.getLong(expected.length + 2));
+                            Assert.assertFalse(resultSet.next());
+                        }
+                    }
+                },
+                () -> sendBufferSize = 512
+        );
+    }
+
+    @Test
+    public void testBinaryResultWithRandomDecimalsSpansSendBuffer() throws Exception {
+        assertWithPgServerExtendedBinaryOnly(
+                (connection, _, _, _) -> {
+                    try (PreparedStatement statement = connection.prepareStatement(
+                            """
+                                    SELECT
+                                        lpad('', 600, 'x')::VARCHAR,
+                                        rnd_decimal(4, 1, 2),
+                                        x + 1000
+                                    FROM long_sequence(1)
+                                    """
+                    )) {
+                        try (ResultSet resultSet = statement.executeQuery()) {
+                            Assert.assertTrue(resultSet.next());
+                            Assert.assertEquals(600, resultSet.getString(1).length());
+                            Assert.assertEquals(new BigDecimal("667.2"), resultSet.getBigDecimal(2));
+                            Assert.assertEquals(1001, resultSet.getLong(3));
+                            Assert.assertFalse(resultSet.next());
+                        }
+                    }
+                },
+                () -> {
+                    allowFunctionMemoization();
+                    sendBufferSize = 512;
+                }
+        );
+    }
+
+    // Test boundary values for each decimal type
+    @Test
+    public void testBoundaryValues() throws Exception {
+        // DECIMAL8 max (precision 2)
+        assertDecimalConversion("99", 2, 0);
+        assertDecimalConversion("-99", 2, 0);
+
+        // DECIMAL16 max (precision 4)
+        assertDecimalConversion("9999", 4, 0);
+        assertDecimalConversion("-9999", 4, 0);
+
+        // DECIMAL32 max (precision 9)
+        assertDecimalConversion("999999999", 9, 0);
+        assertDecimalConversion("-999999999", 9, 0);
+
+        // DECIMAL64 max (precision 18)
+        assertDecimalConversion("999999999999999999", 18, 0);
+        assertDecimalConversion("-999999999999999999", 18, 0);
+
+        // DECIMAL128 max (precision 38)
+        assertDecimalConversion("99999999999999999999999999999999999999", 38, 0);
+        assertDecimalConversion("-99999999999999999999999999999999999999", 38, 0);
     }
 
     // Test DECIMAL128 (precision 19-38)
