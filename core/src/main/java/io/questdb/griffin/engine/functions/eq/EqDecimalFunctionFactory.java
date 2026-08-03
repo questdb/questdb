@@ -102,8 +102,13 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
 
         final int leftPrecision = ColumnType.getDecimalPrecision(leftType);
         final int rightPrecision = ColumnType.getDecimalPrecision(rightType);
-        final int maxPrecision = Math.max(leftPrecision, rightPrecision);
-        return switch (Decimals.getStorageSizePow2(maxPrecision)) {
+        // aligning the scales needs max(integer digits) + max(scale), which can be wider than both operands
+        final int alignedPrecision = Math.max(leftPrecision - leftScale, rightPrecision - rightScale)
+                + Math.max(leftScale, rightScale);
+        if (alignedPrecision > Decimals.MAX_PRECISION) {
+            return new Decimal256Func(left, right);
+        }
+        return switch (Decimals.getStorageSizePow2(alignedPrecision)) {
             case 0, 1, 2, 3 -> new Decimal64Func(left, right);
             case 4 -> new Decimal128Func(left, right);
             default -> new Decimal256Func(left, right);
