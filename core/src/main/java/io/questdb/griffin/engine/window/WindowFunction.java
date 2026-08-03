@@ -37,6 +37,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -289,7 +290,66 @@ public interface WindowFunction extends Function {
     ) throws SqlException {
     }
 
+    /**
+     * The output-metadata column index this function writes its result to, as set by
+     * {@link #setColumnIndex(int)} during code generation. Used by the keep-flag filter fusion to
+     * confirm a WHERE literal references exactly this function's boolean output column.
+     *
+     * @return the output column index, or {@code -1} if not applicable.
+     */
+    default int getColumnIndex() {
+        return -1;
+    }
+
+    /**
+     * Appends, in ascending order, the pass1 traversal ordinals this function selects (keeps).
+     * Only valid to call after {@link #preparePass2()} has run, and only on functions for which
+     * {@link #isRowSelecting()} returns {@code true}. The cached executor translates ordered or
+     * backward traversal ordinals to absolute incoming rows before emitting them, avoiding both
+     * per-row boolean materialization and a separate filter pass.
+     *
+     * @param dest destination list; cleared and filled with ascending selected traversal ordinals.
+     */
+    default void getSelectedRows(DirectLongList dest) {
+        throw new UnsupportedOperationException();
+    }
+
     default boolean isIgnoreNulls() {
+        return false;
+    }
+
+    /**
+     * Whether this function is the desugared SUBSAMPLE {@code __keep_subsample} keep flag, as marked
+     * by code generation via {@link #markSubsampleKeepFlag()} when the originating
+     * {@code WindowExpression} carries the desugar marker. The keep-flag filter fusion fuses ONLY
+     * functions for which this returns {@code true}: the boolean of such a column is guaranteed to be
+     * dropped by the outer projection, so skipping its per-row materialization is safe. A hand-written
+     * window query that projects a row-selecting keep boolean is NOT marked and must not fuse.
+     *
+     * @return {@code true} if this function is the internal subsample keep flag; {@code false} (default) otherwise.
+     */
+    default boolean isSubsampleKeepFlag() {
+        return false;
+    }
+
+    /**
+     * Marks this function as the internal subsample keep flag; see {@link #isSubsampleKeepFlag()}.
+     * Called by code generation only when the originating {@code WindowExpression} is the desugared
+     * {@code __keep_subsample} column. Default no-op for functions that cannot be row-selecting.
+     */
+    default void markSubsampleKeepFlag() {
+    }
+
+    /**
+     * Whether this two-pass window function is a pure row-selecting keep flag: it produces a
+     * BOOLEAN "keep this row?" result and, after {@link #preparePass2()}, can enumerate the exact
+     * set of kept pass1 traversal ordinals via {@link #getSelectedRows(DirectLongList)}. When such
+     * a function is the sole window function and its boolean is exactly a filter predicate, the
+     * cached executor can fuse the filter into the window cursor and emit only the kept rows.
+     *
+     * @return {@code true} if this function supports row-selecting fusion; {@code false} (default) otherwise.
+     */
+    default boolean isRowSelecting() {
         return false;
     }
 
@@ -309,6 +369,23 @@ public interface WindowFunction extends Function {
      * {@link #getPassCount()} is greater than {@link #ONE_PASS}.
      */
     default void pass2(Record record, long recordOffset, WindowSPI spi) {
+    }
+
+    /**
+     * Whether {@link #pass2(Record, long, WindowSPI)} reads the base {@code Record} argument.
+     * <p>
+     * When every two-pass function in a cached-execution group returns {@code false}, the executor
+     * skips the per-row random-access base re-read ({@code baseCursor.recordAt(...)}) that would
+     * otherwise reposition the record before each {@code pass2} call. Return {@code false} only if
+     * {@code pass2} never reads the base {@code Record} argument (e.g. it drives entirely off state
+     * cached during {@link #pass1(Record, long, WindowSPI)} and writes its output through the
+     * {@link WindowSPI}).
+     *
+     * @return {@code true} (default) if {@code pass2} needs a positioned base record; {@code false}
+     * if the base record is never read in {@code pass2}.
+     */
+    default boolean pass2NeedsBaseRecord() {
+        return true;
     }
 
     /**

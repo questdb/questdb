@@ -34,11 +34,14 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
@@ -58,6 +61,45 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
             copy.add(keyTypes.getColumnType(i));
         }
         return copy;
+    }
+
+    // Mirrors SqlCodeGenerator's private coerceRuntimeConstantType and preserves the former SUBSAMPLE
+    // target/stride validation contract: resolve a still-UNDEFINED bind-variable arg to `type`, otherwise
+    // require the arg to already be a constant/runtime-constant whose type is convertible to `type`
+    // (message/pos on mismatch). Shared by the keep-flag window factories
+    // (uniform/cadence/m4/minmax/lttb/lttb-gap).
+    static void coerceRuntimeConstantType(Function func, int type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
+        if (ColumnType.isUndefined(func.getType())) {
+            func.assignType(type, context.getBindVariableService());
+        } else if ((!func.isConstant() && !func.isRuntimeConstant()) || !ColumnType.isConvertibleFrom(func.getType(), type)) {
+            throw SqlException.$(pos, message);
+        }
+    }
+
+    static long validateStride(long stride, int position) throws SqlException {
+        if (stride == Numbers.LONG_NULL) {
+            throw SqlException.$(position, "stride must be set");
+        }
+        if (stride < 1) {
+            throw SqlException.$(position, "stride must be at least 1");
+        }
+        if (stride > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "stride exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+        return stride;
+    }
+
+    static long validateTarget(long target, int position) throws SqlException {
+        if (target == Numbers.LONG_NULL) {
+            throw SqlException.$(position, "target point count must be set");
+        }
+        if (target < 2) {
+            throw SqlException.$(position, "target points must be at least 2");
+        }
+        if (target > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+        return target;
     }
 
     static void expandRingBuffer(MemoryARW memory, RingBufferDesc desc, int recordSize) {

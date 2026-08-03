@@ -2424,6 +2424,9 @@ public class SqlParser {
                 if (prevModel.getNestedModel().getLimitPosition() > 0) {
                     throw SqlException.$(prevModel.getNestedModel().getLimitPosition(), "unexpected token 'limit'");
                 }
+                if (prevModel.getNestedModel().getSubsamplePosition() > 0) {
+                    throw SqlException.$(prevModel.getNestedModel().getSubsamplePosition(), "unexpected token 'subsample'");
+                }
             }
 
             if (isUnionKeyword(tok)) {
@@ -3179,6 +3182,56 @@ public class SqlParser {
         // Validate that all named window references in SELECT columns are defined.
         // Fail fast here rather than waiting for the optimizer.
         validateNamedWindowReferences(masterModel);
+
+        // expect [subsample]
+        // Syntax: SUBSAMPLE methodName(arg1, arg2, ...)
+        // Parsed manually because the method name is not a registered SQL function.
+        if (tok != null && isSubsampleKeyword(tok)) {
+            int subsamplePos = lexer.lastTokenPosition();
+            tok = tok(lexer, "subsample method name");
+            int methodPos = lexer.lastTokenPosition();
+            CharSequence methodName = GenericLexer.immutableOf(tok);
+
+            tok = tok(lexer, "'('");
+            if (!Chars.equals(tok, '(')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'(' expected after subsample method name");
+            }
+
+            // Build a FUNCTION ExpressionNode: methodName(arg1, arg2, ...)
+            ExpressionNode methodNode = expressionNodePool.next().of(
+                    ExpressionNode.FUNCTION,
+                    methodName,
+                    0,
+                    methodPos
+            );
+
+            int argCount = 0;
+            int savedSubQueryMode = subQueryMode ? 1 : 0;
+            subQueryMode = false; // Prevent expr() from consuming ')' as subquery close
+            try {
+                while (true) {
+                    ExpressionNode argExpr = expr(lexer, model, sqlParserCallback, model.getDecls());
+                    if (argExpr == null) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "expression expected");
+                    }
+                    methodNode.args.add(argExpr);
+                    argCount++;
+
+                    tok = tok(lexer, "',' or ')'");
+                    if (Chars.equals(tok, ')')) {
+                        break;
+                    }
+                    if (!Chars.equals(tok, ',')) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "',' or ')' expected");
+                    }
+                }
+            } finally {
+                subQueryMode = savedSubQueryMode != 0;
+            }
+            methodNode.paramCount = argCount;
+            model.setSubsample(methodNode, subsamplePos);
+            tok = optTok(lexer);
+        }
 
         // expect [order by]
 
@@ -5710,6 +5763,7 @@ public class SqlParser {
         tableAliasStop.add("range");
         tableAliasStop.add("window");
         tableAliasStop.add("horizon");
+        tableAliasStop.add("subsample");
         tableAliasStop.add("unnest");
         //
         columnAliasStop.add("from");
