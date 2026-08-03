@@ -61,6 +61,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.tasks.PostingSealPurgeTask;
 import org.jetbrains.annotations.TestOnly;
@@ -1753,6 +1754,12 @@ public class PostingIndexWriter implements IndexWriter {
     public void setCoveredColumnNameTxns(LongList txns) {
         coveredColumnNameTxns.clear();
         coveredColumnNameTxns.addAll(txns);
+    }
+
+    @Override
+    public void setCoveredPartitionPath(Utf8Sequence partitionPath) {
+        this.coveredPartitionPath.clear();
+        this.coveredPartitionPath.put(partitionPath);
     }
 
     @Override
