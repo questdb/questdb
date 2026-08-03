@@ -91,6 +91,23 @@ public class WriterRowUtils {
         putDecimal0(index, decimalSink, ColumnType.tagOf(columnType), row);
     }
 
+    public static void putDecimalVarchar(int index, Decimal256 decimalSink, Utf8Sequence decimalValue, int columnType, TableWriter.Row row) {
+        if (decimalValue == null) {
+            putNullDecimal(row, index, columnType);
+            return;
+        }
+
+        final int precision = ColumnType.getDecimalPrecision(columnType);
+        final int scale = ColumnType.getDecimalScale(columnType);
+        try {
+            // non-ASCII bytes are not valid decimal characters, so the parser rejects them
+            decimalSink.ofString(decimalValue.asAsciiCharSequence(), precision, scale);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(decimalValue, ColumnType.VARCHAR, columnType);
+        }
+        putDecimal0(index, decimalSink, ColumnType.tagOf(columnType), row);
+    }
+
     public static void putGeoHash(int index, long value, int columnType, TableWriter.Row row) {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.GEOBYTE:
