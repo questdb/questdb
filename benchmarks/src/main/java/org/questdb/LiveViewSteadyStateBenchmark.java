@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
@@ -103,9 +104,11 @@ public class LiveViewSteadyStateBenchmark {
     private static final long DAILY_ANCHOR_OFFSET_MICROS = 12L * Micros.HOUR_MICROS;
     private static final String DAILY_ANCHOR_PERIOD = "daily";
     private static final String DAILY_ANCHOR_TIME = "12:00";
+    private static final int MAX_SUM_COLUMNS = 8;
     private static final int RESTART_PROBE_ROWS = 1_000;
     private static final long START_TS = 1_785_496_035_000_000L;
     private static final long TS_STEP_MICROS = 444L;
+    private static final String VIEW_NAME = "mm_transaction_live_created_at_view";
 
     public static void main(String[] args) throws Exception {
         long seedRows = 1_000_000L;
@@ -121,6 +124,10 @@ public class LiveViewSteadyStateBenchmark {
         String anchorPeriod = DAILY_ANCHOR_PERIOD;
         int compactStalePercent = -1; // -1 = leave the configuration default alone
         int compactThreshold = -1; // -1 = leave the configuration default alone
+        String shape = Shape.TARGET.name;
+        String keyType = "symbol";
+        int nullPercent = 0;
+        int sumColumns = 0; // extra one-component sum(qN) projections, for the width sweep
         for (String arg : args) {
             if (arg.startsWith("--restart=")) {
                 isRestartMeasured = Boolean.parseBoolean(arg.substring(10));
@@ -150,12 +157,35 @@ public class LiveViewSteadyStateBenchmark {
                 compactThreshold = Integer.parseInt(arg.substring(20));
             } else if (arg.startsWith("--compact-stale-percent=")) {
                 compactStalePercent = Integer.parseInt(arg.substring(24));
+            } else if (arg.startsWith("--shape=")) {
+                shape = arg.substring(8);
+            } else if (arg.startsWith("--key-type=")) {
+                keyType = arg.substring(11);
+            } else if (arg.startsWith("--null-percent=")) {
+                nullPercent = Integer.parseInt(arg.substring(15));
+            } else if (arg.startsWith("--sum-columns=")) {
+                sumColumns = Integer.parseInt(arg.substring(14));
             } else {
                 throw new IllegalArgumentException("unknown argument: " + arg);
             }
         }
         if (accountWindow > 0 && recycleAccounts > 0) {
             throw new IllegalArgumentException("--account-window and --recycle-accounts both pick the account, use one");
+        }
+        final Shape selectShape = Shape.of(shape);
+        final KeyType partitionKeyType = KeyType.of(keyType);
+        if (nullPercent < 0 || nullPercent > 100) {
+            throw new IllegalArgumentException("--null-percent must be within [0, 100]: " + nullPercent);
+        }
+        if (sumColumns < 0 || sumColumns > MAX_SUM_COLUMNS) {
+            throw new IllegalArgumentException("--sum-columns must be within [0, " + MAX_SUM_COLUMNS + "]: " + sumColumns);
+        }
+        // Only a SYMBOL key has a dictionary to pre-size or an index to build, so both
+        // knobs describe nothing on an INT or LONG key. They are forced off and the
+        // header line reports what the run actually used.
+        if (partitionKeyType != KeyType.SYMBOL) {
+            isIndexed = false;
+            isSymbolPreSized = false;
         }
 
         final long anchorPeriodMicros = anchorPeriodMicros(anchorPeriod);
@@ -206,11 +236,12 @@ public class LiveViewSteadyStateBenchmark {
                     Locale.ROOT,
                     "# seed=%d batch=%d batches=%d checkpointRows=%d preSizeSymbol=%s index=%s recycleAccounts=%d "
                             + "anchorPeriod=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d "
-                            + "compactStalePercent=%d%n",
+                            + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d sumColumns=%d%n",
                     seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
                     anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
-                    configuration.getLiveViewPartitionCompactStalePercent()
+                    configuration.getLiveViewPartitionCompactStalePercent(),
+                    selectShape.name, partitionKeyType.name, nullPercent, sumColumns
             );
 
             engine = new CairoEngine(configuration);
@@ -229,30 +260,34 @@ public class LiveViewSteadyStateBenchmark {
             engine.execute(
                     "create table mm_transaction_live_created_at ("
                             + "created_at timestamp, "
-                            + "cod_acct_no symbol" + capacity + " nocache" + indexClause + ", "
+                            + "cod_acct_no " + partitionKeyType.columnDdl(capacity, indexClause) + ", "
                             + "amt_txn double"
+                            + sumColumnDdl(sumColumns)
                             + ") timestamp(created_at) partition by hour wal",
                     sqlCtx
             );
             engine.execute(
-                    insertSql(1, seedRows, recycleAccounts, accountWindow, anchorPeriodMicros, anchorOffsetMicros),
+                    insertSql(1, seedRows, recycleAccounts, accountWindow, anchorPeriodMicros, anchorOffsetMicros,
+                            partitionKeyType, nullPercent, sumColumns),
                     sqlCtx
             );
             drainWal(engine);
 
             engine.execute(
-                    "create live view mm_transaction_live_created_at_view "
+                    "create live view " + VIEW_NAME + " "
                             + "flush every 5s start from beginning as "
                             + "select created_at, cod_acct_no, "
-                            + "sum(amt_txn) over w as cumulative_sum, "
-                            + "count(cod_acct_no) over w as cumulative_count "
-                            + "from mm_transaction_live_created_at "
+                            + selectShape.projections(sumColumns)
+                            + " from mm_transaction_live_created_at "
                             + "window w as (partition by cod_acct_no order by created_at "
-                            + anchorClause(anchorPeriod) + ")",
+                            + anchorClause(anchorPeriod) + ")"
+                            + selectShape.extraWindows(),
                     sqlCtx
             );
-            final LiveViewInstance instance = engine.getLiveViewRegistry()
-                    .getViewInstance("mm_transaction_live_created_at_view");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(VIEW_NAME);
+            final CheckpointSegments segments = new CheckpointSegments(
+                    dbRoot.resolve(engine.getTableTokenIfExists(VIEW_NAME).getDirName())
+            );
 
             try (
                     LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
@@ -267,7 +302,8 @@ public class LiveViewSteadyStateBenchmark {
                 System.out.printf(Locale.ROOT, "# seed_ms=%.3f seed_checkpoint_ms=%.3f%n",
                         (System.nanoTime() - seedStart) / 1e6, instance.getHeadCheckpointWriteMicros() / 1e3);
 
-                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb");
+                segments.sample();
+                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb\tmeta_segs\tdata_segs\tmeta_bytes\tdata_bytes");
                 long firstRow = seedRows + 1;
                 // A seal after a sweep is the one this measurement is about: compact()
                 // demotes the next seal to a full scan of the whole live state, while a
@@ -281,7 +317,8 @@ public class LiveViewSteadyStateBenchmark {
                 long compactionMicrosBefore = compactionMicros(instance);
                 for (int b = 0; b < batches; b++) {
                     engine.execute(
-                            insertSql(firstRow, batchRows, recycleAccounts, accountWindow, anchorPeriodMicros, anchorOffsetMicros),
+                            insertSql(firstRow, batchRows, recycleAccounts, accountWindow, anchorPeriodMicros,
+                                    anchorOffsetMicros, partitionKeyType, nullPercent, sumColumns),
                             sqlCtx
                     );
                     final long baseStart = System.nanoTime();
@@ -325,9 +362,10 @@ public class LiveViewSteadyStateBenchmark {
                     final long baseSeqTxn = engine.getTableSequencerAPI()
                             .getTxnTracker(engine.getTableTokenIfExists("mm_transaction_live_created_at"))
                             .getWriterTxn();
+                    segments.sample();
                     System.out.printf(
                             Locale.ROOT,
-                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.1f%n",
+                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.1f\t%d\t%d\t%d\t%d%n",
                             b,
                             expected,
                             baseNanos / 1e6,
@@ -342,11 +380,16 @@ public class LiveViewSteadyStateBenchmark {
                             sweeps,
                             evicted,
                             sweepMs,
-                            refreshPeakMb
+                            refreshPeakMb,
+                            segments.getAddedMetaSegments(),
+                            segments.getAddedDataSegments(),
+                            segments.getAddedMetaBytes(),
+                            segments.getAddedDataBytes()
                     );
                     firstRow += batchRows;
                 }
                 reportSweeps(instance, sweptSealMs, sweptSealCount, unsweptSealMs, unsweptSealCount);
+                segments.report();
 
                 if (isRestartMeasured) {
                     // Drop the in-memory instances and read the definitions back from
@@ -361,12 +404,12 @@ public class LiveViewSteadyStateBenchmark {
                     engine.getLiveViewRegistry().clear();
                     engine.buildViewGraphs();
                     engine.execute(
-                            insertSql(firstRow, RESTART_PROBE_ROWS, recycleAccounts, accountWindow, anchorPeriodMicros, anchorOffsetMicros),
+                            insertSql(firstRow, RESTART_PROBE_ROWS, recycleAccounts, accountWindow, anchorPeriodMicros,
+                                    anchorOffsetMicros, partitionKeyType, nullPercent, sumColumns),
                             sqlCtx
                     );
                     drainWal(engine);
-                    final LiveViewInstance restarted = engine.getLiveViewRegistry()
-                            .getViewInstance("mm_transaction_live_created_at_view");
+                    final LiveViewInstance restarted = engine.getLiveViewRegistry().getViewInstance(VIEW_NAME);
                     try (LiveViewRefreshJob restartJob = new LiveViewRefreshJob(0, engine, 1)) {
                         final long checkpointRootIdBefore = restarted.getHeadCheckpointRootId();
                         sampler.reset();
@@ -405,7 +448,7 @@ public class LiveViewSteadyStateBenchmark {
                     }
                 }
 
-                reportFootprint(engine, dbRoot);
+                reportFootprint(engine, dbRoot, partitionKeyType == KeyType.SYMBOL);
             }
         } finally {
             engine = Misc.free(engine);
@@ -433,19 +476,22 @@ public class LiveViewSteadyStateBenchmark {
             int recycleAccounts,
             long accountWindow,
             long anchorPeriodMicros,
-            long anchorOffsetMicros
+            long anchorOffsetMicros,
+            KeyType keyType
     ) {
         final String rowIndex = "(x + " + (firstRow - 1) + ")";
+        final String accountId;
         if (accountWindow > 0) {
             final long slide = Math.max(1, accountWindow / 2);
             final String bucket = "((" + START_TS + " + " + rowIndex + " * " + TS_STEP_MICROS
                     + " - " + anchorOffsetMicros + ") / " + anchorPeriodMicros + ")";
-            return "'acct-' || (" + bucket + " * " + slide + " + " + rowIndex + " % " + accountWindow + ")::string";
+            accountId = "(" + bucket + " * " + slide + " + " + rowIndex + " % " + accountWindow + ")";
+        } else if (recycleAccounts > 0) {
+            accountId = "(" + rowIndex + " % " + recycleAccounts + ")";
+        } else {
+            accountId = rowIndex;
         }
-        if (recycleAccounts > 0) {
-            return "'acct-' || (" + rowIndex + " % " + recycleAccounts + ")::string";
-        }
-        return "'acct-' || " + rowIndex + "::string";
+        return keyType.accountExpression(accountId);
     }
 
     private static long anchorMapSize(LiveViewInstance instance) {
@@ -571,13 +617,22 @@ public class LiveViewSteadyStateBenchmark {
      */
     private static void reportWindowState(LiveViewWindow window) {
         final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
+        // The state-root kind and the residual count are the per-seal fixed cost the
+        // fusion is about: a window root replaces the anchor root and every grouped
+        // function's root at once, so a view whose whole SELECT list fuses publishes two
+        // metadata files per seal - window root plus checkpoint root - where it used to
+        // publish one per function on top of those two. The meta_segs column is where
+        // that shows up as a number.
         System.out.printf(
                 Locale.ROOT,
-                "# window_state map=%s components=%d projections=%d entry_state_bytes=%d%n",
+                "# window_state map=%s state_root=%s components=%d projections=%d entry_state_bytes=%d "
+                        + "residual_functions=%s%n",
                 window.getAnchorMapImplementation(),
+                plan == null ? "anchor" : "window",
                 plan == null ? 0 : plan.getComponentCount(),
                 plan == null ? 0 : plan.getProjectionCount(),
-                plan == null ? Long.BYTES : plan.getTotalInlineStateBytes()
+                plan == null ? Long.BYTES : plan.getTotalInlineStateBytes(),
+                plan == null ? "n/a" : Integer.toString(plan.getResidualFunctions().size())
         );
     }
 
@@ -591,7 +646,7 @@ public class LiveViewSteadyStateBenchmark {
      * Heap is read after a best-effort collection, which is advisory rather than
      * exact. Run with a fixed -Xmx and compare two builds on the same host.
      */
-    private static void reportFootprint(CairoEngine engine, Path dbRoot) throws IOException {
+    private static void reportFootprint(CairoEngine engine, Path dbRoot, boolean isSymbolKey) throws IOException {
         for (int i = 0; i < 4; i++) {
             System.gc();
             try {
@@ -603,7 +658,7 @@ public class LiveViewSteadyStateBenchmark {
         }
         final Runtime runtime = Runtime.getRuntime();
         final long heapBytes = runtime.totalMemory() - runtime.freeMemory();
-        final TableToken viewToken = engine.getTableTokenIfExists("mm_transaction_live_created_at_view");
+        final TableToken viewToken = engine.getTableTokenIfExists(VIEW_NAME);
         final Path viewPath = dbRoot.resolve(viewToken.getDirName());
         int symbolCapacity = -1;
         boolean isSymbolCached = false;
@@ -622,7 +677,7 @@ public class LiveViewSteadyStateBenchmark {
                         + "view_symbol_capacity=%d view_symbol_cached=%s%n",
                 heapBytes / (1024.0 * 1024.0),
                 Unsafe.getMemUsed() / (1024.0 * 1024.0),
-                dirBytes(viewPath, "cod_acct_no.") / (1024.0 * 1024.0),
+                isSymbolKey ? dirBytes(viewPath, "cod_acct_no.") / (1024.0 * 1024.0) : 0.0,
                 dirBytes(viewPath, null) / (1024.0 * 1024.0),
                 symbolCapacity,
                 isSymbolCached
@@ -707,14 +762,44 @@ public class LiveViewSteadyStateBenchmark {
             int recycleAccounts,
             long accountWindow,
             long anchorPeriodMicros,
-            long anchorOffsetMicros
+            long anchorOffsetMicros,
+            KeyType keyType,
+            int nullPercent,
+            int sumColumns
     ) {
-        final String acct = accountExpression(firstRow, recycleAccounts, accountWindow, anchorPeriodMicros, anchorOffsetMicros);
-        return "insert into mm_transaction_live_created_at "
-                + "select (" + START_TS + " + (x + " + (firstRow - 1) + ") * " + TS_STEP_MICROS + ")::timestamp, "
-                + acct + ", "
-                + "((x + " + (firstRow - 1) + ") % 2001 - 1000) * 0.01 "
-                + "from long_sequence(" + rows + ")";
+        final String acct = accountExpression(firstRow, recycleAccounts, accountWindow, anchorPeriodMicros,
+                anchorOffsetMicros, keyType);
+        final String rowIndex = "(x + " + (firstRow - 1) + ")";
+        final String amount = "(" + rowIndex + " % 2001 - 1000) * 0.01";
+        // A NULL amount is what separates the two counters a fused group might otherwise
+        // look equivalent on: sum(amt_txn) skips the row and count(cod_acct_no) does not.
+        final String nullableAmount = nullPercent > 0
+                ? "case when " + rowIndex + " % 100 < " + nullPercent + " then null::double else " + amount + " end"
+                : amount;
+        final StringBuilder sql = new StringBuilder("insert into mm_transaction_live_created_at ")
+                .append("select (").append(START_TS).append(" + ").append(rowIndex)
+                .append(" * ").append(TS_STEP_MICROS).append(")::timestamp, ")
+                .append(acct).append(", ")
+                .append(nullableAmount);
+        for (int i = 1; i <= sumColumns; i++) {
+            sql.append(", (").append(rowIndex).append(" % ").append(2000 + i).append(") * 0.01");
+        }
+        return sql.append(" from long_sequence(").append(rows).append(')').toString();
+    }
+
+    /**
+     * The extra {@code q1..qN} DOUBLE columns the width sweep sums over. Each one is a
+     * distinct argument and therefore a distinct 16-byte component, so {@code N} moves
+     * the fused entry's width by 16 bytes a step with nothing else about the view
+     * changing - which is what makes the leaf-budget question measurable rather than
+     * arguable.
+     */
+    private static String sumColumnDdl(int sumColumns) {
+        final StringBuilder ddl = new StringBuilder();
+        for (int i = 1; i <= sumColumns; i++) {
+            ddl.append(", q").append(i).append(" double");
+        }
+        return ddl.toString();
     }
 
     private static int symbolCapacity(long rows) {
@@ -723,6 +808,247 @@ public class LiveViewSteadyStateBenchmark {
             capacity <<= 1;
         }
         return (int) Math.min(capacity, 1L << 30);
+    }
+
+    /**
+     * The published checkpoint segments, sampled from the view's own
+     * {@code _checkpoints} directory between batches.
+     * <p>
+     * The two counts are the per-seal fixed cost that does not scale with the dirty set,
+     * and they are what removing a root actually removes: a seal publishes one metadata
+     * file per state root plus one for the checkpoint root, each preceded by a probe and
+     * followed by an mmap, a sync and a rename. On a small incremental dirty set that
+     * cost dominates the per-entry bytes entirely.
+     * <p>
+     * A segment id only ever increases, so "published since the last sample" is counted
+     * as the files whose id is above the highest id seen then - exact even when the same
+     * batch also retired older segments, which a plain file-count delta would net out.
+     * The retained figures are the whole directory as it stands.
+     */
+    private static final class CheckpointSegments {
+        private final Path dataDir;
+        private final Path metaDir;
+        private long addedDataBytes;
+        private long addedDataSegments;
+        private long addedMetaBytes;
+        private long addedMetaSegments;
+        private long maxDataSegmentId = -1;
+        private long maxMetaSegmentId = -1;
+        private long retainedDataBytes;
+        private long retainedDataSegments;
+        private long retainedMetaBytes;
+        private long retainedMetaSegments;
+
+        CheckpointSegments(Path viewDir) {
+            final Path checkpoints = viewDir.resolve(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            metaDir = checkpoints.resolve(LiveViewCheckpointLayout.META_DIR_NAME);
+            dataDir = checkpoints.resolve(LiveViewCheckpointLayout.DATA_DIR_NAME);
+        }
+
+        long getAddedDataBytes() {
+            return addedDataBytes;
+        }
+
+        long getAddedDataSegments() {
+            return addedDataSegments;
+        }
+
+        long getAddedMetaBytes() {
+            return addedMetaBytes;
+        }
+
+        long getAddedMetaSegments() {
+            return addedMetaSegments;
+        }
+
+        void report() {
+            System.out.printf(
+                    Locale.ROOT,
+                    "# segments retained_meta=%d retained_meta_bytes=%d retained_data=%d retained_data_bytes=%d%n",
+                    retainedMetaSegments,
+                    retainedMetaBytes,
+                    retainedDataSegments,
+                    retainedDataBytes
+            );
+        }
+
+        void sample() throws IOException {
+            final long[] meta = scan(metaDir, maxMetaSegmentId);
+            addedMetaSegments = meta[0];
+            addedMetaBytes = meta[1];
+            retainedMetaSegments = meta[2];
+            retainedMetaBytes = meta[3];
+            maxMetaSegmentId = meta[4];
+            final long[] data = scan(dataDir, maxDataSegmentId);
+            addedDataSegments = data[0];
+            addedDataBytes = data[1];
+            retainedDataSegments = data[2];
+            retainedDataBytes = data[3];
+            maxDataSegmentId = data[4];
+        }
+
+        /**
+         * Returns {@code {addedCount, addedBytes, retainedCount, retainedBytes, maxId}}
+         * for one segment directory. A {@code .tmp} name is a staged file the publish has
+         * not renamed yet and is not a segment.
+         */
+        private static long[] scan(Path dir, long previousMaxId) throws IOException {
+            final long[] out = {0, 0, 0, 0, previousMaxId};
+            if (!Files.exists(dir)) {
+                return out;
+            }
+            Files.walkFileTree(dir, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    final String name = file.getFileName().toString();
+                    final int dot = name.indexOf('.');
+                    if (dot < 0 || name.endsWith(".tmp")) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    final long id;
+                    try {
+                        id = Long.parseLong(name.substring(dot + 1));
+                    } catch (NumberFormatException e) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    out[2]++;
+                    out[3] += attrs.size();
+                    if (id > previousMaxId) {
+                        out[0]++;
+                        out[1] += attrs.size();
+                    }
+                    out[4] = Math.max(out[4], id);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+            return out;
+        }
+    }
+
+    /**
+     * The partition key's column type, and with it the runtime map shape the fused
+     * window value lands on.
+     * <p>
+     * {@code MapFactory.createUnorderedMap} selects {@code Unordered4Map} or
+     * {@code Unordered8Map} only while {@code keySize + valueSize} fits
+     * {@code cairo.sql.unordered.map.max.entry.size}, default 16. An INT key with the
+     * anchor-only 10-byte value sits at 14 and moves to {@code OrderedMap} at 26 once a
+     * 16-byte accumulator joins it; a LONG key was already past the limit at 18 before
+     * fusing, and a SYMBOL key was never eligible. The INT control is therefore the only
+     * run that can show the transition, and it is why it exists.
+     */
+    private enum KeyType {
+        INT("int"),
+        LONG("long"),
+        SYMBOL("symbol");
+
+        private final String name;
+
+        KeyType(String name) {
+            this.name = name;
+        }
+
+        static KeyType of(String name) {
+            for (KeyType keyType : values()) {
+                if (keyType.name.equals(name)) {
+                    return keyType;
+                }
+            }
+            throw new IllegalArgumentException("--key-type must be one of symbol, int, long: " + name);
+        }
+
+        String accountExpression(String accountId) {
+            return switch (this) {
+                case SYMBOL -> "'acct-' || " + accountId + "::string";
+                case INT -> accountId + "::int";
+                case LONG -> accountId + "::long";
+            };
+        }
+
+        String columnDdl(String capacity, String indexClause) {
+            return this == SYMBOL ? "symbol" + capacity + " nocache" + indexClause : name;
+        }
+    }
+
+    /**
+     * The SELECT list a run measures. Each shape is one row of the acceptance plan: what
+     * the fused group is made of decides how many components the entry carries, how many
+     * of them several projections share, and which functions stay on a legacy root.
+     */
+    private enum Shape {
+        /**
+         * Four dispersion calls plus a {@code count} that folds onto their counter - one
+         * 24-byte Welford component serving five outputs.
+         */
+        DISPERSION("dispersion"),
+        /**
+         * A fused group beside a bounded ROWS call, which keeps a ring-backed root of its
+         * own. The mixed shape the acceptance plan asks for.
+         */
+        MIXED("mixed"),
+        /**
+         * {@code count(*)} and {@code row_number()} over one row-count component.
+         */
+        ROW_COUNT("row-count"),
+        /**
+         * The single-{@code count} control.
+         */
+        SINGLE_COUNT("count"),
+        /**
+         * The single-{@code sum} control, and the one to read beside the INT key type.
+         */
+        SINGLE_SUM("sum"),
+        /**
+         * Three projections onto one {@code (sum, nonNullCount)} component: the shape the
+         * cross-family derivation exists for.
+         */
+        SUM_AVG_COUNT("sum-avg-count"),
+        /**
+         * The reported workload: a {@code sum} over the amount beside a {@code count} over
+         * the key. Their arguments differ, so the two counters never merge and the entry
+         * carries two components.
+         */
+        TARGET("target");
+
+        private final String name;
+
+        Shape(String name) {
+            this.name = name;
+        }
+
+        static Shape of(String name) {
+            for (Shape shape : values()) {
+                if (shape.name.equals(name)) {
+                    return shape;
+                }
+            }
+            throw new IllegalArgumentException("unknown --shape: " + name);
+        }
+
+        String extraWindows() {
+            return this == MIXED
+                    ? ", r as (partition by cod_acct_no order by created_at rows between 999 preceding and current row)"
+                    : "";
+        }
+
+        String projections(int sumColumns) {
+            final StringBuilder select = new StringBuilder(switch (this) {
+                case DISPERSION -> "stddev_samp(amt_txn) over w as ss, stddev_pop(amt_txn) over w as sp, "
+                        + "var_samp(amt_txn) over w as vs, var_pop(amt_txn) over w as vp, "
+                        + "count(amt_txn) over w as c";
+                case MIXED -> "sum(amt_txn) over w as cumulative_sum, sum(amt_txn) over r as bounded_sum";
+                case ROW_COUNT -> "count(*) over w as n, row_number() over w as rn";
+                case SINGLE_COUNT -> "count(cod_acct_no) over w as cumulative_count";
+                case SINGLE_SUM -> "sum(amt_txn) over w as cumulative_sum";
+                case SUM_AVG_COUNT -> "sum(amt_txn) over w as s, avg(amt_txn) over w as a, "
+                        + "count(amt_txn) over w as c";
+                case TARGET -> "sum(amt_txn) over w as cumulative_sum, count(cod_acct_no) over w as cumulative_count";
+            });
+            for (int i = 1; i <= sumColumns; i++) {
+                select.append(", sum(q").append(i).append(") over w as qs").append(i);
+            }
+            return select.toString();
+        }
     }
 
     /**
