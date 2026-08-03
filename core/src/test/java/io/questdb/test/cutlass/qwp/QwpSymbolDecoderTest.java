@@ -401,6 +401,44 @@ public class QwpSymbolDecoderTest {
     }
 
     @Test
+    public void testSmallOverlapRollbackAfterLargeOverlapCommit() throws Exception {
+        // Pins the prefix-release discipline of dictRollbackScratch: a large
+        // committed overlap grows the scratch's capacity, and a later small
+        // failing overlap must restore correctly from scratch[0..pos) alone,
+        // independent of the stale capacity above pos.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            // Register 8 ids, then re-send all 8 (full-dict overlap): the
+            // committed frame drives scratch pos, and capacity, to 8.
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0,
+                    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"));
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0,
+                    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"));
+            Assert.assertEquals(8, dict.size());
+
+            // A small overlapping frame fails mid-loop: declares 3 at id 2,
+            // carries 2. The loop overwrites ids 2 and 3, then throws; the
+            // rollback must restore both from THIS frame's scratch prefix.
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 2, 3, "x2", "x3");
+                Assert.fail("Expected a truncated-entry parse error");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+            }
+            Assert.assertEquals(8, dict.size());
+            for (int i = 0; i < 8; i++) {
+                Assert.assertEquals("s" + i, dict.getQuick(i));
+            }
+
+            // And the connection still takes a clean delta afterwards.
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 8, "s8"));
+            Assert.assertEquals(9, dict.size());
+            Assert.assertEquals("s8", dict.getQuick(8));
+        });
+    }
+
+    @Test
     public void testRolledBackFrameDoesNotLeakStaleRedefinition() throws Exception {
         // extendPos grows pos WITHOUT null-filling, and the rollback's setPos does not
         // clear, so slots above the restored size can still hold a failed frame's

@@ -93,7 +93,7 @@ public class QwpMessageCursor implements Mutable {
         deltaSymbolDictEnabled = false;
         connectionSymbolDict = null;
         symbolDictRedefined = false;
-        dictRollbackScratch.clear();
+        releaseDictRollbackScratch();
     }
 
     /**
@@ -294,7 +294,7 @@ public class QwpMessageCursor implements Mutable {
         // runs only on success, so a half-applied overlap would leave the cache
         // mapping the old strings while the dictionary holds the new ones. The
         // scratch stays empty on a pure append.
-        dictRollbackScratch.clear();
+        releaseDictRollbackScratch();
         boolean committed = false;
         try {
             // extendPos, not an add(null) loop: with the gap rejected above,
@@ -364,7 +364,7 @@ public class QwpMessageCursor implements Mutable {
             // pooled HttpConnectionContext, until the NEXT delta frame happens to
             // overlap and clear it at the top of this method -- or never, on a
             // connection that sends no further overlapping delta.
-            dictRollbackScratch.clear();
+            releaseDictRollbackScratch();
         } finally {
             if (!committed) {
                 // Content first, then length: setQuick asserts index < pos, so shrinking
@@ -385,11 +385,24 @@ public class QwpMessageCursor implements Mutable {
                     connectionSymbolDict.setQuick(i, null);
                 }
                 connectionSymbolDict.setPos(sizeBefore);
-                dictRollbackScratch.clear();
+                releaseDictRollbackScratch();
             }
         }
 
         return address;
+    }
+
+    private void releaseDictRollbackScratch() {
+        // Not ObjList.clear(): that Arrays.fill()s the WHOLE backing array,
+        // and scratch capacity is lifetime-monotonic on a pooled connection,
+        // so one large catch-up overlap would bill every later overlapping
+        // frame the full historical capacity to release a handful of refs.
+        // Slots above pos are already null: this is the only code that
+        // shrinks pos, and it nulls everything it shrinks away.
+        for (int i = 0, n = dictRollbackScratch.size(); i < n; i++) {
+            dictRollbackScratch.setQuick(i, null);
+        }
+        dictRollbackScratch.setPos(0);
     }
 
 }
