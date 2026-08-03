@@ -39,9 +39,10 @@ import io.questdb.std.Numbers;
  * With this holder the sub-query is evaluated exactly once per outer execution: the pruning bound
  * (the owner) publishes its computed value here in {@code init()}, which runs at partition-frame open
  * before any row is filtered, and every residual reader - including per-worker filter clones, which
- * share this same holder by reference - reads that one frozen value. Publishing is a single write on
- * the frame-open path that happens-before the reads dispatched to worker threads; {@code volatile}
- * makes the frozen value visible to those readers.
+ * share this same holder by reference - snapshots that one frozen value in its own {@code init()}.
+ * Both the publish and every snapshot run on the frame-open thread, before the async filter dispatches
+ * to workers, so no row loop touches this holder; {@code volatile} is retained as a cheap guard for any
+ * future reader that is not init()-scoped.
  * <p>
  * The {@code published} flag is a per-execution tripwire, not a one-shot latch: the owner disarms it
  * via {@link #reset()} at the top of its {@code init()} and re-arms it in {@link #publish(long)} once

@@ -25,8 +25,12 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ScalarTimestampBoundHolder;
+import io.questdb.std.Numbers;
 
 /**
  * Residual-side reader for a scalar sub-query designated-timestamp bound that is also used for
@@ -37,12 +41,20 @@ import io.questdb.griffin.model.ScalarTimestampBoundHolder;
  * Owns nothing: the wrapped sub-query factory is owned and closed by the pruning bound
  * ({@link ScalarSubQueryTimestampFunction}). Per-worker filter clones reference the same holder, so
  * every worker reads the identical frozen bound.
+ * <p>
+ * The holder read is hoisted into {@link #init}: the row loop must not repeat a volatile
+ * acquire-load (an {@code ldar} on ARM64, non-hoistable by the JIT) once per filtered row when the
+ * value is frozen for the whole execution.
  *
  * @see io.questdb.griffin.WhereClauseParser
  * @see io.questdb.griffin.FunctionParser
  */
 public final class ScalarSubQueryBoundRefFunction extends TimestampFunction {
     private final ScalarTimestampBoundHolder holder;
+    // Execution-scoped snapshot of holder.value(), taken in init(). Plain field on purpose: it is
+    // written on the frame-open thread before any row is filtered and before the async filter
+    // dispatches to workers, so the existing dispatch edge publishes it.
+    private long value = Numbers.LONG_NULL;
 
     public ScalarSubQueryBoundRefFunction(ScalarTimestampBoundHolder holder) {
         super(holder.getTimestampType());
@@ -51,12 +63,25 @@ public final class ScalarSubQueryBoundRefFunction extends TimestampFunction {
 
     @Override
     public long getTimestamp(Record rec) {
-        // The owning pruning bound publishes the frozen value in init() at partition-frame open,
-        // which happens-before any residual read; fail fast under -ea if that ordering is violated.
-        // The owner disarms the flag at the top of the same init(), so this stays armed on every
-        // execution of a reused/cached factory, not just the first one.
+        return value;
+    }
+
+    /**
+     * Snapshots the frozen bound once per execution. The owning pruning bound publishes it from its
+     * own {@code init()} at partition-frame open, which happens-before this one on both the serial
+     * path ({@code AbstractPageFrameRecordCursorFactory.getCursor()} opens the partition-frame
+     * cursor, and with it the runtime interval model, before it builds the record cursor) and the
+     * async path ({@code PageFrameSequence.of()} opens the page-frame cursor before
+     * {@code atom.init()}). Per-worker filter clones are init()ed from that same frame-open thread
+     * ({@code AsyncFilterAtom.init()}), so each clone snapshots the identical published value.
+     */
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        // Fail fast under -ea if that publish-before-init ordering is ever violated. The owner
+        // disarms the flag at the top of the same init(), so this stays armed on every execution of
+        // a reused/cached factory, not just the first one.
         assert holder.isPublished() : "scalar sub-query bound read before it was published";
-        return holder.value();
+        value = holder.value();
     }
 
     // Deliberately does NOT override isNonDeterministic(). The holder mirrors the wrapped sub-query
