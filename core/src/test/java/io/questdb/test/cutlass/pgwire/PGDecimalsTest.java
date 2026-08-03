@@ -571,6 +571,30 @@ public class PGDecimalsTest extends BasePGTest {
         });
     }
 
+    @Test
+    public void testTextResultReportsRequiredSizeWithDecimal() throws Exception {
+        assertWithPgServer(
+                Mode.SIMPLE,
+                false,
+                -1,
+                (connection, _, _, _) -> {
+                    try (Statement statement = connection.createStatement()) {
+                        try (ResultSet ignore = statement.executeQuery(
+                                "SELECT lpad('', 950, 'x')::VARCHAR, '0.1'::DECIMAL(76, 75)"
+                        )) {
+                            Assert.fail("exception expected");
+                        }
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(
+                                e.getMessage(),
+                                "not enough space in send buffer [sendBufferSize=512, requiredSize=1037]"
+                        );
+                    }
+                },
+                () -> sendBufferSize = 512
+        );
+    }
+
     // Test zero values with different scales
     @Test
     public void testZeroValues() throws Exception {
