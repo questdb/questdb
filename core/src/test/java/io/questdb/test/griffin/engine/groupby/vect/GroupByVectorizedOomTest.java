@@ -27,6 +27,8 @@ package io.questdb.test.griffin.engine.groupby.vect;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Chars;
+import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractOomSweepTest;
 import org.junit.Assert;
@@ -45,15 +47,28 @@ import org.junit.Test;
  * the already-reopened buffer (512 bytes, {@code NATIVE_DEFAULT}). The query fuzzer's
  * malloc fault injection surfaced this leak.
  * <p>
- * The cursor-open sweep runs in {@link AbstractOomSweepTest#assertCursorOpenOomSweep}. The parquet
- * sweep below targets a later operation and keeps its own loop: it compiles and opens above the
- * ceiling, then arms it for the {@code hasNext()} drain, where {@code buildRosti} publishes work
- * before the fault lands. Both compile a fresh factory per point: a reused one would let a later
- * success clean up a stranded partial allocation, and would hand the parquet survivor live pools
- * instead of the freed ones it must dereference.
+ * Three sweeps live here, each with its own fault mechanism. The cursor-open one runs in
+ * {@link AbstractOomSweepTest#assertCursorOpenOomSweep} against an RSS ceiling. The parquet one
+ * targets a later operation and keeps its own loop against the same ceiling: it compiles and opens
+ * above it, then arms it for the {@code hasNext()} drain, where {@code buildRosti} publishes work
+ * before the fault lands. The column-top one arms rosti's own malloc hook instead, because
+ * {@code Unsafe.setRssMemLimit} cannot reach allocations rosti makes for itself; that hook is a
+ * global on/off flag rather than a countdown, so it faults whichever rosti allocation the build
+ * reaches first, and the sweep separates the null group insert from the keyed aggregation by the
+ * message each raises.
+ * <p>
+ * The two ceiling sweeps compile a fresh factory per point: a reused one would let a later success
+ * clean up a stranded partial allocation, and would hand the parquet survivor live pools instead of
+ * the freed ones it must dereference.
  */
 public class GroupByVectorizedOomTest extends AbstractOomSweepTest {
 
+    // The message GroupByRecordCursorFactory raises when the post-drain null group insert cannot grow
+    // the map. Rosti.enableOOMOnMalloc() fails every rosti malloc while armed, so the keyed
+    // aggregation of the live keys can cross the same threshold earlier in the same build and raise
+    // first; CairoException.isOutOfMemory() is true for that failure too, and only the message tells
+    // the two apart.
+    private static final String NULL_KEY_INSERT_OOM_MESSAGE = "could not insert null key into rosti hash table";
     // Ceiling range the buildRosti drain sweep walks. The drain allocates ~32 KiB, so the sweep
     // crosses its whole OOM/success transition with room to spare; the armed-drain assertion below
     // fails loudly if an allocation-path change ever pushes the transition past this.
@@ -61,6 +76,69 @@ public class GroupByVectorizedOomTest extends AbstractOomSweepTest {
     // The faulting allocations here are 128 B and larger, so a 64-byte step lands inside every one of
     // their windows many times over.
     private static final int ROSTI_BUILD_SLACK_STEP = 64;
+
+    @Test
+    public void testColumnTopKeyInsertOomRaisesInsteadOfShortResult() throws Exception {
+        assertMemoryLeak(() -> {
+            // The key counts bracket the point where the map must grow, so the sweep straddles the
+            // transition three ways: below the boundary nothing allocates and the query must return
+            // every group under the armed fault, at it the null group insert faults, above it the
+            // keyed aggregation faults before the insert is reached at all. Only the insert failure
+            // is what this test is about, so the guard below keys on its message rather than on
+            // isOutOfMemory(), which all three failures share. Unsafe.setRssMemLimit, used by the
+            // other tests in this class, cannot reach rosti's own allocations.
+            boolean hasCompletedArmed = false;
+            boolean hasSeenNullKeyInsertOom = false;
+            for (int liveKeys = 888; liveKeys <= 904; liveKeys++) {
+                // The column-top partition sits at the later timestamps, so the live keys fill the
+                // map before the null group is even discovered; v is a column top too, which leaves
+                // the post-drain insert as the only thing that can create the null group.
+                GroupByVectorizedRostiAccountingTest.createColumnTopTable(liveKeys, false, true, sqlExecutionContext);
+                final String query = "SELECT k, max(v) FROM tab";
+
+                try (RecordCursorFactory factory = select(query)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Rosti.enableOOMOnMalloc();
+                        try {
+                            int rowCount = 0;
+                            while (cursor.hasNext()) {
+                                rowCount++;
+                            }
+                            Assert.assertEquals("short result under a rosti malloc fault: the NULL-key "
+                                    + "group went missing instead of the query raising out-of-memory", liveKeys + 1, rowCount);
+                            hasCompletedArmed = true;
+                        } catch (CairoException e) {
+                            Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
+                            if (Chars.contains(e.getFlyweightMessage(), NULL_KEY_INSERT_OOM_MESSAGE)) {
+                                hasSeenNullKeyInsertOom = true;
+                            }
+                        } finally {
+                            Rosti.disableOOMOnMalloc();
+                        }
+                    }
+                }
+
+                try (RecordCursorFactory factory = select(query)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        int rowCount = 0;
+                        while (cursor.hasNext()) {
+                            rowCount++;
+                        }
+                        Assert.assertEquals(liveKeys + 1, rowCount);
+                    }
+                }
+
+                execute("DROP TABLE tab");
+            }
+            Assert.assertTrue("no sweep iteration faulted the post-drain null group insert, so none of "
+                    + "them exercised the raise this test is about; either the growth boundary moved out "
+                    + "of the sweep, or the insert no longer reports \"" + NULL_KEY_INSERT_OOM_MESSAGE
+                    + "\" -- re-derive the liveKeys sweep", hasSeenNullKeyInsertOom);
+            Assert.assertTrue("every sweep iteration faulted, so none of them proved a full result "
+                    + "under an armed fault; the sweep no longer straddles the growth boundary "
+                    + "-- widen the liveKeys sweep", hasCompletedArmed);
+        });
+    }
 
     @Test
     public void testVectorizedGroupByCleansUpWhenCursorRunsOutOfMemory() throws Exception {

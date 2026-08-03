@@ -34,9 +34,10 @@ public interface VectorAggregateFunction extends Function, Mutable {
     /**
      * Non-keyed aggregation that doesn't use rosti.
      * Used either for truly non-keyed aggregation or when key is null in page frame due to column tops.
+     * In the latter case {@link #wrapUp(long)} merges the accumulated value into rosti under the null key.
      *
-     * @param address       address
-     * @param frameRowCount row count int the frame; this is provided to "count" functions
+     * @param address       value address; 0 when there is no value column (count()) or it is a column top
+     * @param frameRowCount row count in the frame; this is provided to "count" functions
      * @param workerId      worker id
      */
     void aggregate(long address, long frameRowCount, int workerId);
@@ -100,6 +101,8 @@ public interface VectorAggregateFunction extends Function, Mutable {
     /**
      * Used for keyed aggregates only.
      * Merges value for null key (empty/null key page frames with rosti) and (optionally) replaces null values with constant in rosti.
+     * The null key slot may already exist, so implementations must fold their value into whatever the slot
+     * holds instead of overwriting it.
      *
      * @param pRosti pointer to rosti
      * @return true if wrapUp was fine and false if it failed on memory allocation
