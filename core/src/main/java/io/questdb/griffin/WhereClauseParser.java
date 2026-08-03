@@ -44,6 +44,7 @@ import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.ScalarSubQueryCompileCache;
 import io.questdb.griffin.model.ScalarTimestampBoundHolder;
 import io.questdb.griffin.model.TimestampMonotonicInverter;
 import io.questdb.std.CharSequenceHashSet;
@@ -93,17 +94,18 @@ public final class WhereClauseParser implements Mutable {
     private static final int INTRINSIC_OP_LESS_EQ = 5;
     private static final int INTRINSIC_OP_NOT = 8;
     private static final int INTRINSIC_OP_NOT_EQ = 7;
-    // Cap on how deeply speculative scalar sub-query bound compiles may nest.
+    // Ceiling on how deeply speculative scalar sub-query bound compiles may nest.
     // <p>
-    // Resolving a QUERY bound compiles the sub-query in full just to find out whether pruning is
-    // legal (only the generated factory can answer checkCursorFunctionReturnsSingleTimestamp() and
-    // isStableWithinExecution()). Whenever that speculation ends in a decline the predicate stays a
-    // residual row filter, which compiles the very same sub-query a second time - so every nesting
-    // level of a monotonic scalar sub-query bound doubles compile time, T(k) = 2*T(k+1) = O(2^D),
-    // with no cancellation point anywhere in code generation (the circuit breaker is only tested on
-    // row-iteration paths). Past this depth we stop speculating and let the predicate go straight to
-    // the residual, which turns the tail back into T(k) = T(k+1) and bounds the whole compile at
-    // 2^MAX regardless of how deep the statement nests.
+    // A declined speculation no longer costs a second compile - the compiled sub-query is handed to
+    // the residual filter through ScalarSubQueryCompileCache - so compile work is already linear in
+    // the nesting depth. This cap is the backstop for that guarantee, not the mechanism behind it:
+    // reuse serves one consumer, so any predicate that is genuinely compiled more than once (a
+    // per-worker filter clone finding the slot already claimed) would fall back to generating its
+    // own copy, and were that ever to happen on a nested chain the old doubling would reappear as
+    // T(k) = 2*T(k+1) = O(2^D). Nothing in code generation tests the circuit breaker (all trip tests
+    // sit on row-iteration paths) and neither SqlParser nor ExpressionParser caps nesting, so an
+    // uncancellable exponential compile is worth a hard ceiling even when it should be unreachable.
+    // Past this depth pruning is simply not attempted, which bounds the worst case at 2^MAX.
     // <p>
     // Declining is always semantically safe: it is the same fallback the stability gate below uses,
     // and the residual filter remains the single source of truth. Only the pruning optimization is
@@ -111,6 +113,9 @@ public final class WhereClauseParser implements Mutable {
     private static final int MAX_SPECULATIVE_SCALAR_BOUND_DEPTH = 4;
     private static final CharSequenceIntHashMap intrinsicOps = new CharSequenceIntHashMap();
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
+    // Slots holding sub-query compiles parked for a declined bound's residual filter. Owned here and
+    // released when the enclosing generation completes.
+    private final ObjList<ScalarSubQueryCompileCache> scalarBoundCompileCaches = new ObjList<>();
     // Holds the WHERE clauses saved around a speculative scalar sub-query compile. Cleared only in
     // clear(), i.e. at a top-level compilation boundary, so a saved clause handed back to a model
     // stays valid for the whole compilation, exactly like the compiler's own expression node pool.
@@ -170,6 +175,7 @@ public final class WhereClauseParser implements Mutable {
     @Override
     public void clear() {
         freeBorrowedModels();
+        freeScalarBoundCompileCaches();
         csPool.clear();
         exprNodePool.clear();
         clearTransientState();
@@ -191,6 +197,18 @@ public final class WhereClauseParser implements Mutable {
 
     void setScalarBoundDepth(int scalarBoundDepth) {
         this.scalarBoundDepth = scalarBoundDepth;
+    }
+
+    /**
+     * Releases any speculative sub-query compile that no residual filter claimed. Called when the
+     * generation that produced them finishes, which is the point at which an unclaimed entry is
+     * provably garbage: the residual filter is compiled inside that same generation.
+     */
+    void freeScalarBoundCompileCaches() {
+        for (int i = 0, n = scalarBoundCompileCaches.size(); i < n; i++) {
+            scalarBoundCompileCaches.getQuick(i).free();
+        }
+        scalarBoundCompileCaches.clear();
     }
 
     void clearTransientState() {
@@ -1574,9 +1592,12 @@ public final class WhereClauseParser implements Mutable {
         } catch (SqlException | CairoException e) {
             return false;
         } finally {
-            Misc.free(loBound);
+            // Only reached with a non-null bound when pruning was declined (the adopted path nulls
+            // them out above). A declined scalar sub-query bound is about to be generated again by
+            // the retained residual filter, so hand the compile over instead of discarding it.
+            parkDeclinedScalarBound(loBound, loBoundNode);
             if (hiBound != loBound) {
-                Misc.free(hiBound);
+                parkDeclinedScalarBound(hiBound, hiBoundNode);
             }
             Misc.free(head);
         }
@@ -3154,6 +3175,42 @@ public final class WhereClauseParser implements Mutable {
         }
     }
 
+    /**
+     * Hands a declined scalar sub-query bound to the residual filter that is about to compile the
+     * same sub-query node, instead of freeing a factory only to generate an identical one. Anything
+     * that is not a scalar sub-query bound, or has no QUERY node to key on, is freed as before.
+     * <p>
+     * The slot is owned by this parser and released by {@link #freeScalarBoundCompileCaches()} when
+     * the enclosing generation finishes, so a bound that is never consumed - a predicate optimized
+     * away, or a generation that threw - cannot leak an open factory.
+     */
+    private void parkDeclinedScalarBound(Function bound, ExpressionNode boundNode) {
+        if (bound == null) {
+            return;
+        }
+        Function compiled = bound;
+        if (bound instanceof ScalarSubQueryTimestampFunction ssf) {
+            // Park the wrapped sub-query, not the timestamp-bound wrapper: the residual expects the
+            // same cursor function a fresh generation would produce.
+            compiled = ssf.releaseCursorFunction();
+            Misc.free(ssf);
+        }
+        if (compiled == null) {
+            return;
+        }
+        if (boundNode == null || boundNode.type != ExpressionNode.QUERY) {
+            Misc.free(compiled);
+            return;
+        }
+        ScalarSubQueryCompileCache cache = boundNode.scalarBoundCompileCache;
+        if (cache == null) {
+            cache = new ScalarSubQueryCompileCache();
+            boundNode.scalarBoundCompileCache = cache;
+            scalarBoundCompileCaches.add(cache);
+        }
+        cache.put(compiled);
+    }
+
     private void processArgument(
             ExpressionNode inArg,
             RecordMetadata metadata,
@@ -3476,7 +3533,9 @@ public final class WhereClauseParser implements Mutable {
                 }
                 return BOUND_FAIL;
             } finally {
-                Misc.free(owner);
+                // owner is still the raw sub-query cursor function here - it is nulled once wrapped
+                // and adopted - so it is exactly what the residual would otherwise re-generate.
+                parkDeclinedScalarBound(owner, boundNode);
             }
         }
         if (isFunc(boundNode)) {

@@ -55,10 +55,10 @@ public class ScalarSubqueryBoundNestingDepthTest extends AbstractCairoTest {
     }
 
     private void createTable() throws Exception {
-        execute("CREATE TABLE t (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-        execute("INSERT INTO t VALUES (1, '2020-06-01T00:00:00.000000Z')," +
-                " (2, '2020-06-02T00:00:00.000000Z')," +
-                " (3, '2020-06-03T00:00:00.000000Z')");
+        execute("CREATE TABLE t (i INT, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO t VALUES (1, '2020-06-01T00:00:00.000000Z', '2020-06-01T00:00:00.000000Z')," +
+                " (2, '2020-06-02T00:00:00.000000Z', '2020-06-02T00:00:00.000000Z')," +
+                " (3, '2020-06-03T00:00:00.000000Z', '2020-06-03T00:00:00.000000Z')");
     }
 
     /**
@@ -101,6 +101,44 @@ public class ScalarSubqueryBoundNestingDepthTest extends AbstractCairoTest {
                         .timestamp("ts")
                         .returns(expected);
             }
+        });
+    }
+
+    /**
+     * A declined bound hands its compiled sub-query to the residual filter instead of freeing it.
+     * The residual owns and evaluates that function itself - nothing is frozen - so results must be
+     * identical to generating it a second time, and the hand-off must not leak the open factory.
+     * <p>
+     * {@code bounds} carries two rows, so the bound is not a provably stable single-row scan and the
+     * stability gate declines, which is the path that parks the compile. Repeating the query proves
+     * the slot is re-armed per compilation rather than serving a stale factory.
+     */
+    @Test
+    public void testDeclinedBoundReusesCompileWithoutChangingResults() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            execute("CREATE TABLE bounds (lo TIMESTAMP)");
+            execute("INSERT INTO bounds VALUES ('2020-06-02T00:00:00.000000Z')");
+
+            final String expected = "i\tts\n" +
+                    "2\t2020-06-02T00:00:00.000000Z\n" +
+                    "3\t2020-06-03T00:00:00.000000Z\n";
+            // ORDER BY ... LIMIT 1 over a plain table is not a provably stable scan, so the stability
+            // gate declines and the compiled bound is parked for the residual rather than freed
+            final String query = "SELECT i, ts FROM t WHERE dateadd('h', 1, ts) >= " +
+                    "(SELECT lo FROM bounds ORDER BY lo DESC LIMIT 1)";
+
+            // compiled repeatedly: the slot must be re-armed per compilation, never serve a stale factory
+            for (int i = 0; i < 3; i++) {
+                assertQuery(query).timestamp("ts").returns(expected);
+            }
+
+            // same predicate over a non-designated column never takes the monotonic path at all,
+            // so it is an independent oracle for the reused-compile answer
+            assertQuery("SELECT i, ts FROM t WHERE dateadd('h', 1, ts2) >= " +
+                    "(SELECT lo FROM bounds ORDER BY lo DESC LIMIT 1)")
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 

@@ -121,6 +121,7 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.ScalarSubQueryCompileCache;
 import io.questdb.griffin.model.ScalarTimestampBoundHolder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -795,6 +796,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // observe a different commit than the pruning open and drop qualifying rows, so read the
             // pruning bound's single frozen value instead.
             return new ScalarSubQueryBoundRefFunction(scalarBoundHolder);
+        }
+        final ScalarSubQueryCompileCache compileCache = node.scalarBoundCompileCache;
+        if (compileCache != null) {
+            // This sub-query was already compiled as a speculative pruning bound that was then
+            // declined. Nothing froze its value - the bound was not provably stable - so reuse the
+            // compiled function itself and evaluate it here, exactly as a fresh generation would,
+            // instead of generating the identical sub-query a second time. An empty slot (a later
+            // per-worker clone, or a parser that already released it) falls through and compiles.
+            final Function reused = compileCache.take();
+            if (reused != null) {
+                return reused;
+            }
         }
         // Make sure to override timestamp required flag from base query.
         sqlExecutionContext.pushTimestampRequiredFlag(false);

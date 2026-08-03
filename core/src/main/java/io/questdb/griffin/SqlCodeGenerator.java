@@ -902,8 +902,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         failure.addSuppressed(cleanupFailure);
                     }
                 }
+                try {
+                    parser.freeScalarBoundCompileCaches();
+                } catch (Throwable cleanupFailure) {
+                    if (cleanupFailure != failure) {
+                        failure.addSuppressed(cleanupFailure);
+                    }
+                }
             } else {
                 parser.freeBorrowedModels();
+                // A speculative sub-query compile parked for a declined bound is claimed by the
+                // residual filter, which is generated inside the call above. Anything still parked
+                // here was never claimed, so release it rather than hold an open factory.
+                parser.freeScalarBoundCompileCaches();
             }
         }
     }
