@@ -1245,6 +1245,257 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddPostingCoveringIndexWithPendingLazyConversionAcrossParquetRowGroupsWal() throws Exception {
+        // Same pending-lazy-conversion case as the single-row-group test, but with a
+        // tiny Parquet row group size so a 100-row partition spans several row groups.
+        // The converted var-size covered columns (SYMBOL->LONG, INT->VARCHAR,
+        // INT->STRING, VARCHAR->LONG) must have their aux offsets rebased across row
+        // groups via ColumnTypeDriver.shiftCopyAuxVector on the converted buffers, not
+        // on the raw decode buffers.
+        node1.setProperty(io.questdb.PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_lazy_conv_rg (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        c_sym_long SYMBOL,
+                        c_int_vc INT,
+                        c_int_str INT,
+                        c_vc_long VARCHAR,
+                        c_keep DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_lazy_conv_rg
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4),
+                        (x % 5)::STRING,
+                        x::INT,
+                        x::INT,
+                        (x * 10)::VARCHAR,
+                        x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_lazy_conv_rg CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_lazy_conv_rg ALTER COLUMN c_sym_long TYPE LONG");
+            execute("ALTER TABLE t_lazy_conv_rg ALTER COLUMN c_int_vc TYPE VARCHAR");
+            execute("ALTER TABLE t_lazy_conv_rg ALTER COLUMN c_int_str TYPE STRING");
+            execute("ALTER TABLE t_lazy_conv_rg ALTER COLUMN c_vc_long TYPE LONG");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_lazy_conv_rg ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep)");
+            drainWalQueue();
+
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 't_lazy_conv_rg'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("suspended\nfalse\n");
+            assertSqlCursors(
+                    "SELECT ts, c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep FROM t_lazy_conv_rg WHERE sym = 'A0' ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep FROM t_lazy_conv_rg WHERE sym = 'A0' ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexWithPendingLazyConversionAllNullColumnWal() throws Exception {
+        // Every converting covered column is fully NULL across the whole partition, so each
+        // parquet row group decodes to an all-null chunk. This exercises the all-null routing
+        // in accumulateCoveredColumnsFromRowGroup for converting columns: the size-based
+        // detection (srcDataSize == 0 && srcAuxSize == 0) must route SYMBOL->LONG and
+        // VARCHAR->LONG to accumulateAllNullFixedChunk and INT->VARCHAR / INT->STRING to
+        // accumulateAllNullVarSizeChunk instead of into the conversion arms. Tiny row groups
+        // place several all-null row groups back to back, covering the cross-row-group
+        // all-null aux rebase as well.
+        node1.setProperty(io.questdb.PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_lazy_conv_allnull (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        c_sym_long SYMBOL,
+                        c_int_vc INT,
+                        c_int_str INT,
+                        c_vc_long VARCHAR,
+                        c_keep DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_lazy_conv_allnull
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4),
+                        NULL::STRING,
+                        NULL::INT,
+                        NULL::INT,
+                        NULL::VARCHAR,
+                        x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_lazy_conv_allnull CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_lazy_conv_allnull ALTER COLUMN c_sym_long TYPE LONG");
+            execute("ALTER TABLE t_lazy_conv_allnull ALTER COLUMN c_int_vc TYPE VARCHAR");
+            execute("ALTER TABLE t_lazy_conv_allnull ALTER COLUMN c_int_str TYPE STRING");
+            execute("ALTER TABLE t_lazy_conv_allnull ALTER COLUMN c_vc_long TYPE LONG");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_lazy_conv_allnull ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep)");
+            drainWalQueue();
+
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 't_lazy_conv_allnull'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("suspended\nfalse\n");
+            assertSqlCursors(
+                    "SELECT ts, c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep FROM t_lazy_conv_allnull WHERE sym = 'A0' ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep FROM t_lazy_conv_allnull WHERE sym = 'A0' ORDER BY ts"
+            );
+            assertSqlCursors(
+                    "SELECT ts, sym, c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep FROM t_lazy_conv_allnull ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, sym, c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep FROM t_lazy_conv_allnull ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexWithPendingLazyConversionNullsAndVarcharSpillWal() throws Exception {
+        // Stresses the pending-lazy-conversion covered columns on their hardest inputs:
+        // NULLs in every converting column (exercises the null branch of each converter --
+        // writeFixedNull for var/symbol->fixed, the VARCHAR null header and STRING -1
+        // length prefix for fixed->var), and a LONG->VARCHAR column whose values exceed 9
+        // bytes so the converted varchar spills into the data buffer (the inline-only case
+        // never touches accumulateFixedToVarChunk's data append). Tiny row groups add the
+        // cross-row-group aux rebase on top of both.
+        node1.setProperty(io.questdb.PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_lazy_conv_nulls (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        c_sym_long SYMBOL,
+                        c_int_str INT,
+                        c_long_vc LONG,
+                        c_vc_long VARCHAR,
+                        c_keep DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_lazy_conv_nulls
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4),
+                        CASE WHEN x % 9 = 0 THEN NULL ELSE (x % 5)::STRING END,
+                        CASE WHEN x % 7 = 0 THEN NULL ELSE x::INT END,
+                        CASE WHEN x % 6 = 0 THEN NULL ELSE (x * 1_000_000_000)::LONG END,
+                        CASE WHEN x % 8 = 0 THEN NULL ELSE (x * 10)::VARCHAR END,
+                        x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_lazy_conv_nulls CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_lazy_conv_nulls ALTER COLUMN c_sym_long TYPE LONG");
+            execute("ALTER TABLE t_lazy_conv_nulls ALTER COLUMN c_int_str TYPE STRING");
+            execute("ALTER TABLE t_lazy_conv_nulls ALTER COLUMN c_long_vc TYPE VARCHAR");
+            execute("ALTER TABLE t_lazy_conv_nulls ALTER COLUMN c_vc_long TYPE LONG");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_lazy_conv_nulls ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (c_sym_long, c_int_str, c_long_vc, c_vc_long, c_keep)");
+            drainWalQueue();
+
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 't_lazy_conv_nulls'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("suspended\nfalse\n");
+            assertSqlCursors(
+                    "SELECT ts, c_sym_long, c_int_str, c_long_vc, c_vc_long, c_keep FROM t_lazy_conv_nulls WHERE sym = 'A0' ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, c_sym_long, c_int_str, c_long_vc, c_vc_long, c_keep FROM t_lazy_conv_nulls WHERE sym = 'A0' ORDER BY ts"
+            );
+            assertSqlCursors(
+                    "SELECT ts, sym, c_sym_long, c_int_str, c_long_vc, c_vc_long, c_keep FROM t_lazy_conv_nulls ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, sym, c_sym_long, c_int_str, c_long_vc, c_vc_long, c_keep FROM t_lazy_conv_nulls ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexWithPendingLazyConversionParquetWal() throws Exception {
+        // A covered column carries a pending lazy ALTER COLUMN TYPE: the partition was
+        // converted to Parquet while the column had its source type, then the type was
+        // changed without re-encoding Parquet, so the Parquet file still stores the
+        // source type while metadata holds the target type. Building the covering index
+        // must decode each such column in its Parquet-stored type and convert to the
+        // current type, rather than asking the decoder for a type the file does not
+        // contain (which suspended the table). Covers every crossing conversion arm:
+        // SYMBOL->LONG and VARCHAR->LONG (var/symbol->fixed), INT->VARCHAR and
+        // INT->STRING (fixed->var), plus a same-type pass-through (DOUBLE).
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_lazy_conv (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        c_sym_long SYMBOL,
+                        c_int_vc INT,
+                        c_int_str INT,
+                        c_vc_long VARCHAR,
+                        c_keep DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_lazy_conv
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4),
+                        (x % 5)::STRING,
+                        x::INT,
+                        x::INT,
+                        (x * 10)::VARCHAR,
+                        x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_lazy_conv CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_lazy_conv ALTER COLUMN c_sym_long TYPE LONG");
+            execute("ALTER TABLE t_lazy_conv ALTER COLUMN c_int_vc TYPE VARCHAR");
+            execute("ALTER TABLE t_lazy_conv ALTER COLUMN c_int_str TYPE STRING");
+            execute("ALTER TABLE t_lazy_conv ALTER COLUMN c_vc_long TYPE LONG");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_lazy_conv ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep)");
+            drainWalQueue();
+
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 't_lazy_conv'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("suspended\nfalse\n");
+            assertQuery("SELECT indexed FROM table_columns('t_lazy_conv') WHERE \"column\" = 'sym'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("indexed\ntrue\n");
+            // Covering read of the converted covered columns must match the no_covering
+            // base read (the mature lazy-conversion read path) for every row of each key.
+            assertSqlCursors(
+                    "SELECT ts, c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep FROM t_lazy_conv WHERE sym = 'A0' ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep FROM t_lazy_conv WHERE sym = 'A0' ORDER BY ts"
+            );
+            assertSqlCursors(
+                    "SELECT ts, sym, c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep FROM t_lazy_conv ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, sym, c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep FROM t_lazy_conv ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
     public void testAlterAddIndexAuthorizesIndexedColumnOnly() throws Exception {
         // SecurityContext.authorizeAlterTableAddIndex must receive only the indexed
         // column name. Passing covering column names through the same hook would let
@@ -6310,6 +6561,103 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             [0.022965637512889825,null]\t8
                             [0.18769708157331322,null,null]\t10
                             [0.45659895188239796,0.9566236549439661,0.5406709846540508]\t12
+                            """);
+        });
+    }
+
+    @Test
+    public void testCoveringQueryArrayDimLenAndElement() throws Exception {
+        // Reading an array column back whole goes through CoveringRecord.getArray(). Reading only a
+        // dimension or a single element does not: dim_length() and arr[i] take Record's
+        // getArrayDimLen()/getArrayDouble1d2d() defaults, which call getArray() and then dereference
+        // what comes back. A NULL array has to survive that route as a NULL answer rather than an
+        // NPE, which is what pins CoveringRecord on the no-Java-null side of the getArray() contract.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_arr_dim (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (vals, extra),
+                        vals DOUBLE[],
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_arr_dim VALUES
+                    ('2024-01-01T00:00:00', 'A', ARRAY[1.0, 2.0, 3.0], 1),
+                    ('2024-01-01T01:00:00', 'B', ARRAY[9.0], 2),
+                    ('2024-01-01T02:00:00', 'A', NULL, 3),
+                    ('2024-01-01T03:00:00', 'A', ARRAY[4.0, 5.0], 4)
+                    """);
+            engine.releaseAllWriters();
+
+            // Pin the route: read off the covering index, not the table. Both accessors reach
+            // CoveringRecord only from here, and a query that quietly fell back to a frame scan
+            // would still return these rows while covering none of it.
+            assertQuery("SELECT extra, dim_length(vals, 1) len, vals[1] first FROM t_arr_dim WHERE sym = 'A'")
+                    .withPlanContaining("CoveringIndex on: sym with: extra, vals")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            extra\tlen\tfirst
+                            1\t3\t1.0
+                            3\tnull\tnull
+                            4\t2\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testCoveringQueryArrayDimLenAndElementOverUnavailableSidecar() throws Exception {
+        // A sidecar the reader cannot map makes getVarSidecarArray() hand back a Java null for a row
+        // whose array is not null at all. This drives the missing-file guard: ensureSidecarOpen()
+        // returns quietly and leaves the slot at size 0 when the .pc file is not there to be mapped.
+        // The sibling guard reaches the identical reader state from a published zero end offset,
+        // which PostingIndexWriter's in-place reseal window can produce over a sidecar that exists.
+        // CoveringRecord.getArray() has to turn that into a NULL ArrayView: getArrayDimLen() and
+        // getArrayDouble1d2d() dereference whatever getArray() hands them, so a Java null takes the
+        // whole query down.
+        final AtomicBoolean hideSidecar = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ name) {
+                // Arm only after the write side has published the sidecar, so the index is built
+                // normally and only the covered read finds the .pc missing.
+                if (hideSidecar.get() && name != null && Utf8s.containsAscii(name, ".pc0.")) {
+                    return false;
+                }
+                return super.exists(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_arr_sidecar (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (vals, extra),
+                        vals DOUBLE[],
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_arr_sidecar VALUES
+                    ('2024-01-01T00:00:00', 'A', ARRAY[1.0, 2.0, 3.0], 1),
+                    ('2024-01-01T01:00:00', 'A', ARRAY[4.0, 5.0], 2)
+                    """);
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            hideSidecar.set(true);
+            // Every array stored here is non-null, so a null length or element can only have come
+            // from the unmappable sidecar, never from the data.
+            assertQuery("SELECT extra, dim_length(vals, 1) len, vals[1] first FROM t_arr_sidecar WHERE sym = 'A'")
+                    .withPlanContaining("CoveringIndex on: sym with: extra, vals")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            extra\tlen\tfirst
+                            1\tnull\tnull
+                            2\tnull\tnull
                             """);
         });
     }

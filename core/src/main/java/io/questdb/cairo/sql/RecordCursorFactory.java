@@ -42,6 +42,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -136,6 +137,19 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default boolean fragmentedSymbolTables() {
         return false;
+    }
+
+    /**
+     * Returns the atom holding this factory's shared, per-worker execution state, if any.
+     * Parallel factories keep the atom on the factory, so it outlives the cursor and stays
+     * observable after the frame sequence has been awaited. Tests use it to assert that a
+     * reduce phase released everything it acquired.
+     *
+     * @return the atom, or null if the factory drives no parallel execution state
+     */
+    @TestOnly
+    default @Nullable StatefulAtom getAtom() {
+        return null;
     }
 
     /**
@@ -388,6 +402,28 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default boolean supportsPageFrameCursor() {
         return false;
+    }
+
+    /**
+     * Returns true when this factory's page-frame cursor ({@link #getPageFrameCursor})
+     * yields frames whose column page addresses are fully materialized — a raw
+     * page-frame consumer that reads {@code frame.getPageAddress(col)} directly (the
+     * parquet {@code /exp} / {@code COPY} DIRECT_PAGE_FRAME export) sees real data.
+     * <p>
+     * The covering-index single-key scan ({@code sym = 'x'}) instead produces
+     * METADATA-ONLY frames: the covered columns are decoded lazily on the async reduce
+     * workers (via {@code PageFrameMemoryPool#patchCoveredFrameMemory}) and the raw
+     * frame addresses are placeholders, so a direct reader would export all-null
+     * covered columns. Such factories return false, and the parquet exporter routes
+     * them through the row-wise cursor path, which drives the same covered decode the
+     * query path uses. Delegates to the base factory so a wrapper over a metadata-only
+     * scan reports the same.
+     *
+     * @return true if raw page-frame addresses are directly readable
+     */
+    default boolean producesMaterializedPageFrames() {
+        final RecordCursorFactory base = getBaseFactory();
+        return base == null || base.producesMaterializedPageFrames();
     }
 
     /**

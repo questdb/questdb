@@ -817,16 +817,16 @@ public class IODispatcherTest extends AbstractTest {
                 Content-Disposition: attachment; filename="questdb-query-0.csv"\r
                 Keep-Alive: timeout=5, max=10000\r
                 \r
-                01ed\r
+                ed\r
                 "QUERY PLAN"\r
                 "VirtualRecord"\r
-                "&nbsp;&nbsp;functions: [1]"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;limit: 1"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PageFrame"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x"\r
+                "  functions: [1]"\r
+                "    Async Filter workers: 2"\r
+                "      limit: 1"\r
+                "      filter: (systimestamp()<f and f<0)"\r
+                "        PageFrame"\r
+                "            Row forward scan"\r
+                "            Frame forward scan on: x"\r
                 \r
                 00\r
                 \r
@@ -931,17 +931,17 @@ public class IODispatcherTest extends AbstractTest {
                 Content-Type: application/json; charset=utf-8\r
                 Keep-Alive: timeout=5, max=10000\r
                 \r
-                0288\r
+                0188\r
                 {"query":"explain select 1 from x where f>systimestamp() and f<0 limit 1","columns":[{"name":"QUERY PLAN","type":"STRING"}],\
                 "timestamp":-1,"dataset":\
                 [["VirtualRecord"],\
-                ["&nbsp;&nbsp;functions: [1]"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;limit: 1"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PageFrame"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x"]],\
+                ["  functions: [1]"],\
+                ["    Async Filter workers: 2"],\
+                ["      limit: 1"],\
+                ["      filter: (systimestamp()<f and f<0)"],\
+                ["        PageFrame"],\
+                ["            Row forward scan"],\
+                ["            Frame forward scan on: x"]],\
                 "count":8}\r
                 00\r
                 \r
@@ -4032,6 +4032,35 @@ public class IODispatcherTest extends AbstractTest {
                 00\r
                 \r
                 """);
+    }
+
+    @Test
+    public void testJsonQueryPivotProtectedColumnNames() throws Exception {
+        // Pivot values the compiler wraps in protective quotes internally - operator tokens
+        // ('in', 'and') and dotted names ('FNCL 2.5', the exact shape reported in #6471) - must
+        // surface clean column names in the JSON /exec response the web console renders, with no
+        // embedded double quotes (regression - the quotes used to leak into the headers).
+        getSimpleTester().run((_, _) -> {
+            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "create table data (grp int, cat string, val int)");
+            testHttpClient.assertGet("{\"dml\":\"OK\"}", "insert into data values (1,'in',10),(1,'and',20),(2,'in',30),(2,'and',40)");
+            testHttpClient.assertGet(
+                    "{\"query\":\"data PIVOT (sum(val) FOR cat IN ('in','and') GROUP BY grp) ORDER BY grp\"," +
+                            "\"columns\":[{\"name\":\"grp\",\"type\":\"INT\"},{\"name\":\"in\",\"type\":\"LONG\"},{\"name\":\"and\",\"type\":\"LONG\"}]," +
+                            "\"timestamp\":-1,\"dataset\":[[1,10,20],[2,30,40]],\"count\":2}",
+                    "data PIVOT (sum(val) FOR cat IN ('in','and') GROUP BY grp) ORDER BY grp"
+            );
+
+            // Dotted pivot values are quote-protected to keep the optimiser from splitting them at the
+            // dot; the JSON headers must be the clean 'FNCL 2.5' / 'FNCL 3.0', not the protective
+            // quotes escaped into the name - the exact #6471 web-console symptom.
+            testHttpClient.assertGet("{\"dml\":\"OK\"}", "insert into data values (1,'FNCL 2.5',10),(1,'FNCL 3.0',20),(2,'FNCL 2.5',30),(2,'FNCL 3.0',40)");
+            testHttpClient.assertGet(
+                    "{\"query\":\"data PIVOT (sum(val) FOR cat IN ('FNCL 2.5','FNCL 3.0') GROUP BY grp) ORDER BY grp\"," +
+                            "\"columns\":[{\"name\":\"grp\",\"type\":\"INT\"},{\"name\":\"FNCL 2.5\",\"type\":\"LONG\"},{\"name\":\"FNCL 3.0\",\"type\":\"LONG\"}]," +
+                            "\"timestamp\":-1,\"dataset\":[[1,10,20],[2,30,40]],\"count\":2}",
+                    "data PIVOT (sum(val) FOR cat IN ('FNCL 2.5','FNCL 3.0') GROUP BY grp) ORDER BY grp"
+            );
+        });
     }
 
     @Test

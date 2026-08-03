@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
@@ -57,14 +58,14 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final GroupByRecordCursor cursor;
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final ObjList<Function> keyFunctions;
+    private RecordCursorFactory base;
+    private GroupByRecordCursor cursor;
+    private ObjList<GroupByFunction> groupByFunctions;
+    private ObjList<Function> keyFunctions;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
-    private final ObjList<Function> recordFunctions;
-    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
+    private ObjList<Function> recordFunctions;
+    private @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private ObjList<GroupBySharedCursor> sharedCursors;
 
     public GroupByRecordCursorFactory(
@@ -92,17 +93,27 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.cursor = new GroupByRecordCursor(configuration, recordFunctions, groupByFunctions, updater, keyTypes, valueTypes);
         } catch (Throwable e) {
-            close();
+            Misc.free(this, e);
             throw e;
         }
     }
 
     public static void freeSharedRecordFunctions(@Nullable ObjList<ObjList<Function>> sharedRecordFunctions) {
+        CairoException.rethrowCleanupFailure(freeSharedRecordFunctionsBestEffort(null, sharedRecordFunctions));
+    }
+
+    public static Throwable freeSharedRecordFunctionsBestEffort(
+            Throwable cleanupFailure,
+            @Nullable ObjList<ObjList<Function>> sharedRecordFunctions
+    ) {
         if (sharedRecordFunctions != null) {
             for (int i = 0, n = sharedRecordFunctions.size(); i < n; i++) {
-                Misc.freeObjListAndClear(sharedRecordFunctions.getQuick(i));
+                final ObjList<Function> functions = sharedRecordFunctions.getQuick(i);
+                sharedRecordFunctions.setQuick(i, null);
+                cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, functions);
             }
         }
+        return cleanupFailure;
     }
 
     public static ObjList<String> getKeys(ObjList<Function> recordFunctions, RecordMetadata metadata) {
@@ -197,13 +208,28 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
-        Misc.freeObjList(keyFunctions);
-        freeSharedRecordFunctions(sharedRecordFunctions);
-        Misc.free(base);
-        Misc.free(cursor);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final GroupByRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        this.groupByFunctions = null; // groupByFunctions are included in recordFunctions
+        final ObjList<Function> keyFunctions = this.keyFunctions;
+        this.keyFunctions = null;
+        final ObjList<Function> recordFunctions = this.recordFunctions;
+        this.recordFunctions = null;
+        final ObjList<GroupBySharedCursor> sharedCursors = this.sharedCursors;
+        this.sharedCursors = null;
+        final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
+        this.sharedRecordFunctions = null;
+
+        Throwable cleanupFailure = Misc.freeObjListBestEffort(null, recordFunctions);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, keyFunctions);
+        cleanupFailure = freeSharedRecordFunctionsBestEffort(cleanupFailure, sharedRecordFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, base);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     private static class GroupBySharedCursor extends AbstractVirtualFunctionRecordCursor {

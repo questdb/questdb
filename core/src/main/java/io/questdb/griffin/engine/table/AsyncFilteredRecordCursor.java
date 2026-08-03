@@ -48,7 +48,7 @@ import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class AsyncFilteredRecordCursor implements RecordCursor {
+class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.RecordFreer, RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
     private final int defaultDispatchLimit;
     private final Function filter;
@@ -80,7 +80,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         PageFrameMemoryPool frameMemoryPool = null;
         try {
             record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-            frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
+            frameMemoryPool = new PageFrameMemoryPool(configuration);
         } catch (Throwable th) {
             Misc.free(record);
             Misc.free(frameMemoryPool);
@@ -97,7 +97,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         if (frameIndex == -1) {
             fetchNextFrame(dispatchLimit, true);
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         }
 
         if (rowsRemaining < 1) {
@@ -140,7 +140,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 throwTimeoutException();
             }
 
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         }
     }
 
@@ -176,6 +176,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         dispatchLimit = defaultDispatchLimit;
     }
 
+    @Override
     public void freeRecords() {
         Misc.free(record);
         Misc.free(recordB);

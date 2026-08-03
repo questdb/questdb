@@ -505,8 +505,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 rowCount = txReader.getTransientRowCount();
             }
 
-            long parquetSize = txReader.getPartitionParquetFileSize(i);
-
             if (i > 0) {
                 sink.put(",");
             }
@@ -519,7 +517,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
 
             if (txReader.isPartitionParquet(i)) {
-                sink.put(", parquetSize: ").put(parquetSize);
+                sink.put(", parquetSize: ").put(txReader.getPartitionParquetFileSize(i));
             }
             if (txReader.isPartitionReadOnly(i)) {
                 sink.put(", readOnly=true");
