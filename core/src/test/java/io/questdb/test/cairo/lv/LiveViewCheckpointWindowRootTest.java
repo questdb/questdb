@@ -404,11 +404,11 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
 
                 final LiveViewInstance instance = instance();
                 try (
-                    LiveViewCheckpointMetaStore store = openStore(instance);
-                    Path checkpointsDir = checkpointsDir(instance);
-                    LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(configuration);
-                    LiveViewCheckpointPartitionMapReader partitions =
-                            new LiveViewCheckpointPartitionMapReader(configuration)
+                        LiveViewCheckpointMetaStore store = openStore(instance);
+                        Path checkpointsDir = checkpointsDir(instance);
+                        LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(configuration);
+                        LiveViewCheckpointPartitionMapReader partitions =
+                                new LiveViewCheckpointPartitionMapReader(configuration)
                 ) {
                     Assert.assertEquals(
                             "an all-inline seal writes no data page and commits no data segment",
