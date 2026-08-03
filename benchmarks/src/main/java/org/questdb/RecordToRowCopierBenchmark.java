@@ -519,6 +519,10 @@ public class RecordToRowCopierBenchmark {
         }
 
         @Override
+        public void putDecimalVarchar(int columnIndex, Utf8Sequence decimalValue) {
+        }
+
+        @Override
         public void putDouble(int columnIndex, double value) {
         }
 
