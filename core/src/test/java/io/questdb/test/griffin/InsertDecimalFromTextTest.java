@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -34,7 +35,7 @@ import java.util.Arrays;
 import java.util.Collection;
 
 /**
- * Inserts into decimal columns from CHAR and VARCHAR sources, against every record-to-row copier
+ * Inserts into decimal columns from CHAR, STRING and VARCHAR sources, against every record-to-row copier
  * implementation. The narrow table stays under the bytecode method size limit, the wide one exceeds it
  * and falls back to the chunked or the looping copier depending on configuration.
  */
@@ -64,6 +65,27 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCharBindVariableIntoDecimal() throws Exception {
+        // a runtime constant is not folded at compile time, so the value crosses the copier
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE dst (d DECIMAL(10,2))");
+            bindVariableService.clear();
+            bindVariableService.define(0, ColumnType.CHAR, 0);
+
+            bindVariableService.setChar(0, '7');
+            execute("INSERT INTO dst VALUES ($1)");
+
+            bindVariableService.setChar(0, 'z');
+            assertExceptionNoLeakCheck("INSERT INTO dst VALUES ($1)", 24, "inconvertible value: `z` [STRING -> DECIMAL(10,2)]");
+
+            assertQuery("SELECT d FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("d\n7.00\n");
+        });
+    }
+
+    @Test
     public void testCharColumnIntoDecimal() throws Exception {
         // rejected at compile time, so the copier flavour is irrelevant here
         assertMemoryLeak(() -> {
@@ -77,11 +99,65 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
 
     @Test
     public void testCharLiteralIntoDecimal() throws Exception {
+        // a one-character quoted literal types as CHAR, a longer one as VARCHAR
         assertMemoryLeak(() -> {
-            execute("create table dst (d decimal(10,2))");
+            execute("CREATE TABLE dst (small DECIMAL(2,1), mid DECIMAL(18,4), big DECIMAL(38,10))");
 
-            assertExceptionNoLeakCheck("insert into dst values ('a')", 24, "inconvertible types: CHAR ->");
-            assertExceptionNoLeakCheck("insert into dst values ('5')", 24, "inconvertible types: CHAR ->");
+            execute("""
+                    INSERT INTO dst VALUES
+                    ('5', '7', '9'),
+                    ('0', '0', '0'),
+                    (NULL, NULL, NULL)""");
+
+            assertQuery("SELECT * FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            small\tmid\tbig
+                            5.0\t7.0000\t9.0000000000
+                            0.0\t0.0000\t0.0000000000
+                            \t\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testCharLiteralIntoDecimalNonNumeric() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE dst (d DECIMAL(10,2))");
+
+            assertExceptionNoLeakCheck("INSERT INTO dst VALUES ('a')", 24, "inconvertible value: `a` [STRING -> DECIMAL(10,2)]");
+            assertExceptionNoLeakCheck("INSERT INTO dst VALUES ('-')", 24, "inconvertible value: `-` [STRING -> DECIMAL(10,2)]");
+            assertExceptionNoLeakCheck("INSERT INTO dst VALUES ('.')", 24, "inconvertible value: `.` [STRING -> DECIMAL(10,2)]");
+            assertExceptionNoLeakCheck("INSERT INTO dst VALUES (' ')", 24, "inconvertible value: ` ` [STRING -> DECIMAL(10,2)]");
+
+            assertQuery("SELECT d FROM dst").noLeakCheck().expectSize().returns("d\n");
+        });
+    }
+
+    @Test
+    public void testCharLiteralIntoDecimalOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE dst (d DECIMAL(1,1))");
+
+            assertExceptionNoLeakCheck("INSERT INTO dst VALUES ('5')", 24, "inconvertible value: `5` [STRING -> DECIMAL(1,1)]");
+            execute("INSERT INTO dst VALUES ('0')");
+
+            assertQuery("SELECT d FROM dst").noLeakCheck().expectSize().returns("d\n0.0\n");
+        });
+    }
+
+    @Test
+    public void testStringIntoDecimalNonNumeric() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("string", "decimal(10,2)");
+            insertRow("'abc'");
+
+            assertExceptionNoLeakCheck(
+                    "insert into dst select * from src",
+                    -1,
+                    "inconvertible value: `abc` [STRING -> DECIMAL(10,2)]"
+            );
         });
     }
 
@@ -108,12 +184,39 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarcharIntoDecimalNonAscii() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("varchar", "decimal(10,2)");
+
+            // fullwidth digits are not decimal digits, and the message must show them undamaged
+            insertRow("'１２３'");
+            assertExceptionNoLeakCheck(
+                    "insert into dst select * from src",
+                    -1,
+                    "inconvertible value: `１２３` [VARCHAR -> DECIMAL(10,2)]"
+            );
+
+            execute("truncate table src");
+            insertRow("'12.3€'");
+            assertExceptionNoLeakCheck(
+                    "insert into dst select * from src",
+                    -1,
+                    "inconvertible value: `12.3€` [VARCHAR -> DECIMAL(10,2)]"
+            );
+        });
+    }
+
+    @Test
     public void testVarcharIntoDecimalNonNumeric() throws Exception {
         assertMemoryLeak(() -> {
             createTables("varchar", "decimal(10,2)");
             insertRow("'abc'");
 
-            assertExceptionNoLeakCheck("insert into dst select * from src", -1, "inconvertible value: `abc`");
+            assertExceptionNoLeakCheck(
+                    "insert into dst select * from src",
+                    -1,
+                    "inconvertible value: `abc` [VARCHAR -> DECIMAL(10,2)]"
+            );
         });
     }
 
@@ -123,7 +226,11 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
             createTables("varchar", "decimal(4,2)");
             insertRow("'12345.67'");
 
-            assertExceptionNoLeakCheck("insert into dst select * from src", -1, "inconvertible value: `12345.67`");
+            assertExceptionNoLeakCheck(
+                    "insert into dst select * from src",
+                    -1,
+                    "inconvertible value: `12345.67` [VARCHAR -> DECIMAL(4,2)]"
+            );
         });
     }
 

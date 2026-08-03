@@ -360,6 +360,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBranchTypeMismatchCharAgainstDecimalKey() throws Exception {
+        // CHAR carries no decimal digits, so no CHAR -> DECIMAL conversion exists and the
+        // branch key is rejected at compile time.
+        assertQuery("SELECT CASE d WHEN 'a' THEN 1 ELSE 2 END FROM test")
+                .ddl("CREATE TABLE test (d DECIMAL(10,2))")
+                .fails(19, "type mismatch [expected=DECIMAL(10,2), actual=CHAR]");
+    }
+
+    @Test
     public void testByteOrElse() throws Exception {
         assertQuery("""
                 select\s

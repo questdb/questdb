@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -93,8 +97,65 @@ public class DecimalFullScaleTest extends AbstractCairoTest {
                     "decimal '1.5' requires precision of 4 but is limited to 3"
             );
             assertExceptionNoLeakCheck("select cast('1.0' as decimal(1,1))", -1, "inconvertible value: `1.0`");
+            assertExceptionNoLeakCheck("insert into t values ('10')", -1, "inconvertible value: `10`");
+            assertExceptionNoLeakCheck("insert into t values ('0.0001')", -1, "inconvertible value: `0.0001`");
 
             assertQuery("select a from t").noLeakCheck().expectSize().returns("a\n");
+        });
+    }
+
+    @Test
+    public void testZeroTextBoundToFullScaleVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DECIMAL(3,3))");
+            bindVariableService.define(0, ColumnType.getDecimalType(3, 3), 0);
+
+            bindVariableService.setStr(0, "0");
+            execute("INSERT INTO t VALUES ($1)");
+            bindVariableService.setStr(0, "-0");
+            execute("INSERT INTO t VALUES ($1)");
+            bindVariableService.setStr(0, "0.125");
+            execute("INSERT INTO t VALUES ($1)");
+            bindVariableService.setStr(0, null);
+            execute("INSERT INTO t VALUES ($1)");
+
+            assertQuery("SELECT a FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\n0.000\n0.000\n0.125\n\n");
+
+            try {
+                bindVariableService.setStr(0, "1.5");
+                Assert.fail("expected '1.5' to be rejected");
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `1.5` [STRING -> DECIMAL(3,3)]");
+            }
+        });
+    }
+
+    @Test
+    public void testZeroTextCastsToEveryWidth() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                """
+                        SELECT '0'::varchar::decimal(3,3) a,
+                               '0.0'::varchar::decimal(3,3) b,
+                               '-0'::varchar::decimal(3,3) c,
+                               '0'::decimal(1,1) d,
+                               '0'::decimal(38,38) e,
+                               '0'::decimal(76,76) f"""
+        )
+                .noLeakCheck()
+                .expectSize()
+                .returns("a\tb\tc\td\te\tf\n0.000\t0.000\t0.000\t0.0\t0." + "0".repeat(38) + "\t0." + "0".repeat(76) + "\n"));
+    }
+
+    @Test
+    public void testZeroTextHoldsAtEveryWidth() throws Exception {
+        assertMemoryLeak(() -> {
+            assertZeroRoundTrip(1);
+            assertZeroRoundTrip(3);
+            assertZeroRoundTrip(38);
+            assertZeroRoundTrip(76);
         });
     }
 
@@ -114,5 +175,22 @@ public class DecimalFullScaleTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("a\n" + value + "\n" + value + "\n-" + value + "\n" + value + "\n" + value + "\n");
         execute("drop table t");
+    }
+
+    private void assertZeroRoundTrip(int precision) throws Exception {
+        final String type = "decimal(" + precision + "," + precision + ")";
+        final String zero = "0." + "0".repeat(precision);
+        execute("CREATE TABLE t (a " + type + ")");
+        // every text spelling of zero reaches the column through the parser
+        execute("INSERT INTO t VALUES ('0'::varchar), ('-0'), ('0.0'), ('0.'), ('.0'), ('000'), ('0e5')");
+        execute("INSERT INTO t VALUES ('0'::varchar::" + type + ")");
+        execute("INSERT INTO t VALUES ('0'::" + type + ")");
+        execute("INSERT INTO t VALUES (0m), (0)");
+
+        assertQuery("SELECT a FROM t")
+                .noLeakCheck()
+                .expectSize()
+                .returns("a\n" + (zero + "\n").repeat(11));
+        execute("DROP TABLE t");
     }
 }
