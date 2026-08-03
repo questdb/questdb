@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
@@ -101,6 +102,59 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         Assert.assertEquals(1, plan.getProjectionCount());
                         Assert.assertEquals(1, plan.getResidualFunctions().size());
                         Assert.assertEquals(ANCHOR_BYTES + SUM_STATE_BYTES, plan.getTotalInlineStateBytes());
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testASecondFusedGroupIsUnreachableFromTheLiveViewSyntax() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // A fused group needs a partitioned window over an unbounded frame whose
+            // per-partition state an anchor resets. Every route to a second one is
+            // closed at CREATE, which is why there is one window-state root and not a
+            // root per window group.
+            //
+            // Route 1: a second anchored named WINDOW. The runtime dispatches
+            // resetPartition through one LiveViewWindow, so the parser admits one.
+            assertCreateRejected(
+                    "select ts, sym, sum(x) over w1 as s1, sum(y) over w2 as s2 from base "
+                            + "window w1 as (partition by sym order by ts anchor daily '00:00'), "
+                            + "       w2 as (partition by sym order by ts anchor daily '06:00')",
+                    "at most one anchored WINDOW"
+            );
+            // Route 2: an inline OVER (...) carrying its own ANCHOR. It parses, but the
+            // persisted anchor spec is captured from named WINDOW clauses alone, so the
+            // reset would never dispatch.
+            assertCreateRejected(
+                    "select ts, sym, sum(x) over w as s, "
+                            + "sum(y) over (partition by sym order by ts anchor daily '06:00') as s2 "
+                            + "from base window w as (partition by sym order by ts anchor daily '00:00')",
+                    "ANCHOR is only supported on named WINDOW clauses"
+            );
+            // Route 3: a second window over the same unbounded frame but with no anchor
+            // at all. Its per-partition state has no finite influence bound and grows
+            // with the key count, so CREATE turns it away before fusion is a question.
+            assertCreateRejected(
+                    "select ts, sym, sum(x) over w as s, sum(y) over w2 as s2 from base "
+                            + "window w as (partition by sym order by ts anchor daily '00:00'), "
+                            + "       w2 as (partition by sym order by ts)",
+                    "must have an ANCHOR clause"
+            );
+            // What a second named WINDOW may be is a bounded one, and a bounded frame
+            // keeps sliding across bucket crossings rather than resetting with the
+            // anchor. It compiles, stays out of the group, and keeps the legacy root it
+            // has - one fused group beside one residual, not two groups.
+            assertPlan(
+                    "select ts, sym, sum(x) over w as s, sum(y) over w2 as b from base "
+                            + "window w as (partition by sym order by ts anchor daily '00:00'), "
+                            + "       w2 as (partition by sym order by ts rows between 3 preceding and current row)",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(1, plan.getProjectionCount());
+                        Assert.assertEquals(1, plan.getResidualFunctions().size());
                     }
             );
         });
@@ -928,6 +982,20 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         );
         Assert.assertNotNull(component);
         return component;
+    }
+
+    /**
+     * Asserts that {@code CREATE LIVE VIEW} over {@code select} fails with a message
+     * containing {@code expectedMessage}. Used where the shape a case is about never
+     * reaches a compiled plan at all, because the grammar closed it first.
+     */
+    private static void assertCreateRejected(String select, String expectedMessage) throws Exception {
+        try {
+            execute("create live view lv_rejected flush every 1s start from now as " + select);
+            Assert.fail("expected reject: " + expectedMessage);
+        } catch (SqlException e) {
+            Assert.assertTrue(e.getMessage(), e.getMessage().contains(expectedMessage));
+        }
     }
 
     /**
