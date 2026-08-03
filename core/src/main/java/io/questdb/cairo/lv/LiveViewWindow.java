@@ -1805,8 +1805,42 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * Whether the partition key of the entry {@code record} is positioned on is present,
+     * which for a guarded {@code count(k)} is exactly whether that call counts its
+     * partition's rows or none of them.
+     * <p>
+     * The key rather than the argument, because this walk has no base row to evaluate the
+     * argument against. The two agree by construction: the compiler admits the guarded
+     * form only for a SYMBOL or VARCHAR argument, whose {@code count} contributes on a
+     * plain null test, and a SYMBOL partition column reaches the map as its resolved
+     * STRING - null for the null symbol. That agreement is what the type check below
+     * holds the two sides to; anything else means they have drifted apart, and reading
+     * some other type's null sentinel would silently answer for a different set of rows.
+     */
+    private boolean isPartitionKeyPresent(@NotNull MapRecord record) {
+        final int keyIndex = activeKeyStartIndex;
+        switch (ColumnType.tagOf(partitionKeyTypes.getColumnType(0))) {
+            case ColumnType.STRING:
+                return record.getStrA(keyIndex) != null;
+            case ColumnType.VARCHAR:
+                return record.getVarcharA(keyIndex) != null;
+            default:
+                throw CairoException.critical(0)
+                        .put("live view window state cannot test a partition key of this type [type=")
+                        .put(ColumnType.nameOf(partitionKeyTypes.getColumnType(0))).put(']');
+        }
+    }
+
+    /**
      * Writes one projection's own accumulator back into the private map its function
      * owns outside a fused group, taking it from {@code fusedValue}'s slots.
+     * <p>
+     * A {@link LiveViewAccumulatorProjection#isPartitionKeyGuarded() guarded} count is
+     * the one projection whose own state is not the slots it reads: it emits
+     * {@code partition-key-is-null ? 0 : rowCount}, so copying the row count into its map
+     * would leave the NULL-key partition counting rows it never counted. The guard is
+     * applied here from the entry's own key, which is where that key is available - the
+     * function reads it off a base row and this walk has none.
      */
     private void lowerProjectionInto(
             @NotNull LiveViewWindowStatePlan plan,
@@ -1823,12 +1857,21 @@ public class LiveViewWindow implements QuietCloseable {
         final MapKey key = map.withKey();
         key.put(fusedRecord, fusedKeySink);
         final MapValue value = key.createValue();
-        projection.getFunctionComponent().copyState(
-                fusedValue,
-                projection.getFunctionSlotBase(),
-                value,
-                0
-        );
+        if (projection.isPartitionKeyGuarded()) {
+            value.putLong(
+                    0,
+                    isPartitionKeyPresent(fusedRecord)
+                            ? fusedValue.getLong(projection.getNonNullCountSlot())
+                            : 0L
+            );
+        } else {
+            projection.getFunctionComponent().copyState(
+                    fusedValue,
+                    projection.getFunctionSlotBase(),
+                    value,
+                    0
+            );
+        }
         final int tombstoneIndex = function.getTombstoneValueIndex();
         if (tombstoneIndex >= 0) {
             value.putByte(tombstoneIndex, (byte) 0);
@@ -2035,7 +2078,7 @@ public class LiveViewWindow implements QuietCloseable {
             plan.getContributor(c).accumulateWindowState(record, value);
         }
         for (int p = 0, n = plan.getProjectionCount(); p < n; p++) {
-            plan.getProjectionFunction(p).projectWindowState(value);
+            plan.getProjectionFunction(p).projectWindowState(record, value);
         }
     }
 

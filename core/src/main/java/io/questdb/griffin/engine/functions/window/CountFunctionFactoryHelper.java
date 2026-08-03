@@ -1523,6 +1523,12 @@ public class CountFunctionFactoryHelper {
         private final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         private long count;
+        // True while the plan bound this call onto a row-count component, which happens
+        // only for a count over the window's own partition key. It changes what the bound
+        // slot means: every row rather than the argument's non-null ones, corrected at
+        // projection time by the test on the key. Installed by bindWindowStateSlots and
+        // cleared the same way, both on the refresh worker.
+        private boolean isWindowStatePartitionKeyGuarded;
         // Single-writer (refresh worker), not volatile.
 
         public CountOverUnboundedPartitionRowsFrameFunction(
@@ -1561,11 +1567,26 @@ public class CountFunctionFactoryHelper {
             return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
+        /**
+         * Absorbs the row into the counter the plan bound, which is not always this call's
+         * own: a {@code count(k)} over the window's own partition key reads a row count,
+         * and a row count admits every row whatever the argument says. The plan never
+         * makes such a projection its component's contributor - an unguarded reading of
+         * the same row count always outranks it - so this arm exists to keep the two
+         * readings of {@code windowStateNonNullCountSlot} consistent rather than because
+         * it is reached.
+         */
         @Override
         public void accumulateWindowState(Record record, MapValue value) {
-            if (isRecordNotNull.isNotNull(arg, record)) {
+            if (isWindowStatePartitionKeyGuarded || isRecordNotNull.isNotNull(arg, record)) {
                 value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
             }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable LiveViewAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.isWindowStatePartitionKeyGuarded = projection != null && projection.isPartitionKeyGuarded();
         }
 
         @Override
@@ -1612,10 +1633,18 @@ public class CountFunctionFactoryHelper {
          * while the plan did not fold it onto a wider one: a {@code count(x)} beside a
          * {@code sum(x)} projects the counter inside that sum's accumulator, and the slot
          * the plan bound is what says which.
+         * <p>
+         * A {@code count(k)} over the window's own partition key reads a slot that counts
+         * every row instead, and corrects it here. The key is constant across a partition,
+         * so the test on the current row answers for the whole of it: present, and the
+         * partition's row count is its count; absent, and its count is zero however many
+         * rows the partition has.
          */
         @Override
-        public void projectWindowState(MapValue value) {
-            count = value.getLong(windowStateNonNullCountSlot);
+        public void projectWindowState(Record record, MapValue value) {
+            count = isWindowStatePartitionKeyGuarded && !isRecordNotNull.isNotNull(arg, record)
+                    ? 0
+                    : value.getLong(windowStateNonNullCountSlot);
         }
 
         @Override

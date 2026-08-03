@@ -1592,7 +1592,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
          * here rather than in the state.
          */
         @Override
-        public void projectWindowState(MapValue value) {
+        public void projectWindowState(Record record, MapValue value) {
             stddev = computeResultWelford(
                     value.getDouble(windowStateM2Slot),
                     value.getLong(windowStateNonNullCountSlot),

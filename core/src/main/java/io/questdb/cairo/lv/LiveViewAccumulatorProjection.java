@@ -47,6 +47,14 @@ import org.jetbrains.annotations.NotNull;
  * {@link #getFunctionStateLength()} are that slice, and are what a restore hands the
  * function rather than the component's own bounds.
  * <p>
+ * <h2>Guarded projections</h2>
+ * One projection does not read its component's fields at all but corrects them with a
+ * per-row test: a {@code count(k)} over the column its own window partitions by emits
+ * {@code partition-key-is-null ? 0 : rowCount}, so it shares the row-count component
+ * {@code count(*)} keeps instead of persisting a counter of its own.
+ * {@link #isPartitionKeyGuarded()} is what marks it, and it is the one projection kind
+ * whose value is not a function of the state alone.
+ * <p>
  * <b>A projection is not checkpoint-stateless.</b> A derived {@code avg} or
  * {@code count} still depends on every row its component has absorbed, so it keeps
  * its real {@link LiveViewCheckpointDependency} for repair planning even when it owns
@@ -65,6 +73,22 @@ public final class LiveViewAccumulatorProjection {
      * count are the same number.
      */
     public static final int PROJECTION_COUNT = 2;
+    /**
+     * {@code partition-key-is-null ? 0 : rowCount} - what a {@code count(k)} emits when
+     * {@code k} is the window's own partition key.
+     * <p>
+     * Every row of a partition carries the same {@code k}, so the counter such a call
+     * keeps is the partition's row count wherever {@code k} is present and zero where it
+     * is not. That makes it a reading of a {@link LiveViewAccumulatorDescriptor#FAMILY_ROW_COUNT}
+     * component rather than a component of its own - the same component {@code count(*)}
+     * and {@code row_number()} maintain - with the guard supplied per row from the
+     * argument rather than from the state.
+     * <p>
+     * The guard is what keeps it out of {@link #PROJECTION_COUNT}: the NULL-key partition
+     * exists and its {@code count(k)} is zero there while its row count is not, so an
+     * unguarded reading of the same slot would be wrong for exactly one partition.
+     */
+    public static final int PROJECTION_COUNT_PARTITION_KEY = 8;
     /**
      * The default: this output reads no shared accumulator.
      */
@@ -191,6 +215,12 @@ public final class LiveViewAccumulatorProjection {
                         || family == LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD
                         || family == LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT
                         || family == LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT;
+            case PROJECTION_COUNT_PARTITION_KEY:
+                // The row count alone. A guarded reading of a non-null count would be
+                // either a tautology or a contradiction - that counter already applies the
+                // argument's own predicate - so the kind names the one family whose counter
+                // it corrects.
+                return family == LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT;
             case PROJECTION_STDDEV_POP:
             case PROJECTION_STDDEV_SAMP:
             case PROJECTION_VAR_POP:
@@ -333,6 +363,23 @@ public final class LiveViewAccumulatorProjection {
      */
     public boolean isDerived() {
         return isDerived;
+    }
+
+    /**
+     * Whether this output corrects the component's counter with a per-row test on the
+     * partition key rather than reading it straight - a {@code count(k)} over the very
+     * column the window partitions by.
+     * <p>
+     * Such a projection is the one shape whose emitted value is not a function of the
+     * state alone, and two things follow from that. It must never be chosen as its
+     * component's <b>contributor</b>: the counter it would keep on its own is the
+     * partition's {@code count(k)} and the component's is the partition's row count,
+     * and those differ on the NULL-key partition. And a runtime handing the state back
+     * to the function's private map must apply the guard rather than copy the slot,
+     * for the same reason.
+     */
+    public boolean isPartitionKeyGuarded() {
+        return kind == PROJECTION_COUNT_PARTITION_KEY;
     }
 
     private static int absoluteFieldOffset(LiveViewAccumulatorDescriptor component, int componentStateOffset, int field) {

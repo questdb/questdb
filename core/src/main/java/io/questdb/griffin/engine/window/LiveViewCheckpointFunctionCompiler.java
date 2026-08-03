@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.window;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -627,6 +628,13 @@ public final class LiveViewCheckpointFunctionCompiler {
      * column's non-null values, which agree only on data where that column is never
      * null.
      * <p>
+     * One {@code count(x)} nevertheless joins that row count, and it is the case the
+     * window rather than the argument settles: {@code x} being the very column the window
+     * partitions by makes it constant across a partition, so the call reads
+     * {@code partition-key-is-null ? 0 : rowCount}. See
+     * {@link #isCountOverTheWindowsOwnPartitionKey}, which is also where the four
+     * conditions that keep the equality honest are set out.
+     * <p>
      * Sharing is proved from the component identity alone and never from SQL text.
      * {@code sum(x)} and {@code avg(x)} over one window merge because both declare the
      * same {@code (family, argument, contribution predicate, codec)}, and a
@@ -653,13 +661,25 @@ public final class LiveViewCheckpointFunctionCompiler {
         if (anchorableWindowFunctions == null || anchorableWindowFunctions.size() == 0) {
             return null;
         }
+        // Read before a single projection is added, because whether a count over the
+        // partition key may join a row count depends on the group holding an unguarded
+        // reading of that same row count - and the count may precede it in the SELECT
+        // list. Everything else about a projection follows from the function alone.
+        final WindowFunction rowCountHost = rowCountHost(functions, anchorableWindowFunctions);
         final LiveViewWindowStatePlan.Builder builder = new LiveViewWindowStatePlan.Builder();
         for (int i = 0, n = functions.size(); i < n; i++) {
             final Function function = functions.getQuick(i);
             if (!(function instanceof WindowFunction windowFunction)) {
                 continue;
             }
-            if (!addAccumulatorProjection(builder, windowFunction, i, anchorableWindowFunctions, baseMetadata)) {
+            if (!addAccumulatorProjection(
+                    builder,
+                    windowFunction,
+                    i,
+                    anchorableWindowFunctions,
+                    baseMetadata,
+                    rowCountHost
+            )) {
                 builder.addResidual(windowFunction);
             }
         }
@@ -703,38 +723,39 @@ public final class LiveViewCheckpointFunctionCompiler {
             WindowFunction function,
             int outputPosition,
             ObjList<WindowFunction> anchorableWindowFunctions,
-            RecordMetadata baseMetadata
+            RecordMetadata baseMetadata,
+            @Nullable WindowFunction rowCountHost
     ) {
-        if (anchorableWindowFunctions.indexOf(function) < 0) {
+        if (!isFusibleAccumulator(function, anchorableWindowFunctions)) {
             return false;
         }
-        final LiveViewCheckpointDependency dependency = function.checkpointDependency();
-        if (dependency == null
-                || dependency.getKind() != DependencyKind.FIXED_ANCHOR_SEGMENT
-                || !dependency.supportsKeyReset()) {
-            return false;
-        }
-        if (!function.supportsCheckpointState()
-                || function.supportsCheckpointRingState()
-                || function.isCheckpointStateless()) {
-            return false;
-        }
-        if (!LiveViewCheckpointContracts.isInlineableStateLength(function.checkpointStateFixedLength())) {
-            return false;
-        }
-        final int projectionKind = function.checkpointAccumulatorProjection();
+        int projectionKind = function.checkpointAccumulatorProjection();
         if (projectionKind == LiveViewAccumulatorProjection.PROJECTION_NONE) {
             return false;
         }
-        final int family = function.checkpointAccumulatorFamily();
-        final int argumentColumnIndex;
-        final int argumentColumnType;
+        int family = function.checkpointAccumulatorFamily();
+        int argumentColumnIndex;
+        int argumentColumnType;
         if (LiveViewAccumulatorDescriptor.familyTakesArgument(family)) {
             argumentColumnIndex = directColumnIndex(function.checkpointAccumulatorArgument(), baseMetadata);
             if (argumentColumnIndex < 0) {
                 return false;
             }
             argumentColumnType = baseMetadata.getColumnType(argumentColumnIndex);
+            if (isCountOverTheWindowsOwnPartitionKey(
+                    function,
+                    family,
+                    projectionKind,
+                    argumentColumnIndex,
+                    argumentColumnType,
+                    baseMetadata,
+                    rowCountHost
+            )) {
+                family = LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT;
+                projectionKind = LiveViewAccumulatorProjection.PROJECTION_COUNT_PARTITION_KEY;
+                argumentColumnIndex = LiveViewAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX;
+                argumentColumnType = ColumnType.UNDEFINED;
+            }
         } else {
             // A row-count component counts rows and nothing about a column, so its
             // identity has no argument to carry. A function that declares the family and
@@ -1156,10 +1177,138 @@ public final class LiveViewCheckpointFunctionCompiler {
                 && SqlUtil.getColumnIndexQuiet(baseMetadata, orderBy.getQuick(0).token) == timestampIndex;
     }
 
+    /**
+     * Whether {@code function} is a {@code count(k)} whose argument is the single column
+     * its own window partitions by, and whose group already holds an unguarded reading of
+     * the row count it would join.
+     * <p>
+     * Every row of a partition carries the same {@code k}, so such a call's counter is
+     * the partition's row count wherever {@code k} is present and zero where it is not.
+     * That makes it a
+     * {@link LiveViewAccumulatorProjection#PROJECTION_COUNT_PARTITION_KEY guarded reading}
+     * of the {@link LiveViewAccumulatorDescriptor#FAMILY_ROW_COUNT} component
+     * {@code count(*)} and {@code row_number()} maintain, rather than a counter of its
+     * own - which is what takes {@code count(*) + count(k)} from two components to one.
+     * <p>
+     * Four things narrow it, and each closes a way the equality could fail:
+     * <ul>
+     *     <li><b>The argument's contribution predicate is the type's own null test.</b>
+     *     A widened-to-double argument contributes on {@code Numbers.isFinite}, so a
+     *     partition keyed by a DOUBLE {@code +Infinity} would be a present key that the
+     *     count does not count. SYMBOL and VARCHAR are the two types whose predicate is
+     *     exactly "the key is absent";</li>
+     *     <li><b>the partition key is one term and that term is the argument's own
+     *     column</b>, proved through {@link #directColumnIndex} rather than through the
+     *     rendered partition signature - two spellings of one column are still one
+     *     column, and one spelling of two is not;</li>
+     *     <li><b>the encoded key is one column too</b>, so the guard has one value to
+     *     read rather than a tuple whose null-ness is a different question;</li>
+     *     <li><b>the group holds a row-count projection that is not itself guarded.</b>
+     *     That projection is what the component's contributor will be, and it is the
+     *     only kind that maintains a true row count. Without it the component would be
+     *     maintained by the guarded count alone - correct for every output the group has
+     *     today, but a leaf carrying a partition's {@code count(k)} where the manifest
+     *     says row count, which a later recompile adding {@code count(*)} would read
+     *     back at face value under the very same manifest.</li>
+     * </ul>
+     */
+    private static boolean isCountOverTheWindowsOwnPartitionKey(
+            WindowFunction function,
+            int family,
+            int projectionKind,
+            int argumentColumnIndex,
+            int argumentColumnType,
+            RecordMetadata baseMetadata,
+            @Nullable WindowFunction rowCountHost
+    ) {
+        if (family != LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT
+                || projectionKind != LiveViewAccumulatorProjection.PROJECTION_COUNT
+                || rowCountHost == null) {
+            return false;
+        }
+        final int tag = ColumnType.tagOf(argumentColumnType);
+        if (tag != ColumnType.SYMBOL && tag != ColumnType.VARCHAR) {
+            return false;
+        }
+        final ColumnTypes keyColumnTypes = function.getCheckpointKeyColumnTypes();
+        if (keyColumnTypes == null || keyColumnTypes.getColumnCount() != 1) {
+            return false;
+        }
+        final ObjList<? extends Function> partitionBy = function.checkpointPartitionByFunctions();
+        if (partitionBy == null || partitionBy.size() != 1) {
+            return false;
+        }
+        if (directColumnIndex(partitionBy.getQuick(0), baseMetadata) != argumentColumnIndex) {
+            return false;
+        }
+        return isSameWindowGroup(function, rowCountHost);
+    }
+
+    /**
+     * The gates a function passes before any part of its accumulator identity is read.
+     * Shared by the projection walk and by the row-count pre-pass, so the pre-pass cannot
+     * name a host the walk would have declined.
+     */
+    private static boolean isFusibleAccumulator(
+            WindowFunction function,
+            ObjList<WindowFunction> anchorableWindowFunctions
+    ) {
+        if (anchorableWindowFunctions.indexOf(function) < 0) {
+            return false;
+        }
+        final LiveViewCheckpointDependency dependency = function.checkpointDependency();
+        if (dependency == null
+                || dependency.getKind() != DependencyKind.FIXED_ANCHOR_SEGMENT
+                || !dependency.supportsKeyReset()) {
+            return false;
+        }
+        if (!function.supportsCheckpointState()
+                || function.supportsCheckpointRingState()
+                || function.isCheckpointStateless()) {
+            return false;
+        }
+        return LiveViewCheckpointContracts.isInlineableStateLength(function.checkpointStateFixedLength());
+    }
+
     private static boolean isRanking(CharSequence name) {
         return Chars.equalsIgnoreCase(name, "row_number")
                 || Chars.equalsIgnoreCase(name, "rank")
                 || Chars.equalsIgnoreCase(name, "dense_rank");
+    }
+
+    /**
+     * Whether two functions belong to one fused window group: the same named window, the
+     * same partition and order domains, and the same encoded partition-key layout. It is
+     * the test {@code LiveViewWindowStatePlan.Builder} applies when a projection joins,
+     * read here from the two identities directly because the row-count pre-pass runs
+     * before any of them has been offered to the builder.
+     */
+    private static boolean isSameWindowGroup(WindowFunction left, WindowFunction right) {
+        final LiveViewCheckpointFunctionIdentity a = left.checkpointFunctionIdentity();
+        final LiveViewCheckpointFunctionIdentity b = right.checkpointFunctionIdentity();
+        if (a == null || b == null) {
+            return false;
+        }
+        if (!Chars.equals(a.getCanonicalWindowName(), b.getCanonicalWindowName())
+                || !Chars.equals(a.getPartitionSignature(), b.getPartitionSignature())
+                || !Chars.equals(a.getOrderSignature(), b.getOrderSignature())) {
+            return false;
+        }
+        final ColumnTypes leftKey = left.getCheckpointKeyColumnTypes();
+        final ColumnTypes rightKey = right.getCheckpointKeyColumnTypes();
+        if (leftKey == null || rightKey == null) {
+            return false;
+        }
+        final int n = leftKey.getColumnCount();
+        if (n != rightKey.getColumnCount()) {
+            return false;
+        }
+        for (int i = 0; i < n; i++) {
+            if (leftKey.getColumnType(i) != rightKey.getColumnType(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static NumericConvergence numericConvergence(WindowFunction function) {
@@ -1278,6 +1427,48 @@ public final class LiveViewCheckpointFunctionCompiler {
                 window.getRowsLoExprPos(),
                 "width"
         );
+    }
+
+    /**
+     * The first function of {@code functions} that would join the group as an unguarded
+     * {@link LiveViewAccumulatorDescriptor#FAMILY_ROW_COUNT row count} - a
+     * {@code count(*)} or a partitioned {@code row_number()} - or null when the factory
+     * holds none.
+     * <p>
+     * It is the host a {@code count} over the window's own partition key may join, and
+     * the reason the search runs before any projection is added: such a count may precede
+     * its host in the SELECT list, and whether it fuses must not depend on that.
+     * <p>
+     * The gates are the same ones {@link #addAccumulatorProjection} applies, so this
+     * cannot name a host that walk would decline. Its own arm is deliberately narrow: the
+     * family must be the argumentless one and the function must actually hold no argument,
+     * which is what keeps a {@code count(x)} from being read as a row count here.
+     */
+    private static @Nullable WindowFunction rowCountHost(
+            ObjList<Function> functions,
+            ObjList<WindowFunction> anchorableWindowFunctions
+    ) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final Function function = functions.getQuick(i);
+            if (!(function instanceof WindowFunction windowFunction)
+                    || !isFusibleAccumulator(windowFunction, anchorableWindowFunctions)
+                    || windowFunction.checkpointAccumulatorFamily() != LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT
+                    || windowFunction.checkpointAccumulatorArgument() != null
+                    || windowFunction.checkpointAccumulatorProjection() == LiveViewAccumulatorProjection.PROJECTION_NONE
+                    || windowFunction.checkpointFunctionIdentity() == null) {
+                continue;
+            }
+            final LiveViewAccumulatorDescriptor component = LiveViewAccumulatorDescriptor.of(
+                    LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                    LiveViewAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX,
+                    ColumnType.UNDEFINED
+            );
+            if (component != null
+                    && component.getStateLength() == windowFunction.checkpointStateFixedLength()) {
+                return windowFunction;
+            }
+        }
+        return null;
     }
 
     /**

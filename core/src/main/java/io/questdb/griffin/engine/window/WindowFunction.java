@@ -206,6 +206,25 @@ public interface WindowFunction extends Function {
         return null;
     }
 
+    /**
+     * The compiled PARTITION BY terms this function keys its per-partition state by, or
+     * null when it keeps no keyed state.
+     * <p>
+     * The reference is <b>non-owning</b>, exactly as
+     * {@link #checkpointAccumulatorArgument()}'s is: the window function owns its
+     * partition-by functions and frees them, and the compiler only reads their identity.
+     * What it reads them for is the one relation that holds between a call's argument and
+     * the window rather than between two calls - a {@code count(k)} over the column its
+     * own window partitions by, whose value is the partition's row count wherever
+     * {@code k} is present. Resolving the terms to base columns is the same proof
+     * {@code directColumnIndex} applies to an argument, so an expression term proves
+     * nothing and the relation is declined.
+     */
+    @Nullable
+    default ObjList<? extends Function> checkpointPartitionByFunctions() {
+        return null;
+    }
+
     default void computeNext(Record record) {
     }
 
@@ -771,8 +790,15 @@ public interface WindowFunction extends Function {
      * there rather than from {@code computeNext} is what removes the ordering dependency
      * on the SELECT list: the accumulators are whole before the first output reads one,
      * however the outputs happen to be ordered.
+     * <p>
+     * {@code record} is the base row the value was loaded for. Almost every projection
+     * ignores it and reads the slots alone; the one that does not is a
+     * {@link LiveViewAccumulatorProjection#isPartitionKeyGuarded() guarded} count, whose
+     * output is the component's counter corrected by a test on the partition key. The
+     * key is constant across a partition, so reading it off the current row answers for
+     * the whole of it and the result stays independent of SELECT-list order.
      */
-    default void projectWindowState(MapValue value) {
+    default void projectWindowState(Record record, MapValue value) {
         throw CairoException.critical(0)
                 .put("window function does not project a fused accumulator [function=")
                 .put(getName()).put(']');

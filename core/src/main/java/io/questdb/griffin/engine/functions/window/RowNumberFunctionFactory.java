@@ -345,7 +345,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
          * the plan bound it to a {@code count(*)}'s, which reads the same rows.
          */
         @Override
-        public void projectWindowState(MapValue value) {
+        public void projectWindowState(Record record, MapValue value) {
             rowNumber = value.getLong(windowStateRowCountSlot);
         }
 

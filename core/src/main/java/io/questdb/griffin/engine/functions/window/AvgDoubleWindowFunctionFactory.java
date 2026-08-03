@@ -1850,7 +1850,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void projectWindowState(MapValue value) {
+        public void projectWindowState(Record record, MapValue value) {
             final long count = value.getLong(windowStateNonNullCountSlot);
             avg = count != 0 ? value.getDouble(windowStateSumSlot) / count : Double.NaN;
         }

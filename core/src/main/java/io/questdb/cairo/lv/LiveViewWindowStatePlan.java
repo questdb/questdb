@@ -57,6 +57,13 @@ import java.util.Arrays;
  * is what takes {@code sum(x) + avg(x) + count(x)} to one component and a 24-byte
  * fused entry. Neither ever applies across arguments or contribution predicates, so
  * the target shape's {@code sum(amt)} and {@code count(acct)} remain two components.
+ * <p>
+ * One projection joins on neither strength but on an argument the window itself pins:
+ * a {@code count(k)} over the very column the window partitions by reads the row-count
+ * component {@code count(*)} maintains and corrects it per row - see
+ * {@link LiveViewAccumulatorProjection#PROJECTION_COUNT_PARTITION_KEY}. Such a
+ * projection never becomes its component's contributor, because the counter it would
+ * keep alone is not the one the component holds.
  *
  * <h2>Scalar layout</h2>
  * <pre>
@@ -210,7 +217,9 @@ public final class LiveViewWindowStatePlan {
      * A contributor is always a projection whose own function persists that exact
      * component, never a {@link LiveViewAccumulatorProjection#isDerived() derived} one:
      * a {@code count} folded onto a sum's counter freezes eight bytes and the component
-     * is sixteen, so it could not write the image even though it can read it.
+     * is sixteen, so it could not write the image even though it can read it. Nor a
+     * {@link LiveViewAccumulatorProjection#isPartitionKeyGuarded() guarded} one, whose
+     * image is the same eight bytes as its component's and still a different number.
      */
     public WindowFunction getContributor(int index) {
         return projectionFunctions.getQuick(contributorIndexes.getQuick(index));
@@ -361,6 +370,14 @@ public final class LiveViewWindowStatePlan {
      * function to the residual list and it keeps the legacy root it has today.
      */
     public static final class Builder {
+        /**
+         * Per component, whether the projection currently chosen as its contributor is a
+         * {@link LiveViewAccumulatorProjection#isPartitionKeyGuarded() guarded} one. A
+         * guarded projection keeps a different counter from the component it reads, so it
+         * yields the role to any candidate that does not, and {@link #build()} refuses a
+         * component left with no other.
+         */
+        private final IntList componentContributorIsGuarded = new IntList();
         private final IntList componentContributorOutputPositions = new IntList();
         private final IntList componentContributors = new IntList();
         private final ObjList<LiveViewAccumulatorDescriptor> components = new ObjList<>();
@@ -417,6 +434,8 @@ public final class LiveViewWindowStatePlan {
                     || !isSameLayout(keyColumnTypes, candidateKeyColumnTypes)) {
                 return false;
             }
+            final boolean isGuarded =
+                    projectionKind == LiveViewAccumulatorProjection.PROJECTION_COUNT_PARTITION_KEY;
             int componentIndex = -1;
             for (int i = 0, n = components.size(); i < n; i++) {
                 if (components.getQuick(i).isSameIdentity(component)) {
@@ -429,11 +448,15 @@ public final class LiveViewWindowStatePlan {
                 components.add(component);
                 componentContributors.add(projectionFunctions.size());
                 componentContributorOutputPositions.add(outputPosition);
-            } else if (outputPosition < componentContributorOutputPositions.getQuick(componentIndex)) {
-                // Deterministic contributor choice: the lowest output position wins, so
-                // the answer follows the compiled view rather than traversal order.
+                componentContributorIsGuarded.add(isGuarded ? 1 : 0);
+            } else if (isBetterContributor(componentIndex, outputPosition, isGuarded)) {
+                // Deterministic contributor choice: an unguarded projection outranks a
+                // guarded one whatever their positions, and among equals the lowest output
+                // position wins - so the answer follows the compiled view rather than
+                // traversal order.
                 componentContributors.setQuick(componentIndex, projectionFunctions.size());
                 componentContributorOutputPositions.setQuick(componentIndex, outputPosition);
+                componentContributorIsGuarded.setQuick(componentIndex, isGuarded ? 1 : 0);
             }
             projectionFunctions.add(function);
             projectionComponents.add(componentIndex);
@@ -465,6 +488,17 @@ public final class LiveViewWindowStatePlan {
             final int componentCount = components.size();
             if (componentCount == 0) {
                 return null;
+            }
+            for (int i = 0; i < componentCount; i++) {
+                if (componentContributorIsGuarded.getQuick(i) != 0) {
+                    // Belt and braces: the compiler only offers a guarded projection where
+                    // the same group already holds an unguarded reading of the same
+                    // component, so this is unreachable. Declining the whole plan rather
+                    // than shipping a component nothing maintains correctly is the
+                    // fail-safe direction - every function goes back to the legacy root it
+                    // has outside a group.
+                    return null;
+                }
             }
             final IntList componentOffsets = new IntList(componentCount);
             // The runtime slot layout follows the durable one exactly: same components,
@@ -579,6 +613,7 @@ public final class LiveViewWindowStatePlan {
                 components.remove(last);
                 componentContributors.removeIndex(last);
                 componentContributorOutputPositions.removeIndex(last);
+                componentContributorIsGuarded.removeIndex(last);
             }
             // A contributor is one of the projections that reads its own component, so a
             // kept component's contributor is a survivor by construction and only its index
@@ -639,6 +674,7 @@ public final class LiveViewWindowStatePlan {
             final int[] newIndexOfOld = new int[n];
             final ObjList<LiveViewAccumulatorDescriptor> kept = new ObjList<>(n);
             final IntList keptContributors = new IntList(n);
+            final IntList keptContributorGuards = new IntList(n);
             final IntList keptContributorPositions = new IntList(n);
             for (int i = 0; i < n; i++) {
                 if (hostOf[i] != -1) {
@@ -651,6 +687,7 @@ public final class LiveViewWindowStatePlan {
                 kept.add(components.getQuick(i));
                 keptContributors.add(componentContributors.getQuick(i));
                 keptContributorPositions.add(componentContributorOutputPositions.getQuick(i));
+                keptContributorGuards.add(componentContributorIsGuarded.getQuick(i));
             }
             if (kept.size() == n) {
                 return;
@@ -665,6 +702,27 @@ public final class LiveViewWindowStatePlan {
             componentContributors.addAll(keptContributors);
             componentContributorOutputPositions.clear();
             componentContributorOutputPositions.addAll(keptContributorPositions);
+            componentContributorIsGuarded.clear();
+            componentContributorIsGuarded.addAll(keptContributorGuards);
+        }
+
+        /**
+         * Whether a projection just offered to component {@code componentIndex} should
+         * take the contributor role from the one that holds it.
+         * <p>
+         * An unguarded projection always outranks a guarded one, whatever their output
+         * positions: a guarded {@code count(k)} keeps the partition's {@code count(k)}
+         * where the component keeps its row count, so it cannot be the one that maintains
+         * the state. Among two of the same rank the lowest output position wins, which is
+         * what makes the choice a function of the compiled view rather than of the order
+         * the compiler happened to walk it in.
+         */
+        private boolean isBetterContributor(int componentIndex, int outputPosition, boolean isGuarded) {
+            final boolean isIncumbentGuarded = componentContributorIsGuarded.getQuick(componentIndex) != 0;
+            if (isGuarded != isIncumbentGuarded) {
+                return isIncumbentGuarded;
+            }
+            return outputPosition < componentContributorOutputPositions.getQuick(componentIndex);
         }
 
         /**
@@ -721,6 +779,7 @@ public final class LiveViewWindowStatePlan {
             final int[] newIndexOfOld = new int[n];
             final ObjList<LiveViewAccumulatorDescriptor> sorted = new ObjList<>(n);
             final IntList sortedContributors = new IntList(n);
+            final IntList sortedContributorGuards = new IntList(n);
             final IntList sortedContributorPositions = new IntList(n);
             for (int i = 0; i < n; i++) {
                 final int old = order[i];
@@ -728,6 +787,7 @@ public final class LiveViewWindowStatePlan {
                 sorted.add(components.getQuick(old));
                 sortedContributors.add(componentContributors.getQuick(old));
                 sortedContributorPositions.add(componentContributorOutputPositions.getQuick(old));
+                sortedContributorGuards.add(componentContributorIsGuarded.getQuick(old));
             }
             components.clear();
             components.addAll(sorted);
@@ -735,6 +795,8 @@ public final class LiveViewWindowStatePlan {
             componentContributors.addAll(sortedContributors);
             componentContributorOutputPositions.clear();
             componentContributorOutputPositions.addAll(sortedContributorPositions);
+            componentContributorIsGuarded.clear();
+            componentContributorIsGuarded.addAll(sortedContributorGuards);
             for (int i = 0, m = projectionComponents.size(); i < m; i++) {
                 projectionComponents.setQuick(i, newIndexOfOld[projectionComponents.getQuick(i)]);
             }

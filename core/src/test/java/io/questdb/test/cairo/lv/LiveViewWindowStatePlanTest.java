@@ -596,6 +596,113 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testACountOverThePartitionKeyJoinsTheRowCountItIsBesideAndNothingElse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table keyed (ts timestamp, sym symbol, other symbol, x double) "
+                    + "timestamp(ts) partition by day wal");
+            // A partition's rows all carry the same sym, so count(sym) is that partition's
+            // row count wherever sym is present. It reads the counter count(*) keeps -
+            // corrected per row by a test on the key - instead of persisting a second one.
+            assertPlan(
+                    "select ts, sym, count(*) over w as r, count(sym) over w as c "
+                            + "from keyed window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(2, plan.getProjectionCount());
+                        Assert.assertEquals(0, plan.getResidualFunctions().size());
+                        Assert.assertEquals(
+                                LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(ANCHOR_BYTES + COUNT_STATE_BYTES, plan.getTotalInlineStateBytes());
+                        Assert.assertFalse(plan.getProjection(0).isPartitionKeyGuarded());
+                        Assert.assertTrue(plan.getProjection(1).isPartitionKeyGuarded());
+                        // The guarded call's own counter is not the component's, so it may
+                        // never be the one that maintains it - whatever the output order.
+                        Assert.assertSame(plan.getProjectionFunction(0), plan.getContributor(0));
+                    }
+            );
+            // The same two the other way round in the SELECT list. The contributor follows
+            // the projection kinds rather than the positions, so it is still the count(*).
+            assertPlan(
+                    "select ts, sym, count(sym) over w as c, count(*) over w as r "
+                            + "from keyed window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertTrue(plan.getProjection(0).isPartitionKeyGuarded());
+                        Assert.assertSame(plan.getProjectionFunction(1), plan.getContributor(0));
+                    }
+            );
+            // A partitioned row_number() is the other reading of a row count, and hosts it
+            // just as well.
+            assertPlan(
+                    "select ts, sym, row_number() over w as rn, count(sym) over w as c "
+                            + "from keyed window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertSame(plan.getProjectionFunction(0), plan.getContributor(0));
+                    }
+            );
+            // Without a host the count keeps its own non-null counter, exactly as before.
+            // The row count of the NULL-key partition would otherwise be maintained by the
+            // guarded call alone, which keeps a different number - and the leaf carries no
+            // tag that would say so.
+            assertPlan(
+                    "select ts, sym, count(sym) over w as c "
+                            + "from keyed window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(
+                                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertFalse(plan.getProjection(0).isPartitionKeyGuarded());
+                    }
+            );
+            // A count over some other column is not constant across the partition, so it
+            // stays a counter of its own however many row counts sit beside it.
+            assertPlan(
+                    "select ts, sym, count(*) over w as r, count(other) over w as c "
+                            + "from keyed window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(2, plan.getComponentCount());
+                        Assert.assertEquals(
+                                ANCHOR_BYTES + 2 * COUNT_STATE_BYTES,
+                                plan.getTotalInlineStateBytes()
+                        );
+                    }
+            );
+            // Two partition terms: the key is a tuple and "the partition key is absent" is
+            // a different question from "this one column is".
+            assertPlan(
+                    "select ts, sym, count(*) over w as r, count(sym) over w as c "
+                            + "from keyed window w as (partition by sym, other order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(2, plan.getComponentCount());
+                    }
+            );
+            // A DOUBLE key contributes under Numbers.isFinite rather than under a null
+            // test, so a partition keyed by an infinity is a present key whose count(x)
+            // counts nothing. The guard cannot be read off the key's presence there, and
+            // the count keeps its own component.
+            assertPlan(
+                    "select ts, x, count(*) over w as r, count(x) over w as c "
+                            + "from keyed window w as (partition by x order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(2, plan.getComponentCount());
+                    }
+            );
+        });
+    }
+
+    @Test
     public void testCountStarAndRowNumberShareOneRowCounter() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();

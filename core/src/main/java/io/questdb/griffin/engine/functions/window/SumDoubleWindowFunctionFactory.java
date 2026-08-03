@@ -598,7 +598,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void projectWindowState(MapValue value) {
+        public void projectWindowState(Record record, MapValue value) {
             sum = value.getLong(windowStateNonNullCountSlot) != 0
                     ? value.getDouble(windowStateSumSlot)
                     : Double.NaN;

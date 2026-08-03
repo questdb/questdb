@@ -442,18 +442,22 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
             // function's own freezeCheckpointState would have written into a state page.
             // The two are separate implementations of one codec, and a leaf carries no
             // length that would catch them diverging.
-            createBaseTable();
             // One view naming every family the plan admits, so each new family is held to
-            // the claim rather than only the two the target shape happens to use.
+            // the claim rather than only the two the target shape happens to use. The
+            // non-null count is over a column the window does not partition by, which is
+            // what keeps it a component of its own beside the row count: a count over the
+            // partition key would read that row count instead.
+            execute("create table tx (created_at timestamp, cod_acct_no symbol, br_code symbol, amt_txn double) "
+                    + "timestamp(created_at) partition by hour wal");
             execute("create live view lv flush every 100ms start from beginning as "
                     + "select created_at, cod_acct_no, sum(amt_txn) over w as s, "
-                    + "count(cod_acct_no) over w as c, count(*) over w as r, "
+                    + "count(br_code) over w as c, count(*) over w as r, "
                     + "stddev_samp(amt_txn) over w as sd "
                     + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
-                insertAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", 5.0);
-                insertAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-1", 11.0);
+                insertBranchAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", "br-1", 5.0);
+                insertBranchAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-1", "br-2", 11.0);
 
                 final LiveViewWindowStatePlan plan = window().getCheckpointWindowStatePlan();
                 Assert.assertNotNull(plan);
@@ -465,6 +469,86 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 for (int c = 0, n = plan.getComponentCount(); c < n; c++) {
                     assertComponentCodecMatchesContributor(plan, c);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testACountOverThePartitionKeyReadsTheRowCountAndAnswersZeroForTheNullKey() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // Every row of a partition carries the same account, so count(cod_acct_no) is
+            // the partition's row count wherever the account is present. It therefore reads
+            // the counter count(*) already keeps rather than persisting a second one - one
+            // component and a 16-byte entry where the two used to cost 24.
+            //
+            // The NULL-account partition is what the guard is for, and it is the whole of
+            // the difference between the two outputs: count(*) counts its rows and
+            // count(cod_acct_no) counts none of them. The recompute below runs the unfused
+            // implementations of both, so a guard that fired on the wrong partitions - or
+            // never - would surface there.
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, cod_acct_no, count(*) over w as r, "
+                    + "count(cod_acct_no) over w as c "
+                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", 5.0);
+                insertAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-2", 7.0);
+                insertAccount(job, DAILY_ANCHOR + "09:00:20.000000Z", "acct-1", 11.0);
+                // The NULL-key partition, twice, so its row count runs ahead of its count
+                // rather than merely differing on the first row.
+                insertAccount(job, DAILY_ANCHOR + "09:00:30.000000Z", null, 3.0);
+                insertAccount(job, DAILY_ANCHOR + "09:00:40.000000Z", null, 4.0);
+                // A bucket crossing, so the shared counter resets in place under both.
+                insertAccount(job, "2026-01-02T09:00:00.000000Z", "acct-1", 3.0);
+                insertAccount(job, "2026-01-02T09:00:10.000000Z", null, 6.0);
+
+                final LiveViewWindow window = window();
+                final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
+                Assert.assertNotNull(plan);
+                Assert.assertEquals("one counter serves both calls", 1, plan.getComponentCount());
+                Assert.assertEquals(2, plan.getProjectionCount());
+                Assert.assertEquals(
+                        LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                        plan.getComponent(0).getFamily()
+                );
+                Assert.assertEquals(Long.BYTES + Long.BYTES, plan.getTotalInlineStateBytes());
+                Assert.assertFalse("count(*) reads the slot straight", plan.getProjection(0).isPartitionKeyGuarded());
+                Assert.assertTrue("count(k) corrects it", plan.getProjection(1).isPartitionKeyGuarded());
+                // The guarded call keeps the partition's count where the component keeps
+                // its row count, so it must never be the one that maintains the component.
+                Assert.assertSame(plan.getProjectionFunction(0), plan.getContributor(0));
+                for (int i = 0; i < 2; i++) {
+                    final WindowFunction function = plan.getProjectionFunction(i);
+                    Assert.assertTrue("projection " + i + " must be fused", function.isWindowStateOwned());
+                    Assert.assertFalse(
+                            "a fused projection must never allocate its private map",
+                            function.getPartitionMap().isOpen()
+                    );
+                }
+                assertPartitionKeyCountViewMatchesRecompute();
+
+                // The head that seals one counter for two different outputs restores on its
+                // own, NULL-key partition included.
+                final byte[] before = snapshotWindow(window);
+                restoreHead();
+                Assert.assertArrayEquals(before, snapshotWindow(window));
+                assertPartitionKeyCountViewMatchesRecompute();
+
+                // Handing the state back is the one place the guard has no base row to read
+                // and takes the entry's own key instead. A row count copied through
+                // unguarded would leave the NULL-account partition counting rows it never
+                // counted, which the next row's output would carry forward.
+                Assert.assertFalse(window.bindCheckpointWindowStatePlan(null));
+                insertAccount(job, "2026-01-02T09:00:20.000000Z", null, 7.0);
+                insertAccount(job, "2026-01-02T09:00:30.000000Z", "acct-1", 8.0);
+                assertPartitionKeyCountViewMatchesRecompute();
+
+                Assert.assertTrue(window.bindCheckpointWindowStatePlan(plan));
+                insertAccount(job, "2026-01-02T09:00:40.000000Z", null, 9.0);
+                assertPartitionKeyCountViewMatchesRecompute();
+                assertNoRefreshFaults("lv");
             }
         });
     }
@@ -717,6 +801,29 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     }
 
     /**
+     * The {@link #assertViewMatchesRecompute()} counterpart for the shape whose count is
+     * over the window's own partition key. The two output columns differ on exactly one
+     * partition - the NULL-account one - which is what the guard has to produce.
+     */
+    private void assertPartitionKeyCountViewMatchesRecompute() throws Exception {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
+        final String frame = "over (partition by cod_acct_no, bucket order by created_at "
+                + "rows between unbounded preceding and current row)";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(select created_at, cod_acct_no, "
+                        + "count(*) " + frame + " as r, "
+                        + "count(cod_acct_no) " + frame + " as c "
+                        + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)"
+                        + ") order by 2, 1",
+                "(lv) order by 2, 1",
+                LOG,
+                true
+        );
+    }
+
+    /**
      * The {@link #assertViewMatchesRecompute()} counterpart for the row-count shape.
      */
     private void assertRowCountViewMatchesRecompute() throws Exception {
@@ -803,7 +910,26 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
      * the literal is written out the same way either way.
      */
     private void insertAccount(LiveViewRefreshJob job, String timestamp, String account, Number amount) throws Exception {
+        execute("insert into tx values ('" + timestamp + "', "
+                + (account == null ? "null" : "'" + account + "'") + ", "
+                + (amount == null ? "null" : amount.toString()) + ")");
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * Appends one row of the four-column base a case needs when it wants a SYMBOL the
+     * window does not partition by.
+     */
+    private void insertBranchAccount(
+            LiveViewRefreshJob job,
+            String timestamp,
+            String account,
+            String branch,
+            Number amount
+    ) throws Exception {
         execute("insert into tx values ('" + timestamp + "', '" + account + "', "
+                + (branch == null ? "null" : "'" + branch + "'") + ", "
                 + (amount == null ? "null" : amount.toString()) + ")");
         drainWalQueue();
         driveRefreshToQuiescence(job);
