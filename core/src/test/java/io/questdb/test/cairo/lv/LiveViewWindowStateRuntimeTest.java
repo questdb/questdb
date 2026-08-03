@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.MemoryTag;
@@ -351,7 +352,7 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 Assert.assertEquals(1, plan.getProjectionCount());
                 Assert.assertEquals("sum and avg stay residual", 2, plan.getResidualFunctions().size());
                 Assert.assertEquals(
-                        LiveViewAccumulatorDescriptor.CONTRIBUTION_TYPED_NOT_NULL,
+                        WindowAccumulatorDescriptor.CONTRIBUTION_TYPED_NOT_NULL,
                         plan.getComponent(0).getContributionKind()
                 );
                 Assert.assertTrue(plan.getProjectionFunction(0).isWindowStateOwned());
@@ -510,7 +511,7 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 Assert.assertEquals("one counter serves both calls", 1, plan.getComponentCount());
                 Assert.assertEquals(2, plan.getProjectionCount());
                 Assert.assertEquals(
-                        LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                        WindowAccumulatorDescriptor.FAMILY_ROW_COUNT,
                         plan.getComponent(0).getFamily()
                 );
                 Assert.assertEquals(Long.BYTES + Long.BYTES, plan.getTotalInlineStateBytes());

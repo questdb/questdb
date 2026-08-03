@@ -41,6 +41,8 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import org.junit.Assert;
@@ -101,7 +103,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         Assert.assertEquals(0, plan.getResidualFunctions().size());
                         Assert.assertEquals(ANCHOR_BYTES + COUNT_STATE_BYTES, plan.getTotalInlineStateBytes());
                         Assert.assertEquals(
-                                LiveViewAccumulatorDescriptor.CONTRIBUTION_TYPED_NOT_NULL,
+                                WindowAccumulatorDescriptor.CONTRIBUTION_TYPED_NOT_NULL,
                                 plan.getComponent(0).getContributionKind()
                         );
                     }
@@ -259,7 +261,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         // DOUBLE column are two different proofs.
                         Assert.assertEquals(ColumnType.LONG, plan.getComponent(0).getArgumentColumnType());
                         Assert.assertEquals(
-                                LiveViewAccumulatorDescriptor.CONTRIBUTION_FINITE_DOUBLE,
+                                WindowAccumulatorDescriptor.CONTRIBUTION_FINITE_DOUBLE,
                                 plan.getComponent(0).getContributionKind()
                         );
                         Assert.assertTrue(plan.getProjection(2).isDerived());
@@ -274,7 +276,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         Assert.assertNotNull(plan);
                         Assert.assertEquals(1, plan.getComponentCount());
                         Assert.assertEquals(
-                                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
                                 plan.getComponent(0).getFamily()
                         );
                         Assert.assertEquals(ColumnType.INT, plan.getComponent(0).getArgumentColumnType());
@@ -324,32 +326,32 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         // count over a DOUBLE counts finite values, exactly as a DOUBLE sum's own counter
         // does, so the two agree on infinities as well as on NULL.
         Assert.assertEquals(
-                LiveViewAccumulatorDescriptor.CONTRIBUTION_FINITE_DOUBLE,
-                LiveViewAccumulatorDescriptor.contributionKindFor(
-                        LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                WindowAccumulatorDescriptor.CONTRIBUTION_FINITE_DOUBLE,
+                WindowAccumulatorDescriptor.contributionKindFor(
+                        WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                         ColumnType.DOUBLE
                 )
         );
         Assert.assertEquals(
-                LiveViewAccumulatorDescriptor.CONTRIBUTION_TYPED_NOT_NULL,
-                LiveViewAccumulatorDescriptor.contributionKindFor(
-                        LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                WindowAccumulatorDescriptor.CONTRIBUTION_TYPED_NOT_NULL,
+                WindowAccumulatorDescriptor.contributionKindFor(
+                        WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                         ColumnType.SYMBOL
                 )
         );
         // An integral column has no sum factory of its own: it widens into sum(D),
         // avg(D) and count(D) alike, so one predicate covers all of them.
         Assert.assertEquals(
-                LiveViewAccumulatorDescriptor.CONTRIBUTION_FINITE_DOUBLE,
-                LiveViewAccumulatorDescriptor.contributionKindFor(
-                        LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                WindowAccumulatorDescriptor.CONTRIBUTION_FINITE_DOUBLE,
+                WindowAccumulatorDescriptor.contributionKindFor(
+                        WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
                         ColumnType.LONG
                 )
         );
         Assert.assertEquals(
-                LiveViewAccumulatorDescriptor.CONTRIBUTION_FINITE_DOUBLE,
-                LiveViewAccumulatorDescriptor.contributionKindFor(
-                        LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                WindowAccumulatorDescriptor.CONTRIBUTION_FINITE_DOUBLE,
+                WindowAccumulatorDescriptor.contributionKindFor(
+                        WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                         ColumnType.LONG
                 )
         );
@@ -358,22 +360,22 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         // would count different rows and neither family names a predicate for it. So
         // does a STRING, which sum(D) reaches by parsing the text.
         Assert.assertEquals(
-                LiveViewAccumulatorDescriptor.CONTRIBUTION_NONE,
-                LiveViewAccumulatorDescriptor.contributionKindFor(
-                        LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                WindowAccumulatorDescriptor.CONTRIBUTION_NONE,
+                WindowAccumulatorDescriptor.contributionKindFor(
+                        WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
                         ColumnType.CHAR
                 )
         );
         Assert.assertNull(LiveViewAccumulatorDescriptor.of(
-                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                 0,
                 ColumnType.STRING
         ));
         // And DECIMAL never widens at all - it has factories of its own.
         Assert.assertEquals(
-                LiveViewAccumulatorDescriptor.CONTRIBUTION_NONE,
-                LiveViewAccumulatorDescriptor.contributionKindFor(
-                        LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                WindowAccumulatorDescriptor.CONTRIBUTION_NONE,
+                WindowAccumulatorDescriptor.contributionKindFor(
+                        WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
                         ColumnType.getDecimalType(18, 3)
                 )
         );
@@ -381,12 +383,12 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         // The same argument under two families is two components: one counts finite
         // doubles alongside their sum, the other only counts.
         final LiveViewAccumulatorDescriptor sumCount = component(
-                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
                 2,
                 ColumnType.DOUBLE
         );
         final LiveViewAccumulatorDescriptor count = component(
-                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                 2,
                 ColumnType.DOUBLE
         );
@@ -394,7 +396,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         // And so is the same family over two different columns - the target shape's
         // negative control, in its smallest form.
         Assert.assertFalse(count.isSameIdentity(component(
-                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                 1,
                 ColumnType.DOUBLE
         )));
@@ -417,7 +419,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         Assert.assertEquals(3, plan.getProjectionCount());
                         Assert.assertEquals(ANCHOR_BYTES + SUM_STATE_BYTES, plan.getTotalInlineStateBytes());
                         Assert.assertEquals(
-                                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
                                 plan.getComponent(0).getFamily()
                         );
                         for (int i = 0; i < 3; i++) {
@@ -478,7 +480,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         Assert.assertNotNull(plan);
                         Assert.assertEquals(1, plan.getComponentCount());
                         Assert.assertEquals(
-                                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                                 plan.getComponent(0).getFamily()
                         );
                         Assert.assertEquals(ANCHOR_BYTES + COUNT_STATE_BYTES, plan.getTotalInlineStateBytes());
@@ -505,12 +507,12 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     @Test
     public void testDerivationIsProvedFromTheComponentIdentityAndNotTheArithmetic() {
         final LiveViewAccumulatorDescriptor sumCount = component(
-                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
                 2,
                 ColumnType.DOUBLE
         );
         final LiveViewAccumulatorDescriptor count = component(
-                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                 2,
                 ColumnType.DOUBLE
         );
@@ -519,14 +521,14 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         // And it contains the bare counter over its own argument, at the counter's own
         // field offset - which is the whole of what makes count(x) free beside sum(x).
         Assert.assertEquals(
-                sumCount.getFieldOffset(LiveViewAccumulatorDescriptor.FIELD_NON_NULL_COUNT),
+                sumCount.getFieldOffset(WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT),
                 sumCount.derivedStateOffset(count)
         );
         // Not the other way round: eight bytes do not contain sixteen.
         Assert.assertEquals(-1, count.derivedStateOffset(sumCount));
         // A different column is a different accumulator however alike the families read.
         Assert.assertEquals(-1, sumCount.derivedStateOffset(component(
-                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                 1,
                 ColumnType.DOUBLE
         )));
@@ -534,7 +536,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         // null where the DOUBLE accumulators test for finiteness, so the two disagree on
         // any infinity even before their columns do.
         Assert.assertEquals(-1, sumCount.derivedStateOffset(component(
-                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                 2,
                 ColumnType.SYMBOL
         )));
@@ -612,7 +614,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         Assert.assertEquals(2, plan.getProjectionCount());
                         Assert.assertEquals(0, plan.getResidualFunctions().size());
                         Assert.assertEquals(
-                                LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                                WindowAccumulatorDescriptor.FAMILY_ROW_COUNT,
                                 plan.getComponent(0).getFamily()
                         );
                         Assert.assertEquals(ANCHOR_BYTES + COUNT_STATE_BYTES, plan.getTotalInlineStateBytes());
@@ -657,7 +659,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         Assert.assertNotNull(plan);
                         Assert.assertEquals(1, plan.getComponentCount());
                         Assert.assertEquals(
-                                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                                 plan.getComponent(0).getFamily()
                         );
                         Assert.assertFalse(plan.getProjection(0).isPartitionKeyGuarded());
@@ -718,7 +720,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         Assert.assertEquals(2, plan.getProjectionCount());
                         Assert.assertEquals(0, plan.getResidualFunctions().size());
                         Assert.assertEquals(
-                                LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                                WindowAccumulatorDescriptor.FAMILY_ROW_COUNT,
                                 plan.getComponent(0).getFamily()
                         );
                         Assert.assertEquals(ANCHOR_BYTES + COUNT_STATE_BYTES, plan.getTotalInlineStateBytes());
@@ -765,7 +767,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         Assert.assertEquals(5, plan.getProjectionCount());
                         Assert.assertEquals(0, plan.getResidualFunctions().size());
                         Assert.assertEquals(
-                                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
                                 plan.getComponent(0).getFamily()
                         );
                         Assert.assertEquals(
@@ -780,11 +782,11 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                             );
                         }
                         Assert.assertEquals(
-                                LiveViewAccumulatorProjection.PROJECTION_STDDEV_SAMP,
+                                WindowAccumulatorProjection.PROJECTION_STDDEV_SAMP,
                                 plan.getProjection(0).getKind()
                         );
                         Assert.assertEquals(
-                                LiveViewAccumulatorProjection.PROJECTION_VAR_POP,
+                                WindowAccumulatorProjection.PROJECTION_VAR_POP,
                                 plan.getProjection(3).getKind()
                         );
                         // Only the count is derived, and its slice is the counter at the
@@ -822,28 +824,28 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
 
     @Test
     public void testAnArgumentlessFamilyIsIdentifiedByNothingElse() {
-        Assert.assertFalse(LiveViewAccumulatorDescriptor.familyTakesArgument(
-                LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT
+        Assert.assertFalse(WindowAccumulatorDescriptor.familyTakesArgument(
+                WindowAccumulatorDescriptor.FAMILY_ROW_COUNT
         ));
-        Assert.assertTrue(LiveViewAccumulatorDescriptor.familyTakesArgument(
-                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD
+        Assert.assertTrue(WindowAccumulatorDescriptor.familyTakesArgument(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD
         ));
         // A row count declared with an argument, and an argument-taking family declared
         // without one, are both incoherent rather than merely unusual.
         Assert.assertNull(LiveViewAccumulatorDescriptor.of(
-                LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                WindowAccumulatorDescriptor.FAMILY_ROW_COUNT,
                 2,
                 ColumnType.DOUBLE
         ));
         Assert.assertNull(LiveViewAccumulatorDescriptor.of(
-                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
-                LiveViewAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX,
+                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                WindowAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX,
                 ColumnType.UNDEFINED
         ));
 
         final LiveViewAccumulatorDescriptor rowCount = rowCountComponent();
         Assert.assertEquals(
-                LiveViewAccumulatorDescriptor.CONTRIBUTION_EVERY_ROW,
+                WindowAccumulatorDescriptor.CONTRIBUTION_EVERY_ROW,
                 rowCount.getContributionKind()
         );
         Assert.assertEquals(COUNT_STATE_BYTES, rowCount.getStateLength());
@@ -852,7 +854,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         // And a row count neither is, nor contains, nor sits inside a counter over a
         // column - in either direction, at the same eight bytes.
         final LiveViewAccumulatorDescriptor count = component(
-                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                 2,
                 ColumnType.DOUBLE
         );
@@ -863,20 +865,20 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         // Welford ends with the counter a count(x) over the same argument would keep, and
         // increments it under the same predicate, so the count's whole image is that field.
         final LiveViewAccumulatorDescriptor welford = component(
-                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
                 2,
                 ColumnType.DOUBLE
         );
         Assert.assertEquals(WELFORD_STATE_BYTES, welford.getStateLength());
         Assert.assertEquals(
-                welford.getFieldOffset(LiveViewAccumulatorDescriptor.FIELD_NON_NULL_COUNT),
+                welford.getFieldOffset(WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT),
                 welford.derivedStateOffset(count)
         );
         Assert.assertEquals(2, welford.derivedSlotOffset(count));
         // A sum's image is not a run inside Welford's, however alike the two families
         // read: the second holds a running mean where the first holds a running sum.
         Assert.assertEquals(-1, welford.derivedStateOffset(component(
-                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
                 2,
                 ColumnType.DOUBLE
         )));
@@ -961,7 +963,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                     Assert.assertEquals(expectedOffset, projection.getComponentStateOffset());
                     Assert.assertEquals(
                             expectedOffset + plan.getComponent(componentIndex).getFieldOffset(
-                                    LiveViewAccumulatorDescriptor.FIELD_NON_NULL_COUNT
+                                    WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT
                             ),
                             projection.getNonNullCountFieldOffset()
                     );
@@ -1007,47 +1009,47 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
 
     @Test
     public void testProjectionMustFitItsComponentFamily() {
-        Assert.assertTrue(LiveViewAccumulatorProjection.isCompatible(
-                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
-                LiveViewAccumulatorProjection.PROJECTION_AVG
+        Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                WindowAccumulatorProjection.PROJECTION_AVG
         ));
         // Arithmetically a count reads either family's counter; whether it may is decided
         // by the component identity the plan checks first, not here.
-        Assert.assertTrue(LiveViewAccumulatorProjection.isCompatible(
-                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
-                LiveViewAccumulatorProjection.PROJECTION_COUNT
+        Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                WindowAccumulatorProjection.PROJECTION_COUNT
         ));
         // A bare counter carries no sum, so nothing can project one out of it.
-        Assert.assertFalse(LiveViewAccumulatorProjection.isCompatible(
-                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
-                LiveViewAccumulatorProjection.PROJECTION_SUM
+        Assert.assertFalse(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                WindowAccumulatorProjection.PROJECTION_SUM
         ));
-        Assert.assertFalse(LiveViewAccumulatorProjection.isCompatible(
-                LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
-                LiveViewAccumulatorProjection.PROJECTION_AVG
+        Assert.assertFalse(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                WindowAccumulatorProjection.PROJECTION_AVG
         ));
         // Every family carries a counter, so a count reads any of them - subject, again,
         // to the identity test the plan applies first.
-        Assert.assertTrue(LiveViewAccumulatorProjection.isCompatible(
-                LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT,
-                LiveViewAccumulatorProjection.PROJECTION_COUNT
+        Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                WindowAccumulatorProjection.PROJECTION_COUNT
         ));
-        Assert.assertTrue(LiveViewAccumulatorProjection.isCompatible(
-                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
-                LiveViewAccumulatorProjection.PROJECTION_COUNT
+        Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                WindowAccumulatorProjection.PROJECTION_COUNT
         ));
         // A dispersion needs the squared deviations only Welford's state holds.
-        Assert.assertTrue(LiveViewAccumulatorProjection.isCompatible(
-                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
-                LiveViewAccumulatorProjection.PROJECTION_VAR_SAMP
+        Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                WindowAccumulatorProjection.PROJECTION_VAR_SAMP
         ));
-        Assert.assertFalse(LiveViewAccumulatorProjection.isCompatible(
-                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
-                LiveViewAccumulatorProjection.PROJECTION_STDDEV_POP
+        Assert.assertFalse(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                WindowAccumulatorProjection.PROJECTION_STDDEV_POP
         ));
-        Assert.assertFalse(LiveViewAccumulatorProjection.isCompatible(
-                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
-                LiveViewAccumulatorProjection.PROJECTION_SUM
+        Assert.assertFalse(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                WindowAccumulatorProjection.PROJECTION_SUM
         ));
 
         // A contributor whose declared image is not its family's width is declined
@@ -1056,8 +1058,8 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         final LiveViewWindowStatePlan.Builder builder = new LiveViewWindowStatePlan.Builder();
         Assert.assertFalse(builder.addProjection(
                 new WidthStub(COUNT_STATE_BYTES),
-                component(LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT, 0, ColumnType.DOUBLE),
-                LiveViewAccumulatorProjection.PROJECTION_SUM,
+                component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT, 0, ColumnType.DOUBLE),
+                WindowAccumulatorProjection.PROJECTION_SUM,
                 0,
                 windowIdentity(),
                 keyTypes()
@@ -1077,16 +1079,16 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         Assert.assertEquals(1, plan.getComponentCount());
                         Assert.assertEquals(2, plan.getProjectionCount());
                         Assert.assertEquals(
-                                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
                                 plan.getComponent(0).getFamily()
                         );
                         Assert.assertEquals(ANCHOR_BYTES + SUM_STATE_BYTES, plan.getTotalInlineStateBytes());
                         Assert.assertEquals(
-                                LiveViewAccumulatorProjection.PROJECTION_SUM,
+                                WindowAccumulatorProjection.PROJECTION_SUM,
                                 plan.getProjection(0).getKind()
                         );
                         Assert.assertEquals(
-                                LiveViewAccumulatorProjection.PROJECTION_AVG,
+                                WindowAccumulatorProjection.PROJECTION_AVG,
                                 plan.getProjection(1).getKind()
                         );
                         // Both read the same slice; only the arithmetic on top differs.
@@ -1154,8 +1156,8 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         for (int i = 0; i < componentCount; i++) {
             Assert.assertTrue(builder.addProjection(
                     new WidthStub(SUM_STATE_BYTES),
-                    component(LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT, i, ColumnType.DOUBLE),
-                    LiveViewAccumulatorProjection.PROJECTION_SUM,
+                    component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT, i, ColumnType.DOUBLE),
+                    WindowAccumulatorProjection.PROJECTION_SUM,
                     i,
                     windowIdentity(),
                     keyTypes()
@@ -1166,8 +1168,8 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
 
     private static LiveViewAccumulatorDescriptor rowCountComponent() {
         final LiveViewAccumulatorDescriptor component = LiveViewAccumulatorDescriptor.of(
-                LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT,
-                LiveViewAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX,
+                WindowAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                WindowAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX,
                 ColumnType.UNDEFINED
         );
         Assert.assertNotNull(component);

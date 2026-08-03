@@ -35,6 +35,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -183,28 +184,28 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
         assertGolden(
                 "sum(x)/avg(x) over a DOUBLE column",
                 GOLDEN_SUM_COUNT_DOUBLE_COL2,
-                component(LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT, 2, ColumnType.DOUBLE).getEncoded()
+                component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT, 2, ColumnType.DOUBLE).getEncoded()
         );
         assertGolden(
                 "count(x) over a DOUBLE column",
                 GOLDEN_COUNT_DOUBLE_COL2,
-                component(LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT, 2, ColumnType.DOUBLE).getEncoded()
+                component(WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT, 2, ColumnType.DOUBLE).getEncoded()
         );
         assertGolden(
                 "count(y) over a LONG column",
                 GOLDEN_COUNT_LONG_COL3,
-                component(LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT, 3, ColumnType.LONG).getEncoded()
+                component(WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT, 3, ColumnType.LONG).getEncoded()
         );
         assertGolden(
                 "count(k) over a SYMBOL column",
                 GOLDEN_COUNT_SYMBOL_COL1,
-                component(LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT, 1, ColumnType.SYMBOL).getEncoded()
+                component(WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT, 1, ColumnType.SYMBOL).getEncoded()
         );
         assertGolden(
                 "count(d) over a DECIMAL(18,3) column",
                 GOLDEN_COUNT_DECIMAL_COL4,
                 component(
-                        LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                        WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                         4,
                         ColumnType.getDecimalType(18, 3)
                 ).getEncoded()
@@ -217,7 +218,7 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
         assertGolden(
                 "the dispersion family over a DOUBLE column",
                 GOLDEN_WELFORD_DOUBLE_COL2,
-                component(LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD, 2, ColumnType.DOUBLE).getEncoded()
+                component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD, 2, ColumnType.DOUBLE).getEncoded()
         );
     }
 
@@ -228,15 +229,15 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
             // that would catch a field moving, so the image is pinned field for field
             // rather than only round-tripped.
             assertStateImage(
-                    component(LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT, 2, ColumnType.DOUBLE),
+                    component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT, 2, ColumnType.DOUBLE),
                     GOLDEN_SUM_COUNT_STATE_IMAGE
             );
             assertStateImage(
-                    component(LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD, 2, ColumnType.DOUBLE),
+                    component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD, 2, ColumnType.DOUBLE),
                     GOLDEN_WELFORD_STATE_IMAGE
             );
             assertStateImage(
-                    component(LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT, 2, ColumnType.DOUBLE),
+                    component(WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT, 2, ColumnType.DOUBLE),
                     GOLDEN_COUNT_STATE_IMAGE
             );
             assertStateImage(rowCountComponent(), GOLDEN_COUNT_STATE_IMAGE);
@@ -257,10 +258,10 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
         // In ascending family-id order, which is the order the walk above discovers them
         // in - the ids themselves are arbitrary and only their persistence matters.
         final IntList golden = new IntList();
-        golden.add(LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT);
-        golden.add(LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT);
-        golden.add(LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT);
-        golden.add(LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD);
+        golden.add(WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT);
+        golden.add(WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT);
+        golden.add(WindowAccumulatorDescriptor.FAMILY_ROW_COUNT);
+        golden.add(WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD);
         Assert.assertEquals(
                 "a family without a golden identity is a persisted encoding nothing pins",
                 golden.toString(),
@@ -272,7 +273,7 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
     public void testManifestBytesForADirectlyBuiltComponentList() {
         final ObjList<LiveViewAccumulatorDescriptor> components = new ObjList<>();
         components.add(rowCountComponent());
-        components.add(component(LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD, 2, ColumnType.DOUBLE));
+        components.add(component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD, 2, ColumnType.DOUBLE));
         final IntList offsets = new IntList();
         offsets.add(LiveViewWindowStatePlan.ANCHOR_STATE_OFFSET + LiveViewWindowStatePlan.ANCHOR_STATE_BYTES);
         offsets.add(offsets.getQuick(0) + components.getQuick(0).getStateLength());
@@ -374,8 +375,8 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
 
     private static LiveViewAccumulatorDescriptor rowCountComponent() {
         return component(
-                LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT,
-                LiveViewAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX,
+                WindowAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                WindowAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX,
                 ColumnType.UNDEFINED
         );
     }

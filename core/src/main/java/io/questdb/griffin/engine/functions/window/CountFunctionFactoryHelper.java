@@ -31,7 +31,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
-import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
 import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
@@ -52,6 +51,8 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -1737,13 +1738,13 @@ public class CountFunctionFactoryHelper {
         @Override
         public int checkpointAccumulatorFamily() {
             return arg == null
-                    ? LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT
-                    : LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT;
+                    ? WindowAccumulatorDescriptor.FAMILY_ROW_COUNT
+                    : WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT;
         }
 
         @Override
         public int checkpointAccumulatorProjection() {
-            return LiveViewAccumulatorProjection.PROJECTION_COUNT;
+            return WindowAccumulatorProjection.PROJECTION_COUNT;
         }
 
         /**

@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
 import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
@@ -96,7 +95,7 @@ public interface WindowFunction extends Function {
      * expressions equivalent, and SQL text equality is not that proof.
      * <p>
      * Null is <b>required</b> rather than merely permitted of a function declaring a
-     * family {@link LiveViewAccumulatorDescriptor#familyTakesArgument} says takes none:
+     * family {@link WindowAccumulatorDescriptor#familyTakesArgument} says takes none:
      * such a family's identity has no room for an argument, so a function that both
      * declared it and handed one over would be persisting state under an identity that
      * does not describe it. The compiler declines that combination.
@@ -110,28 +109,28 @@ public interface WindowFunction extends Function {
 
     /**
      * The accumulator family this function's per-partition state belongs to, as one of
-     * the {@link LiveViewAccumulatorDescriptor} {@code FAMILY_*} constants, or
-     * {@link LiveViewAccumulatorDescriptor#FAMILY_NONE} when the function keeps state
+     * the {@link WindowAccumulatorDescriptor} {@code FAMILY_*} constants, or
+     * {@link WindowAccumulatorDescriptor#FAMILY_NONE} when the function keeps state
      * a fused window cannot share.
      * <p>
      * The family names the <b>mathematics</b>, not the SELECT-list call: a DOUBLE
      * {@code sum} and a DOUBLE {@code avg} both report
-     * {@link LiveViewAccumulatorDescriptor#FAMILY_DOUBLE_SUM_COUNT} because both
+     * {@link WindowAccumulatorDescriptor#FAMILY_DOUBLE_SUM_COUNT} because both
      * maintain exactly {@code (sum, nonNullCount)}, and {@code count(*)} beside
      * {@code row_number()} both report
-     * {@link LiveViewAccumulatorDescriptor#FAMILY_ROW_COUNT} because both maintain one
+     * {@link WindowAccumulatorDescriptor#FAMILY_ROW_COUNT} because both maintain one
      * counter of rows. Declaring a family is a claim about
      * the whole-state image, so it may only be made where
      * {@link #checkpointStateFixedLength()} declares the family's own width - the plan
      * checks the two against each other and declines the projection when they disagree.
      */
     default int checkpointAccumulatorFamily() {
-        return LiveViewAccumulatorDescriptor.FAMILY_NONE;
+        return WindowAccumulatorDescriptor.FAMILY_NONE;
     }
 
     /**
      * Which value this output reads off its family's state, as one of the
-     * {@link LiveViewAccumulatorProjection} {@code PROJECTION_*} constants.
+     * {@link WindowAccumulatorProjection} {@code PROJECTION_*} constants.
      * <p>
      * Separate from {@link #checkpointAccumulatorFamily()} because the two answer
      * different questions: the family says what state exists, the projection says what
@@ -140,7 +139,7 @@ public interface WindowFunction extends Function {
      * serve both.
      */
     default int checkpointAccumulatorProjection() {
-        return LiveViewAccumulatorProjection.PROJECTION_NONE;
+        return WindowAccumulatorProjection.PROJECTION_NONE;
     }
 
     /**
@@ -179,8 +178,9 @@ public interface WindowFunction extends Function {
      * the family's business: {@code (sum, nonNullCount)} covers the DOUBLE accumulators
      * and the counters, and Welford's {@code (mean, m2, nonNullCount)} does not. An
      * implementation reads the fields it needs through
-     * {@link LiveViewAccumulatorProjection#getFieldSlot(int)} and caches them, so the
-     * per-row path still touches plain int fields.
+     * {@link LiveViewAccumulatorProjection#getFieldSlot(int)} - naming the field with a
+     * {@link WindowAccumulatorDescriptor} {@code FIELD_*} constant - and caches them, so
+     * the per-row path still touches plain int fields.
      *
      * @param projection this output's binding onto its component, or null to hand the
      *                   state back to the map this function owns outside a fused group

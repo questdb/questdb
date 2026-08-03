@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
-import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
 import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
@@ -50,6 +49,8 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -1449,10 +1450,10 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             super.bindWindowStateSlots(projection);
             windowStateMeanSlot = projection == null
                     ? -1
-                    : projection.getFieldSlot(LiveViewAccumulatorDescriptor.FIELD_MEAN);
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_MEAN);
             windowStateM2Slot = projection == null
                     ? -1
-                    : projection.getFieldSlot(LiveViewAccumulatorDescriptor.FIELD_M2);
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_M2);
         }
 
         @Override
@@ -1468,19 +1469,19 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
          */
         @Override
         public int checkpointAccumulatorFamily() {
-            return LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD;
+            return WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD;
         }
 
         @Override
         public int checkpointAccumulatorProjection() {
             if (isSqrt) {
                 return isSample
-                        ? LiveViewAccumulatorProjection.PROJECTION_STDDEV_SAMP
-                        : LiveViewAccumulatorProjection.PROJECTION_STDDEV_POP;
+                        ? WindowAccumulatorProjection.PROJECTION_STDDEV_SAMP
+                        : WindowAccumulatorProjection.PROJECTION_STDDEV_POP;
             }
             return isSample
-                    ? LiveViewAccumulatorProjection.PROJECTION_VAR_SAMP
-                    : LiveViewAccumulatorProjection.PROJECTION_VAR_POP;
+                    ? WindowAccumulatorProjection.PROJECTION_VAR_SAMP
+                    : WindowAccumulatorProjection.PROJECTION_VAR_POP;
         }
 
         /**

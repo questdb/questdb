@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
-import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
 import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
@@ -51,6 +50,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
@@ -192,7 +193,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void bindWindowStateSlots(@Nullable LiveViewAccumulatorProjection projection) {
             windowStateRowCountSlot = projection == null
                     ? -1
-                    : projection.getFieldSlot(LiveViewAccumulatorDescriptor.FIELD_NON_NULL_COUNT);
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT);
         }
 
         @Override
@@ -216,12 +217,12 @@ public class RowNumberFunctionFactory implements FunctionFactory {
          */
         @Override
         public int checkpointAccumulatorFamily() {
-            return LiveViewAccumulatorDescriptor.FAMILY_ROW_COUNT;
+            return WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;
         }
 
         @Override
         public int checkpointAccumulatorProjection() {
-            return LiveViewAccumulatorProjection.PROJECTION_COUNT;
+            return WindowAccumulatorProjection.PROJECTION_COUNT;
         }
 
         /**

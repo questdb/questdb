@@ -53,6 +53,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.IntList;
@@ -444,7 +446,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                         // here would pin the ordering rule too.
                         for (int p = 0, n = plan.getProjectionCount(); p < n; p++) {
                             final LiveViewAccumulatorProjection projection = plan.getProjection(p);
-                            if (projection.getKind() == LiveViewAccumulatorProjection.PROJECTION_SUM) {
+                            if (projection.getKind() == WindowAccumulatorProjection.PROJECTION_SUM) {
                                 sums[0] += Double.longBitsToDouble(
                                         readLongLe(payload, projection.getSumFieldOffset())
                                 );
@@ -561,7 +563,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
     }
 
     private static LiveViewWindowStateManifest countManifest() {
-        return manifestOf(component(LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT, 1, ColumnType.SYMBOL));
+        return manifestOf(component(WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT, 1, ColumnType.SYMBOL));
     }
 
     private static long directCount(LiveViewCheckpointPageRef rootRef, byte[] key) {
@@ -663,7 +665,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
     }
 
     private static LiveViewWindowStateManifest sumCountManifest() {
-        return manifestOf(component(LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT, 2, ColumnType.DOUBLE));
+        return manifestOf(component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT, 2, ColumnType.DOUBLE));
     }
 
     private static ObjList<WindowFunction> unwrapWindowFunctions(LiveViewInstance instance) {

@@ -26,6 +26,7 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.map.Map;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -61,7 +62,7 @@ import java.util.Arrays;
  * One projection joins on neither strength but on an argument the window itself pins:
  * a {@code count(k)} over the very column the window partitions by reads the row-count
  * component {@code count(*)} maintains and corrects it per row - see
- * {@link LiveViewAccumulatorProjection#PROJECTION_COUNT_PARTITION_KEY}. Such a
+ * {@link WindowAccumulatorProjection#PROJECTION_COUNT_PARTITION_KEY}. Such a
  * projection never becomes its component's contributor, because the counter it would
  * keep alone is not the one the component holds.
  *
@@ -421,7 +422,7 @@ public final class LiveViewWindowStatePlan {
             if (candidateKeyColumnTypes == null || candidateKeyColumnTypes.getColumnCount() == 0) {
                 return false;
             }
-            if (!LiveViewAccumulatorProjection.isCompatible(component.getFamily(), projectionKind)) {
+            if (!WindowAccumulatorProjection.isCompatible(component.getFamily(), projectionKind)) {
                 return false;
             }
             if (component.getStateLength() != function.checkpointStateFixedLength()) {
@@ -435,7 +436,7 @@ public final class LiveViewWindowStatePlan {
                 return false;
             }
             final boolean isGuarded =
-                    projectionKind == LiveViewAccumulatorProjection.PROJECTION_COUNT_PARTITION_KEY;
+                    projectionKind == WindowAccumulatorProjection.PROJECTION_COUNT_PARTITION_KEY;
             int componentIndex = -1;
             for (int i = 0, n = components.size(); i < n; i++) {
                 if (components.getQuick(i).isSameIdentity(component)) {
