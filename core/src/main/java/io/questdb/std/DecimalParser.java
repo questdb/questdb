@@ -259,9 +259,11 @@ public final class DecimalParser {
         // Note that contrary to the scale, it's alright to have a precision that is different than the user provided
         // precision, as long as it's lower.
 
-        // Compute the final precision of the decimal
+        // Compute the final precision of the decimal. The leading zero of a value below one is not a
+        // significant digit, so such a value only needs as many digits as its scale. Zero without any
+        // digit left ('0.0' with trailing zeroes stripped) still needs one.
         int pow = literalDigits + exp;
-        final int finalPrecision = Math.max(pow, scale + 1);
+        final int finalPrecision = Math.max(Math.max(pow, scale), 1);
         if (precision != -1 && finalPrecision > precision) {
             throw NumericException.instance()
                     .put("decimal '").put(cs)
