@@ -77,22 +77,37 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     private static final int WELFORD_STATE_BYTES = 2 * Double.BYTES + Long.BYTES;
 
     @Test
-    public void testADecimalArgumentKeepsTheLegacyRootItHasToday() throws Exception {
+    public void testADecimalCountFusesWhileADecimalSumKeepsItsOwnRoot() throws Exception {
         assertMemoryLeak(() -> {
             createNumericBaseTable();
-            // DECIMAL is the one half of the numeric extension that widening does not
-            // reach: it has window factories of its own, and a DECIMAL sum accumulates
-            // into a Decimal256 whose whole image is past the per-component inline
-            // budget whatever the column's declared width. The implementation declares
-            // no fixed width at all today, so the group turns it away before the
-            // budget is even consulted, and it keeps the page-backed root it has.
+            // A DECIMAL sum accumulates into a Decimal128 or Decimal256 beside a
+            // null-state flag, which is a state shape the component families do not
+            // describe, so it declines and there is no group at all.
             assertPlan(
                     "select ts, sym, sum(dec) over w as d "
                             + "from nums window w as (partition by sym order by ts anchor daily '00:00')",
                     Assert::assertNull
             );
-            // Beside a fusible call it is an ordinary residual: the group forms around
-            // what it can carry rather than declining whole.
+            // A count over a DECIMAL column is not a decimal accumulator. It is the same
+            // counting implementation every other count uses, under that width's own null
+            // test, so it is an ordinary non-null-count component.
+            assertPlan(
+                    "select ts, sym, count(dec) over w as c "
+                            + "from nums window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(1, plan.getProjectionCount());
+                        Assert.assertEquals(0, plan.getResidualFunctions().size());
+                        Assert.assertEquals(ANCHOR_BYTES + COUNT_STATE_BYTES, plan.getTotalInlineStateBytes());
+                        Assert.assertEquals(
+                                LiveViewAccumulatorDescriptor.CONTRIBUTION_TYPED_NOT_NULL,
+                                plan.getComponent(0).getContributionKind()
+                        );
+                    }
+            );
+            // Beside a fusible call the sum is an ordinary residual: the group forms
+            // around what it can carry rather than declining whole.
             assertPlan(
                     "select ts, sym, sum(l) over w as s, sum(dec) over w as d "
                             + "from nums window w as (partition by sym order by ts anchor daily '00:00')",
@@ -102,6 +117,40 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         Assert.assertEquals(1, plan.getProjectionCount());
                         Assert.assertEquals(1, plan.getResidualFunctions().size());
                         Assert.assertEquals(ANCHOR_BYTES + SUM_STATE_BYTES, plan.getTotalInlineStateBytes());
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testADecimalCountOverTwoWidthsStaysTwoComponents() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table decs (ts timestamp, sym symbol, narrow decimal(9,2), wide decimal(30,2)) "
+                    + "timestamp(ts) partition by day wal");
+            // Both counts name CONTRIBUTION_TYPED_NOT_NULL, and the predicate behind that
+            // name is a different one for each: the count factory picks its null test off
+            // the argument's decimal width. The argument type is in the identity, which is
+            // what keeps the two apart.
+            assertPlan(
+                    "select ts, sym, count(narrow) over w as cn, count(wide) over w as cw "
+                            + "from decs window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(2, plan.getComponentCount());
+                        Assert.assertEquals(2, plan.getProjectionCount());
+                        Assert.assertEquals(ANCHOR_BYTES + 2 * COUNT_STATE_BYTES, plan.getTotalInlineStateBytes());
+                    }
+            );
+            // Two counts over one column are one component, exactly as over any other
+            // argument type - the merge is on the identity and nothing about DECIMAL
+            // changes it.
+            assertPlan(
+                    "select ts, sym, count(wide) over w as c1, count(wide) over w as c2 "
+                            + "from decs window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(ANCHOR_BYTES + COUNT_STATE_BYTES, plan.getTotalInlineStateBytes());
                     }
             );
         });

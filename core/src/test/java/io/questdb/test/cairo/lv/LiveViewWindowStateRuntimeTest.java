@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -255,6 +256,67 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                         snapshotWindow(window)
                 );
                 assertViewMatchesRecompute();
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testADecimalArgumentFusesItsCountAndLeavesItsSumOnItsOwnRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            // DECIMAL has window factories of its own and never widens into the DOUBLE
+            // ones, so a DECIMAL sum and avg keep accumulators - a Decimal256 beside a
+            // null-state flag, and one beside a counter - that the component families do
+            // not describe. Both stay residual and keep their own maps. The count over the
+            // same column is a different matter: it is the shared counting implementation
+            // under this width's null test, so it joins the group and the window owns it.
+            // The recompute below runs the unfused implementations of all three, so a
+            // count that counted different rows from its own factory would surface here.
+            execute("create table tx (created_at timestamp, cod_acct_no symbol, amt_txn decimal(38,2)) "
+                    + "timestamp(created_at) partition by hour wal");
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, cod_acct_no, sum(amt_txn) over w as s, "
+                    + "avg(amt_txn) over w as a, count(amt_txn) over w as c "
+                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertDecimalAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", "5.25");
+                insertDecimalAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-2", "7.50");
+                insertDecimalAccount(job, DAILY_ANCHOR + "09:00:20.000000Z", "acct-1", "11.75");
+                // A null joins neither the accumulators nor the counter.
+                insertDecimalAccount(job, DAILY_ANCHOR + "09:00:30.000000Z", "acct-1", null);
+                // A bucket crossing, so the fused counter is reset in place while the two
+                // residuals reset through their own maps.
+                insertDecimalAccount(job, "2026-01-02T09:00:00.000000Z", "acct-1", "3.00");
+
+                final LiveViewWindowStatePlan plan = window().getCheckpointWindowStatePlan();
+                Assert.assertNotNull(plan);
+                Assert.assertEquals("only the count is a component", 1, plan.getComponentCount());
+                Assert.assertEquals(1, plan.getProjectionCount());
+                Assert.assertEquals("sum and avg stay residual", 2, plan.getResidualFunctions().size());
+                Assert.assertEquals(
+                        LiveViewAccumulatorDescriptor.CONTRIBUTION_TYPED_NOT_NULL,
+                        plan.getComponent(0).getContributionKind()
+                );
+                Assert.assertTrue(plan.getProjectionFunction(0).isWindowStateOwned());
+                for (int i = 0; i < 2; i++) {
+                    final WindowFunction residual = plan.getResidualFunctions().getQuick(i);
+                    Assert.assertFalse(residual.isWindowStateOwned());
+                    // Their whole image is fixed width and fits the per-component budget,
+                    // so the seal carries it in the leaf instead of a data page.
+                    Assert.assertTrue(
+                            residual.getName() + " must inline its image",
+                            LiveViewCheckpointContracts.isInlineableStateLength(residual.checkpointStateFixedLength())
+                    );
+                }
+                assertDerivedViewMatchesRecompute();
+
+                // And the head that seals a fused counter beside two inline residual roots
+                // restores on its own.
+                final byte[] before = snapshotWindow(window());
+                restoreHead();
+                Assert.assertArrayEquals(before, snapshotWindow(window()));
+                assertDerivedViewMatchesRecompute();
                 assertNoRefreshFaults("lv");
             }
         });
@@ -687,6 +749,18 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     private void insertAccount(LiveViewRefreshJob job, String timestamp, String account, Number amount) throws Exception {
         execute("insert into tx values ('" + timestamp + "', '" + account + "', "
                 + (amount == null ? "null" : amount.toString()) + ")");
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * Inserts one row whose amount is a DECIMAL. A bare numeric literal is a DOUBLE and
+     * does not convert into a DECIMAL column, so the value carries its own cast.
+     */
+    private void insertDecimalAccount(LiveViewRefreshJob job, String timestamp, String account, String amount)
+            throws Exception {
+        execute("insert into tx values ('" + timestamp + "', '" + account + "', "
+                + (amount == null ? "null" : amount) + "::decimal(38,2))");
         drainWalQueue();
         driveRefreshToQuiescence(job);
     }

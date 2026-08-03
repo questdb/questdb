@@ -250,6 +250,101 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
         });
     }
 
+    @Test
+    public void testDecimalAccumulatorsCarryTheirWholeImageInTheLeaf() throws Exception {
+        // One logical boundary per commit, so each commit below is its own seal.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
+                    + "amt_txn decimal(38,2)) timestamp(created_at) partition by hour wal");
+            execute("insert into tx values ('2026-01-01T11:00:00.000000Z', 'acct-1', 10.25::decimal(38,2))");
+            drainWalQueue();
+            // The widest DECIMAL accumulator the group has to answer for: sum keeps a
+            // Decimal256 beside a null-state flag at 33 bytes and avg keeps one beside a
+            // counter at 40, neither of which the fused component families describe - so
+            // both stay on roots of their own. What the declared width buys them is the
+            // leaf: 40 bytes fits the per-component budget, so the seal writes no data
+            // page for either. The count over the same column does join the group.
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, cod_acct_no, sum(amt_txn) over w as s, "
+                    + "avg(amt_txn) over w as a, count(amt_txn) over w as c "
+                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                commit("('2026-01-01T11:00:10.000000Z', 'acct-1', 11.50::decimal(38,2))", job);
+                commit("('2026-01-01T11:00:11.000000Z', 'acct-2', 12.75::decimal(38,2))", job);
+                // A null argument joins neither accumulator nor the counter, and must not
+                // change the width of any of the three images.
+                commit("('2026-01-01T11:00:12.000000Z', 'acct-1', null::decimal(38,2))", job);
+
+                final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
+                int declaring = 0;
+                for (int i = 0, n = functions.size(); i < n; i++) {
+                    final WindowFunction function = functions.getQuick(i);
+                    final int declared = function.checkpointStateFixedLength();
+                    if (declared < 0) {
+                        continue;
+                    }
+                    declaring++;
+                    Assert.assertTrue(
+                            "a DECIMAL accumulator's declared width must fit the leaf budget",
+                            LiveViewCheckpointContracts.isInlineableStateLength(declared)
+                    );
+                    assertEveryStateImageIsExactly(function, declared);
+                }
+                Assert.assertEquals(
+                        "sum, avg and count over a DECIMAL column must all declare a width",
+                        3,
+                        declaring
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testUnboundedPartitionedDecimalAccumulatorsDeclareTheirWidth() throws Exception {
+        assertMemoryLeak(() -> {
+            // One column per DECIMAL storage width, picked by precision: 1-2 bytes for
+            // DECIMAL8/16, 4 for DECIMAL32, 8 for DECIMAL64, 16 for DECIMAL128 and 32 for
+            // DECIMAL256.
+            execute("create table decs (ts timestamp, sym symbol, "
+                    + "d8 decimal(2,1), d16 decimal(4,1), d32 decimal(9,2), "
+                    + "d64 decimal(18,2), d128 decimal(38,2), d256 decimal(60,2)) "
+                    + "timestamp(ts) partition by day wal");
+            // A DECIMAL sum keeps (acc, wasNullState), and the accumulator is the width it
+            // sums into rather than the argument's: D8/D16 add into a raw long, D32/D64
+            // into a Decimal128 and D128/D256 into a Decimal256.
+            assertDecimalWidth("sum(d8)", Long.BYTES + Byte.BYTES);
+            assertDecimalWidth("sum(d16)", Long.BYTES + Byte.BYTES);
+            assertDecimalWidth("sum(d32)", 16 + Byte.BYTES);
+            assertDecimalWidth("sum(d64)", 16 + Byte.BYTES);
+            assertDecimalWidth("sum(d128)", 32 + Byte.BYTES);
+            assertDecimalWidth("sum(d256)", 32 + Byte.BYTES);
+            // A DECIMAL avg keeps (acc, nonNullCount), and picks its accumulator width one
+            // step later than the sum does - D32 still adds into a long there.
+            assertDecimalWidth("avg(d8)", 2 * Long.BYTES);
+            assertDecimalWidth("avg(d16)", 2 * Long.BYTES);
+            assertDecimalWidth("avg(d32)", 2 * Long.BYTES);
+            assertDecimalWidth("avg(d64)", 16 + Long.BYTES);
+            assertDecimalWidth("avg(d128)", 32 + Long.BYTES);
+            assertDecimalWidth("avg(d256)", 32 + Long.BYTES);
+            // The rescaling two-argument form accumulates into a Decimal256 whatever the
+            // argument's width, so its image is one width for all six.
+            assertDecimalWidth("avg(d8, 4)", 32 + Long.BYTES);
+            assertDecimalWidth("avg(d64, 4)", 32 + Long.BYTES);
+            assertDecimalWidth("avg(d256, 4)", 32 + Long.BYTES);
+            // A count over a DECIMAL column is the shared counting implementation under
+            // that width's null test, so it is one counter like every other count.
+            assertDecimalWidth("count(d8)", COUNT_STATE_BYTES);
+            assertDecimalWidth("count(d64)", COUNT_STATE_BYTES);
+            assertDecimalWidth("count(d256)", COUNT_STATE_BYTES);
+            // Every one of those fits the per-component inline budget, which is what puts
+            // the image in the leaf instead of a data page it names with a 40-byte
+            // reference.
+            Assert.assertTrue(LiveViewCheckpointContracts.isInlineableStateLength(32 + Long.BYTES));
+        });
+    }
+
     private static void assertDeclarationAccepted(WindowFunction function) {
         try {
             CairoEngine.validateLiveViewWindowFunction(function, 0);
@@ -269,6 +364,18 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
 
     private static void assertDeclaredWidth(String sql, int expected) throws Exception {
         Assert.assertEquals(sql, expected, compiledFunction(sql).checkpointStateFixedLength());
+    }
+
+    /**
+     * Asserts the width {@code call} declares over the unbounded partitioned frame, given
+     * a {@code decs} base table with one column per DECIMAL storage width.
+     */
+    private static void assertDecimalWidth(String call, int expected) throws Exception {
+        assertDeclaredWidth(
+                "select ts, sym, " + call + " over (partition by sym order by ts "
+                        + "rows between unbounded preceding and current row) v from decs",
+                expected
+        );
     }
 
     private static void assertDeclinesFixedWidth(String sql) throws Exception {

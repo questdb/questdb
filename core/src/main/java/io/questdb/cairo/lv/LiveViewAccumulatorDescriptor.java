@@ -251,6 +251,19 @@ public final class LiveViewAccumulatorDescriptor {
                     case ColumnType.SYMBOL:
                     case ColumnType.VARCHAR:
                         return CONTRIBUTION_TYPED_NOT_NULL;
+                    // A DECIMAL count is the argument type's own null test and nothing
+                    // else: CountDecimalWindowFunctionFactory selects a predicate per
+                    // width, and every one of the six compares against that width's null
+                    // sentinel. The type stays in the identity, so a count over a
+                    // DECIMAL64 column and one over a DECIMAL128 column remain two
+                    // components even though both name this kind.
+                    case ColumnType.DECIMAL8:
+                    case ColumnType.DECIMAL16:
+                    case ColumnType.DECIMAL32:
+                    case ColumnType.DECIMAL64:
+                    case ColumnType.DECIMAL128:
+                    case ColumnType.DECIMAL256:
+                        return CONTRIBUTION_TYPED_NOT_NULL;
                     default:
                         return CONTRIBUTION_NONE;
                 }
@@ -704,11 +717,15 @@ public final class LiveViewAccumulatorDescriptor {
      * is a third predicate again beside the null test their {@code count} uses. Each of
      * those declines here rather than being assumed, one argument type at a time.
      * <p>
-     * DECIMAL is absent for a different reason: it has factories of its own, so it never
-     * widens, and its sum accumulates into a {@code Decimal256} whose whole image is
-     * past {@link LiveViewCheckpointContracts#MAX_INLINE_COMPONENT_STATE_BYTES}. It
-     * needs the format's combined overflow page before it could join a fused group at
-     * all.
+     * DECIMAL is absent because it has factories of its own and so never widens into a
+     * double at all. Its {@code count} is nevertheless a fused component - see the
+     * {@link #CONTRIBUTION_TYPED_NOT_NULL} arm of {@link #contributionKindFor} - because
+     * a {@code count} over a DECIMAL column is the shared counting implementation under
+     * that width's null test, not a decimal accumulator. What has no family here is
+     * {@code sum} and {@code avg} over a DECIMAL: those accumulate into a
+     * {@code Decimal128} or {@code Decimal256} beside a flag or a counter, which is a
+     * state shape this class's slot model does not describe. They inline their whole
+     * image in their own function root instead.
      */
     private static boolean isWidenedToDouble(int columnType) {
         switch (ColumnType.tagOf(columnType)) {
