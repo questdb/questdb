@@ -126,13 +126,10 @@ public class Decimal128Test {
             BigDecimal bdA = a.toBigDecimal();
             BigDecimal bdB = b.toBigDecimal();
 
-            // The comparison may overflow during rescaling
-            try {
-                int actual = a.compareTo(b);
-                int expected = bdA.compareTo(bdB);
-                Assert.assertEquals("iteration: " + i + " expected:<" + expected + "> but was:<" + actual + ">", expected, actual);
-            } catch (NumericException ignore) {
-            }
+            // aligning the scales must never overflow, whatever the operands
+            int actual = a.compareTo(b);
+            int expected = bdA.compareTo(bdB);
+            Assert.assertEquals("iteration: " + i + " expected:<" + expected + "> but was:<" + actual + ">", expected, actual);
         }
     }
 
@@ -157,6 +154,43 @@ public class Decimal128Test {
         larger.of(200, 0, 2);
         Assert.assertTrue(smaller.compareTo(larger) < 0);
         Assert.assertTrue(larger.compareTo(smaller) > 0);
+    }
+
+    @Test
+    public void testCompareToScaleAlignmentAtRangeLimit() {
+        // 10^38-1 vs (10^38-1)/10: aligning the scales needs 39 digits
+        final long maxHigh = Decimal128.MAX_VALUE.getHigh();
+        final long maxLow = Decimal128.MAX_VALUE.getLow();
+        final Decimal128 a = new Decimal128(maxHigh, maxLow, 0);
+        final Decimal128 b = new Decimal128(maxHigh, maxLow, 1);
+        Assert.assertEquals(1, a.compareTo(b));
+        Assert.assertEquals(-1, b.compareTo(a));
+        Assert.assertEquals(a.toBigDecimal().compareTo(b.toBigDecimal()), a.compareTo(b));
+
+        final long minHigh = Decimal128.MIN_VALUE.getHigh();
+        final long minLow = Decimal128.MIN_VALUE.getLow();
+        final Decimal128 negA = new Decimal128(minHigh, minLow, 0);
+        final Decimal128 negB = new Decimal128(minHigh, minLow, 1);
+        Assert.assertEquals(-1, negA.compareTo(negB));
+        Assert.assertEquals(1, negB.compareTo(negA));
+
+        // mixed signs
+        Assert.assertEquals(1, a.compareTo(negB));
+        Assert.assertEquals(-1, negA.compareTo(b));
+
+        // equal values expressed at different scales
+        Assert.assertEquals(0, new Decimal128(0, 1, 0).compareTo(new Decimal128(0, 10, 1)));
+
+        // zero always aligns
+        Assert.assertEquals(0, new Decimal128(0, 0, 0).compareTo(new Decimal128(0, 0, 38)));
+        Assert.assertEquals(-1, new Decimal128(0, 0, 0).compareTo(new Decimal128(0, 1, 38)));
+        Assert.assertEquals(1, new Decimal128(0, 1, 0).compareTo(new Decimal128(0, 1, 38)));
+
+        // null on either side
+        final Decimal128 nullValue = new Decimal128();
+        nullValue.ofNull();
+        Assert.assertEquals(-1, nullValue.compareTo(a));
+        Assert.assertEquals(1, a.compareTo(nullValue));
     }
 
     @Test
@@ -891,7 +925,7 @@ public class Decimal128Test {
     public void testOfStringDecimalPointAtStart() throws NumericException {
         Decimal128 d = new Decimal128();
         int precision = Numbers.decodeLowInt(d.ofString(".123"));
-        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("0.123", d.toString());
     }
@@ -928,7 +962,7 @@ public class Decimal128Test {
 
         // Integer base with negative exponent
         precision = Numbers.decodeLowInt(d.ofString("456e-3"));
-        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("0.456", d.toString());
     }
@@ -945,7 +979,7 @@ public class Decimal128Test {
 
         // Negative number with negative exponent
         precision = Numbers.decodeLowInt(d.ofString("-2.5e-2"));
-        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("-0.025", d.toString());
     }

@@ -379,17 +379,28 @@ public class Decimal256 implements Sinkable, Decimal {
             bHH = ~bHH + c;
         }
 
+        // Scale up the operand with the smaller scale. When the aligned value no longer fits, its
+        // magnitude is past MAX_VALUE and therefore past the other operand, so the ordering is
+        // already known and there is no need to materialise it.
         Decimal256 holder = Misc.getThreadLocalDecimal256();
         if (aScale < bScale) {
+            final int scaleDiff = bScale - aScale;
+            if (scaleUpOverflows(aHH, aHL, aLH, aLL, scaleDiff)) {
+                return aNeg ? -1 : 1;
+            }
             holder.of(aHH, aHL, aLH, aLL, aScale);
-            holder.multiplyByPowerOf10InPlace(bScale - aScale);
+            holder.multiplyByPowerOf10InPlace(scaleDiff);
             aHH = holder.hh;
             aHL = holder.hl;
             aLH = holder.lh;
             aLL = holder.ll;
         } else {
+            final int scaleDiff = aScale - bScale;
+            if (scaleUpOverflows(bHH, bHL, bLH, bLL, scaleDiff)) {
+                return aNeg ? 1 : -1;
+            }
             holder.of(bHH, bHL, bLH, bLL, bScale);
-            holder.multiplyByPowerOf10InPlace(aScale - bScale);
+            holder.multiplyByPowerOf10InPlace(scaleDiff);
             bHH = holder.hh;
             bHL = holder.hl;
             bLH = holder.lh;
@@ -1124,44 +1135,15 @@ public class Decimal256 implements Sinkable, Decimal {
 
     /**
      * Checks if this Decimal256 value fits within the specified storage size (pow 2).
-     * The value fits if its absolute magnitude can be represented with the given number of digits.
+     * The narrowest width the value can be stored at is given by {@link #getStorageSize()},
+     * which excludes the NULL sentinel of every width.
      *
      * @param size the target size (number of bytes available pow 2, e.g., 4 bytes -> 2)
      * @return true if the value fits within the storage size, false otherwise
      */
     public boolean fitsInStorageSizePow2(int size) {
-        return switch (size) {
-            case 0 -> // 1 byte - max magnitude 127
-                    (hh == 0 || hh == -1) &&
-                            (hl == 0 || hl == -1) &&
-                            (lh == 0 || lh == -1) &&
-                            Math.abs(ll) <= 0x7FL;
-            case 1 -> // 2 bytes - max magnitude 32,767
-                    (hh == 0 || hh == -1) &&
-                            (hl == 0 || hl == -1) &&
-                            (lh == 0 || lh == -1) &&
-                            Math.abs(ll) <= 0x7FFFL;
-            case 2 -> // 4 bytes - max magnitude 2,147,483,647
-                    (hh == 0 || hh == -1) &&
-                            (hl == 0 || hl == -1) &&
-                            (lh == 0 || lh == -1) &&
-                            Math.abs(ll) <= 0x7FFFFFFFL;
-            case 3 -> // 8 bytes - max magnitude 9,223,372,036,854,775,807
-                    (hh == 0 || hh == -1) &&
-                            (hl == 0 || hl == -1) &&
-                            (lh == 0 || lh == -1);
-            // ll can use full long range
-
-            case 4 -> // 128-bit storage
-                    (hh == 0 || hh == -1) &&
-                            (hl == 0 || hl == -1);
-            // lh and ll can use full range
-
-            case 5 -> // 256-bit storage
-                    true; // Always fits in 256-bit
-
-            default -> false;
-        };
+        // 5, i.e. 32 bytes, is the widest decimal storage
+        return size <= 5 && getStorageSize() <= size;
     }
 
     /**
@@ -1784,18 +1766,17 @@ public class Decimal256 implements Sinkable, Decimal {
             return;
         }
 
-        // Negate other and perform addition
-        if (bHH != 0 || bHL != 0 || bLH != 0 || bLL != 0) {
-            bLL = ~bLL + 1;
-            long c = bLL == 0L ? 1L : 0L;
-            bLH = ~bLH + c;
-            c = (c == 1L && bLH == 0L) ? 1L : 0L;
-            bHL = ~bHL + c;
-            c = (c == 1L && bHL == 0L) ? 1L : 0L;
-            bHH = ~bHH + c;
+        // Negate other and perform addition. Zero negates to zero, so it goes
+        // through add() too, which aligns the scales.
+        bLL = ~bLL + 1;
+        long c = bLL == 0L ? 1L : 0L;
+        bLH = ~bLH + c;
+        c = (c == 1L && bLH == 0L) ? 1L : 0L;
+        bHL = ~bHL + c;
+        c = (c == 1L && bHL == 0L) ? 1L : 0L;
+        bHH = ~bHH + c;
 
-            add(this, hh, hl, lh, ll, scale, bHH, bHL, bLH, bLL, bScale);
-        }
+        add(this, hh, hl, lh, ll, scale, bHH, bHL, bLH, bLL, bScale);
     }
 
     /**
@@ -1869,6 +1850,7 @@ public class Decimal256 implements Sinkable, Decimal {
      *
      * @return double representation
      */
+    @TestOnly
     public double toDouble() {
         return toBigDecimal().doubleValue();
     }
@@ -1978,6 +1960,21 @@ public class Decimal256 implements Sinkable, Decimal {
         for (int i = 0; i < 8; i++) {
             bytes[offset + i] = (byte) (value >>> ((7 - i) * 8));
         }
+    }
+
+    /**
+     * Returns true when the given magnitude multiplied by 10^n is out of the Decimal256 range.
+     * Mirrors the bounds enforced by {@link #multiplyByPowerOf10InPlace(int)}.
+     */
+    private static boolean scaleUpOverflows(long hh, long hl, long lh, long ll, int n) {
+        if ((hh | hl | lh | ll) == 0) {
+            return false;
+        }
+        if (n > POWERS_TEN_TABLE_THRESHOLDS.length) {
+            return true;
+        }
+        final long[] thresholds = POWERS_TEN_TABLE_THRESHOLDS[n - 1];
+        return compare(hh, hl, lh, ll, thresholds[0], thresholds[1], thresholds[2], thresholds[3]) > 0;
     }
 
     private static void uncheckedAdd(Decimal256 result,

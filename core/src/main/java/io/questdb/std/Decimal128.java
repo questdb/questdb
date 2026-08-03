@@ -317,17 +317,26 @@ public class Decimal128 implements Sinkable, Decimal {
             bHigh = ~bHigh + (bLow == 0 ? 1L : 0L);
         }
 
-        // Different scales - need to align for comparison
-        // We'll scale up the one with smaller scale
+        // Different scales - we'll scale up the one with the smaller scale. When the aligned value no
+        // longer fits, its magnitude is past MAX_VALUE and therefore past the other operand, so the
+        // ordering is already known and there is no need to materialise it.
         Decimal128 holder = Misc.getThreadLocalDecimal128();
         if (aScale < bScale) {
+            final int scaleDiff = bScale - aScale;
+            if (scaleUpOverflows(aHigh, aLow, scaleDiff)) {
+                return aNeg ? -1 : 1;
+            }
             holder.of(aHigh, aLow, aScale);
-            holder.multiplyByPowerOf10InPlace(bScale - aScale);
+            holder.multiplyByPowerOf10InPlace(scaleDiff);
             aHigh = holder.high;
             aLow = holder.low;
         } else {
+            final int scaleDiff = aScale - bScale;
+            if (scaleUpOverflows(bHigh, bLow, scaleDiff)) {
+                return aNeg ? 1 : -1;
+            }
             holder.of(bHigh, bLow, bScale);
-            holder.multiplyByPowerOf10InPlace(aScale - bScale);
+            holder.multiplyByPowerOf10InPlace(scaleDiff);
             bHigh = holder.high;
             bLow = holder.low;
         }
@@ -1218,6 +1227,7 @@ public class Decimal128 implements Sinkable, Decimal {
      *
      * @return double representation
      */
+    @TestOnly
     public double toDouble() {
         return toBigDecimal().doubleValue();
     }
@@ -1309,6 +1319,21 @@ public class Decimal128 implements Sinkable, Decimal {
         }
         long bLo = POWERS_TEN_TABLE[pow][offset + 1];
         return Long.compareUnsigned(aLo, bLo);
+    }
+
+    /**
+     * Returns true when the given magnitude multiplied by 10^n is out of the Decimal128 range.
+     * Mirrors the bounds enforced by {@link #multiplyByPowerOf10InPlace(int)}.
+     */
+    private static boolean scaleUpOverflows(long high, long low, int n) {
+        if (high == 0 && low == 0) {
+            return false;
+        }
+        if (n > POWERS_TEN_TABLE_THRESHOLDS.length) {
+            return true;
+        }
+        final long[] thresholds = POWERS_TEN_TABLE_THRESHOLDS[n - 1];
+        return high > thresholds[0] || (high == thresholds[0] && unsignedLongCompare(low, thresholds[1]));
     }
 
     /**
