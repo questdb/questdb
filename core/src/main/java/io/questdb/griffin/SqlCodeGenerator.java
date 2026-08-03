@@ -336,8 +336,10 @@ import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
+import io.questdb.griffin.engine.window.WindowAccumulatorPlanBuilder;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.griffin.engine.window.WindowMapSpec;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
@@ -9814,6 +9816,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         ObjList<Function> functions = new ObjList<>();
         final ObjList<String> checkpointFactorySignatures = executionContext.isLiveViewCompile() ? new ObjList<>() : null;
+        // One entry per SELECT-list index: the normalized window that index's function was
+        // compiled under, or null for a non-window column and for a window shape the Map
+        // group compiler does not admit. Null as a whole for a live-view compile - see the
+        // capture site.
+        final ObjList<WindowMapSpec> windowMapSpecs = executionContext.isLiveViewCompile() ? null : new ObjList<>();
         ObjList<WindowFunction> naturalOrderFunctions = null;
         ObjList<Function> partitionByFunctions = null;
         LiveViewCheckpointRowsPlan checkpointRowsPlan = null;
@@ -9948,6 +9955,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if ((osz > 0 && !dismissOrder) || af.getPassCount() != WindowFunction.ZERO_PASS) {
                             isFastPath = false;
                             break;
+                        }
+
+                        // Snapshot the normalized window this function was compiled under,
+                        // while the context still holds it: it is a per-function scratch the
+                        // finally below clears, and the key types it exposes are the
+                        // compiler's own reused list. Functions whose snapshots are equal
+                        // may share one partition map, which is what the shadow plan built
+                        // after this loop works out.
+                        //
+                        // Not for a live-view compile. A compatible live-view function is
+                        // already owned by LiveViewWindow, through the plan built a few
+                        // lines below this loop, and binding it to a second generic owner
+                        // would create two sources of truth for one accumulator. Unifying
+                        // the two owners is a later refactor, not an implicit side effect
+                        // of compiling a second plan beside the first.
+                        if (windowMapSpecs != null) {
+                            windowMapSpecs.extendAndSet(i, WindowMapSpec.of(
+                                    executionContext.getWindowContext(),
+                                    ac.getOrderBy(),
+                                    ac.getOrderByDirection(),
+                                    dismissOrder,
+                                    af,
+                                    baseMetadata
+                            ));
                         }
                     } finally {
                         executionContext.clearWindowContext();
@@ -10093,6 +10124,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 anchorableWindowFunctions,
                                 baseMetadata
                         )
+                                : null,
+                        // Compiled but not adopted: the groups name their components and
+                        // bindings, and nothing allocates a map or binds a slot off them
+                        // yet. Non-owning references into `functions`, like the plan above.
+                        windowMapSpecs != null
+                                ? WindowAccumulatorPlanBuilder.compileGroups(functions, windowMapSpecs, baseMetadata)
                                 : null
                 );
                 checkpointRowsPlan = null;

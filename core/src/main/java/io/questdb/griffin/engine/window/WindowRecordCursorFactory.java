@@ -72,6 +72,13 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     // live-view compile or when nothing in it can join a fused group. Holds only
     // non-owning references into this factory's own functions, so it needs no cleanup.
     private final LiveViewWindowStatePlan checkpointWindowStatePlan;
+    // One entry per window Map group this factory's functions form: the components the
+    // group's map value would be made of, and the outputs that read them. Compiled in
+    // shadow - nothing allocates a map or binds a slot off these yet - so the runtime is
+    // exactly what it was without them. Null when the factory is a live-view compile, or
+    // when no group forms that removes anything. Holds only non-owning references into this
+    // factory's own functions, so it needs no cleanup.
+    private final ObjList<WindowAccumulatorPlan> windowAccumulatorPlans;
     private final ObjList<WindowFunction> windowFunctions;
     private final int windowFunctionsCount;
     private RecordCursorFactory base;
@@ -84,7 +91,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             GenericRecordMetadata metadata,
             ObjList<Function> functions
     ) {
-        this(base, metadata, functions, null, null, null, null);
+        this(base, metadata, functions, null, null, null, null, null);
     }
 
     public WindowRecordCursorFactory(
@@ -93,7 +100,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             ObjList<Function> functions,
             ObjList<WindowFunction> anchorableWindowFunctions
     ) {
-        this(base, metadata, functions, anchorableWindowFunctions, null, null, null);
+        this(base, metadata, functions, anchorableWindowFunctions, null, null, null, null);
     }
 
     public WindowRecordCursorFactory(
@@ -103,7 +110,8 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             ObjList<WindowFunction> anchorableWindowFunctions,
             LiveViewCheckpointRangePlan checkpointRangePlan,
             LiveViewCheckpointRowsPlan checkpointRowsPlan,
-            LiveViewWindowStatePlan checkpointWindowStatePlan
+            LiveViewWindowStatePlan checkpointWindowStatePlan,
+            ObjList<WindowAccumulatorPlan> windowAccumulatorPlans
     ) {
         super(metadata);
         this.base = base;
@@ -112,6 +120,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         this.checkpointRangePlan = checkpointRangePlan;
         this.checkpointRowsPlan = checkpointRowsPlan;
         this.checkpointWindowStatePlan = checkpointWindowStatePlan;
+        this.windowAccumulatorPlans = windowAccumulatorPlans;
 
         windowFunctions = new ObjList<>();
         for (int i = 0, n = functions.size(); i < n; i++) {
@@ -213,6 +222,19 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getIncrementalCursor(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         cursor.ofIncremental(baseCursor, executionContext);
         return cursor;
+    }
+
+    /**
+     * Returns the window Map groups this factory's functions form, or null when none does.
+     * <p>
+     * Nothing consumes them yet: the groups are compiled so that their identity, ordering
+     * and sharing decisions can be asserted before a runtime is built on them, and the
+     * cursor still drives every function through the private map it owns. A live-view
+     * compile never produces one - {@link #getCheckpointWindowStatePlan()} is that
+     * factory's group, and one accumulator may have one owner.
+     */
+    public @Nullable ObjList<WindowAccumulatorPlan> getWindowAccumulatorPlans() {
+        return windowAccumulatorPlans;
     }
 
     public ObjList<WindowFunction> getWindowFunctions() {

@@ -153,6 +153,11 @@ public class WindowContextImpl implements WindowContext, Mutable {
     }
 
     @Override
+    public int getOrderByScanDirection() {
+        return orderByDirection;
+    }
+
+    @Override
     public ColumnTypes getPartitionByKeyTypes() {
         return partitionByKeyTypes;
     }
