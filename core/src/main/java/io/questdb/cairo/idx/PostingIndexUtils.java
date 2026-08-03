@@ -318,6 +318,18 @@ public final class PostingIndexUtils {
     public static final int V2_HEADER_OFFSET_SEQUENCE_END = 4088;
     public static final int V2_HEADER_OFFSET_SEQUENCE_START = 0;
     public static final long V2_NO_HEAD = -1L;
+    // Written to V2_HEADER_OFFSET_FORMAT_VERSION as soon as the .pk file
+    // contains a COVERING_FORMAT_DEALIASED entry that actually carries covers.
+    // Such an entry shifts its gen-dir past the fixed footer reserve, so a build
+    // that predates the de-alias resolves slot 0 at entry+56 and reads the
+    // footer as a gen-dir slot -- garbage txnAtSeal / file offsets with no error
+    // anywhere. Rejecting the file by version turns that silent misread into a
+    // loud "Unsupported Posting index version" on the older build. Once raised it
+    // never goes back down for that file, because a superseded format-1 entry
+    // stays reachable through the head prev pointer. Non-covering files stay at
+    // V2_FORMAT_VERSION, where both layouts are byte-identical and downgrading
+    // remains safe.
+    public static final int V3_FORMAT_VERSION = 3;
     // EF header: sentinel(4B) + count(4B) + L(1B) + universe(8B) = 17B
     static final int EF_HEADER_SIZE = 17;
     private static final long PARSE_FAIL = Long.MIN_VALUE;
@@ -1120,6 +1132,18 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * The .pk chain-header FORMAT_VERSION values this build can read. Every
+     * version gate goes through here so a new version reaches the pread reader,
+     * the mapped reader and the writer together. {@link #V2_FORMAT_VERSION} is
+     * the 9.4.0 layout; {@link #V3_FORMAT_VERSION} additionally allows
+     * {@link #COVERING_FORMAT_DEALIASED} entries, which a 9.4.x build would
+     * misread.
+     */
+    public static boolean isSupportedFormatVersion(long formatVersion) {
+        return formatVersion == V2_FORMAT_VERSION || formatVersion == V3_FORMAT_VERSION;
+    }
+
+    /**
      * Builds the full path to the key file (.pk).
      * <p>
      * Filename format: <code>&lt;name&gt;.pk.&lt;postingColumnNameTxn&gt;</code>.
@@ -1249,7 +1273,7 @@ public final class PostingIndexUtils {
             // I/O error fold into the same -1 -- the post-seqlock check
             // plus the region-descriptor sanity below disambiguates them.
             long formatVersion = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_FORMAT_VERSION);
-            if (formatVersion != V2_FORMAT_VERSION) {
+            if (!isSupportedFormatVersion(formatVersion)) {
                 return READ_FAILURE;
             }
             long headEntryOffset = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET);

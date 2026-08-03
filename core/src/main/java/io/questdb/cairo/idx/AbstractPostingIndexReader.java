@@ -1292,7 +1292,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
             // headerScratch.formatVersion is populated regardless of pick
             // outcome (read under seqlock at the start of the picker).
-            if (headerScratch.formatVersion != PostingIndexUtils.V2_FORMAT_VERSION) {
+            if (!PostingIndexUtils.isSupportedFormatVersion(headerScratch.formatVersion)) {
                 throw CairoException.critical(0)
                         .put("Unsupported Posting index version: ").put(headerScratch.formatVersion);
             }

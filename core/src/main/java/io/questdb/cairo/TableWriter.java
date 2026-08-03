@@ -13351,8 +13351,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // appended lag row (lagRowCount -> 0) and indexes + covered-publishes them
         // via the fast-lag path. The overflow (if any) stays in o3Columns for O3.
         long applied = applyFromWalLagToLastPartition(prefixMax, false);
-        assert applied != Long.MIN_VALUE : "fast-append precondition passed but applyFromWalLagToLastPartition failed";
-        assert txWriter.getLagRowCount() == 0 : "fast-append left uncommitted lag";
+        // Not an assert: assertions are off in most production deployments, and
+        // failing this check silently is unrecoverable. The caller skips
+        // processWalCommitFinishApply for a fully-consumed block, so a fast path
+        // that did NOT commit its rows would still return o3LoHi and the block
+        // would be recorded as applied -- rows gone, sequencer none the wiser.
+        // Every guard above currently rules this out, but the corresponding
+        // single-txn gate (applyFromWalLagToLastPartitionPossible) is maintained
+        // separately and intentionally diverges, so the two can drift apart.
+        //
+        // errno 0 deliberately, NOT txnApplyBlockError: this must NOT reach the
+        // block-apply retry. By now dispatchColumnTasks has physically appended
+        // the prefix and lagRowCount/lagTxnCount are already bumped, so replaying
+        // the same seqTxns one at a time would duplicate those rows and break the
+        // lagTxnCount invariant. Suspending the table is the correct outcome.
+        // distressed marks the writer unusable so the pool discards it rather than
+        // reusing one holding lag that never reached disk -- rollback() would not
+        // clear it, since transientRowCount never moved.
+        if (applied == Long.MIN_VALUE || txWriter.getLagRowCount() != 0) {
+            distressed = true;
+            throw CairoException.critical(0)
+                    .put("fast-append precondition passed but the block was not committed [table=")
+                    .put(tableToken.getTableName())
+                    .put(", applied=").put(applied)
+                    .put(", lagRowCount=").put(txWriter.getLagRowCount())
+                    .put(", prefixRows=").put(prefixRows).put(']');
+        }
+        if (PostingIndexWriter.COVERING_COUNTERS_ENABLED) {
+            PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.incrementAndGet();
+        }
         final long overflowLo = o3Lo + prefixRows;
         if (overflowLo < o3LoHi) {
             // The prefix apply consumed the block's lag min/max (reset to

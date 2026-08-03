@@ -147,7 +147,7 @@ public class PostingIndexChainWriterTest {
         PostingIndexChainEntry.writeHeader(mem, off2, 2, 200, 0, 0, 0, 1, 64, 0, off1);
         long limit = off2 + PostingIndexChainEntry.entrySize(1);
         PostingIndexChainHeader.publish(
-                mem, PostingIndexUtils.PAGE_A_OFFSET, off2, /* entryCount */ 2,
+                mem, PostingIndexUtils.PAGE_A_OFFSET, PostingIndexUtils.V2_FORMAT_VERSION, off2, /* entryCount */ 2,
                 PostingIndexUtils.V2_ENTRY_REGION_BASE, limit, 2L
         );
         w.openExisting(mem);
@@ -220,6 +220,49 @@ public class PostingIndexChainWriterTest {
         } catch (IllegalStateException expected) {
             Assert.assertTrue(expected.getMessage().contains("empty"));
         }
+    }
+
+    @Test
+    public void testFormat1EntryRaisesFileVersionAndKeepsIt() {
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+
+        // A non-covering entry is byte-identical in both layouts, so the file
+        // stays safely readable by a build that predates the de-alias.
+        w.appendNewEntry(mem, 1, 10, 0, 0, 0, 1, 64, PostingIndexUtils.COVERING_FORMAT_LEGACY);
+        Assert.assertEquals(PostingIndexUtils.V2_FORMAT_VERSION, readFileFormatVersion());
+
+        // A format-1 covering entry shifts its gen-dir past the fixed footer
+        // reserve. An older build resolves slot 0 at entry+56 and would read the
+        // footer as a gen-dir slot, so the file must stop opening there.
+        LongList covers = new LongList();
+        covers.add(4096L);
+        covers.add(8192L);
+        w.appendNewEntry(mem, 2, 20, 0, 0, 0, 1, 64, PostingIndexUtils.COVERING_FORMAT_DEALIASED, covers);
+        Assert.assertEquals(PostingIndexUtils.V3_FORMAT_VERSION, readFileFormatVersion());
+
+        // The format-1 entry stays reachable through the new head prev pointer, so
+        // a later non-covering entry must not put back a version an older build
+        // accepts.
+        w.appendNewEntry(mem, 3, 30, 0, 0, 0, 1, 64, PostingIndexUtils.COVERING_FORMAT_LEGACY);
+        Assert.assertEquals(PostingIndexUtils.V3_FORMAT_VERSION, readFileFormatVersion());
+
+        // The version survives a writer reopen and the publishes that follow it.
+        PostingIndexChainWriter reopened = new PostingIndexChainWriter();
+        reopened.openExisting(mem);
+        reopened.updateHeadMaxValue(mem, 1234L);
+        Assert.assertEquals(PostingIndexUtils.V3_FORMAT_VERSION, readFileFormatVersion());
+    }
+
+    @Test
+    public void testFormat1EntryWithoutCoversKeepsFileVersion2() {
+        // COVER_COUNT == 0 makes the two layouts byte-identical (the footer
+        // reserve is empty), so nothing an older build reads moves. Raising the
+        // version here would block a downgrade for no reason.
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+        w.appendNewEntry(mem, 1, 10, 0, 0, 0, 1, 64, PostingIndexUtils.COVERING_FORMAT_DEALIASED, new LongList());
+        Assert.assertEquals(PostingIndexUtils.V2_FORMAT_VERSION, readFileFormatVersion());
     }
 
     @Test
@@ -414,6 +457,19 @@ public class PostingIndexChainWriterTest {
         Assert.assertEquals(footerVals[1], snap.coverFileEndOffsets.getQuick(1));
     }
 
+    @Test
+    public void testMigrateHeadToFormat1RaisesFileVersion() {
+        // The COW migration is how an upgraded 9.4.x table acquires its first
+        // format-1 entry, so it must raise the version exactly like a fresh append.
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+        buildLegacyCoveringHead(w, 1, 10, 3, 2, new long[]{4096L, 8192L});
+        Assert.assertEquals(PostingIndexUtils.V2_FORMAT_VERSION, readFileFormatVersion());
+
+        w.migrateHeadToFormat1(mem);
+        Assert.assertEquals(PostingIndexUtils.V3_FORMAT_VERSION, readFileFormatVersion());
+    }
+
     // Crash AFTER the head-pointer flip: the header publish landed. A fresh
     // writer reopening the same memory must read the fully-written format-1 head
     // (no exception, no REINDEX), with covered reads intact.
@@ -444,6 +500,23 @@ public class PostingIndexChainWriterTest {
         Assert.assertEquals(coverCount, snap.coverFileEndOffsets.size());
         Assert.assertEquals(footerVals[0], snap.coverFileEndOffsets.getQuick(0));
         Assert.assertEquals(footerVals[1], snap.coverFileEndOffsets.getQuick(1));
+    }
+
+    @Test
+    public void testOpenExistingAcceptsFormatVersion3() {
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+        LongList covers = new LongList();
+        covers.add(4096L);
+        w.appendNewEntry(mem, 1, 10, 0, 0, 0, 1, 64, PostingIndexUtils.COVERING_FORMAT_DEALIASED, covers);
+        Assert.assertEquals(PostingIndexUtils.V3_FORMAT_VERSION, readFileFormatVersion());
+
+        // This build must keep reading what it just wrote: the version locks out
+        // older builds, not the one that produced it.
+        PostingIndexChainWriter reopened = new PostingIndexChainWriter();
+        reopened.openExisting(mem);
+        Assert.assertEquals(w.getHeadEntryOffset(), reopened.getHeadEntryOffset());
+        Assert.assertEquals(w.getRegionLimit(), reopened.peekRegionLimit(mem));
     }
 
     @Test
@@ -585,6 +658,107 @@ public class PostingIndexChainWriterTest {
         Assert.assertEquals(writer.getRegionLimit(), reader.peekRegionLimit(mem));
         Assert.assertTrue("a non-empty chain's region must extend past the header window",
                 reader.peekRegionLimit(mem) > PostingIndexUtils.KEY_FILE_RESERVED);
+    }
+
+    @Test
+    public void testReadHeadCoverEndOffsetsOnTornLegacyHead() {
+        // A format-0 head has no packed cover count, so its count can only come
+        // from the size -- and a crash mid-extendHead leaves a LEN sized for a gen
+        // GEN_COUNT never published. Deriving from that pair reports 5 covers on a
+        // NON-covering index and 5 extra on a covering one; both make the writer
+        // treat the head as something it is not. The published regionLimit is the
+        // last consistent length, because the crash skipped the header publish
+        // that would have advanced it.
+        PostingIndexChainWriter nonCovering = new PostingIndexChainWriter();
+        nonCovering.initialiseEmpty(mem);
+        buildTornExtendLegacyHead(nonCovering, /* committedGens */ 1, /* coverCount */ 0, /* committedTxn */ 10L);
+        LongList out = new LongList();
+        nonCovering.readHeadCoverEndOffsets(mem, out);
+        Assert.assertEquals(0, out.size());
+
+        // Same tear on a genuinely covering legacy head: the real covers survive
+        // and nothing extra is invented.
+        tearDown();
+        setUp();
+        PostingIndexChainWriter covering = new PostingIndexChainWriter();
+        covering.initialiseEmpty(mem);
+        buildTornExtendLegacyHead(covering, /* committedGens */ 3, /* coverCount */ 2, /* committedTxn */ 10L);
+        out.clear();
+        covering.readHeadCoverEndOffsets(mem, out);
+        Assert.assertEquals(2, out.size());
+        Assert.assertEquals(4096L, out.getQuick(0));
+        Assert.assertEquals(8192L, out.getQuick(1));
+    }
+
+    @Test
+    public void testReadHeadCoverEndOffsetsUsesEntryCoverCountNotDerivedLength() {
+        // Same torn-extendHead shape as the recovery-trim test, on the path
+        // publishToChain uses to reload the head's footer. captureCoverEndOffsets
+        // sizes the footer it republishes from this list, and extendHead writes
+        // that many slots into the head's FIXED cover reserve. An over-long list
+        // therefore runs past the reserve and lands on gen-dir slot 0, wiping the
+        // TXN_AT_SEAL readers use for visibility.
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+        final int coverCount = 2;
+        buildTornExtendFormat1Head(w, /* committedGens */ 3, coverCount, /* committedTxn */ 10L);
+
+        LongList out = new LongList();
+        w.readHeadCoverEndOffsets(mem, out);
+
+        Assert.assertEquals(coverCount, out.size());
+        Assert.assertEquals(4096L, out.getQuick(0));
+        Assert.assertEquals(8192L, out.getQuick(1));
+    }
+
+    @Test
+    public void testReadLimitsCorruptPackedCoverCountToEntrySize() {
+        // A format-1 entry's cover count is packed into the upper 24 bits of
+        // COVERING_FORMAT, so a corrupted bit can make it as large as 16,777,215. read()
+        // turns that into a gen-dir offset 134 MB past the entry, dereferences it
+        // for TXN_AT_SEAL, and sizes the footer list to a 134 MB allocation --
+        // none of which the picker's LEN-vs-mapping check can stop, because it
+        // happens inside read(). The entry cannot hold more footer slots than
+        // (LEN - header) / 8, which is the same size limit the format-0 branch has
+        // always applied to itself.
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+        final int coverCount = 2;
+        LongList covers = new LongList();
+        covers.add(4096L);
+        covers.add(8192L);
+        long off = w.appendNewEntry(
+                mem, /* sealTxn */ 1, /* txnAtSeal */ 10,
+                /* valueMemSize */ 1500, /* maxValue */ 902,
+                /* keyCount */ 5, /* genCount */ 3,
+                /* blockCapacity */ 64, PostingIndexUtils.COVERING_FORMAT_DEALIASED,
+                covers
+        );
+        writeFormat1GenSlot(off, 0, coverCount, 10L);
+
+        // Flip the packed count to a value the entry could never hold.
+        mem.putInt(off + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT,
+                PostingIndexChainEntry.packCoveringFormat(PostingIndexUtils.COVERING_FORMAT_DEALIASED, 100_000));
+
+        PostingIndexChainEntry.Snapshot snap = new PostingIndexChainEntry.Snapshot();
+        PostingIndexChainEntry.read(mem, off, coverCount, snap);
+
+        long maxSlots = (snap.len
+                - PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                - (long) snap.genCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE)
+                / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE;
+        Assert.assertTrue("coverCount " + snap.coverCount + " exceeds what the entry can hold (" + maxSlots + ')',
+                snap.coverCount <= maxSlots);
+        Assert.assertTrue("footer list sized past the entry: " + snap.coverFileEndOffsets.size(),
+                snap.coverFileEndOffsets.size() <= maxSlots);
+        // Every gen-dir slot the entry claims must land inside the entry.
+        Assert.assertTrue("gen-dir resolved past the entry: " + snap.genDirOffset + " vs " + (off + snap.len),
+                snap.genDirOffset + (long) snap.genCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE <= off + snap.len);
+        // The bound is exact for a well-formed entry, so the real covers survive
+        // the size limit rather than being thrown away with the corruption.
+        Assert.assertEquals(coverCount, snap.coverCount);
+        Assert.assertEquals(4096L, snap.coverFileEndOffsets.getQuick(0));
+        Assert.assertEquals(8192L, snap.coverFileEndOffsets.getQuick(1));
     }
 
     @Test
@@ -1066,6 +1240,39 @@ public class PostingIndexChainWriterTest {
     }
 
     @Test
+    public void testRecoveryTrimUsesEntryCoverCountNotDerivedLength() {
+        // extendHead publishes LEN before GEN_COUNT on purpose (GEN_COUNT is what
+        // readers latch on), so a crash in that window leaves a durable entry
+        // whose LEN is sized for genCount+1 while GEN_COUNT still reads genCount.
+        // Working the cover count out from LEN then gives 5 too many, which inflates
+        // the format-1 gen-dir reserve by 40 bytes and makes the trim read
+        // TXN_AT_SEAL out of the wrong slot. Recovery must take the count from
+        // the entry's own packed COVERING_FORMAT field, which the torn write
+        // never touched.
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+
+        final int committedGens = 3;
+        final int coverCount = 2;
+        final long committedTxn = 10L;
+        long off = buildTornExtendFormat1Head(w, committedGens, coverCount, committedTxn);
+
+        LongList orphans = new LongList();
+        int dropped = w.recoveryDropAbandoned(mem, committedTxn, orphans);
+
+        // All three published gens are committed at _txn 10, so there is nothing
+        // to drop and nothing to trim. Reading the shifted slots instead sees
+        // TXN_AT_SEAL values far above 10 and discards the whole entry.
+        Assert.assertEquals(0, dropped);
+        Assert.assertEquals(0, orphans.size());
+        Assert.assertEquals(off, w.getHeadEntryOffset());
+        PostingIndexChainEntry.Snapshot snap = new PostingIndexChainEntry.Snapshot();
+        PostingIndexChainEntry.read(mem, off, coverCount, snap);
+        Assert.assertEquals(committedGens, snap.genCount);
+        Assert.assertEquals(committedTxn, snap.txnAtSeal);
+    }
+
+    @Test
     public void testRecoveryWholeEntryDroppedWhenSlot0InFlight() {
         PostingIndexChainWriter w = new PostingIndexChainWriter();
         w.initialiseEmpty(mem);
@@ -1163,5 +1370,66 @@ public class PostingIndexChainWriterTest {
             mem.putLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE, 900L + g);
         }
         return off;
+    }
+
+    // A format-1 covering head left behind by a crash mid-extendHead: LEN was
+    // grown to fit one more gen and that gen's slot bytes landed, but the
+    // GEN_COUNT store never did. Deriving the cover count from (GEN_COUNT, LEN)
+    // on this shape returns coverCount+5, not coverCount.
+    private long buildTornExtendFormat1Head(PostingIndexChainWriter w, int committedGens, int coverCount, long committedTxn) {
+        LongList covers = new LongList();
+        for (int c = 0; c < coverCount; c++) {
+            covers.add(4096L * (1L << c));
+        }
+        long off = w.appendNewEntry(
+                mem, /* sealTxn */ 1, /* txnAtSeal */ committedTxn,
+                /* valueMemSize */ 1500, /* maxValue */ 902,
+                /* keyCount */ 5, /* genCount */ committedGens,
+                /* blockCapacity */ 64, PostingIndexUtils.COVERING_FORMAT_DEALIASED,
+                covers
+        );
+        for (int g = 0; g < committedGens; g++) {
+            writeFormat1GenSlot(off, g, coverCount, committedTxn);
+        }
+        writeFormat1GenSlot(off, committedGens, coverCount, committedTxn + 1);
+        mem.putLong(off + PostingIndexUtils.V2_ENTRY_OFFSET_LEN,
+                PostingIndexChainEntry.entrySize(committedGens + 1, coverCount));
+        return off;
+    }
+
+    // A format-0 (legacy) head left behind by a crash mid-extendHead. Same shape
+    // as the format-1 fixture, but this layout carries no packed cover count, so
+    // the size is the only thing a reader can derive one from.
+    private void buildTornExtendLegacyHead(PostingIndexChainWriter w, int committedGens, int coverCount, long committedTxn) {
+        long[] footerVals = new long[coverCount];
+        for (int c = 0; c < coverCount; c++) {
+            footerVals[c] = 4096L * (1L << c);
+        }
+        long off = buildLegacyCoveringHead(w, 1, committedTxn, committedGens, coverCount, footerVals);
+        mem.putLong(off + PostingIndexUtils.V2_ENTRY_OFFSET_LEN,
+                PostingIndexChainEntry.entrySize(committedGens + 1, coverCount));
+    }
+
+    // The FORMAT_VERSION an older build would read off the active header page.
+    private long readFileFormatVersion() {
+        PostingIndexChainHeader.Snapshot snap = new PostingIndexChainHeader.Snapshot();
+        Assert.assertTrue(PostingIndexChainHeader.readUnderSeqlock(mem, snap));
+        return snap.formatVersion;
+    }
+
+    // Fill one format-1 gen-dir slot with deterministic, non-zero payload. The
+    // non-zero MAX_KEY / MAX_VALUE matter: a mis-resolved slot offset lands
+    // partway into a neighbour and must read something that is visibly not a
+    // valid TXN_AT_SEAL.
+    private void writeFormat1GenSlot(long entryOffset, int gen, int coverCount, long txnAtSeal) {
+        long slot = PostingIndexChainEntry.resolveGenDirOffset(
+                entryOffset, gen, PostingIndexUtils.COVERING_FORMAT_DEALIASED, coverCount);
+        mem.putLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET, gen * 1000L);
+        mem.putLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_SIZE, 500L + gen);
+        mem.putInt(slot + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, 3 + gen);
+        mem.putInt(slot + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, gen);
+        mem.putInt(slot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, 4 + gen);
+        mem.putLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, txnAtSeal);
+        mem.putLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE, 900L + gen);
     }
 }

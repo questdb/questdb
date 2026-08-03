@@ -128,6 +128,13 @@ public class PostingIndexWriter implements IndexWriter {
     // thread that sets the flag, so there is no cross-thread visibility hazard.
     @TestOnly
     public static boolean COVERING_FASTPATH_DISABLED = false;
+    // @TestOnly: how many times TableWriter.tryFastAppendInOrderBlock actually
+    // committed a block. Distinct from COVERING_FASTLAG_COMMIT_COUNT, which counts
+    // the SHARED fast-lag covered publish that the pre-existing single-txn path
+    // also drives -- a test asserting only that one cannot tell this PR's
+    // block-apply fast path from the path that was already there on master.
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_BLOCK_FASTPATH_COUNT = new java.util.concurrent.atomic.AtomicLong();
     @TestOnly
     public static final java.util.concurrent.atomic.AtomicLong COVERING_FASTLAG_COMMIT_COUNT = new java.util.concurrent.atomic.AtomicLong();
     @TestOnly
@@ -930,13 +937,15 @@ public class PostingIndexWriter implements IndexWriter {
                 && headStoredCoverCount() > 0;
     }
 
-    // The head entry's OWN cover count, recovered from its total size
-    // (layout-order-independent; safe single-threaded on the writer's own head).
+    // The head entry's OWN cover count. A format-1 head reports the count it was
+    // sealed with; only a format-0 head falls back to deriving it from LEN. That
+    // matters because publishToChain feeds this value to resolveGenDirOffset for
+    // the slot it is about to write: a count above the head's real one would put
+    // the footer republish on top of gen-dir slot 0, including the TXN_AT_SEAL
+    // every reader uses to decide whether the entry is visible.
     private int headStoredCoverCount() {
-        long head = chain.getHeadEntryOffset();
-        return PostingIndexChainEntry.coverCountFromLen(
-                keyMem.getInt(head + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT),
-                keyMem.getLong(head + PostingIndexUtils.V2_ENTRY_OFFSET_LEN));
+        return PostingIndexChainEntry.resolveEntryCoverCount(
+                keyMem, chain.getHeadEntryOffset(), chain.getRegionLimit());
     }
 
     private long resolveHeadGenDirOffset(int gen) {
@@ -4396,15 +4405,26 @@ public class PostingIndexWriter implements IndexWriter {
         // A format-1 extend writes into the head's fixed cover reserve using the
         // HEAD's own coverCount (writeCoverCount above), so the footer fits by
         // construction. When covering is actively configured (coverCount>0), the
-        // writer's cover set must match the head's — a genuine cover-set change
+        // writer's cover set must match the head's -- a genuine cover-set change
         // (ALTER add/drop covered column) must roll a NEW sealTxn (appendNewEntry),
         // never extend in place. coverCount==0 (covering not configured this cycle,
-        // e.g. an O3 pool rebuild) is legitimate and skips the check.
-        assert newEntry
-                || writeFormat != PostingIndexUtils.COVERING_FORMAT_DEALIASED
-                || coverCount == 0
-                || coverCount == headStoredCoverCount()
-                : "format-1 extend cover-set mismatch [writer=" + coverCount + ", head=" + headStoredCoverCount() + ']';
+        // e.g. an O3 pool rebuild) is legitimate: captureCoverEndOffsets then
+        // republishes the head's own cached extents, so the footer stays the head's
+        // width. This throws rather than asserts because production runs with
+        // assertions off on some deployments: extendHead would write coverCount
+        // footer slots into a reserve sized for the head's smaller count, and the
+        // overflow lands on gen-dir slot 0 -- clobbering the TXN_AT_SEAL every
+        // reader consults to decide whether the entry is visible. Failing the
+        // publish leaves the chain untouched and lets the caller retry.
+        if (!newEntry
+                && writeFormat == PostingIndexUtils.COVERING_FORMAT_DEALIASED
+                && coverCount > 0
+                && coverCount != writeCoverCount) {
+            throw CairoException.critical(0)
+                    .put("posting index cover set changed without a new seal [index=").put(indexName)
+                    .put(", writer=").put(coverCount)
+                    .put(", head=").put(writeCoverCount).put(']');
+        }
         long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex, writeFormat, writeCoverCount);
         long slotTxnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);

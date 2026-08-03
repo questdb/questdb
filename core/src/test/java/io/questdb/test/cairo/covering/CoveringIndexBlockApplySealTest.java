@@ -67,6 +67,7 @@ public class CoveringIndexBlockApplySealTest extends AbstractCairoTest {
         PostingIndexWriter.COVERING_AUTOSEAL_COUNT.set(0);
         PostingIndexWriter.COVERING_MAX_GENCOUNT_OBSERVED.set(0);
         PostingIndexWriter.COVERING_MAX_SEGCOUNT_OBSERVED.set(0);
+        PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.set(0);
     }
 
     @After
@@ -251,6 +252,7 @@ public class CoveringIndexBlockApplySealTest extends AbstractCairoTest {
 
             PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.set(0);
             PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.set(0);
+            PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.set(0);
 
             // One block of 5 ascending multi-timestamp transactions starting at
             // 23:59:01 on day 1 and crossing midnight into day 2 (straddle).
@@ -271,9 +273,12 @@ public class CoveringIndexBlockApplySealTest extends AbstractCairoTest {
 
             // The prefix used the fast-lag path; both partitions got data (proven
             // by the per-partition counts matching the control, which has the
-            // identical data via the plain O3 path).
+            // identical data via the plain O3 path). Assert the BLOCK-APPLY
+            // counter, not COVERING_FASTLAG_COMMIT_COUNT: the latter also counts
+            // the pre-existing single-txn fast-lag publish, so it cannot tell this
+            // path from the one that was already on master.
             Assert.assertTrue("straddle must fast-append the within-partition prefix",
-                    PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.get() > 0);
+                    PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.get() > 0);
             assertSqlCursors(
                     "SELECT ts::date d, count(*), sum(value) FROM ctl GROUP BY d ORDER BY d",
                     "SELECT ts::date d, count(*), sum(value) FROM blk GROUP BY d ORDER BY d"
@@ -489,6 +494,7 @@ public class CoveringIndexBlockApplySealTest extends AbstractCairoTest {
 
             PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.set(0);
             PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.set(0);
+            PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.set(0);
 
             // Two INTERLEAVED batches (even/odd seconds) -> the block must SORT.
             // Starts at 23:59:01 on day 1 and crosses midnight into day 2, all
@@ -504,10 +510,12 @@ public class CoveringIndexBlockApplySealTest extends AbstractCairoTest {
             execute("INSERT INTO ctl" + odd);
             drainWalQueue();
 
-            // Prefix fast-lagged (its reseal == 0; if it had resealed, fastLag
-            // would be 0). Overflow created day 2 via O3.
+            // Prefix fast-lagged, overflow created day 2 via O3. Assert the
+            // BLOCK-APPLY counter rather than COVERING_FASTLAG_COMMIT_COUNT: the
+            // latter also counts the pre-existing single-txn fast-lag publish, so
+            // it cannot tell this path from the one already on master.
             Assert.assertTrue("straddling sorted block must fast-append the day-1 prefix",
-                    PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.get() > 0);
+                    PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.get() > 0);
             // Both partitions exist with the right rows (vs the plain-O3 control).
             assertSqlCursors(
                     "SELECT ts::date d, count(*), sum(value) FROM ctl GROUP BY d ORDER BY d",

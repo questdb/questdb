@@ -100,6 +100,34 @@ public final class PostingIndexChainEntry {
     }
 
     /**
+     * Cover-column count from an entry's size: LEN = round8(56 + genCount*44 +
+     * coverCount*8), pad &lt; 8, so floor-division is exact in either format.
+     * Only safe on an entry nobody is extending. On the head it returns 5 or 6
+     * too many, because extendHead writes LEN before GEN_COUNT and a crash
+     * between them leaves a size describing one more gen than the count admits.
+     * Resolving a head's count goes through resolveEntryCoverCount.
+     */
+    public static int coverCountFromLen(int genCount, long len) {
+        long cover = len - PostingIndexUtils.V2_ENTRY_HEADER_SIZE - (long) genCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        return cover > 0 ? (int) (cover / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE) : 0;
+    }
+
+    /**
+     * The stored COVERING_FORMAT int packs the format discriminator in its low
+     * byte and, for format 1, the entry's own coverCount in the upper bits. This
+     * makes a format-1 entry's gen-dir position self-contained (an atomic int
+     * read), so a reader whose live .pci coverCount is transiently stale (e.g.
+     * mid covering-config transition) still resolves the gen-dir correctly.
+     * Legacy format-0 entries stored a plain 0, which decodes to format 0 /
+     * coverCount 0 — unchanged.
+     */
+    public static int packCoveringFormat(int coveringFormat, int coverCount) {
+        return coveringFormat == PostingIndexUtils.COVERING_FORMAT_DEALIASED
+                ? (PostingIndexUtils.COVERING_FORMAT_DEALIASED | (coverCount << 8))
+                : coveringFormat;
+    }
+
+    /**
      * Read an entry header at {@code entryOffset} into {@code into}. Returns
      * the offset just past this entry's bytes (useful for forward scans).
      * <p>
@@ -134,7 +162,12 @@ public final class PostingIndexChainEntry {
         // .pci coverCount. Format 0 puts the gen-dir directly after the header
         // (no reserve) and trails the footer, so its coverCount is irrelevant to
         // the gen-dir and its footer span is bounded by LEN below.
-        int entryCoverCount = unpackCoverCount(rawCoveringFormat);
+        // The size limit is what keeps the reads in range: one corrupted bit in
+        // the 24-bit packed count reads as about 16.7M covers, and the TXN_AT_SEAL
+        // read below would then reach 134 MB past the entry -- SIGSEGV in a -da
+        // build. The picker checks LEN against the mapping, but that check runs
+        // after read() returns, so it cannot prevent this.
+        int entryCoverCount = limitCoverCountToEntrySize(unpackCoverCount(rawCoveringFormat), into.genCount, into.len);
         into.coverCount = into.coveringFormat == PostingIndexUtils.COVERING_FORMAT_DEALIASED ? entryCoverCount : coverCount;
         into.genDirOffset = resolveGenDirOffset(entryOffset, 0, into.coveringFormat, entryCoverCount);
         // Entry-level txnAtSeal sources from slot[0] (single source of truth).
@@ -175,36 +208,14 @@ public final class PostingIndexChainEntry {
     }
 
     /**
-     * The stored COVERING_FORMAT int packs the format discriminator in its low
-     * byte and, for format 1, the entry's own coverCount in the upper bits. This
-     * makes a format-1 entry's gen-dir position self-contained (an atomic int
-     * read), so a reader whose live .pci coverCount is transiently stale (e.g.
-     * mid covering-config transition) still resolves the gen-dir correctly.
-     * Legacy format-0 entries stored a plain 0, which decodes to format 0 /
-     * coverCount 0 — unchanged.
+     * Overload without a limit, for callers that only read header or txn fields.
+     * It can return too many covers for a format-0 entry whose size was left
+     * wrong back when it was the head. That does no damage there, because format 0
+     * puts its gen-dir at entry+56 whatever the count says. Turn the result into
+     * an offset and it does.
      */
-    public static int packCoveringFormat(int coveringFormat, int coverCount) {
-        return coveringFormat == PostingIndexUtils.COVERING_FORMAT_DEALIASED
-                ? (PostingIndexUtils.COVERING_FORMAT_DEALIASED | (coverCount << 8))
-                : coveringFormat;
-    }
-
-    public static int unpackCoveringFormat(int rawStored) {
-        return rawStored & 0xFF;
-    }
-
-    /**
-     * Recover an entry's own cover-column count from its total size. LEN =
-     * round8(56 + genCount*44 + coverCount*8); 56 and coverCount*8 are 8-aligned,
-     * so the alignment pad (0 or 4) is &lt; 8 and floor-division recovers
-     * coverCount exactly, independent of format (the total size is the same in
-     * both). Safe ONLY in single-threaded writer contexts (a concurrent
-     * extendHead races LEN vs GEN_COUNT); concurrent readers must use the entry's
-     * packed coverCount (format 1) or the .pci-published coverCount.
-     */
-    public static int coverCountFromLen(int genCount, long len) {
-        long cover = len - PostingIndexUtils.V2_ENTRY_HEADER_SIZE - (long) genCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
-        return cover > 0 ? (int) (cover / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE) : 0;
+    public static int resolveEntryCoverCount(MemoryR keyMem, long entryOffset) {
+        return resolveEntryCoverCount(keyMem, entryOffset, Long.MAX_VALUE);
     }
 
     /**
@@ -227,6 +238,44 @@ public final class PostingIndexChainEntry {
         return coveringFormat == PostingIndexUtils.COVERING_FORMAT_DEALIASED
                 ? (long) coverCount * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE
                 : 0L;
+    }
+
+    /**
+     * An existing entry's authoritative cover-column count. Use this for anything
+     * that becomes an offset, a length or a loop bound.
+     * <p>
+     * Format 1 reads its own packed count, which extendHead never rewrites, and
+     * reduces it to what the entry can hold: the field is 24 bits, so a single
+     * corrupted bit reads as about 16.7M covers, and publishToChain would write
+     * its gen-dir 134 MB past the entry. Format 0 has no packed count and must
+     * work one out from the size, so it needs entryEndLimit to cover the case
+     * where a crash left the head with a size that describes one more gen than it
+     * has. Without it, a head with no covers at all works out to 5 and gets
+     * migrated as if it were an old covering one.
+     *
+     * @param entryEndLimit the entry's known end; pass the chain header's published
+     *                      regionLimit, which the interrupted extendHead never
+     *                      advanced and so still holds the last correct length.
+     *                      Must not reach past a superseded entry -- migrate and
+     *                      head-trim leave those behind, and a limit beyond one
+     *                      restricts nothing. Long.MAX_VALUE when the caller
+     *                      derives no offset from the result.
+     */
+    public static int resolveEntryCoverCount(MemoryR keyMem, long entryOffset, long entryEndLimit) {
+        int rawStored = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT);
+        int genCount = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
+        long len = Math.min(
+                keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN),
+                entryEndLimit - entryOffset
+        );
+        if (unpackCoveringFormat(rawStored) == PostingIndexUtils.COVERING_FORMAT_DEALIASED) {
+            return limitCoverCountToEntrySize(unpackCoverCount(rawStored), genCount, len);
+        }
+        return coverCountFromLen(genCount, len);
+    }
+
+    public static int unpackCoveringFormat(int rawStored) {
+        return rawStored & 0xFF;
     }
 
     /**
@@ -356,6 +405,21 @@ public final class PostingIndexChainEntry {
                 );
             }
         }
+    }
+
+    /**
+     * Reduce a packed cover count to what the entry's bytes could hold. A correct
+     * entry satisfies 56 + genCount*44 + coverCount*8 &lt;= len, so the space left
+     * over never rejects a valid count; a wrong genCount only makes the limit
+     * smaller, and a negative result gives 0 -- gen-dir at entry+56, empty footer,
+     * nothing read past the entry.
+     */
+    private static int limitCoverCountToEntrySize(int packedCoverCount, int genCount, long len) {
+        long maxCoverSlots = (len
+                - PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                - (long) genCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE)
+                / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE;
+        return (int) Math.min(packedCoverCount, Math.max(0L, maxCoverSlots));
     }
 
     /**
