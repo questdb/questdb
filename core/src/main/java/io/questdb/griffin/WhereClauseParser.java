@@ -93,6 +93,22 @@ public final class WhereClauseParser implements Mutable {
     private static final int INTRINSIC_OP_LESS_EQ = 5;
     private static final int INTRINSIC_OP_NOT = 8;
     private static final int INTRINSIC_OP_NOT_EQ = 7;
+    // Cap on how deeply speculative scalar sub-query bound compiles may nest.
+    // <p>
+    // Resolving a QUERY bound compiles the sub-query in full just to find out whether pruning is
+    // legal (only the generated factory can answer checkCursorFunctionReturnsSingleTimestamp() and
+    // isStableWithinExecution()). Whenever that speculation ends in a decline the predicate stays a
+    // residual row filter, which compiles the very same sub-query a second time - so every nesting
+    // level of a monotonic scalar sub-query bound doubles compile time, T(k) = 2*T(k+1) = O(2^D),
+    // with no cancellation point anywhere in code generation (the circuit breaker is only tested on
+    // row-iteration paths). Past this depth we stop speculating and let the predicate go straight to
+    // the residual, which turns the tail back into T(k) = T(k+1) and bounds the whole compile at
+    // 2^MAX regardless of how deep the statement nests.
+    // <p>
+    // Declining is always semantically safe: it is the same fallback the stability gate below uses,
+    // and the residual filter remains the single source of truth. Only the pruning optimization is
+    // lost, and only for bounds nested deeper than any realistic query.
+    private static final int MAX_SPECULATIVE_SCALAR_BOUND_DEPTH = 4;
     private static final CharSequenceIntHashMap intrinsicOps = new CharSequenceIntHashMap();
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
     // Holds the WHERE clauses saved around a speculative scalar sub-query compile. Cleared only in
@@ -140,6 +156,15 @@ public final class WhereClauseParser implements Mutable {
     private int reentryDepth;
     private long resolvedBoundConst;
     private Function resolvedBoundFunc;
+    // Nesting depth of speculative scalar sub-query bound compiles that led to this parser, and
+    // whether this parser has already spent a speculative compile on the model it is parsing. Each
+    // generation depth gets its own parser instance, so SqlCodeGenerator seeds the child from its
+    // parent when it borrows one. The flag is sticky for the whole generation on purpose: once a
+    // bound here has been speculatively compiled, the residual re-compile of that same sub-query is
+    // the second half of the doubling and has to be charged for too, otherwise the budget resets on
+    // every residual descent and the blow-up merely drops from O(2^D) to O(D^MAX).
+    private int scalarBoundDepth;
+    private boolean scalarBoundSpeculated;
     private CharSequence timestamp;
 
     @Override
@@ -149,12 +174,27 @@ public final class WhereClauseParser implements Mutable {
         exprNodePool.clear();
         clearTransientState();
         reentryDepth = 0;
+        scalarBoundDepth = 0;
         for (int i = 0, n = savedStates.size(); i < n; i++) {
             savedStates.getQuick(i).clear();
         }
     }
 
+    /**
+     * Depth to seed a parser borrowed for a nested generation with: one deeper than this parser
+     * when the nested generation was triggered by a speculative scalar sub-query bound compile,
+     * otherwise unchanged, so ordinary sub-select nesting never consumes the speculation budget.
+     */
+    int childScalarBoundDepth() {
+        return scalarBoundSpeculated ? scalarBoundDepth + 1 : scalarBoundDepth;
+    }
+
+    void setScalarBoundDepth(int scalarBoundDepth) {
+        this.scalarBoundDepth = scalarBoundDepth;
+    }
+
     void clearTransientState() {
+        scalarBoundSpeculated = false;
         stack.clear();
         keyNodes.clear();
         keyExclNodes.clear();
@@ -2551,14 +2591,14 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private ExpressionNode collapseWithin0(ExpressionNode node) {
-        if (node == null || (node.token != null && isWithinKeyword(node.token))) {
+        if (node == null || (isWithinKeyword(node.token))) {
             return null;
         }
         if (node.queryModel == null && node.token != null && (isAndKeyword(node.token) || isOrKeyword(node.token))) {
-            if (node.lhs == null || (node.lhs.token != null && isWithinKeyword(node.lhs.token))) {
+            if (node.lhs == null || (isWithinKeyword(node.lhs.token))) {
                 return node.rhs;
             }
-            if (node.rhs == null || (node.rhs.token != null && isWithinKeyword(node.rhs.token))) {
+            if (node.rhs == null || (isWithinKeyword(node.rhs.token))) {
                 return node.lhs;
             }
         }
@@ -2566,7 +2606,7 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private ExpressionNode collapseWithinNodes(ExpressionNode node) {
-        if (node == null || (node.token != null && isWithinKeyword(node.token))) {
+        if (node == null || (isWithinKeyword(node.token))) {
             return null;
         }
         node.lhs = collapseWithinNodes(collapseWithin0(node.lhs));
@@ -3287,7 +3327,7 @@ public final class WhereClauseParser implements Mutable {
             SqlExecutionContext executionContext,
             LongList prefixes) throws SqlException {
 
-        if (node.token != null && isWithinKeyword(node.token)) {
+        if (isWithinKeyword(node.token)) {
 
             if (prefixes.size() > 0) {
                 throw SqlException.$(node.position, "Multiple 'within' expressions not supported");
@@ -3419,6 +3459,13 @@ public final class WhereClauseParser implements Mutable {
             if (!isTimestamp) {
                 return BOUND_FAIL;
             }
+            // Stop speculating once the bound nesting gets pathological: the compile below is
+            // discarded on every decline and re-done by the residual, so each extra level doubles
+            // compile time. Declining here costs only the pruning optimization.
+            if (scalarBoundDepth >= MAX_SPECULATIVE_SCALAR_BOUND_DEPTH) {
+                return BOUND_FAIL;
+            }
+            scalarBoundSpeculated = true;
             Function owner = parseScalarSubQueryBound(boundNode, functionParser, metadata, executionContext);
             try {
                 if (checkCursorFunctionReturnsSingleTimestamp(owner)) {

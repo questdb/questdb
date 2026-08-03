@@ -870,6 +870,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         final WhereClauseParser parser = whereClauseParsers.getQuick(parserIndex);
         parser.clearTransientState();
+        // Carry the speculative scalar sub-query bound nesting depth down to the nested parser.
+        // Each generation depth uses its own parser instance, so the budget that bounds the
+        // doubling compile in WhereClauseParser only survives if it is seeded from the parent.
+        parser.setScalarBoundDepth(parserIndex == 0 ? 0 : whereClauseParsers.getQuick(parserIndex - 1).childScalarBoundDepth());
         whereClauseParserDepth++;
         Throwable failure = null;
         try {

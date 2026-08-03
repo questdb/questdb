@@ -1,0 +1,128 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin;
+
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Misc;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
+import org.junit.Test;
+
+/**
+ * Resolving a {@code monotonic(ts) >= (SELECT ...)} bound compiles the sub-query speculatively,
+ * because only the generated factory can say whether pruning is legal. Every decline discards that
+ * compile and leaves the predicate as a residual row filter, which compiles the same sub-query
+ * again - so without a cap each nesting level doubles compile time, T(k) = 2*T(k+1) = O(2^D), and
+ * nothing in code generation tests the circuit breaker, making the burn uncancellable.
+ *
+ * <p>{@code WhereClauseParser.MAX_SPECULATIVE_SCALAR_BOUND_DEPTH} stops the speculation past a
+ * small depth, which restores T(k) = T(k+1) for the tail. These tests pin the resulting bound and
+ * verify that declining to prune never changes results.
+ */
+public class ScalarSubqueryBoundNestingDepthTest extends AbstractCairoTest {
+
+    private static String nestedMonotonic(int depth) {
+        StringBuilder sb = new StringBuilder("SELECT i, ts FROM t WHERE dateadd('h', 1, ts) >= ");
+        StringBuilder tail = new StringBuilder();
+        for (int i = 0; i < depth; i++) {
+            sb.append("(SELECT min(ts) FROM t WHERE dateadd('h', 1, ts) >= ");
+            tail.append(')');
+        }
+        sb.append("'2020-06-02T00:00:00.000000Z'").append(tail);
+        return sb.toString();
+    }
+
+    private void createTable() throws Exception {
+        execute("CREATE TABLE t (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO t VALUES (1, '2020-06-01T00:00:00.000000Z')," +
+                " (2, '2020-06-02T00:00:00.000000Z')," +
+                " (3, '2020-06-03T00:00:00.000000Z')");
+    }
+
+    /**
+     * A deeply nested chain must stay cheap to compile. Before the cap this grew as 2^D: ~4 s at
+     * depth 14 and ~76 s at depth 17 on a developer laptop, with no way to cancel it.
+     */
+    @Test
+    public void testDeepNestingCompilesInBoundedTime() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            // warm up so the measurement excludes first-compile/class-loading noise
+            for (int i = 0; i < 3; i++) {
+                Misc.free(select(nestedMonotonic(2)));
+            }
+            final long start = System.nanoTime();
+            try (RecordCursorFactory f = select(nestedMonotonic(20))) {
+                Assert.assertNotNull(f);
+            }
+            final long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            // generous: the point is bounded-vs-exponential, not a precise timing pin
+            Assert.assertTrue("depth-20 compile took " + elapsedMs + "ms, expected bounded", elapsedMs < 5_000);
+        });
+    }
+
+    /**
+     * Declining to prune must never change the answer, at any depth - above or below the cap.
+     * Each level takes min(ts) of the rows at or after the previous bound, so the bound is stable
+     * at 2020-06-02 and every depth returns the same two rows.
+     */
+    @Test
+    public void testResultsAreIdenticalAcrossTheCap() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            final String expected = "i\tts\n" +
+                    "2\t2020-06-02T00:00:00.000000Z\n" +
+                    "3\t2020-06-03T00:00:00.000000Z\n";
+            // depths straddling MAX_SPECULATIVE_SCALAR_BOUND_DEPTH (4): below, at, and well above
+            for (int depth : new int[]{1, 2, 3, 4, 5, 6, 9}) {
+                assertQuery(nestedMonotonic(depth))
+                        .timestamp("ts")
+                        .returns(expected);
+            }
+        });
+    }
+
+    /**
+     * Ordinary sub-select nesting must not consume the speculation budget: the bound below sits at
+     * scalar-bound depth 0 no matter how many plain derived tables wrap it, so pruning is retained.
+     */
+    @Test
+    public void testPlainSubSelectNestingKeepsPruning() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            String inner = "SELECT i, ts FROM t WHERE dateadd('h', 1, ts) >= (SELECT min(ts) FROM t)";
+            for (int i = 0; i < 8; i++) {
+                inner = "SELECT i, ts FROM (" + inner + ")";
+            }
+            assertQuery(inner)
+                    .timestamp("ts")
+                    .withPlanContaining("Interval forward scan on: t")
+                    .returns("i\tts\n" +
+                            "1\t2020-06-01T00:00:00.000000Z\n" +
+                            "2\t2020-06-02T00:00:00.000000Z\n" +
+                            "3\t2020-06-03T00:00:00.000000Z\n");
+        });
+    }
+}
