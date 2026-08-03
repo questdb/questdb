@@ -74,11 +74,14 @@ import java.util.Arrays;
  * fits and turns the rest into residuals, so it degrades one component at a time
  * rather than losing the fusion whole.
  *
- * <h2>Status</h2>
- * The plan compiles and validates today but nothing persists it yet: the checkpoint
- * seal still writes one legacy root per function. Its first durable consumer is the
- * window-state root, which reads {@link #getManifest()} for the layout and
- * {@link #getWindowIdentity()} plus the key schema for predecessor compatibility.
+ * <h2>What reads it</h2>
+ * The plan is durable, not advisory. {@code LiveViewCheckpointWindowRoot} persists
+ * {@link #getManifest()} as the layout every fused leaf is sliced by, and compares it
+ * byte-for-byte against a predecessor root's before a seal may build on that
+ * predecessor's leaves; {@link #getWindowIdentity()} and the key schema are the other
+ * two halves of that compatibility test. {@code LiveViewWindow} builds its fused map
+ * value from the same component order, so a component's runtime slot base and its
+ * durable state offset are two readings of one decision.
  */
 public final class LiveViewWindowStatePlan {
     /**
@@ -476,6 +479,10 @@ public final class LiveViewWindowStatePlan {
                 offset += components.getQuick(i).getStateLength();
                 slot += components.getQuick(i).getSlotCount();
             }
+            // The truncation above and this loop add the same widths from the same start,
+            // so they cannot disagree - and if they ever did, the manifest and the leaf
+            // would both be sized by a total nothing checked.
+            assert offset <= LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES;
             final ObjList<LiveViewAccumulatorProjection> projections = new ObjList<>(projectionKinds.size());
             for (int i = 0, n = projectionKinds.size(); i < n; i++) {
                 final int componentIndex = projectionComponents.getQuick(i);
