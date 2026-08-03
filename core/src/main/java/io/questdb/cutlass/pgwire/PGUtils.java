@@ -50,8 +50,6 @@ class PGUtils {
     private static final int MAX_GEOINT_TEXT_LEN = 32;
     private static final int MAX_GEOLONG_TEXT_LEN = 64;
     private static final int MAX_GEOSHORT_TEXT_LEN = 16;
-    // "('<timestamp>', '<timestamp>')": two quoted timestamps (31 chars each, see MAX_TIMESTAMP_TEXT_LEN)
-    // plus the brackets and the separator. A "null" bound and a raw long bound are both shorter than that.
     private static final int MAX_INTERVAL_TEXT_LEN = 2 * (31 + 2) + 4;
     private static final int MAX_INT_TEXT_LEN = String.valueOf(Integer.MIN_VALUE).length();
     private static final int MAX_IPv4_TEXT_LEN = 15; // "255.255.255.255"
@@ -151,7 +149,6 @@ class PGUtils {
                 int vcRemaining = vcValue.size() - vcResumePoint;
                 return resumePoint == -1 ? Integer.BYTES + vcRemaining : vcRemaining;
             case ColumnType.ARRAY_STRING:
-                // ARRAY_STRING travels the wire as a STRING, see outRecord()
             case ColumnType.STRING:
                 final CharSequence strValue = record.getStrA(columnIndex);
                 return strValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(strValue);
@@ -182,7 +179,6 @@ class PGUtils {
                     return Integer.BYTES;
                 }
                 if (dec128Value.isNegative()) {
-                    // getDigitAtPowerOfTen() requires a positive value, and outColBinDecimal() negates too
                     dec128Value.negate();
                 }
                 return decimalBinSize(topDigitPow(dec128Value, columnType), columnType);
@@ -197,8 +193,6 @@ class PGUtils {
                 }
                 return decimalBinSize(topDigitPow(dec256Value, columnType), columnType);
             case ColumnType.INTERVAL:
-                // outColInterval() renders the interval as text, so its length is only known once it
-                // has been rendered. Bail out and let the caller re-send the whole record after a flush.
                 return -1;
             case ColumnType.SYMBOL:
                 final CharSequence symValue = record.getSymA(columnIndex);
@@ -299,8 +293,6 @@ class PGUtils {
                 yield strValue == null ? Integer.BYTES : Integer.BYTES + 3L * strValue.length();
             }
             case ColumnType.INTERVAL -> Integer.BYTES + MAX_INTERVAL_TEXT_LEN;
-            // the sign, a possible leading zero, the decimal point and at most precision + 1 digits,
-            // see Decimal64.toSink() and its Decimal128 / Decimal256 counterparts
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32,
                  ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
                     Integer.BYTES + Decimals.getDecimalTagPrecision(typeTag) + 4;
@@ -359,14 +351,6 @@ class PGUtils {
         return count;
     }
 
-    /**
-     * Mirrors {@link PGPipelineEntry}'s {@code outColBinDecimal()}: a 4-byte length prefix, the 8-byte
-     * NUMERIC header (ndigits, weight, sign, dscale) and 2 bytes per base-10000 digit group. The groups
-     * align on the decimal point; the encoder skips the leading all-zero ones but writes the trailing
-     * ones, so the group count follows from the position of the most significant non-zero digit.
-     *
-     * @param topDigitPow power of ten of the most significant non-zero digit, -1 for a zero value
-     */
     private static int decimalBinSize(int topDigitPow, int columnType) {
         final int headerSize = Integer.BYTES + 4 * Short.BYTES;
         if (topDigitPow < 0) {
@@ -390,12 +374,6 @@ class PGUtils {
         }
     }
 
-    /**
-     * Returns the power of ten of the most significant non-zero digit of the given non-null decimal,
-     * or -1 when the decimal is zero. The result is clamped to {@code precision - 1}, which is what the
-     * encoder sees: it never inspects a higher digit, and {@code getDigitAtPowerOfTen()} saturates at 9
-     * for a value that overflows the declared precision.
-     */
     private static int topDigitPow(Decimal128 value, int columnType) {
         if (value.isZero()) {
             return -1;
