@@ -179,6 +179,30 @@ public class QwpSymbolDecoderTest {
     }
 
     @Test
+    public void testDeltaSymbolDictClaimedCountExceedsPayloadRejected() throws Exception {
+        // A frame can be complete -- payloadEnd is the true end of the message -- and
+        // still claim far more entries than it carries: every entry costs at least its
+        // own length varint, so deltaCount must not exceed the payload bytes left after
+        // the header. Before this check, this exact input reached extendPos and grew the
+        // connection dictionary to a MAX_SYMBOL_DICTIONARY_SIZE-sized backing array before
+        // failing on the first entry with "truncated delta symbol entry".
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 0, 1_000_000);
+                Assert.fail("Expected rejection for deltaCount exceeding the remaining payload");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+                Assert.assertTrue(e.getMessage(),
+                        e.getMessage().contains("delta symbol dictionary declares 1000000 entries"));
+            }
+            Assert.assertEquals("a rejected frame must not grow the connection dictionary", 0, dict.size());
+        });
+    }
+
+    @Test
     public void testParseErrorRoutingDiscriminatesTheGap() {
         // A malformed row index must stay terminal; only the gap becomes retriable.
         Assert.assertEquals(QwpIngressProcessorState.Status.DICTIONARY_GAP,

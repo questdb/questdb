@@ -273,6 +273,18 @@ public class QwpMessageCursor implements Mutable {
                             + " exceeds dictionary size " + connectionSymbolDict.size()
             );
         }
+        // Every entry costs at least its own 1-byte length varint, so deltaCount
+        // <= payloadEnd - address is a necessary condition for a complete frame.
+        // Checking it here, before extendPos, bounds both the allocation and the
+        // finally's null-fill at O(payload) instead of O(deltaCount) on a frame
+        // that claims up to MAX_SYMBOL_DICTIONARY_SIZE entries but carries none.
+        if (deltaCount > payloadEnd - address) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "delta symbol dictionary declares " + deltaCount
+                            + " entries but only " + (payloadEnd - address) + " payload bytes remain"
+            );
+        }
         int sizeBefore = connectionSymbolDict.size();
         // The entry loop snapshots each pre-existing slot into dictRollbackScratch
         // just before overwriting it, so the finally can restore content alongside
