@@ -38,9 +38,13 @@ import io.questdb.std.Decimal64;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.StringSink;
 
 public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
+    // 10^38 is below Float.MAX_VALUE, so fewer integral digits cannot leave the float range
+    private static final int MAX_IN_RANGE_INTEGRAL_DIGITS = 38;
+
     @Override
     public String getSignature() {
         return "cast(Ξf)";
@@ -63,9 +67,19 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
         };
     }
 
-    // out of the float range yields NULL, same as cast(double as float)
-    private static float narrow(double value) {
-        return Numbers.isNull(value) || value > Float.MAX_VALUE || value < -Float.MAX_VALUE ? Float.NaN : (float) value;
+    /**
+     * Rounds the decimal text to a float in a single step. Out of the float range yields NULL,
+     * same as cast(double as float), and the double decides that range the same way.
+     */
+    private static float toFloat(StringSink sink, int integralDigits) {
+        if (integralDigits > MAX_IN_RANGE_INTEGRAL_DIGITS) {
+            final double magnitude = Numbers.parseDouble(sink);
+            if (magnitude > Float.MAX_VALUE || magnitude < -Float.MAX_VALUE) {
+                return Float.NaN;
+            }
+        }
+        // rejectOverflow=false keeps underflow to zero out of the exception path
+        return FastFloatParser.parseFloat(sink, false);
     }
 
     private static class Func extends AbstractCastToFloatFunction {
@@ -87,7 +101,17 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             if (decimal256.isNull()) {
                 return Float.NaN;
             }
-            return narrow(CastDecimalToDoubleFunctionFactory.toDouble(sink, decimal256, fromScale, fromPrecision));
+            sink.clear();
+            Decimal256.toSink(
+                    sink,
+                    decimal256.getHh(),
+                    decimal256.getHl(),
+                    decimal256.getLh(),
+                    decimal256.getLl(),
+                    fromScale,
+                    fromPrecision
+            );
+            return toFloat(sink, fromPrecision - fromScale);
         }
 
         @Override
@@ -115,7 +139,9 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             if (decimal128.isNull()) {
                 return Float.NaN;
             }
-            return narrow(CastDecimalToDoubleFunctionFactory.toDouble(sink, decimal128, fromScale, fromPrecision));
+            sink.clear();
+            Decimal128.toSink(sink, decimal128.getHigh(), decimal128.getLow(), fromScale, fromPrecision);
+            return toFloat(sink, fromPrecision - fromScale);
         }
 
         @Override
@@ -142,7 +168,9 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             if (Decimal64.isNull(v)) {
                 return Float.NaN;
             }
-            return narrow(CastDecimalToDoubleFunctionFactory.toDouble(sink, v, fromScale, fromPrecision));
+            sink.clear();
+            Decimal64.toSink(sink, v, fromScale, fromPrecision);
+            return toFloat(sink, fromPrecision - fromScale);
         }
 
         @Override

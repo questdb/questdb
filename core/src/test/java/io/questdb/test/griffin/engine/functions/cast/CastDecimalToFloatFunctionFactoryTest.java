@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.functions.cast;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -249,6 +248,24 @@ public class CastDecimalToFloatFunctionFactoryTest extends AbstractCairoTest {
                                         long_sequence count: 1
                                     """);
                 }
+        );
+    }
+
+    @Test
+    public void testCastFloatRangeBoundary() throws Exception {
+        assertMemoryLeak(
+                () -> assertQuery("select cast(340282346638528859811704183484516925440m as float) atMax, " +
+                        "cast(-340282346638528859811704183484516925440m as float) atMaxNeg, " +
+                        "cast(340282346638528900000000000000000000000m as float) justAboveMax, " +
+                        "cast(340282356779733600000000000000000000000m as float) aboveRoundingThreshold, " +
+                        "cast(cast(340282346638528859811704183484516925440m as double) as float) atMaxViaDouble, " +
+                        "cast(cast(340282346638528900000000000000000000000m as double) as float) justAboveMaxViaDouble")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                atMax\tatMaxNeg\tjustAboveMax\taboveRoundingThreshold\tatMaxViaDouble\tjustAboveMaxViaDouble
+                                3.4028235E38\t-3.4028235E38\tnull\tnull\t3.4028235E38\tnull
+                                """)
         );
     }
 
@@ -519,6 +536,46 @@ public class CastDecimalToFloatFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastRoundsOnceBelowFloatMidpoint() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    // every value sits just below the midpoint of 1.0000001 and 1.0000002, so it rounds down;
+                    // rounding through a double lands on the midpoint and rounds up instead
+                    assertQuery("select cast(cast(1.00000017881393432m as DECIMAL(18,17)) as float) d64, " +
+                            "cast(cast(-1.00000017881393432m as DECIMAL(18,17)) as float) d64Neg, " +
+                            "cast(cast(1.0000001788139343261718749999999999999m as DECIMAL(38,37)) as float) d128, " +
+                            "cast(cast(-1.0000001788139343261718749999999999999m as DECIMAL(38,37)) as float) d128Neg, " +
+                            "cast(cast(1.00000017881393432617187499999999999999m as DECIMAL(39,38)) as float) d256, " +
+                            "cast(cast(-1.00000017881393432617187499999999999999m as DECIMAL(39,38)) as float) d256Neg")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    d64\td64Neg\td128\td128Neg\td256\td256Neg
+                                    1.0000001\t-1.0000001\t1.0000001\t-1.0000001\t1.0000001\t-1.0000001
+                                    """);
+
+                    assertQuery("select cast(a as float) d64, cast(b as float) d128, cast(c as float) d256 from midpoints")
+                            .ddl(
+                                    "create table midpoints (a DECIMAL(18,17), b DECIMAL(38,37), c DECIMAL(39,38))",
+                                    """
+                                            insert into midpoints values
+                                            (1.00000017881393432m, 1.0000001788139343261718749999999999999m, 1.00000017881393432617187499999999999999m),
+                                            (-1.00000017881393432m, -1.0000001788139343261718749999999999999m, -1.00000017881393432617187499999999999999m),
+                                            (null, null, null)"""
+                            )
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    d64\td128\td256
+                                    1.0000001\t1.0000001\t1.0000001
+                                    -1.0000001\t-1.0000001\t-1.0000001
+                                    null\tnull\tnull
+                                    """);
+                }
+        );
+    }
+
+    @Test
     public void testCastRuntimeScaledDecimal16() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(99.5m as DECIMAL(4,2)) value " +
@@ -652,6 +709,9 @@ public class CastDecimalToFloatFunctionFactoryTest extends AbstractCairoTest {
                                 "insert into x values (340282400000000000000000000000000000000.00m), " +
                                         "(-340282400000000000000000000000000000000.00m), " +
                                         "(340282000000000000000000000000000000000.00m), " +
+                                        "(340282346638528859811704183484516925440.00m), " +
+                                        "(-340282346638528859811704183484516925440.00m), " +
+                                        "(340282346638528900000000000000000000000.00m), " +
                                         "(123.45m), (-0.25m), (null)"
                         )
                         .noLeakCheck()
@@ -661,6 +721,9 @@ public class CastDecimalToFloatFunctionFactoryTest extends AbstractCairoTest {
                                 340282400000000000000000000000000000000.00\tnull
                                 -340282400000000000000000000000000000000.00\tnull
                                 340282000000000000000000000000000000000.00\t3.40282E38
+                                340282346638528859811704183484516925440.00\t3.4028235E38
+                                -340282346638528859811704183484516925440.00\t-3.4028235E38
+                                340282346638528900000000000000000000000.00\tnull
                                 123.45\t123.45
                                 -0.25\t-0.25
                                 \tnull
@@ -694,6 +757,19 @@ public class CastDecimalToFloatFunctionFactoryTest extends AbstractCairoTest {
                                     -1.0E-38
                                     null
                                     """);
+
+                    // the subnormal pair is above half of Float.MIN_VALUE and keeps the smallest subnormal,
+                    // the underflowing pair is below it and collapses to a signed zero
+                    assertQuery("select cast(0.000000000000000000000000000000000000000000000700649232162408536m as float) subnormal, " +
+                            "cast(-0.000000000000000000000000000000000000000000000700649232162408536m as float) subnormalNeg, " +
+                            "cast(0.0000000000000000000000000000000000000000000000000000000000000000000000000001m as float) underflow, " +
+                            "cast(-0.0000000000000000000000000000000000000000000000000000000000000000000000000001m as float) underflowNeg")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    subnormal\tsubnormalNeg\tunderflow\tunderflowNeg
+                                    1.4E-45\t-1.4E-45\t0.0\t-0.0
+                                    """);
                 }
         );
     }
@@ -701,7 +777,8 @@ public class CastDecimalToFloatFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCastMatchesBigDecimalBitForBit() throws Exception {
         assertMemoryLeak(() -> {
-            final int[] pathCounts = new int[2];
+            final BigDecimal maxFloat = new BigDecimal(Float.MAX_VALUE);
+            final int[] rangeCounts = new int[2];
             for (int[] decimalType : CastDecimalToDoubleFunctionFactoryTest.DECIMAL_TYPES) {
                 final int precision = decimalType[0];
                 final int scale = decimalType[1];
@@ -726,21 +803,21 @@ public class CastDecimalToFloatFunctionFactoryTest extends AbstractCairoTest {
                     for (int i = 0, n = values.size(); i < n; i++) {
                         final BigInteger unscaled = values.get(i);
                         Assert.assertTrue(cursor.hasNext());
-                        final double value = new BigDecimal(unscaled).movePointLeft(scale).doubleValue();
-                        final float expected = Numbers.isNull(value) || value > Float.MAX_VALUE || value < -Float.MAX_VALUE
-                                ? Float.NaN : (float) value;
+                        final BigDecimal value = new BigDecimal(unscaled).movePointLeft(scale);
+                        final boolean isOutOfFloatRange = value.abs().compareTo(maxFloat) > 0;
+                        final float expected = isOutOfFloatRange ? Float.NaN : value.floatValue();
                         Assert.assertEquals(
                                 "DECIMAL(" + precision + "," + scale + ") unscaled=" + unscaled,
                                 Float.floatToRawIntBits(expected),
                                 Float.floatToRawIntBits(record.getFloat(0))
                         );
-                        pathCounts[CastDecimalToDoubleFunctionFactoryTest.usesExactShortcut(unscaled, scale) ? 0 : 1]++;
+                        rangeCounts[isOutOfFloatRange ? 1 : 0]++;
                     }
                     Assert.assertFalse(cursor.hasNext());
                 }
             }
-            Assert.assertTrue(pathCounts[0] > 0);
-            Assert.assertTrue(pathCounts[1] > 0);
+            Assert.assertTrue(rangeCounts[0] > 0);
+            Assert.assertTrue(rangeCounts[1] > 0);
         });
     }
 
