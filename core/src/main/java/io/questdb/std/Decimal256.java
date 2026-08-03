@@ -382,32 +382,22 @@ public class Decimal256 implements Sinkable, Decimal {
         // Scale up the operand with the smaller scale. When the aligned value no longer fits, its
         // magnitude is past MAX_VALUE and therefore past the other operand, so the ordering is
         // already known and there is no need to materialise it.
-        Decimal256 holder = Misc.getThreadLocalDecimal256();
+        final int cmp;
         if (aScale < bScale) {
             final int scaleDiff = bScale - aScale;
             if (scaleUpOverflows(aHH, aHL, aLH, aLL, scaleDiff)) {
                 return aNeg ? -1 : 1;
             }
-            holder.of(aHH, aHL, aLH, aLL, aScale);
-            holder.multiplyByPowerOf10InPlace(scaleDiff);
-            aHH = holder.hh;
-            aHL = holder.hl;
-            aLH = holder.lh;
-            aLL = holder.ll;
+            cmp = compareScaledUp(aHH, aHL, aLH, aLL, scaleDiff, bHH, bHL, bLH, bLL);
         } else {
             final int scaleDiff = aScale - bScale;
             if (scaleUpOverflows(bHH, bHL, bLH, bLL, scaleDiff)) {
                 return aNeg ? 1 : -1;
             }
-            holder.of(bHH, bHL, bLH, bLL, bScale);
-            holder.multiplyByPowerOf10InPlace(scaleDiff);
-            bHH = holder.hh;
-            bHL = holder.hl;
-            bLH = holder.lh;
-            bLL = holder.ll;
+            cmp = -compareScaledUp(bHH, bHL, bLH, bLL, scaleDiff, aHH, aHL, aLH, aLL);
         }
 
-        return compare(aHH, aHL, aLH, aLL, bHH, bHL, bLH, bLL) * (aNeg ? -1 : 1);
+        return aNeg ? -cmp : cmp;
     }
 
     /**
@@ -968,6 +958,14 @@ public class Decimal256 implements Sinkable, Decimal {
 
         if (isNull(otherHH, otherHL, otherLH, otherLL)) {
             ofNull();
+            return;
+        }
+
+        if ((otherHH | otherHL | otherLH | otherLL) == 0) {
+            // Adding zero still widens the result to max(scale, otherScale).
+            if (otherScale > scale) {
+                rescale0(otherScale);
+            }
             return;
         }
 
@@ -1766,8 +1764,15 @@ public class Decimal256 implements Sinkable, Decimal {
             return;
         }
 
-        // Negate other and perform addition. Zero negates to zero, so it goes
-        // through add() too, which aligns the scales.
+        if ((bHH | bHL | bLH | bLL) == 0) {
+            // Subtracting zero still widens the result to max(scale, bScale).
+            if (bScale > scale) {
+                rescale0(bScale);
+            }
+            return;
+        }
+
+        // Negate other and perform addition.
         bLL = ~bLL + 1;
         long c = bLL == 0L ? 1L : 0L;
         bLH = ~bLH + c;
@@ -1938,6 +1943,87 @@ public class Decimal256 implements Sinkable, Decimal {
         }
     }
 
+    /**
+     * Compares the unsigned magnitude {@code a * 10^n} against the unsigned magnitude {@code b}.
+     * The caller must have ruled out an overflow of the scale-up with {@link #scaleUpOverflows}.
+     */
+    private static int compareScaledUp(
+            long aHH, long aHL, long aLH, long aLL, int n,
+            long bHH, long bHL, long bLH, long bLL
+    ) {
+        if ((aHH | aHL | aLH | aLL) == 0) {
+            return compare(0, 0, 0, 0, bHH, bHL, bLH, bLL);
+        }
+
+        final long[] powers = POWERS_TEN_TABLE[n];
+        final long m3 = powers[0];
+        final long m2 = powers[1];
+        final long m1 = powers[2];
+        final long m0 = powers[3];
+
+        // Column-wise multiplication keeping the low 256 bits. c0/c1 accumulate the partial products
+        // of one column, then c0 drops out as a result limb and the rest carries into the next column.
+        final long rLL = aLL * m0;
+        long c0 = unsignedMultiplyHigh(aLL, m0);
+
+        long p = aLL * m1;
+        long ph = unsignedMultiplyHigh(aLL, m1);
+        long s = c0 + p;
+        if (hasCarry(c0, s)) {
+            ph++;
+        }
+        c0 = s;
+        long c1 = ph;
+
+        p = aLH * m0;
+        ph = unsignedMultiplyHigh(aLH, m0);
+        s = c0 + p;
+        if (hasCarry(c0, s)) {
+            ph++;
+        }
+        c0 = s;
+        s = c1 + ph;
+        final long c2 = hasCarry(c1, s) ? 1L : 0L;
+
+        final long rLH = c0;
+        c0 = s;
+        c1 = c2;
+
+        // From here on the carries out of c1 land above limb 3 and drop out of range.
+        p = aLL * m2;
+        ph = unsignedMultiplyHigh(aLL, m2);
+        s = c0 + p;
+        if (hasCarry(c0, s)) {
+            ph++;
+        }
+        c0 = s;
+        c1 += ph;
+
+        p = aLH * m1;
+        ph = unsignedMultiplyHigh(aLH, m1);
+        s = c0 + p;
+        if (hasCarry(c0, s)) {
+            ph++;
+        }
+        c0 = s;
+        c1 += ph;
+
+        p = aHL * m0;
+        ph = unsignedMultiplyHigh(aHL, m0);
+        s = c0 + p;
+        if (hasCarry(c0, s)) {
+            ph++;
+        }
+        c0 = s;
+        c1 += ph;
+
+        final long rHL = c0;
+        // The top column contributes its low halves only, everything above it is out of range.
+        final long rHH = c1 + aLL * m3 + aLH * m2 + aHL * m1 + aHH * m0;
+
+        return compare(rHH, rHL, rLH, rLL, bHH, bHL, bLH, bLL);
+    }
+
     private static int compareToPowerOfTen(long aHH, long aHL, long aLH, long aLL, int pow, int multiplier) {
         final int offset = (multiplier - 1) * 4;
         long bHH = POWERS_TEN_TABLE[pow][offset];
@@ -2023,6 +2109,13 @@ public class Decimal256 implements Sinkable, Decimal {
         carry |= hasCarry(t, r) ? 1L : 0L;
         result.hl = r;
         result.hh = result.hh + carry + bHH;
+    }
+
+    /**
+     * Returns the high 64 bits of the 128-bit product of two unsigned 64-bit values.
+     */
+    private static long unsignedMultiplyHigh(long x, long y) {
+        return Math.multiplyHigh(x, y) + ((x >> 63) & y) + ((y >> 63) & x);
     }
 
     /**

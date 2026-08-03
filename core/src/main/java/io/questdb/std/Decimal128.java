@@ -320,28 +320,22 @@ public class Decimal128 implements Sinkable, Decimal {
         // Different scales - we'll scale up the one with the smaller scale. When the aligned value no
         // longer fits, its magnitude is past MAX_VALUE and therefore past the other operand, so the
         // ordering is already known and there is no need to materialise it.
-        Decimal128 holder = Misc.getThreadLocalDecimal128();
+        final int cmp;
         if (aScale < bScale) {
             final int scaleDiff = bScale - aScale;
             if (scaleUpOverflows(aHigh, aLow, scaleDiff)) {
                 return aNeg ? -1 : 1;
             }
-            holder.of(aHigh, aLow, aScale);
-            holder.multiplyByPowerOf10InPlace(scaleDiff);
-            aHigh = holder.high;
-            aLow = holder.low;
+            cmp = compareScaledUp(aHigh, aLow, scaleDiff, bHigh, bLow);
         } else {
             final int scaleDiff = aScale - bScale;
             if (scaleUpOverflows(bHigh, bLow, scaleDiff)) {
                 return aNeg ? 1 : -1;
             }
-            holder.of(bHigh, bLow, bScale);
-            holder.multiplyByPowerOf10InPlace(scaleDiff);
-            bHigh = holder.high;
-            bLow = holder.low;
+            cmp = -compareScaledUp(bHigh, bLow, scaleDiff, aHigh, aLow);
         }
 
-        return compare(aHigh, aLow, bHigh, bLow) * (aNeg ? -1 : 1);
+        return aNeg ? -cmp : cmp;
     }
 
     /**
@@ -649,6 +643,14 @@ public class Decimal128 implements Sinkable, Decimal {
      * Add another Decimal128 to this one (in-place)
      */
     public void add(long otherHigh, long otherLow, int otherScale) {
+        if ((otherHigh | otherLow) == 0) {
+            // Adding zero still widens the result to max(scale, otherScale).
+            if (otherScale > scale) {
+                rescale0(otherScale);
+            }
+            return;
+        }
+
         add(this, this.high, this.low, this.scale, otherHigh, otherLow, otherScale);
     }
 
@@ -1154,6 +1156,14 @@ public class Decimal128 implements Sinkable, Decimal {
      * @param bScale the number of decimal places of the other Decimal128
      */
     public void subtract(long bH, long bL, int bScale) {
+        if ((bH | bL) == 0) {
+            // Subtracting zero still widens the result to max(scale, bScale).
+            if (bScale > scale) {
+                rescale0(bScale);
+            }
+            return;
+        }
+
         // Two's complement: invert all bits and add 1
         bL = ~bL + 1;
         bH = ~bH + (bL == 0 ? 1 : 0);
@@ -1311,6 +1321,18 @@ public class Decimal128 implements Sinkable, Decimal {
         }
     }
 
+    /**
+     * Compares the unsigned magnitude {@code a * 10^n} against the unsigned magnitude {@code b}.
+     * The caller must have ruled out an overflow of the scale-up with {@link #scaleUpOverflows}.
+     */
+    private static int compareScaledUp(long aHigh, long aLow, int n, long bHigh, long bLow) {
+        final long mLow = TEN_POWERS_TABLE_LOW[n];
+        final long mHigh = n >= 20 ? TEN_POWERS_TABLE_HIGH[n - 20] : 0L;
+        final long low = aLow * mLow;
+        final long high = unsignedMultiplyHigh(aLow, mLow) + aHigh * mLow + aLow * mHigh;
+        return compare(high, low, bHigh, bLow);
+    }
+
     private static int compareToPowerOfTen(long aHi, long aLo, int pow, int multiplier) {
         final int offset = (multiplier - 1) * 2;
         long bHi = POWERS_TEN_TABLE[pow][offset];
@@ -1375,6 +1397,13 @@ public class Decimal128 implements Sinkable, Decimal {
      */
     private static boolean unsignedLongCompare(long one, long two) {
         return (one + Long.MIN_VALUE) > (two + Long.MIN_VALUE);
+    }
+
+    /**
+     * Returns the high 64 bits of the 128-bit product of two unsigned 64-bit values.
+     */
+    private static long unsignedMultiplyHigh(long x, long y) {
+        return Math.multiplyHigh(x, y) + ((x >> 63) & y) + ((y >> 63) & x);
     }
 
     /**
