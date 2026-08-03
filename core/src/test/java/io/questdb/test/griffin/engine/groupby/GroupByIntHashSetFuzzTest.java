@@ -117,7 +117,9 @@ public class GroupByIntHashSetFuzzTest extends AbstractCairoTest {
                     int val = rnd.nextPositiveInt();
                     long index = set.keyIndex(val);
                     Assert.assertTrue(index >= 0 || referenceSet.contains(val));
-                    set.addAt(index, val);
+                    if (index >= 0) {
+                        set.addAt(index, val);
+                    }
                     referenceSet.add(val);
                 }
             }
