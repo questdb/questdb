@@ -24,6 +24,7 @@
 
 package io.questdb.test.mp;
 
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.FiberRuntime;
@@ -47,8 +48,11 @@ import java.lang.ref.WeakReference;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class FiberRuntimeTest {
 
@@ -99,6 +103,34 @@ public class FiberRuntimeTest {
 
                 Assert.assertTrue(task.isDone());
                 Assert.assertEquals(taskGeneration, task.resumedGeneration);
+            } finally {
+                close(runtime);
+            }
+        });
+    }
+
+    @Test
+    public void testCancellationScratchRemainsFiberConfinedAcrossSuspend() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(2);
+            final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
+            final AtomicBoolean expectedFlag = new AtomicBoolean();
+            final AtomicBoolean replacementFlag = new AtomicBoolean();
+            final ScratchWaitTask waitTask = new ScratchWaitTask(waitQueue, expectedFlag);
+            final ScratchMutationTask mutationTask = new ScratchMutationTask(replacementFlag);
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(waitTask));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertFalse(waitTask.isDone());
+
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(mutationTask));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertTrue(mutationTask.isDone());
+
+                waitQueue.fire(1, false);
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertTrue(waitTask.isDone());
+                Assert.assertSame(expectedFlag, waitTask.resumedFlag);
             } finally {
                 close(runtime);
             }
@@ -281,6 +313,45 @@ public class FiberRuntimeTest {
             Assert.assertEquals(1, runtime.getMountCount());
 
             close(runtime);
+        });
+    }
+
+    @Test
+    public void testDirectLaunchDefersWhileCarrierHoldsRoleSwitchReadLock() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final DirectTask task = new DirectTask();
+            final Fiber fiber = runtime.tryReserveFiber();
+            final Lock lock = new ReentrantLock();
+            final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+
+            Assert.assertNotNull(fiber);
+            lock.lock();
+            SuspensionScope.enterRoleSwitchReadLock(scope, lock);
+            try {
+                Assert.assertEquals(
+                        LaunchResult.LAUNCHED,
+                        runtime.launchReservedDirect(
+                                fiber,
+                                fiber.getReservationEpoch(),
+                                task,
+                                task.getIncarnation()
+                        )
+                );
+                Assert.assertFalse(task.isDone());
+                Assert.assertEquals(1, runtime.getQueuedCount());
+                Assert.assertEquals(0, runtime.drain(1));
+            } finally {
+                SuspensionScope.leaveRoleSwitchReadLock(scope, lock);
+                lock.unlock();
+            }
+
+            try {
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertTrue(task.isDone());
+            } finally {
+                close(runtime);
+            }
         });
     }
 
@@ -1611,6 +1682,61 @@ public class FiberRuntimeTest {
                 if (reason != FiberWaitCoordinator.REASON_WAL) {
                     throw new IllegalStateException("unexpected wait reason");
                 }
+                return true;
+            } catch (RuntimeException | Error th) {
+                if (registration != null) {
+                    registration.cancel();
+                }
+                coordinator.abort(token);
+                coordinator.consume(token);
+                throw th;
+            }
+        }
+    }
+
+    private static class ScratchMutationTask extends FiberTask {
+        private final AtomicBoolean flag;
+
+        private ScratchMutationTask(AtomicBoolean flag) {
+            this.flag = flag;
+        }
+
+        @Override
+        protected boolean runStep() {
+            SuspensionScope.getCancellationBindingScratch().set(flag);
+            return true;
+        }
+    }
+
+    private static class ScratchWaitTask extends FiberTask {
+        private final AtomicBoolean expectedFlag;
+        private final FiberWalWaitQueue waitQueue;
+        private AtomicBoolean resumedFlag;
+
+        private ScratchWaitTask(FiberWalWaitQueue waitQueue, AtomicBoolean expectedFlag) {
+            this.expectedFlag = expectedFlag;
+            this.waitQueue = waitQueue;
+        }
+
+        @Override
+        protected boolean runStep() {
+            final CancellationBinding binding = SuspensionScope.getCancellationBindingScratch();
+            binding.set(expectedFlag);
+            final Fiber fiber = Objects.requireNonNull(Fiber.current());
+            final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
+            final long token = fiber.beginWaitBuild(1);
+            FiberWalWaitRegistration registration = null;
+            try {
+                registration = coordinator.acquireWal(token, 1);
+                if (registration.register(waitQueue) != SourceRegistrationResult.ACCEPTED) {
+                    throw new IllegalStateException("wait registration failed");
+                }
+                final int reason = fiber.suspendWait(token);
+                registration.cancel();
+                if (reason != FiberWaitCoordinator.REASON_WAL) {
+                    throw new IllegalStateException("unexpected wait reason");
+                }
+                resumedFlag = binding.getFlag();
                 return true;
             } catch (RuntimeException | Error th) {
                 if (registration != null) {

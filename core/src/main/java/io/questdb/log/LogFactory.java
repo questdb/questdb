@@ -139,17 +139,18 @@ public class LogFactory implements Closeable {
     }
 
     public static synchronized void closeInstance() {
+        closeInstanceWithin(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+    }
+
+    public static synchronized void closeInstanceWithin(long timeoutNanos) {
         final LogFactory logFactory = INSTANCE;
         if (logFactory == null) {
             return;
         }
-        final long deadline = System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS;
-        for (int i = 0; i < CLOSE_ATTEMPTS; i++) {
-            if (logFactory.closeInternal(true, Math.max(1, deadline - System.nanoTime()))) {
-                INSTANCE = null;
-                return;
-            }
+        if (!logFactory.closeWithin(true, timeoutNanos)) {
+            throw new IllegalStateException("logging worker pool did not halt");
         }
+        INSTANCE = null;
     }
 
     public static void configureRootDir(String rootDir) {
@@ -258,7 +259,9 @@ public class LogFactory implements Closeable {
     }
 
     public void close(boolean flush) {
-        closeInternal(flush, WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+        if (!closeWithin(flush, WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
+            throw new IllegalStateException("logging worker pool did not halt");
+        }
     }
 
     public Log create(Class<?> clazz) {
@@ -608,6 +611,18 @@ public class LogFactory implements Closeable {
             Misc.free(scopeConfigs.getQuick(i));
         }
         return true;
+    }
+
+    private synchronized boolean closeWithin(boolean flush, long timeoutNanos) {
+        final long deadline = System.nanoTime() + timeoutNanos;
+        for (int i = 0; i < CLOSE_ATTEMPTS; i++) {
+            final int remainingAttempts = CLOSE_ATTEMPTS - i;
+            final long remainingNanos = Math.max(1, deadline - System.nanoTime());
+            if (closeInternal(flush, Math.max(1, remainingNanos / remainingAttempts))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void configure(InputStream fis, String rootDir) throws IOException {

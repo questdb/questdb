@@ -609,6 +609,45 @@ public class FiberWaitRegistrationTest {
     }
 
     @Test
+    public void testSlotCancellationReleasesGrantedSlotOutsideCoordinatorMonitor() throws Exception {
+        final TestTarget target = new TestTarget();
+        final FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
+        final CountDownLatch monitorEntered = new CountDownLatch(1);
+        final AtomicReference<Thread> monitorThread = new AtomicReference<>();
+        final FiberSlotWaitQueue queue = new FiberSlotWaitQueue(slot -> {
+            Assert.assertEquals(7, slot);
+            final Thread thread = new Thread(() -> {
+                synchronized (coordinator) {
+                    monitorEntered.countDown();
+                }
+            }, "slot-cancel-monitor-probe");
+            thread.setDaemon(true);
+            monitorThread.set(thread);
+            thread.start();
+            try {
+                Assert.assertTrue(monitorEntered.await(5, TimeUnit.SECONDS));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
+        });
+        final long token = coordinator.beginBuild(1);
+        final FiberSlotWaitRegistration registration = coordinator.acquireSlot(token);
+        Assert.assertSame(SourceRegistrationResult.ACCEPTED, registration.register(queue));
+        Assert.assertTrue(coordinator.seal(token));
+        Assert.assertTrue(queue.transfer(7));
+
+        coordinator.shutdown();
+
+        final Thread thread = monitorThread.get();
+        Assert.assertNotNull(thread);
+        thread.join(5_000);
+        Assert.assertFalse(thread.isAlive());
+        Assert.assertFalse(coordinator.hasInFlightRegistrations());
+        Assert.assertEquals(FiberWaitCoordinator.REASON_SLOT, coordinator.consume(token));
+    }
+
+    @Test
     public void testSlotWaitBuildRejectsSecondRegistration() {
         final TestTarget target = new TestTarget();
         final FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);

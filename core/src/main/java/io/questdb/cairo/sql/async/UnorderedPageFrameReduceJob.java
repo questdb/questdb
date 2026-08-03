@@ -34,6 +34,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.mp.continuation.CancellationBinding;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -72,7 +75,18 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
             SqlExecutionCircuitBreakerWrapper circuitBreaker,
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        return consumeQueue(-1, queue, subSeq, record, circuitBreaker, stealingFrameSequence);
+        return consumeQueue(-1, queue, subSeq, record, circuitBreaker, stealingFrameSequence, null);
+    }
+
+    static boolean consumeQueue(
+            RingQueue<UnorderedPageFrameReduceTask> queue,
+            MCSequence subSeq,
+            PageFrameMemoryRecord record,
+            SqlExecutionCircuitBreakerWrapper circuitBreaker,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence,
+            @Nullable PageFrameReduceDispatcher dispatcher
+    ) {
+        return consumeQueue(-1, queue, subSeq, record, circuitBreaker, stealingFrameSequence, dispatcher);
     }
 
     @Override
@@ -107,6 +121,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                 messageBus.getUnorderedPageFrameReduceSubSeq(),
                 record,
                 circuitBreaker,
+                null,
                 null
         ));
     }
@@ -117,7 +132,8 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
             MCSequence subSeq,
             PageFrameMemoryRecord record,
             SqlExecutionCircuitBreakerWrapper circuitBreaker,
-            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence,
+            @Nullable PageFrameReduceDispatcher dispatcher
     ) {
         do {
             final long cursor = subSeq.next();
@@ -130,6 +146,9 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                 // Release the queue slot immediately.
                 task.clear();
                 subSeq.done(cursor);
+                if (dispatcher != null) {
+                    dispatcher.signalProgress(frameSequence);
+                }
 
                 if (taskSequenceId != frameSequence.getId()) {
                     // Stale task from a previous dispatch cycle; discard without
@@ -139,8 +158,28 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                             .$(", got=").$(taskSequenceId)
                             .I$();
                 } else {
-                    final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-                    final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
+                    final boolean isFiberSuspendable = SuspensionScope.isFiberMode() && Fiber.isMounted();
+                    final SuspensionScope.CarrierScope suspensionScope = isFiberSuspendable
+                            ? null
+                            : SuspensionScope.scope();
+                    final SuspensionScope.Mode previousMode = isFiberSuspendable
+                            ? null
+                            : SuspensionScope.enterBlocking(suspensionScope);
+                    final FiberCancellationSignal previousCancellationSignal = isFiberSuspendable
+                            ? SuspensionScope.getCancellationSignal()
+                            : null;
+                    final long previousCancellationSignalGeneration = isFiberSuspendable
+                            ? SuspensionScope.getCancellationSignalGeneration()
+                            : CancellationBinding.NO_GENERATION;
+                    final FiberCancellationSignal previousSupplementalCancellationSignal = isFiberSuspendable
+                            ? SuspensionScope.getSupplementalCancellationSignal()
+                            : null;
+                    final long previousSupplementalCancellationSignalGeneration = isFiberSuspendable
+                            ? SuspensionScope.getSupplementalCancellationSignalGeneration()
+                            : CancellationBinding.NO_GENERATION;
+                    if (isFiberSuspendable) {
+                        frameSequence.enterReducerCancellationScope();
+                    }
                     try {
                         if (frameSequence.isActive()) {
                             circuitBreaker.init(frameSequence.getCircuitBreaker());
@@ -154,16 +193,35 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                             );
                         }
                     } catch (Throwable th) {
-                        LOG.error()
-                                .$("reduce error [error=").$(th)
-                                .$(", id=").$(frameSequence.getId())
-                                .$(", frameIndex=").$(frameIndex)
-                                .$(", frameCount=").$(frameSequence.getFrameCount())
-                                .I$();
-                        frameSequence.setError(th);
+                        if (frameSequence.isReducerFailureReportable(th)) {
+                            LOG.error()
+                                    .$("reduce error [error=").$(th)
+                                    .$(", id=").$(frameSequence.getId())
+                                    .$(", frameIndex=").$(frameIndex)
+                                    .$(", frameCount=").$(frameSequence.getFrameCount())
+                                    .I$();
+                            frameSequence.setError(th);
+                        }
                     } finally {
-                        SuspensionScope.restoreMode(suspensionScope, previousMode);
-                        frameSequence.getDoneLatch().countDown();
+                        if (isFiberSuspendable) {
+                            SuspensionScope.restoreCancellationSignal(
+                                    previousCancellationSignal,
+                                    previousCancellationSignalGeneration
+                            );
+                            SuspensionScope.restoreSupplementalCancellationSignal(
+                                    previousSupplementalCancellationSignal,
+                                    previousSupplementalCancellationSignalGeneration
+                            );
+                        } else {
+                            SuspensionScope.restoreMode(suspensionScope, previousMode);
+                        }
+                        try {
+                            frameSequence.getDoneLatch().countDown();
+                        } finally {
+                            if (dispatcher != null) {
+                                dispatcher.signalProgress(frameSequence);
+                            }
+                        }
                     }
                 }
                 return false;

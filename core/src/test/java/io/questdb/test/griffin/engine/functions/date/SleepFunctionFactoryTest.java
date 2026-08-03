@@ -24,20 +24,95 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.test.AbstractCairoTest;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class SleepFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testCancellationAtDeadlineIsNotSwallowed() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final SqlExecutionCircuitBreaker previousCircuitBreaker = sqlExecutionContext.getCircuitBreaker();
+            ((SqlExecutionContextImpl) sqlExecutionContext).with(new AtomicBooleanCircuitBreaker(engine));
+            setCurrentMicros(0);
+            try (RecordCursorFactory factory = select("sleep(0.1)")) {
+                final long queryId = registry.register("sleep(0.1)", sqlExecutionContext);
+                try {
+                    final SuspendableSleepTask task = new SuspendableSleepTask(
+                            factory.getBaseFactory(),
+                            sqlExecutionContext
+                    );
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertFalse(task.isDone());
+                    Assert.assertEquals(1, runtime.getParkedFiberCount());
+
+                    setCurrentMicros(200_000);
+                    Assert.assertTrue(registry.cancel(queryId, sqlExecutionContext));
+                    Assert.assertEquals(1, runtime.drain(1));
+
+                    Assert.assertTrue(task.isDone());
+                    Assert.assertNotNull("cancellation at the sleep deadline must fail the query", task.error);
+                    Assert.assertTrue(task.error.getMessage(), task.error.getMessage().contains("cancel"));
+                } finally {
+                    registry.unregister(queryId, sqlExecutionContext);
+                }
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previousCircuitBreaker);
+                setCurrentMicros(-1);
+                close(runtime);
+            }
+        });
+    }
+
+    @Test
+    public void testCancellationSignalWithoutTrippedCircuitBreakerAbortsSleep() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final SqlExecutionCircuitBreaker previousCircuitBreaker = sqlExecutionContext.getCircuitBreaker();
+            ((SqlExecutionContextImpl) sqlExecutionContext).with(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
+            try (RecordCursorFactory factory = select("sleep(60.0)")) {
+                final SuspendableSleepTask task = new SuspendableSleepTask(
+                        factory.getBaseFactory(),
+                        sqlExecutionContext,
+                        cancellationSignal
+                );
+                Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertFalse(task.isDone());
+                Assert.assertEquals(1, runtime.getParkedFiberCount());
+
+                cancellationSignal.cancel();
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertTrue(task.isDone());
+                Assert.assertNotNull(task.error);
+                Assert.assertTrue(task.error.getMessage(), task.error.getMessage().contains("cancel"));
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previousCircuitBreaker);
+                close(runtime);
+            }
+        });
+    }
 
     @Test
     public void testNegativeSeconds() throws Exception {
@@ -253,6 +328,42 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
                     throw new AssertionError(e);
                 }
             }
+        }
+    }
+
+    private static class SuspendableSleepTask extends FiberTask {
+        private final @Nullable FiberCancellationSignal cancellationSignal;
+        private Throwable error;
+        private final RecordCursorFactory factory;
+        private final SqlExecutionContext sqlExecutionContext;
+
+        private SuspendableSleepTask(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) {
+            this(factory, sqlExecutionContext, null);
+        }
+
+        private SuspendableSleepTask(
+                RecordCursorFactory factory,
+                SqlExecutionContext sqlExecutionContext,
+                @Nullable FiberCancellationSignal cancellationSignal
+        ) {
+            this.cancellationSignal = cancellationSignal;
+            this.factory = factory;
+            this.sqlExecutionContext = sqlExecutionContext;
+        }
+
+        @Override
+        public @Nullable FiberCancellationSignal getCancellationSignal() {
+            return cancellationSignal;
+        }
+
+        @Override
+        protected boolean runStep() {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                cursor.hasNext();
+            } catch (Throwable th) {
+                error = th;
+            }
+            return true;
         }
     }
 

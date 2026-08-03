@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.ShardedMapCursor;
@@ -195,6 +196,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
     }
 
+    private CairoException buildInterruptionException() {
+        return frameSequence.buildInterruptionException();
+    }
+
     private void buildMap() {
         // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
@@ -221,7 +226,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     postAggregationStartedCounter
             );
             if (postAggregationCircuitBreaker.checkIfTripped()) {
-                throwInterruptionException();
+                throw buildInterruptionException();
             }
             // The shards contain non-intersecting row groups, so we can return what's in the shards without merging them.
             shardedCursor.of(shards);
@@ -316,7 +321,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
 
         if (postAggregationCircuitBreaker.checkIfTripped()) {
-            throwInterruptionException();
+            throw buildInterruptionException();
         }
 
         // Now merge everything into the destination list.
@@ -343,10 +348,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 .$(", reclaimed=").$(reclaimed)
                 .$(", queuedCount=").$(queuedCount)
                 .I$();
-    }
-
-    private void throwInterruptionException() {
-        throw frameSequence.buildInterruptionException();
     }
 
     void buildMapConditionally() {

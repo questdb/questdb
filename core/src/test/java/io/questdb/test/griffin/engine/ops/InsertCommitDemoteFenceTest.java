@@ -354,6 +354,22 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRoleSwitchLocksRejectConditions() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                Assert.assertThrows(
+                        UnsupportedOperationException.class,
+                        primaryEngine.getRoleSwitchReadLock()::newCondition
+                );
+                Assert.assertThrows(
+                        UnsupportedOperationException.class,
+                        primaryEngine.getRoleSwitchWriteLock()::newCondition
+                );
+            }
+        });
+    }
+
+    @Test
     public void testRoleSwitchReadLockRestoresModeAfterTaskFailure() throws Exception {
         assertMemoryLeak(() -> {
             try (CairoEngine primaryEngine = buildPrimaryEngine()) {
@@ -445,6 +461,51 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                 } finally {
                     close(runtime);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchReadLockInterruptibleWaitDoesNotLeak() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicBoolean isInterrupted = new AtomicBoolean();
+                final AtomicReference<Throwable> readerFailure = new AtomicReference<>();
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final Thread reader = new Thread(() -> {
+                    try {
+                        readLock.lockInterruptibly();
+                        try {
+                            readerFailure.set(new AssertionError("reader acquired a held role-switch write lock"));
+                        } finally {
+                            readLock.unlock();
+                        }
+                    } catch (InterruptedException e) {
+                        isInterrupted.set(true);
+                    } catch (Throwable th) {
+                        readerFailure.set(th);
+                    }
+                });
+                reader.setDaemon(true);
+
+                writeLock.lock();
+                try {
+                    reader.start();
+                    awaitThreadWaiting(reader);
+                    reader.interrupt();
+                    reader.join(TimeUnit.SECONDS.toMillis(10));
+                    Assert.assertFalse(reader.isAlive());
+                    Assert.assertTrue(isInterrupted.get());
+                    Assert.assertNull(readerFailure.get());
+                    Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+                } finally {
+                    reader.interrupt();
+                    writeLock.unlock();
+                }
+
+                Assert.assertTrue(readLock.tryLock());
+                readLock.unlock();
             }
         });
     }
@@ -572,6 +633,176 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRoleSwitchReadLockTryLockTimesOutBehindWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicBoolean isImmediateLockAcquired = new AtomicBoolean();
+                final AtomicBoolean isTimedLockAcquired = new AtomicBoolean();
+                final AtomicReference<Throwable> readerFailure = new AtomicReference<>();
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final Thread reader = new Thread(() -> {
+                    try {
+                        isImmediateLockAcquired.set(readLock.tryLock());
+                        if (isImmediateLockAcquired.get()) {
+                            readLock.unlock();
+                        }
+                        isTimedLockAcquired.set(readLock.tryLock(1, TimeUnit.MILLISECONDS));
+                        if (isTimedLockAcquired.get()) {
+                            readLock.unlock();
+                        }
+                    } catch (Throwable th) {
+                        readerFailure.set(th);
+                    }
+                });
+                reader.setDaemon(true);
+
+                writeLock.lock();
+                try {
+                    reader.start();
+                    reader.join(TimeUnit.SECONDS.toMillis(10));
+                    Assert.assertFalse(reader.isAlive());
+                    Assert.assertFalse(isImmediateLockAcquired.get());
+                    Assert.assertFalse(isTimedLockAcquired.get());
+                    Assert.assertNull(readerFailure.get());
+                } finally {
+                    writeLock.unlock();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchReadLocksLeakCleanupAcrossEnginesInFiber() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    CairoEngine firstEngine = buildPrimaryEngine();
+                    CairoEngine secondEngine = buildPrimaryEngine()
+            ) {
+                final AtomicReference<Throwable> taskError = new AtomicReference<>();
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final Lock firstReadLock = firstEngine.getRoleSwitchReadLock();
+                final Lock secondReadLock = secondEngine.getRoleSwitchReadLock();
+                final FiberTask task = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        taskError.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        firstReadLock.lock();
+                        secondReadLock.lock();
+                        firstReadLock.unlock();
+                        Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
+                        return true;
+                    }
+                };
+                try {
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertTrue(task.isDone());
+                    Assert.assertNotNull(taskError.get());
+                    TestUtils.assertContains(taskError.get().getMessage(), "leaked role-switch read lock");
+                    Assert.assertEquals(0, firstEngine.getRoleSwitchReadLockCount());
+                    Assert.assertEquals(0, secondEngine.getRoleSwitchReadLockCount());
+                } finally {
+                    close(runtime);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchReadLocksNestAcrossEngines() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    CairoEngine firstEngine = buildPrimaryEngine();
+                    CairoEngine secondEngine = buildPrimaryEngine()
+            ) {
+                final Lock firstReadLock = firstEngine.getRoleSwitchReadLock();
+                final Lock secondReadLock = secondEngine.getRoleSwitchReadLock();
+                final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.FIBER);
+                boolean isFirstReadLockHeld = false;
+                boolean isSecondReadLockHeld = false;
+                try {
+                    firstReadLock.lock();
+                    isFirstReadLockHeld = true;
+                    secondReadLock.lock();
+                    isSecondReadLockHeld = true;
+                    Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
+                    Assert.assertEquals(1, firstEngine.getRoleSwitchReadLockCount());
+                    Assert.assertEquals(1, secondEngine.getRoleSwitchReadLockCount());
+
+                    firstReadLock.unlock();
+                    isFirstReadLockHeld = false;
+                    Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
+                    secondReadLock.lock();
+                    Assert.assertEquals(1, secondEngine.getRoleSwitchReadLockCount());
+                    secondReadLock.unlock();
+                    Assert.assertEquals(1, secondEngine.getRoleSwitchReadLockCount());
+                    secondReadLock.unlock();
+                    isSecondReadLockHeld = false;
+                    Assert.assertEquals(SuspensionScope.Mode.FIBER, SuspensionScope.getMode());
+                } finally {
+                    if (isSecondReadLockHeld) {
+                        secondReadLock.unlock();
+                    }
+                    if (isFirstReadLockHeld) {
+                        firstReadLock.unlock();
+                    }
+                    SuspensionScope.restore(previousMode);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchWriteLockInterruptibleWaitDoesNotLeak() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicBoolean isInterrupted = new AtomicBoolean();
+                final AtomicReference<Throwable> writerFailure = new AtomicReference<>();
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final Thread writer = new Thread(() -> {
+                    try {
+                        writeLock.lockInterruptibly();
+                        try {
+                            writerFailure.set(new AssertionError("writer acquired a held role-switch read lock"));
+                        } finally {
+                            writeLock.unlock();
+                        }
+                    } catch (InterruptedException e) {
+                        isInterrupted.set(true);
+                    } catch (Throwable th) {
+                        writerFailure.set(th);
+                    }
+                });
+                writer.setDaemon(true);
+
+                readLock.lock();
+                try {
+                    writer.start();
+                    awaitThreadWaiting(writer);
+                    writer.interrupt();
+                    writer.join(TimeUnit.SECONDS.toMillis(10));
+                    Assert.assertFalse(writer.isAlive());
+                    Assert.assertTrue(isInterrupted.get());
+                    Assert.assertNull(writerFailure.get());
+                    Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                } finally {
+                    writer.interrupt();
+                    readLock.unlock();
+                }
+
+                Assert.assertTrue(writeLock.tryLock());
+                writeLock.unlock();
+            }
+        });
+    }
+
+    @Test
     public void testRoleSwitchWriteLockReentrancyAndDowngrade() throws Exception {
         assertMemoryLeak(() -> {
             try (CairoEngine primaryEngine = buildPrimaryEngine()) {
@@ -591,6 +822,44 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                 Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
                 Assert.assertTrue(writeLock.tryLock());
                 writeLock.unlock();
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchWriteLockRejectsFiberOwner() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicReference<Throwable> taskError = new AtomicReference<>();
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final FiberTask task = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        taskError.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        writeLock.lock();
+                        try {
+                            return true;
+                        } finally {
+                            writeLock.unlock();
+                        }
+                    }
+                };
+                try {
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertTrue(task.isDone());
+                    Assert.assertNotNull(taskError.get());
+                    TestUtils.assertContains(taskError.get().getMessage(), "role-switch write lock");
+                    Assert.assertTrue(writeLock.tryLock());
+                    writeLock.unlock();
+                } finally {
+                    close(runtime);
+                }
             }
         });
     }

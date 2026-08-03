@@ -25,10 +25,14 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinAtom;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
@@ -4143,6 +4147,45 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .returns(sink);
+        });
+    }
+
+    @Test
+    public void testWindowJoinBrokenConnectionPreserved() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+            sqlExecutionContext.setParallelWindowJoinEnabled(true);
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    throw CairoException.queryDisconnected(-1);
+                }
+            });
+            try (
+                    RecordCursorFactory factory = select(
+                            """
+                                    SELECT t.ts, sum(p.price)
+                                    FROM trades t
+                                    WINDOW JOIN prices p
+                                    RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                                    EXCLUDE PREVAILING
+                                    WHERE test_latched_counter()
+                                    """
+                    )
+            ) {
+                Assert.assertTrue(containsFactory(factory, AsyncWindowJoinRecordCursorFactory.class));
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    cursor.hasNext();
+                    Assert.fail("query must abort when the reducer reports a broken connection");
+                } catch (CairoException e) {
+                    Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION, e.getInterruptionReason());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "remote disconnected, query aborted");
+                }
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
         });
     }
 

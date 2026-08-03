@@ -2501,6 +2501,33 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testLineTcpRequiresWorkersForSharedPools() throws Exception {
+        final Properties networkProperties = new Properties();
+        networkProperties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "0");
+        assertInvalidConfiguration(networkProperties, PropertyKey.SHARED_NETWORK_WORKER_COUNT);
+        networkProperties.setProperty(PropertyKey.LINE_TCP_IO_WORKER_COUNT.getPropertyPath(), "1");
+        Assert.assertEquals(
+                1,
+                newPropServerConfiguration(networkProperties)
+                        .getLineTcpReceiverConfiguration()
+                        .getNetworkWorkerPoolConfiguration()
+                        .getWorkerCount()
+        );
+
+        final Properties writeProperties = new Properties();
+        writeProperties.setProperty(PropertyKey.SHARED_WRITE_WORKER_COUNT.getPropertyPath(), "0");
+        assertInvalidConfiguration(writeProperties, PropertyKey.SHARED_WRITE_WORKER_COUNT);
+        writeProperties.setProperty(PropertyKey.LINE_TCP_WRITER_WORKER_COUNT.getPropertyPath(), "1");
+        Assert.assertEquals(
+                1,
+                newPropServerConfiguration(writeProperties)
+                        .getLineTcpReceiverConfiguration()
+                        .getWriterWorkerPoolConfiguration()
+                        .getWorkerCount()
+        );
+    }
+
+    @Test
     public void testMatViewRefreshWorkerCountZeroDisablesRefresh() throws Exception {
         final Properties properties = new Properties();
         properties.setProperty(PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath(), "0");

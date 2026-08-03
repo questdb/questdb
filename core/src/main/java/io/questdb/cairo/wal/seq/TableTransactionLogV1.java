@@ -159,6 +159,11 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     }
 
     @Override
+    public TransactionLogCursor getCursor(long txnLo, @Transient Path path) {
+        return getCursor(txnLo, path, null);
+    }
+
+    @Override
     public TransactionLogCursor getCursor(
             long txnLo,
             @Transient Path path,

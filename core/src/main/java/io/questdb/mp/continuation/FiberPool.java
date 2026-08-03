@@ -25,14 +25,14 @@
 package io.questdb.mp.continuation;
 
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class FiberPool {
     private final @Nullable Runnable beforeWaitFireForTesting;
-    private final AtomicInteger createdCount = new AtomicInteger();
+    private final AtomicLong createdCount = new AtomicLong();
     private final FiberRing freeList;
     private final AtomicInteger inFlightWaitRegistrationCount = new AtomicInteger();
     private volatile boolean isClosed;
@@ -41,7 +41,7 @@ public final class FiberPool {
     private final int maxRetained;
     private final AtomicInteger parkedCount = new AtomicInteger();
     private final AtomicInteger retainedCount = new AtomicInteger();
-    private final AtomicInteger retiredCount = new AtomicInteger();
+    private final AtomicLong retiredCount = new AtomicLong();
     private final FiberRuntime runtime;
 
     FiberPool(
@@ -66,7 +66,7 @@ public final class FiberPool {
         this.runtime = runtime;
     }
 
-    public int getCreatedCount() {
+    public long getCreatedCount() {
         return createdCount.get();
     }
 
@@ -82,7 +82,7 @@ public final class FiberPool {
         return retainedCount.get();
     }
 
-    public int getRetiredCount() {
+    public long getRetiredCount() {
         return retiredCount.get();
     }
 
@@ -118,29 +118,20 @@ public final class FiberPool {
     }
 
     public Fiber tryAcquire() {
-        while (true) {
-            if (isClosed) {
-                throw new IllegalStateException("fiber pool is closed");
-            }
-            final Fiber fiber = freeList.tryDequeue();
-            if (fiber != null) {
-                retainedCount.decrementAndGet();
-                if (!isClosed) {
-                    fiber.reserve();
-                    return fiber;
-                }
-                retire(fiber);
-                throw new IllegalStateException("fiber pool is closed");
-            }
-            final Fiber created = tryAcquireSlow();
-            if (created != null || retainedCount.get() == 0) {
-                return created;
-            }
-            // release() bumps retainedCount before the lock-free put, so a positive count with an empty
-            // dequeue is a publication in flight. Back off outside the monitor: spinning while holding
-            // it would block hasAvailableFiber(), fiber retirement and quiesce.
-            Os.pause();
+        if (isClosed) {
+            throw new IllegalStateException("fiber pool is closed");
         }
+        final Fiber fiber = freeList.tryDequeue();
+        if (fiber != null) {
+            retainedCount.decrementAndGet();
+            if (!isClosed) {
+                fiber.reserve();
+                return fiber;
+            }
+            retire(fiber);
+            throw new IllegalStateException("fiber pool is closed");
+        }
+        return tryAcquireSlow();
     }
 
     synchronized void beginQuiesce() {
@@ -187,7 +178,7 @@ public final class FiberPool {
         if (isClosed) {
             return false;
         }
-        if (freeList.depth() > 0) {
+        if (freeList.hasAvailable()) {
             return true;
         }
         synchronized (this) {

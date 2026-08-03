@@ -199,9 +199,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 ) {
                     return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
                         @Override
-                        public void close() {
+                        public void closeBy(long deadlineNanos) {
                             if (closeAttempts.incrementAndGet() > 1) {
-                                super.close();
+                                super.closeBy(deadlineNanos);
                             }
                         }
 
@@ -234,6 +234,141 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testCloseSignalsBlockedBootBeforeWaitingForLifecycleLock() throws Exception {
+        assertMemoryLeak(() -> {
+            final SOCountDownLatch bootEntered = new SOCountDownLatch(1);
+            final SOCountDownLatch stopRequested = new SOCountDownLatch(1);
+            final ServerMain serverMain = new ServerMain(getServerMainArgs()) {
+                @Override
+                protected io.questdb.lifecycle.LifecycleOrchestrator newOrchestrator(
+                        io.questdb.log.Log log,
+                        WorkerPoolManager workerPoolManager,
+                        Object tokioRuntime
+                ) {
+                    return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
+                        @Override
+                        public void requestStop() {
+                            super.requestStop();
+                            stopRequested.countDown();
+                        }
+
+                        @Override
+                        public void run() {
+                            bootEntered.countDown();
+                            stopRequested.await();
+                        }
+                    };
+                }
+            };
+            final AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+            final AtomicReference<Throwable> startFailure = new AtomicReference<>();
+            final Thread closeThread = new Thread(() -> {
+                try {
+                    serverMain.close();
+                } catch (Throwable th) {
+                    closeFailure.set(th);
+                }
+            });
+            final Thread startThread = new Thread(() -> {
+                try {
+                    serverMain.start();
+                } catch (Throwable th) {
+                    startFailure.set(th);
+                }
+            });
+            startThread.start();
+            try {
+                Assert.assertTrue(bootEntered.await(TimeUnit.SECONDS.toNanos(10)));
+                closeThread.start();
+                Assert.assertTrue(stopRequested.await(TimeUnit.SECONDS.toNanos(10)));
+            } finally {
+                stopRequested.countDown();
+                startThread.join(10_000L);
+                closeThread.join(10_000L);
+                if (!startThread.isAlive() && !closeThread.isAlive() && !serverMain.isCloseComplete()) {
+                    serverMain.close();
+                }
+            }
+            Assert.assertFalse(startThread.isAlive());
+            Assert.assertFalse(closeThread.isAlive());
+            Assert.assertNull(startFailure.get());
+            Assert.assertNull(closeFailure.get());
+        });
+    }
+
+    @Test
+    public void testCloseSignalsOrchestratorPublishedAfterRequest() throws Exception {
+        assertMemoryLeak(() -> {
+            final SOCountDownLatch constructionEntered = new SOCountDownLatch(1);
+            final SOCountDownLatch releaseConstruction = new SOCountDownLatch(1);
+            final SOCountDownLatch stopRequested = new SOCountDownLatch(1);
+            final ServerMain serverMain = new ServerMain(getServerMainArgs()) {
+                @Override
+                protected io.questdb.lifecycle.LifecycleOrchestrator newOrchestrator(
+                        io.questdb.log.Log log,
+                        WorkerPoolManager workerPoolManager,
+                        Object tokioRuntime
+                ) {
+                    constructionEntered.countDown();
+                    releaseConstruction.await();
+                    return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
+                        @Override
+                        public void requestStop() {
+                            super.requestStop();
+                            stopRequested.countDown();
+                        }
+
+                        @Override
+                        public void run() {
+                            stopRequested.await();
+                        }
+                    };
+                }
+            };
+            final AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+            final AtomicReference<Throwable> startFailure = new AtomicReference<>();
+            final Thread closeThread = new Thread(() -> {
+                try {
+                    serverMain.close();
+                } catch (Throwable th) {
+                    closeFailure.set(th);
+                }
+            });
+            final Thread startThread = new Thread(() -> {
+                try {
+                    serverMain.start();
+                } catch (Throwable th) {
+                    startFailure.set(th);
+                }
+            });
+            startThread.start();
+            try {
+                Assert.assertTrue(constructionEntered.await(TimeUnit.SECONDS.toNanos(10)));
+                closeThread.start();
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                while (!serverMain.hasBeenClosed() && System.nanoTime() < deadline) {
+                    Os.pause();
+                }
+                Assert.assertTrue(serverMain.hasBeenClosed());
+                releaseConstruction.countDown();
+                Assert.assertTrue(stopRequested.await(TimeUnit.SECONDS.toNanos(10)));
+            } finally {
+                releaseConstruction.countDown();
+                stopRequested.countDown();
+                startThread.join(10_000L);
+                closeThread.join(10_000L);
+                if (!startThread.isAlive() && !closeThread.isAlive() && !serverMain.isCloseComplete()) {
+                    serverMain.close();
+                }
+            }
+            Assert.assertFalse(startThread.isAlive());
+            Assert.assertFalse(closeThread.isAlive());
+            Assert.assertNull(startFailure.get());
+            Assert.assertNull(closeFailure.get());
+        });
+    }
+
+    @Test
     public void testConcurrentCloseWaitsForCurrentAttempt() throws Exception {
         assertMemoryLeak(() -> {
             final AtomicInteger closeAttempts = new AtomicInteger();
@@ -249,12 +384,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 ) {
                     return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
                         @Override
-                        public void close() {
+                        public void closeBy(long deadlineNanos) {
                             if (closeAttempts.incrementAndGet() == 1) {
                                 firstCloseEntered.countDown();
                                 releaseFirstClose.await();
                             } else {
-                                super.close();
+                                super.closeBy(deadlineNanos);
                             }
                         }
 

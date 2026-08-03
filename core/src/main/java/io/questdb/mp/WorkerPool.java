@@ -41,6 +41,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class WorkerPool implements Closeable {
     // Generous backstop used by the unbounded halt() so a wedged worker cannot block shutdown forever.
@@ -59,7 +60,7 @@ public class WorkerPool implements Closeable {
     private final int fiberRetainedCount;
     private final FiberRuntime fiberRuntime;
     private final ObjList<Object> freeOnExit = new ObjList<>();
-    private final Object haltLock = new Object();
+    private final ReentrantLock haltLock = new ReentrantLock();
     private final boolean haltOnError;
     private final SOCountDownLatch halted;
     private final Metrics metrics;
@@ -239,14 +240,25 @@ public class WorkerPool implements Closeable {
     }
 
     public void halt() {
-        if (!halt(DEFAULT_HALT_TIMEOUT_NANOS, false)) {
-            LOG.critical().$("worker pool retained live resources on halt [pool=").$(poolName).I$();
+        if (!haltWithin(DEFAULT_HALT_TIMEOUT_NANOS)) {
+            throw new IllegalStateException("worker pool did not halt [pool=" + poolName + ']');
         }
     }
 
     @TestOnly
     public void haltAndAssertCleanForTest(long timeoutNanos) {
-        halt(timeoutNanos, true);
+        haltBy(System.nanoTime() + Math.max(0, timeoutNanos), true);
+    }
+
+    /**
+     * Halts the pool using an absolute {@link System#nanoTime()} deadline for every wait.
+     *
+     * @param deadlineNanos absolute deadline by which the pool should halt
+     * @return true when the pool released all owned resources, false when it retained its live
+     * object graph after the deadline
+     */
+    public boolean haltBy(long deadlineNanos) {
+        return haltBy(deadlineNanos, false);
     }
 
     /**
@@ -266,7 +278,7 @@ public class WorkerPool implements Closeable {
      * live object graph after the deadline
      */
     public boolean haltWithin(long timeoutNanos) {
-        return halt(timeoutNanos, false);
+        return haltBy(System.nanoTime() + Math.max(0, timeoutNanos), false);
     }
 
     public boolean isFiberHost() {
@@ -275,7 +287,7 @@ public class WorkerPool implements Closeable {
 
     @TestOnly
     public boolean isHaltTerminalSuccessfulForTesting(long timeoutNanos) {
-        return halt(timeoutNanos, false);
+        return haltBy(System.nanoTime() + Math.max(0, timeoutNanos), false);
     }
 
     @TestOnly
@@ -481,8 +493,28 @@ public class WorkerPool implements Closeable {
         );
     }
 
-    private boolean halt(long timeoutNanos, boolean isStrict) {
-        synchronized (haltLock) {
+    private boolean haltBy(long deadlineNanos, boolean isStrict) {
+        final long timeoutNanos = Math.max(0, deadlineNanos - System.nanoTime());
+        boolean isInterrupted = false;
+        boolean isLockAcquired = haltLock.tryLock();
+        while (!isLockAcquired) {
+            final long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) {
+                if (isInterrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                if (isStrict) {
+                    throw workerPoolHaltLockTimeout(timeoutNanos);
+                }
+                return false;
+            }
+            try {
+                isLockAcquired = haltLock.tryLock(remainingNanos, TimeUnit.NANOSECONDS);
+            } catch (InterruptedException e) {
+                isInterrupted = true;
+            }
+        }
+        try {
             if (isHaltComplete) {
                 return true;
             }
@@ -492,7 +524,6 @@ public class WorkerPool implements Closeable {
                     afterClosed.run();
                 }
             }
-            final long deadline = System.nanoTime() + timeoutNanos;
             final boolean isRunning = running.compareAndSet(true, false);
             if (isRunning) {
                 isStartAttempted = true;
@@ -502,29 +533,30 @@ public class WorkerPool implements Closeable {
             AssertionError runtimeHaltFailure = null;
             if (runtime != null) {
                 runtime.beginQuiesce();
-                if (!runtime.awaitClosed(deadline)) {
+                if (!runtime.awaitClosed(deadlineNanos)) {
                     isRuntimeDrained = false;
                     if (isStrict) {
                         runtimeHaltFailure = fiberRuntimeHaltTimeout(timeoutNanos, runtime);
                     } else {
-                        LOG.error().$("timed out waiting for fiber runtime to drain; retaining live pool resources [pool=").$(poolName)
-                                .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms")
-                                .$(", state=").$(runtime.state().name())
-                                .$(", outstanding=").$(runtime.getOutstandingTaskCount())
-                                .$(", queued=").$(runtime.getQueuedCount())
-                                .$(", mounted=").$(runtime.getMountedCount())
-                                .$(", parked=").$(runtime.getParkedFiberCount())
-                                .$(", live=").$(runtime.getLiveFiberCount())
-                                .$(", retained=").$(runtime.getRetainedFiberCount())
-                                .$(", finalizing=").$(runtime.getFinalizerCount())
-                                .$(", budgetExhaustions=").$(runtime.getBudgetExhaustionCount()).I$();
-                        return false;
+                        try {
+                            LOG.error().$("timed out waiting for fiber runtime to drain; retaining live pool resources [pool=").$(poolName)
+                                    .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms")
+                                    .$(", state=").$(runtime.state().name())
+                                    .$(", outstanding=").$(runtime.getOutstandingTaskCount())
+                                    .$(", queued=").$(runtime.getQueuedCount())
+                                    .$(", mounted=").$(runtime.getMountedCount())
+                                    .$(", parked=").$(runtime.getParkedFiberCount())
+                                    .$(", live=").$(runtime.getLiveFiberCount())
+                                    .$(", retained=").$(runtime.getRetainedFiberCount())
+                                    .$(", finalizing=").$(runtime.getFinalizerCount())
+                                    .$(", budgetExhaustions=").$(runtime.getBudgetExhaustionCount()).I$();
+                        } catch (Throwable ignore) {
+                        }
                     }
                 }
             }
             boolean isWorkerHaltComplete = true;
-            // a drain that burned the whole budget leaves nothing to join the carriers with
-            final long workerDeadline = isRuntimeDrained ? deadline : System.nanoTime() + timeoutNanos;
+            AssertionError workerHaltFailure = null;
             if (isStartAttempted) {
                 // Signal halt to every spawned worker UNCONDITIONALLY, before clearing or freeing.
                 // start() may have stalled between running=true and started.countDown() (e.g. an OOM
@@ -539,42 +571,48 @@ public class WorkerPool implements Closeable {
                 // it torn (a half-published pos/buffer or a null slot). The monitor makes this pass see
                 // an empty-or-complete-and-consistent snapshot; the signal still runs UNCONDITIONALLY
                 // and BEFORE started.await() below, preserving the start-stall halt ordering.
-                synchronized (workersLock) {
-                    for (int i = 0, n = workers.size(); i < n; i++) {
-                        workers.getQuick(i).halt();
-                    }
-                }
-                if (started.await(remaining(workerDeadline))) {
+                signalHalt(runtime != null);
+                if (started.await(remaining(deadlineNanos))) {
                     // start() completed: every worker is now in the list. Re-signal to catch any
                     // worker spawned after the first pass but before started counted down (the flag
                     // is idempotent), then wait for them to exit.
-                    synchronized (workersLock) {
-                        for (int i = 0, n = workers.size(); i < n; i++) {
-                            workers.getQuick(i).halt();
-                        }
-                    }
-                    if (!halted.await(remaining(workerDeadline))) {
+                    signalHalt(runtime != null);
+                    if (!halted.await(remaining(deadlineNanos))) {
                         isWorkerHaltComplete = false;
                         if (isStrict) {
-                            throw workerPoolHaltTimeout(timeoutNanos, true);
+                            workerHaltFailure = workerPoolHaltTimeout(timeoutNanos, true);
+                        } else {
+                            try {
+                                LOG.error().$("timed out waiting for worker pool to halt; retaining live pool resources [pool=")
+                                        .$(poolName)
+                                        .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
+                            } catch (Throwable ignore) {
+                            }
                         }
-                        LOG.error().$("timed out waiting for worker pool to halt; retaining live pool resources [pool=")
-                                .$(poolName)
-                                .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
                     }
                 } else {
                     isWorkerHaltComplete = false;
                     if (isStrict) {
-                        throw workerPoolHaltTimeout(timeoutNanos, false);
+                        workerHaltFailure = workerPoolHaltTimeout(timeoutNanos, false);
+                    } else {
+                        try {
+                            LOG.error().$("timed out waiting for worker pool to start; retaining live pool resources [pool=")
+                                    .$(poolName)
+                                    .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
+                        } catch (Throwable ignore) {
+                        }
                     }
-                    LOG.error().$("timed out waiting for worker pool to start; retaining live pool resources [pool=")
-                            .$(poolName)
-                            .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
                 }
             }
             if (!isRuntimeDrained || !isWorkerHaltComplete) {
                 if (runtimeHaltFailure != null) {
+                    if (workerHaltFailure != null) {
+                        runtimeHaltFailure.addSuppressed(workerHaltFailure);
+                    }
                     throw runtimeHaltFailure;
+                }
+                if (workerHaltFailure != null) {
+                    throw workerHaltFailure;
                 }
                 return false;
             }
@@ -593,6 +631,11 @@ public class WorkerPool implements Closeable {
             isHaltComplete = true;
             CairoException.rethrowCleanupFailure(cleanupFailure);
             return true;
+        } finally {
+            haltLock.unlock();
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -601,6 +644,19 @@ public class WorkerPool implements Closeable {
             ObjList<Closeable> workerCleaners = threadLocalCleaners.getQuick(i);
             workerCleaners.add(Path.THREAD_LOCAL_CLEANER);
             workerCleaners.add(O3PartitionJob.THREAD_LOCAL_CLEANER);
+        }
+    }
+
+    private void signalHalt(boolean isFiberRuntimeDraining) {
+        synchronized (workersLock) {
+            for (int i = 0, n = workers.size(); i < n; i++) {
+                final Worker worker = workers.getQuick(i);
+                if (isFiberRuntimeDraining) {
+                    worker.haltAfterFiberDrain();
+                } else {
+                    worker.halt();
+                }
+            }
         }
     }
 
@@ -617,6 +673,15 @@ public class WorkerPool implements Closeable {
             }
             throw th;
         }
+    }
+
+    private AssertionError workerPoolHaltLockTimeout(long timeoutNanos) {
+        return new AssertionError(
+                "WorkerPool timed out waiting to enter halt before leak-sensitive test cleanup [pool="
+                        + poolName
+                        + ", timeoutMs=" + (timeoutNanos / 1_000_000)
+                        + ']'
+        );
     }
 
     private AssertionError workerPoolHaltTimeout(long timeoutNanos, boolean isStartComplete) {

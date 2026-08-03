@@ -26,6 +26,7 @@ package io.questdb.mp.continuation;
 
 import io.questdb.log.Log;
 import io.questdb.mp.CarrierIdentity;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -137,12 +138,9 @@ public final class TimerShards {
      * RUNNING so that parked continuations have a carrier to remount on.
      */
     public synchronized void shutdown() {
-        if (isShutdownComplete) {
-            return;
+        if (!shutdown(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
+            throw new IllegalStateException("timer shards did not halt");
         }
-        requestShutdown();
-        joinThreads();
-        finishShutdown();
     }
 
     public synchronized boolean shutdown(long deadlineNanos) {
@@ -212,30 +210,6 @@ public final class TimerShards {
         }
     }
 
-    private void joinThreads() {
-        boolean isInterrupted = false;
-        for (int i = 0, n = threads.size(); i < n; i++) {
-            final Thread t = threads.getQuick(i);
-            if (t == null) {
-                continue;
-            }
-            if (t == Thread.currentThread()) {
-                throw new IllegalStateException("timer shard cannot join itself");
-            }
-            while (t.isAlive()) {
-                try {
-                    t.join();
-                } catch (InterruptedException e) {
-                    isInterrupted = true;
-                }
-            }
-            threads.setQuick(i, null);
-        }
-        if (isInterrupted) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
     private boolean joinThreads(long deadlineNanos) {
         boolean isInterrupted = false;
         boolean isJoined = true;
@@ -274,6 +248,9 @@ public final class TimerShards {
     }
 
     private void requestShutdown() {
+        if (isShutdownRequested) {
+            return;
+        }
         isShutdownRequested = true;
         isRunning = false;
         for (int i = 0, n = shards.size(); i < n; i++) {

@@ -1677,24 +1677,20 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (runtime == null) {
             throw new IllegalStateException("materialized view refresh fiber runtime is not configured");
         }
-        try {
-            if (!task.prepare(notification)) {
-                return false;
-            }
-            final LaunchResult result = runtime.launchReserved(
-                    fiber,
-                    reservationEpoch,
-                    task,
-                    task.getIncarnation()
-            );
-            if (result == LaunchResult.LAUNCHED) {
-                return true;
-            }
-            task.releaseAfterLaunchFailure();
+        if (!task.prepare(notification)) {
             return false;
-        } finally {
-            runtime.releaseReservedFiber(fiber, reservationEpoch);
         }
+        final LaunchResult result = runtime.launchReserved(
+                fiber,
+                reservationEpoch,
+                task,
+                task.getIncarnation()
+        );
+        if (result == LaunchResult.LAUNCHED) {
+            return true;
+        }
+        task.releaseAfterLaunchFailure();
+        return false;
     }
 
     private boolean processNotifications() {
@@ -1711,12 +1707,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         while (fiberTask == null || fiberTask.isAvailable()) {
             Fiber reservedFiber = null;
             long reservedFiberEpoch = 0;
-            if (fiberTask != null) {
-                if (runtime == null || (reservedFiber = runtime.tryReserveFiber()) == null) {
-                    return refreshed;
-                }
-                reservedFiberEpoch = reservedFiber.getReservationEpoch();
-            }
             try {
                 if (!stateStore.tryDequeueRefreshTask(refreshTask)) {
                     break;
@@ -1742,14 +1732,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     case MatViewRefreshTask.INCREMENTAL_REFRESH:
                     case MatViewRefreshTask.RANGE_REFRESH:
                         if (fiberTask != null) {
-                            final Fiber launchFiber = reservedFiber;
-                            if (launchFiber == null) {
-                                throw new IllegalStateException("materialized view refresh has no reserved fiber");
+                            if (runtime == null || (reservedFiber = runtime.tryReserveFiber()) == null) {
+                                stateStore.reenqueueRefreshTask(refreshTask);
+                                return refreshed;
                             }
+                            reservedFiberEpoch = reservedFiber.getReservationEpoch();
                             if (!launchRefreshOnFiber(
                                     fiberTask,
                                     refreshTask,
-                                    launchFiber,
+                                    reservedFiber,
                                     reservedFiberEpoch
                             )) {
                                 stateStore.reenqueueRefreshTask(refreshTask);
@@ -1765,11 +1756,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         }
                         break;
                     case MatViewRefreshTask.INVALIDATE:
-                        releaseReservedFiber(runtime, reservedFiber, reservedFiberEpoch);
                         invalidate(refreshTask);
                         break;
                     case MatViewRefreshTask.UPDATE_REFRESH_INTERVALS:
-                        releaseReservedFiber(runtime, reservedFiber, reservedFiberEpoch);
                         updateRefreshIntervals(refreshTask);
                         break;
                     default:

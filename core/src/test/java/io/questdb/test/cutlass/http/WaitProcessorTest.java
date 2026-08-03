@@ -189,7 +189,6 @@ public class WaitProcessorTest {
         }
 
         int attempt0 = jobAttempts[0];
-        System.out.println("Rerun attempts: " + attempt0);
         Assert.assertTrue(attempt0 > 0);
 
         for (int i = 1; i < jobAttempts.length; i++) {
@@ -356,7 +355,6 @@ public class WaitProcessorTest {
             processor.runSerially();
         }
 
-        System.out.println("Rerun attempts: " + job1Attempts);
         Assert.assertEquals("Job runs expected to be 10 but are: " + job1Attempts, 10, job1Attempts);
     }
 

@@ -111,8 +111,7 @@ public class HttpServer implements Closeable {
         HttpRequestProcessorSelectorFactory selectorFactory = null;
         try {
             FiberRuntime fiberRuntime = null;
-            if (configuration instanceof HttpFullFatServerConfiguration
-                    && networkSharedPool.isFiberHost()) {
+            if (networkSharedPool.isFiberHost()) {
                 fiberRuntime = networkSharedPool.getFiberRuntime();
             }
             selectorFactory = new HttpRequestProcessorSelectorFactory(

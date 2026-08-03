@@ -73,6 +73,26 @@ abstract class AbstractPageFrameSequence {
         }
     }
 
+    void enterReducerCancellationScope() {
+        final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
+        getCircuitBreaker().copyCancelledFlagTo(cancellationBinding);
+        final AtomicBoolean cancelledFlag = cancellationBinding.getFlag();
+        final FiberCancellationSignal supplementalCancellationSignal;
+        final long supplementalCancellationSignalGeneration;
+        if (cancelledFlag instanceof FiberCancellationSignal signal && signal != cancellationSignal) {
+            supplementalCancellationSignal = signal;
+            supplementalCancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
+        } else {
+            supplementalCancellationSignal = null;
+            supplementalCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
+        }
+        SuspensionScope.enterCancellationSignal(cancellationSignal);
+        SuspensionScope.enterSupplementalCancellationSignal(
+                supplementalCancellationSignal,
+                supplementalCancellationSignalGeneration
+        );
+    }
+
     public int getCancelReason() {
         final int reason = cancelReason.get();
         return reason == CANCEL_REASON_UNSET || reason == CANCEL_REASON_REDUCER_ERROR
@@ -90,6 +110,13 @@ abstract class AbstractPageFrameSequence {
         return progressVersion.get();
     }
 
+    final boolean isReducerFailureReportable(Throwable th) {
+        final int reason = cancelReason.get();
+        return reason == CANCEL_REASON_UNSET
+                || reason == SqlExecutionCircuitBreaker.STATE_OK
+                || !(th instanceof CairoException e && e.isInterruption());
+    }
+
     public boolean isActive() {
         return cancelReason.get() == CANCEL_REASON_UNSET;
     }
@@ -104,7 +131,8 @@ abstract class AbstractPageFrameSequence {
 
     protected final void awaitProgress(
             PageFrameReduceDispatcher dispatcher,
-            long observedProgress,
+            long observedSequenceProgress,
+            long observedGlobalProgress,
             boolean isDraining
     ) {
         final boolean isInterruptible = !isDraining && !isUninterruptible();
@@ -115,6 +143,12 @@ abstract class AbstractPageFrameSequence {
         long cancellationSignalGeneration = isInterruptible
                 ? SuspensionScope.getCancellationSignalGeneration()
                 : CancellationBinding.NO_GENERATION;
+        FiberCancellationSignal supplementalCancellationSignal = isInterruptible
+                ? SuspensionScope.getSupplementalCancellationSignal()
+                : null;
+        final long supplementalCancellationSignalGeneration = isInterruptible
+                ? SuspensionScope.getSupplementalCancellationSignalGeneration()
+                : CancellationBinding.NO_GENERATION;
         if (cancellationSignal == null && circuitBreaker != null) {
             final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
             circuitBreaker.copyCancelledFlagTo(cancellationBinding);
@@ -124,13 +158,19 @@ abstract class AbstractPageFrameSequence {
                 cancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
             }
         }
+        if (supplementalCancellationSignal == cancellationSignal) {
+            supplementalCancellationSignal = null;
+        }
         final boolean isProgressWaitTerminated;
         try {
             isProgressWaitTerminated = dispatcher.isProgressWaitTerminated(
                     this,
-                    observedProgress,
+                    observedSequenceProgress,
+                    observedGlobalProgress,
                     cancellationSignal,
                     cancellationSignalGeneration,
+                    supplementalCancellationSignal,
+                    supplementalCancellationSignalGeneration,
                     circuitBreaker,
                     isDraining
             );

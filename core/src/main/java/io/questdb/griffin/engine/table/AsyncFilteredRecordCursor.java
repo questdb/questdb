@@ -137,7 +137,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             }
 
             if (!allFramesActive) {
-                throwInterruptionException();
+                throw buildInterruptionException();
             }
 
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
@@ -237,7 +237,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         }
 
         if (!allFramesActive) {
-            throwInterruptionException();
+            throw buildInterruptionException();
         }
         return false;
     }
@@ -321,7 +321,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             collectCursor(false);
 
             if (!allFramesActive) {
-                throwInterruptionException();
+                throw buildInterruptionException();
             }
         }
     }
@@ -337,6 +337,10 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         frameRowIndex = -1;
         frameRowCount = -1;
         allFramesActive = true;
+    }
+
+    private CairoException buildInterruptionException() {
+        return frameSequence.buildInterruptionException();
     }
 
     private boolean checkLimit() {
@@ -412,7 +416,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             if (th instanceof CairoException ce) {
                 if (ce.isInterruption() || ce.isCancellation()) {
                     LOG.error().$("filter error [ex=").$safe(ce.getFlyweightMessage()).I$();
-                    throwInterruptionException();
+                    throw buildInterruptionException();
                 } else {
                     LOG.error().$("filter error [ex=").$(th).I$();
                     throw ce;
@@ -430,10 +434,6 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
 
     private long rowIndex() {
         return hasDescendingOrder ? (frameRowCount - frameRowIndex - 1) : frameRowIndex;
-    }
-
-    private void throwInterruptionException() {
-        throw frameSequence.buildInterruptionException();
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {

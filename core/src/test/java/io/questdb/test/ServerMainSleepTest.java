@@ -393,11 +393,15 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                         Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                         Statement stmt = conn.createStatement()
                 ) {
-                    CountDownLatch sleepStarted = new CountDownLatch(1);
+                    CountDownLatch queryStarted = new CountDownLatch(1);
+                    serverMain.getEngine().getQueryRegistry().setListener((query, queryId, executionContext) -> {
+                        if (Chars.contains(query, "sleep(60")) {
+                            queryStarted.countDown();
+                        }
+                    });
                     AtomicReference<Throwable> outcome = new AtomicReference<>();
                     Thread sleeper = new Thread(() -> {
                         try {
-                            sleepStarted.countDown();
                             stmt.executeQuery("sleep(60)");
                             outcome.set(new AssertionError("expected cancellation"));
                         } catch (PSQLException expected) {
@@ -409,22 +413,25 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                     sleeper.setDaemon(true);
                     sleeper.start();
 
-                    Assert.assertTrue("sleep did not start", sleepStarted.await(5, TimeUnit.SECONDS));
-                    Thread.sleep(300);
+                    try {
+                        Assert.assertTrue("sleep query did not start", queryStarted.await(5, TimeUnit.SECONDS));
 
-                    long t0 = System.currentTimeMillis();
-                    stmt.cancel();
-                    sleeper.join(5_000);
-                    long elapsed = System.currentTimeMillis() - t0;
+                        long t0 = System.currentTimeMillis();
+                        stmt.cancel();
+                        sleeper.join(5_000);
+                        long elapsed = System.currentTimeMillis() - t0;
 
-                    Assert.assertFalse("sleep thread did not exit after cancel", sleeper.isAlive());
-                    if (outcome.get() != null) {
-                        throw new AssertionError("sleep cancellation failed", outcome.get());
+                        Assert.assertFalse("sleep thread did not exit after cancel", sleeper.isAlive());
+                        if (outcome.get() != null) {
+                            throw new AssertionError("sleep cancellation failed", outcome.get());
+                        }
+                        Assert.assertTrue(
+                                "cancel took too long to take effect: " + elapsed + " ms",
+                                elapsed < 2_000
+                        );
+                    } finally {
+                        serverMain.getEngine().getQueryRegistry().setListener(null);
                     }
-                    Assert.assertTrue(
-                            "cancel took too long to take effect: " + elapsed + " ms",
-                            elapsed < 2_000
-                    );
                 }
             }
         });

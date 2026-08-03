@@ -66,6 +66,11 @@ final class FiberRing {
         return (int) (pubSeq.current() - subSeq.current());
     }
 
+    boolean hasAvailable() {
+        final long next = subSeq.current() + 1;
+        return pubSeq.availableIndex(next) >= next;
+    }
+
     void put(Fiber fiber) {
         if (fiber == null) {
             throw new IllegalArgumentException("fiber must not be null");

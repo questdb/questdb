@@ -46,6 +46,7 @@ import org.junit.Test;
 import org.junit.rules.Timeout;
 
 import java.lang.reflect.Field;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -140,6 +141,63 @@ public class ServerMainProtocolEnvelopePartialInitTest extends AbstractBootstrap
     }
 
     @Test
+    public void minHttpStopHonorsDeadlineAndRetries() throws Exception {
+        assertMemoryLeak(() -> {
+            final CountDownLatch releaseWorker = new CountDownLatch(1);
+            final CountDownLatch workerEntered = new CountDownLatch(1);
+            try (ServerMain server = new ServerMain(getServerMainArgs()) {
+                @Override
+                protected Services services() {
+                    return new Services() {
+                        @Override
+                        public HttpServer createMinHttpServer(
+                                HttpServerConfiguration configuration,
+                                WorkerPool workerPool
+                        ) {
+                            workerPool.assign(workerContext -> {
+                                workerEntered.countDown();
+                                try {
+                                    releaseWorker.await();
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                }
+                                return false;
+                            });
+                            return null;
+                        }
+                    };
+                }
+            }) {
+                server.testInitForEnvelopeTests();
+                final Component envelope = server.testNewMinHttpEnvelope();
+                envelope.start(newDetachedContext(server, envelope.name()));
+                Assert.assertTrue(workerEntered.await(5, TimeUnit.SECONDS));
+
+                final Thread releaser = new Thread(() -> {
+                    try {
+                        Thread.sleep(500);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    releaseWorker.countDown();
+                });
+                releaser.start();
+                try {
+                    envelope.stop(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(10));
+                    Assert.fail("expected http-min halt timeout");
+                } catch (IllegalStateException e) {
+                    Assert.assertEquals("http-min worker pool did not halt", e.getMessage());
+                } finally {
+                    releaseWorker.countDown();
+                    releaser.join(5_000);
+                }
+                Assert.assertFalse(releaser.isAlive());
+                envelope.stop(System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
+            }
+        });
+    }
+
+    @Test
     public void partialInitFreesAllocatedResources_MinHttp() throws Exception {
         assertMemoryLeak(() -> {
             try (ServerMain server = new ServerMain(getServerMainArgs()) {
@@ -160,7 +218,7 @@ public class ServerMainProtocolEnvelopePartialInitTest extends AbstractBootstrap
                 // The MinHttpEnvelope.start() driven via the orchestrator path normally consults
                 // ServerMain.this.orchestrator via testInitForEnvelopeTests(); register a fresh
                 // MinHttpEnvelope and drive start() directly so the throw fires.
-                Component envelope = newMinHttpEnvelopeViaReflection(server);
+                Component envelope = server.testNewMinHttpEnvelope();
                 LifecycleContext ctx = newDetachedContext(server, envelope.name());
                 boolean threw = false;
                 try {
@@ -209,28 +267,6 @@ public class ServerMainProtocolEnvelopePartialInitTest extends AbstractBootstrap
                 );
             }
         });
-    }
-
-    /**
-     * Build a fresh {@code MinHttpEnvelope} instance via reflection. There is no
-     * {@code testNewMinHttpEnvelope()} factory on {@link ServerMain}; we construct
-     * one directly through the inner class's hosting reference. The envelope captures
-     * {@code ServerMain.this} so the overridden {@link Services#createMinHttpServer}
-     * in the test subclass fires on start().
-     */
-    private static Component newMinHttpEnvelopeViaReflection(ServerMain server) throws Exception {
-        // The inner class MinHttpEnvelope lives on ServerMain; use the published factory if it
-        // exists, otherwise reflect through the inner-class ctor.
-        try {
-            // Prefer a published factory if one is added in a future plan; today we know none
-            // exists for MinHttpEnvelope, so we go through the reflective path.
-            return (Component) ServerMain.class.getMethod("testNewMinHttpEnvelope").invoke(server);
-        } catch (NoSuchMethodException ignore) {
-            Class<?> inner = Class.forName("io.questdb.ServerMain$MinHttpEnvelope");
-            java.lang.reflect.Constructor<?> ctor = inner.getDeclaredConstructor(ServerMain.class, io.questdb.log.Log.class);
-            ctor.setAccessible(true);
-            return (Component) ctor.newInstance(server, io.questdb.log.LogFactory.getLog(ServerMainProtocolEnvelopePartialInitTest.class));
-        }
     }
 
     /**

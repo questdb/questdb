@@ -221,6 +221,10 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         allFramesActive = true;
     }
 
+    private CairoException buildInterruptionException() {
+        return masterFrameSequence.buildInterruptionException();
+    }
+
     private void buildSlaveTimeFrameCacheConditionally() {
         if (!isSlaveTimeFrameCacheBuilt) {
             slaveTimeFrameState.of(
@@ -276,7 +280,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                 }
 
                 if (!allFramesActive) {
-                    throwInterruptionException();
+                    throw buildInterruptionException();
                 }
 
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
@@ -380,7 +384,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             if (th instanceof CairoException ce) {
                 if (ce.isInterruption() || ce.isCancellation()) {
                     LOG.error().$("filter error [ex=").$safe(ce.getFlyweightMessage()).I$();
-                    throwInterruptionException();
+                    throw buildInterruptionException();
                 } else {
                     LOG.error().$("filter error [ex=").$(th).I$();
                     throw ce;
@@ -427,7 +431,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
 
         if (!allFramesActive) {
-            throwInterruptionException();
+            throw buildInterruptionException();
         }
         return false;
     }
@@ -463,13 +467,9 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
 
         if (!allFramesActive) {
-            throwInterruptionException();
+            throw buildInterruptionException();
         }
         return false;
-    }
-
-    private void throwInterruptionException() {
-        throw masterFrameSequence.buildInterruptionException();
     }
 
     void of(

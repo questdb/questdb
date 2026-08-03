@@ -258,6 +258,9 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
         final TimerShards timerShards = SuspensionScope.getTimerShards();
         FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
         long cancellationSignalGeneration = SuspensionScope.getCancellationSignalGeneration();
+        FiberCancellationSignal supplementalCancellationSignal = SuspensionScope.getSupplementalCancellationSignal();
+        final long supplementalCancellationSignalGeneration =
+                SuspensionScope.getSupplementalCancellationSignalGeneration();
         if (cancellationSignal == null && circuitBreaker instanceof SqlExecutionCircuitBreaker sqlCircuitBreaker) {
             final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
             sqlCircuitBreaker.copyCancelledFlagTo(cancellationBinding);
@@ -267,7 +270,13 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                 cancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
             }
         }
-        final int sourceCount = 1 + (cancellationSignal != null ? 1 : 0) + (timerShards != null ? 1 : 0);
+        if (supplementalCancellationSignal == cancellationSignal) {
+            supplementalCancellationSignal = null;
+        }
+        final int sourceCount = 1
+                + (cancellationSignal != null ? 1 : 0)
+                + (supplementalCancellationSignal != null ? 1 : 0)
+                + (timerShards != null ? 1 : 0);
         while (true) {
             if (circuitBreaker != null && circuitBreaker.checkIfTripped()) {
                 return -1;
@@ -284,6 +293,14 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                 if (cancellationSignal != null
                         && !coordinator.armCancellation(token, cancellationSignal, cancellationSignalGeneration)) {
                     throw new IllegalStateException("reducer cancellation registration failed");
+                }
+                if (supplementalCancellationSignal != null
+                        && !coordinator.armCancellation(
+                        token,
+                        supplementalCancellationSignal,
+                        supplementalCancellationSignalGeneration
+                )) {
+                    throw new IllegalStateException("reducer supplemental cancellation registration failed");
                 }
                 if (timerShards != null
                         && !coordinator.armTimer(token, timerShards, timerClock, timerIntervalMillis)) {

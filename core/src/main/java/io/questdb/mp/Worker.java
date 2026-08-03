@@ -27,6 +27,8 @@ package io.questdb.mp;
 import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeState;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.CarrierLocal;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
@@ -93,7 +95,7 @@ public class Worker extends Thread {
 
             @Override
             public boolean isTerminating() {
-                return lifecycle.get() == WorkerLifecycle.HALTED;
+                return lifecycle.get() != WorkerLifecycle.RUNNING;
             }
         };
         this.affinity = affinity;
@@ -132,7 +134,8 @@ public class Worker extends Thread {
     public void run() {
         Throwable ex = null;
         try {
-            if (lifecycle.compareAndSet(WorkerLifecycle.BORN, WorkerLifecycle.RUNNING)) {
+            if (lifecycle.compareAndSet(WorkerLifecycle.BORN, WorkerLifecycle.RUNNING)
+                    || lifecycle.get() == WorkerLifecycle.HALTING) {
                 CarrierIdentity.bind();
                 CURRENT.set(this);
                 if (fiberRuntime != null) {
@@ -169,6 +172,7 @@ public class Worker extends Thread {
             ex = e;
             stdErrCritical(e);
         } finally {
+            lifecycle.set(WorkerLifecycle.HALTED);
             if (onHaltAction != null) {
                 try {
                     onHaltAction.run(ex);
@@ -179,21 +183,45 @@ public class Worker extends Thread {
                     stdErrCritical(t);
                 }
             }
-            haltLatch.countDown();
-            if (log != null) {
-                log.debug().$("os scheduled worker stopped [name=").$(getName()).I$();
+            try {
+                if (log != null) {
+                    log.debug().$("os scheduled worker stopped [name=").$(getName()).I$();
+                }
+            } finally {
+                try {
+                    CURRENT.remove();
+                } finally {
+                    try {
+                        CarrierIdentity.unbind();
+                    } finally {
+                        haltLatch.countDown();
+                    }
+                }
             }
-            CURRENT.remove();
-            CarrierIdentity.unbind();
         }
     }
 
     private void loopBody() {
         long ticker = 0L;
-        while (lifecycle.get() == WorkerLifecycle.RUNNING) {
-            boolean isRunAsap = runJobs();
+        while (true) {
+            final WorkerLifecycle state = lifecycle.get();
+            if (state == WorkerLifecycle.HALTED) {
+                break;
+            }
+            boolean isRunAsap = false;
+            if (state == WorkerLifecycle.RUNNING) {
+                isRunAsap = runJobs();
+            }
             if (fiberRuntime != null) {
+                if (state == WorkerLifecycle.HALTING && fiberRuntime.state() == FiberRuntimeState.CLOSED) {
+                    break;
+                }
                 isRunAsap |= fiberRuntime.drain(fiberMountBudget) > 0;
+                if (state == WorkerLifecycle.HALTING && fiberRuntime.state() == FiberRuntimeState.CLOSED) {
+                    break;
+                }
+            } else if (state == WorkerLifecycle.HALTING) {
+                break;
             }
 
             if (isRunAsap) {
@@ -215,41 +243,50 @@ public class Worker extends Thread {
 
     private boolean runJobs() {
         boolean isRunAsap = false;
+        final SuspensionScope.Mode previousMode = fiberRuntime != null
+                ? SuspensionScope.enter(SuspensionScope.Mode.FORBIDDEN)
+                : null;
         jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
-        final int n = jobs.size();
-        int jobIndex = jobStartIndex;
-        for (int i = 0; i < n; i++) {
-            final Job job = jobs.get(jobIndex);
-            Unsafe.loadFence();
-            try {
-                isRunAsap |= job.run(workerContext);
-            } catch (Throwable e) {
-                if (metrics.isEnabled()) {
-                    try {
-                        metrics.healthMetrics().incrementUnhandledErrors();
-                    } catch (Throwable t) {
-                        stdErrCritical(t);
+        try {
+            final int n = jobs.size();
+            int jobIndex = jobStartIndex;
+            for (int i = 0; i < n; i++) {
+                final Job job = jobs.get(jobIndex);
+                Unsafe.loadFence();
+                try {
+                    isRunAsap |= job.run(workerContext);
+                } catch (Throwable e) {
+                    if (metrics.isEnabled()) {
+                        try {
+                            metrics.healthMetrics().incrementUnhandledErrors();
+                        } catch (Throwable t) {
+                            stdErrCritical(t);
+                        }
                     }
+                    if (log != null) {
+                        log.critical().$("unhandled error [job=").$(job.toString()).$(", ex=").$(e).I$();
+                    } else {
+                        stdErrCritical(e);
+                    }
+                    if (haltOnError) {
+                        throw e;
+                    }
+                } finally {
+                    Unsafe.storeFence();
                 }
-                if (log != null) {
-                    log.critical().$("unhandled error [job=").$(job.toString()).$(", ex=").$(e).I$();
-                } else {
-                    stdErrCritical(e);
+                if (++jobIndex == n) {
+                    jobIndex = 0;
                 }
-                if (haltOnError) {
-                    throw e;
-                }
-            } finally {
-                Unsafe.storeFence();
             }
-            if (++jobIndex == n) {
-                jobIndex = 0;
+            if (n > 0 && ++jobStartIndex == n) {
+                jobStartIndex = 0;
+            }
+            return isRunAsap;
+        } finally {
+            if (fiberRuntime != null) {
+                SuspensionScope.restore(previousMode);
             }
         }
-        if (n > 0 && ++jobStartIndex == n) {
-            jobStartIndex = 0;
-        }
-        return isRunAsap;
     }
 
     private void stdErrCritical(Throwable e) {
@@ -259,6 +296,18 @@ public class Worker extends Thread {
 
     long getJobStartMicros() {
         return jobStartMicros.get();
+    }
+
+    void haltAfterFiberDrain() {
+        while (true) {
+            final WorkerLifecycle state = lifecycle.get();
+            if (state == WorkerLifecycle.HALTED || state == WorkerLifecycle.HALTING) {
+                return;
+            }
+            if (lifecycle.compareAndSet(state, WorkerLifecycle.HALTING)) {
+                return;
+            }
+        }
     }
 
     @FunctionalInterface

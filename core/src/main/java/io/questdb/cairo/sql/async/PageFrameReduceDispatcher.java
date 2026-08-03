@@ -116,14 +116,40 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
     @TestOnly
     public int awaitProgress(
             PageFrameSequence<?> frameSequence,
-            long observedVersion,
+            long observedSequenceVersion,
+            long observedGlobalVersion,
             @Nullable FiberCancellationSignal cancellationSignal
     ) {
         return awaitProgress(
                 frameSequence,
-                observedVersion,
+                observedSequenceVersion,
+                observedGlobalVersion,
                 cancellationSignal,
                 cancellationSignal != null ? cancellationSignal.getGeneration() : CancellationBinding.NO_GENERATION,
+                null,
+                CancellationBinding.NO_GENERATION,
+                false
+        );
+    }
+
+    @TestOnly
+    public int awaitProgress(
+            PageFrameSequence<?> frameSequence,
+            long observedSequenceVersion,
+            long observedGlobalVersion,
+            @Nullable FiberCancellationSignal cancellationSignal,
+            @Nullable FiberCancellationSignal supplementalCancellationSignal
+    ) {
+        return awaitProgress(
+                frameSequence,
+                observedSequenceVersion,
+                observedGlobalVersion,
+                cancellationSignal,
+                cancellationSignal != null ? cancellationSignal.getGeneration() : CancellationBinding.NO_GENERATION,
+                supplementalCancellationSignal,
+                supplementalCancellationSignal != null
+                        ? supplementalCancellationSignal.getGeneration()
+                        : CancellationBinding.NO_GENERATION,
                 false
         );
     }
@@ -214,7 +240,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
                             frameSequence
                     );
                     hasLaunchOwnership = false;
-                    launch(fiber, reservationEpoch, fiberTask);
+                    launch(fiber, reservationEpoch, fiberTask, workerId > -1);
                     return false;
                 }
                 if (cursor == -1) {
@@ -272,7 +298,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
                     }
                     fiberTask.ofUnordered(workerId, queue, subSeq, frameIndex, frameSequence);
                     hasLaunchOwnership = false;
-                    launch(fiber, reservationEpoch, fiberTask);
+                    launch(fiber, reservationEpoch, fiberTask, workerId > -1);
                     return false;
                 }
                 if (cursor == -1) {
@@ -340,11 +366,6 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
     }
 
     @TestOnly
-    public void setBatchLimitForTesting(int batchLimit) {
-        this.batchLimit = batchLimit > 0 ? batchLimit : DEFAULT_BATCH_LIMIT;
-    }
-
-    @TestOnly
     public void setBatchRowBudgetForTesting(long batchRowBudget) {
         this.batchRowBudget = batchRowBudget > 0 ? batchRowBudget : configuredBatchRowBudget;
     }
@@ -356,7 +377,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
 
     @TestOnly
     public void signalProgressForTesting(PageFrameSequence<?> frameSequence) {
-        frameSequence.signalProgress();
+        signalProgress(frameSequence);
     }
 
     public boolean tryAcquirePublication() {
@@ -432,9 +453,12 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
 
     private int awaitProgress(
             AbstractPageFrameSequence frameSequence,
-            long observedVersion,
+            long observedSequenceVersion,
+            long observedGlobalVersion,
             @Nullable FiberCancellationSignal cancellationSignal,
             long cancellationSignalGeneration,
+            @Nullable FiberCancellationSignal supplementalCancellationSignal,
+            long supplementalCancellationSignalGeneration,
             boolean isQuiescingAllowed
     ) {
         if (isClosed || (!isQuiescingAllowed && quiesceState.get() != QUIESCE_OPEN)) {
@@ -447,7 +471,11 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
         if (fiber == null) {
             return FiberWaitCoordinator.REASON_NONE;
         }
-        final long token = fiber.tryBeginWaitBuild(cancellationSignal == null ? 3 : 4);
+        final long token = fiber.tryBeginWaitBuild(
+                3
+                        + (cancellationSignal != null ? 1 : 0)
+                        + (supplementalCancellationSignal != null ? 1 : 0)
+        );
         if (token == Fiber.TOKEN_REFUSED) {
             return FiberWaitCoordinator.REASON_SHUTDOWN;
         }
@@ -461,13 +489,22 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
                     && !coordinator.armCancellation(token, cancellationSignal, cancellationSignalGeneration)) {
                 throw new IllegalStateException("page frame progress cancellation registration failed");
             }
+            if (supplementalCancellationSignal != null
+                    && !coordinator.armCancellation(
+                    token,
+                    supplementalCancellationSignal,
+                    supplementalCancellationSignalGeneration
+            )) {
+                throw new IllegalStateException("page frame supplemental cancellation registration failed");
+            }
             if (!coordinator.armTimer(token, timerShards, timerClock, timerIntervalMillis)) {
                 return FiberWaitCoordinator.REASON_SHUTDOWN;
             }
             if (isClosed || (!isQuiescingAllowed && quiesceState.get() != QUIESCE_OPEN)) {
                 return FiberWaitCoordinator.REASON_SHUTDOWN;
             }
-            if (frameSequence.getProgressVersion() != observedVersion) {
+            if (frameSequence.getProgressVersion() != observedSequenceVersion
+                    || progressVersion.get() != observedGlobalVersion) {
                 return FiberWaitCoordinator.REASON_PROGRESS;
             }
             return fiber.suspendWait(token, FiberWaitCoordinator.REASON_PROGRESS);
@@ -530,11 +567,16 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
         }
     }
 
-    private void launch(Fiber fiber, long reservationEpoch, PageFrameFiberTask task) {
+    private void launch(
+            Fiber fiber,
+            long reservationEpoch,
+            PageFrameFiberTask task,
+            boolean isDirectMountAllowed
+    ) {
         final long taskIncarnation = task.getIncarnation();
-        final LaunchResult result = Fiber.isMounted()
-                ? runtime.launchReserved(fiber, reservationEpoch, task, taskIncarnation)
-                : runtime.launchReservedDirect(fiber, reservationEpoch, task, taskIncarnation);
+        final LaunchResult result = isDirectMountAllowed && !Fiber.isMounted()
+                ? runtime.launchReservedDirect(fiber, reservationEpoch, task, taskIncarnation)
+                : runtime.launchReserved(fiber, reservationEpoch, task, taskIncarnation);
         // launchReserved() may already have run the terminal callbacks, which recycle the task and bump
         // its incarnation; another carrier can then own it. Only abort a task still at our incarnation.
         if (result != LaunchResult.LAUNCHED
@@ -597,17 +639,23 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
 
     boolean isProgressWaitTerminated(
             AbstractPageFrameSequence frameSequence,
-            long observedVersion,
+            long observedSequenceVersion,
+            long observedGlobalVersion,
             @Nullable FiberCancellationSignal cancellationSignal,
             long cancellationSignalGeneration,
+            @Nullable FiberCancellationSignal supplementalCancellationSignal,
+            long supplementalCancellationSignalGeneration,
             @Nullable SqlExecutionCircuitBreaker circuitBreaker,
             boolean isDraining
     ) {
         final int reason = awaitProgress(
                 frameSequence,
-                observedVersion,
+                observedSequenceVersion,
+                observedGlobalVersion,
                 cancellationSignal,
                 cancellationSignalGeneration,
+                supplementalCancellationSignal,
+                supplementalCancellationSignalGeneration,
                 isDraining
         );
         return switch (reason) {

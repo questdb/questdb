@@ -133,7 +133,7 @@ public abstract class WorkerPoolManager implements Target {
      * <p>
      * The deadline is shared across all pools: each pool gets the time remaining until the deadline,
      * so a single wedged pool cannot reset the budget for the next one. This keeps server shutdown
-     * bounded even when a worker thread is stuck. See {@link WorkerPool#haltWithin(long)} for the
+     * bounded even when a worker thread is stuck. See {@link WorkerPool#haltBy(long)} for the
      * resource-retention behaviour after a timeout.
      *
      * @param deadlineNanos absolute deadline from {@link System#nanoTime()} by which all pools should be halted
@@ -222,19 +222,28 @@ public abstract class WorkerPoolManager implements Target {
 
     private boolean closePool(WorkerPool p, String message, long deadlineNanos) {
         if (p != null) {
-            LOG.debug().$(message).$(p.getPoolName())
-                    .$(", workers=").$(p.getWorkerCount())
-                    .I$();
             try {
-                return p.haltWithin(Math.max(1, deadlineNanos - System.nanoTime()));
+                LOG.debug().$(message).$(p.getPoolName())
+                        .$(", workers=").$(p.getWorkerCount())
+                        .I$();
+            } catch (Throwable ignore) {
+            }
+            try {
+                return p.haltBy(deadlineNanos);
             } catch (Throwable th) {
-                LOG.error().$("worker pool cleanup failed [pool=").$(p.getPoolName())
-                        .$(", error=").$(th).I$();
                 try {
-                    return p.haltWithin(Math.max(1, deadlineNanos - System.nanoTime()));
+                    LOG.error().$("worker pool cleanup failed [pool=").$(p.getPoolName())
+                            .$(", error=").$(th).I$();
+                } catch (Throwable ignore) {
+                }
+                try {
+                    return p.haltBy(deadlineNanos);
                 } catch (Throwable retryFailure) {
-                    LOG.error().$("worker pool cleanup retry failed [pool=").$(p.getPoolName())
-                            .$(", error=").$(retryFailure).I$();
+                    try {
+                        LOG.error().$("worker pool cleanup retry failed [pool=").$(p.getPoolName())
+                                .$(", error=").$(retryFailure).I$();
+                    } catch (Throwable ignore) {
+                    }
                     return false;
                 }
             }

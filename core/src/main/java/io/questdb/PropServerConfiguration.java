@@ -2225,6 +2225,19 @@ public class PropServerConfiguration implements ServerConfiguration {
                     sharedWorkerSleepTimeout
             );
 
+            if (!isReadOnlyInstance && lineTcpEnabled && lineTcpIOWorkerCount < 1 && networkPoolWorkerCount < 1) {
+                throw ServerConfigurationException.forInvalidKey(
+                        PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(),
+                        "line TCP requires at least one network worker"
+                );
+            }
+            if (!isReadOnlyInstance && lineTcpEnabled && lineTcpWriterWorkerCount < 1 && writeWorkers < 1) {
+                throw ServerConfigurationException.forInvalidKey(
+                        PropertyKey.SHARED_WRITE_WORKER_COUNT.getPropertyPath(),
+                        "line TCP requires at least one writer worker"
+                );
+            }
+
             // Now all worker counts are known, so we can set select cache capacity props.
             if (pgEnabled) {
                 this.pgFiberEnabled = getBoolean(properties, env, PropertyKey.PG_FIBER_ENABLED, true);

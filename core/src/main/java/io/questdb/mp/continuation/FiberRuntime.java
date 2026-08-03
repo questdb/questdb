@@ -129,13 +129,6 @@ public final class FiberRuntime {
         );
     }
 
-    public int awaitCapacity(@Nullable FiberCancellationSignal cancellationSignal) {
-        return awaitCapacity(
-                cancellationSignal,
-                cancellationSignal != null ? cancellationSignal.getGeneration() : CancellationBinding.NO_GENERATION
-        );
-    }
-
     public int awaitCapacity(
             @Nullable FiberCancellationSignal cancellationSignal,
             long cancellationSignalGeneration
@@ -239,6 +232,10 @@ public final class FiberRuntime {
         if (attemptBudget < 1) {
             throw new IllegalArgumentException("attemptBudget must be positive");
         }
+        if (SuspensionScope.hasAnyRoleSwitchLock(SuspensionScope.scope())) {
+            tryClose();
+            return 0;
+        }
         int attempts = 0;
         while (attempts < attemptBudget) {
             final Fiber fiber = runQueue.tryDequeue();
@@ -246,7 +243,7 @@ public final class FiberRuntime {
                 break;
             }
             attempts++;
-            final int processResult = process(fiber, fiber.getOutcomeScratch(), false);
+            final int processResult = process(fiber, false);
             if (processResult != PROCESS_TERMINATED) {
                 finishProcessingAfterUnmount(fiber, processResult == PROCESS_OWNED);
             }
@@ -262,7 +259,7 @@ public final class FiberRuntime {
         return budgetExhaustionCount.sum();
     }
 
-    public int getCreatedFiberCount() {
+    public long getCreatedFiberCount() {
         return fiberPool.getCreatedCount();
     }
 
@@ -314,7 +311,7 @@ public final class FiberRuntime {
         return fiberPool.getRetainedCount();
     }
 
-    public int getRetiredFiberCount() {
+    public long getRetiredFiberCount() {
         return fiberPool.getRetiredCount();
     }
 
@@ -374,13 +371,26 @@ public final class FiberRuntime {
         return launchReserved(fiber, reservationEpoch, task, taskIncarnation, false);
     }
 
+    /**
+     * Launches the reserved fiber inline when the caller is a scheduler-controlled carrier at a
+     * clean mount boundary. The caller must not hold an intrinsic monitor across this call. With
+     * lightweight locking, a continuation yield transfers the carrier's lock stack into the stack
+     * chunk, which would detach an outer monitor from its matching {@code monitorexit}. When the
+     * current execution owns a role-switch lock, this method queues the fiber instead.
+     */
     public LaunchResult launchReservedDirect(
             Fiber fiber,
             long reservationEpoch,
             FiberTask task,
             long taskIncarnation
     ) {
-        return launchReserved(fiber, reservationEpoch, task, taskIncarnation, true);
+        return launchReserved(
+                fiber,
+                reservationEpoch,
+                task,
+                taskIncarnation,
+                !SuspensionScope.hasAnyRoleSwitchLock(SuspensionScope.scope())
+        );
     }
 
     public synchronized void registerQuiesceListener(FiberRuntimeQuiesceListener listener) {
@@ -560,6 +570,7 @@ public final class FiberRuntime {
         boolean hasFiberOwnership = true;
         try {
             if (!acquireAdmission()) {
+                hasFiberOwnership = false;
                 releaseFiber(fiber);
                 completeAbandoned(task, true);
                 return false;
@@ -572,21 +583,21 @@ public final class FiberRuntime {
                 task.publishPark();
                 final int result = task.resolveArming();
                 if (result == FiberTask.PARK_IDLE) {
-                    releaseFiber(fiber);
                     hasFiberOwnership = false;
+                    releaseFiber(fiber);
                     releaseTaskSlot();
                 } else if (result == FiberTask.PARK_RELAUNCH) {
                     fiber.restageAndRequestRun(task);
                 } else {
-                    releaseFiber(fiber);
                     hasFiberOwnership = false;
+                    releaseFiber(fiber);
                     completeAbandoned(task, false);
                 }
             } catch (Throwable th) {
                 final boolean isTaskOwned = task.abortArming();
                 if (hasFiberOwnership) {
-                    releaseFiber(fiber);
                     hasFiberOwnership = false;
+                    releaseFiber(fiber);
                 }
                 if (isTaskOwned) {
                     terminalError(task, th);
@@ -702,7 +713,7 @@ public final class FiberRuntime {
         boolean hasFiberReservation = true;
         boolean hasTaskSlot = true;
         boolean isTaskClaimed = false;
-        LaunchResult result = LaunchResult.RESOURCE_FAILURE;
+        LaunchResult result;
         try {
             if (!acquireAdmission()) {
                 result = LaunchResult.QUIESCING;
@@ -756,7 +767,7 @@ public final class FiberRuntime {
             }
         }
         if (directFiber != null) {
-            final int processResult = process(directFiber, directFiber.getOutcomeScratch(), true);
+            final int processResult = process(directFiber, true);
             if (processResult != PROCESS_TERMINATED) {
                 finishProcessingAfterUnmount(directFiber, processResult == PROCESS_OWNED);
             }
@@ -785,13 +796,14 @@ public final class FiberRuntime {
         }
     }
 
-    private int process(Fiber fiber, Fiber.Outcome outcome, boolean isDirectMount) {
+    private int process(Fiber fiber, boolean isDirectMount) {
         if (!isDirectMount && !fiber.beginProcessing()) {
-            LOG.critical().$("fiber queue invariant failed [state=").$(fiber.getExecutionState()).I$();
+            LOG.critical().$("fiber queue invariant failed [state=").$(fiber.getNotificationState()).I$();
             return PROCESS_TERMINATED;
         }
         boolean hasFiberOwnership = true;
         boolean isTerminated = false;
+        Fiber.Outcome outcome = fiber.getOutcomeScratch();
         outcome.clear();
         try {
             if (!fiber.beginMount()) {

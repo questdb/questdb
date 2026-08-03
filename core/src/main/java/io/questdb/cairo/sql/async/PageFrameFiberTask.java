@@ -324,21 +324,21 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         this.orderedFrameSequence = frameSequence;
         // frames of one batch can belong to different queries; the carrier scope's signal must
         // track the frame, not the mount
-        SuspensionScope.enterCancellationSignal(frameSequence.getCancellationSignal());
+        frameSequence.enterReducerCancellationScope();
         try {
             if (frameSequence.isActive()) {
                 circuitBreaker.init(frameSequence.getCircuitBreaker());
                 PageFrameReduceJob.reduce(workerId, record, circuitBreaker, reduceTask, frameSequence, null);
             }
         } catch (Throwable th) {
-            LOG.error()
-                    .$("reduce error [error=").$(th)
-                    .$(", id=").$(frameSequence.getId())
-                    .$(", taskType=").$(reduceTask.getTaskType())
-                    .$(", frameIndex=").$(reduceTask.getFrameIndex())
-                    .$(", frameCount=").$(frameSequence.getFrameCount())
-                    .I$();
-            if (frameSequence.isActive()) {
+            if (frameSequence.isReducerFailureReportable(th)) {
+                LOG.error()
+                        .$("reduce error [error=").$(th)
+                        .$(", id=").$(frameSequence.getId())
+                        .$(", taskType=").$(reduceTask.getTaskType())
+                        .$(", frameIndex=").$(reduceTask.getFrameIndex())
+                        .$(", frameCount=").$(frameSequence.getFrameCount())
+                        .I$();
                 reduceTask.setErrorMsg(th);
                 frameSequence.cancelOnReducerError(th);
             }
@@ -361,20 +361,20 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private void reduceUnorderedFrame(int frameIndex, UnorderedPageFrameSequence<?> frameSequence) {
         this.unorderedFrameIndex = frameIndex;
         this.unorderedFrameSequence = frameSequence;
-        SuspensionScope.enterCancellationSignal(frameSequence.getCancellationSignal());
+        frameSequence.enterReducerCancellationScope();
         try {
             if (frameSequence.isActive()) {
                 circuitBreaker.init(frameSequence.getCircuitBreaker());
                 UnorderedPageFrameReduceJob.reduce(workerId, record, circuitBreaker, frameIndex, frameSequence, null);
             }
         } catch (Throwable th) {
-            LOG.error()
-                    .$("reduce error [error=").$(th)
-                    .$(", id=").$(frameSequence.getId())
-                    .$(", frameIndex=").$(frameIndex)
-                    .$(", frameCount=").$(frameSequence.getFrameCount())
-                    .I$();
-            if (frameSequence.isActive()) {
+            if (frameSequence.isReducerFailureReportable(th)) {
+                LOG.error()
+                        .$("reduce error [error=").$(th)
+                        .$(", id=").$(frameSequence.getId())
+                        .$(", frameIndex=").$(frameIndex)
+                        .$(", frameCount=").$(frameSequence.getFrameCount())
+                        .I$();
                 frameSequence.setError(th);
             }
             if (th instanceof Error error) {
@@ -386,7 +386,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             try {
                 frameSequence.getDoneLatch().countDown();
             } finally {
-                frameSequence.signalProgress();
+                dispatcher.signalProgress(frameSequence);
             }
         }
     }

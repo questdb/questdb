@@ -46,7 +46,9 @@ import org.junit.Test;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Lock;
 
 /**
  * Verifies the HTTP /exec CTAS/CREATE/DROP/CREATE MAT VIEW/CREATE VIEW demote write-fence, the twin of
@@ -167,6 +169,32 @@ public class HttpExecDdlDemoteFenceTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCtasReleasesFenceBeforeAwait() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean isWriteLockAvailable = new AtomicBoolean();
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final JsonQueryProcessor processor = newProcessor(primaryEngine);
+                try {
+                    final SqlExecutionContextImpl ctx = TestUtils.createSqlExecutionCtx(primaryEngine, 1);
+                    callExecuteDdlFenced(
+                            processor,
+                            ctx,
+                            CompiledQuery.CREATE_TABLE_AS_SELECT,
+                            operationReturning(futureProbingWriteLock(writeLock, isWriteLockAvailable))
+                    );
+                    Assert.assertTrue(
+                            "executeDdlFenced must release the read fence before waiting",
+                            isWriteLockAvailable.get()
+                    );
+                } finally {
+                    processor.close();
+                }
+            }
+        });
+    }
+
     /**
      * The export-temp-table DROP exemption must survive the fence: the admin's DROP of the HTTP parquet
      * exporter's leftover temp table is the ONE DROP a read-only replica permits (the pre-execution gate
@@ -255,6 +283,26 @@ public class HttpExecDdlDemoteFenceTest extends AbstractCairoTest {
         );
     }
 
+    private static OperationFuture futureProbingWriteLock(Lock writeLock, AtomicBoolean isWriteLockAvailable) {
+        return (OperationFuture) Proxy.newProxyInstance(
+                OperationFuture.class.getClassLoader(),
+                new Class[]{OperationFuture.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "await" -> {
+                        final boolean isLocked = writeLock.tryLock();
+                        isWriteLockAvailable.set(isLocked);
+                        if (isLocked) {
+                            writeLock.unlock();
+                        }
+                        yield OperationFuture.QUERY_COMPLETE;
+                    }
+                    case "getAffectedRowsCount" -> 0L;
+                    case "close" -> null;
+                    default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
+                }
+        );
+    }
+
     private static JsonQueryProcessor newProcessor(CairoEngine engine) {
         DefaultHttpServerConfiguration httpConfig = new HttpServerConfigurationBuilder()
                 .withPort(0)
@@ -269,6 +317,18 @@ public class HttpExecDdlDemoteFenceTest extends AbstractCairoTest {
                 (proxy, method, args) -> switch (method.getName()) {
                     case "await" -> OperationFuture.QUERY_COMPLETE;
                     case "getAffectedRowsCount" -> 0L;
+                    case "close" -> null;
+                    default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
+                }
+        );
+    }
+
+    private static Operation operationReturning(OperationFuture future) {
+        return (Operation) Proxy.newProxyInstance(
+                Operation.class.getClassLoader(),
+                new Class[]{Operation.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "execute" -> future;
                     case "close" -> null;
                     default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
                 }

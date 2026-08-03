@@ -33,6 +33,9 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
 public class LineUdpReceiverCloseTimeoutTest extends AbstractCairoTest {
 
     private static final LineUdpReceiverConfiguration RCVR_CONF = new DefaultLineUdpReceiverConfiguration() {
@@ -62,6 +65,25 @@ public class LineUdpReceiverCloseTimeoutTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCloseTimeoutRetainsResourcesForRetry() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                final BlockingStartLineUdpReceiver receiver = new BlockingStartLineUdpReceiver(RCVR_CONF, engine);
+                try {
+                    receiver.start();
+                    Assert.assertTrue(receiver.awaitThreadEntry());
+                    Assert.assertFalse(receiver.closeBy(System.nanoTime()));
+                    Assert.assertTrue(receiver.hasRetainedResources());
+                } finally {
+                    receiver.releaseStart();
+                    Assert.assertTrue(receiver.closeBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(5)));
+                }
+                Assert.assertFalse(receiver.hasRetainedResources());
+            }
+        });
+    }
+
+    @Test
     public void testFailedStartCannotReuseCompletedLatches() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -78,6 +100,46 @@ public class LineUdpReceiverCloseTimeoutTest extends AbstractCairoTest {
                 Assert.assertEquals(1, receiver.getThreadCreationCount());
             }
         });
+    }
+
+    private static class BlockingStartLineUdpReceiver extends AbstractLineProtoUdpReceiver {
+        private final CountDownLatch releaseStart = new CountDownLatch(1);
+        private final CountDownLatch threadEntered = new CountDownLatch(1);
+
+        private BlockingStartLineUdpReceiver(LineUdpReceiverConfiguration configuration, CairoEngine engine) {
+            super(configuration, engine, null);
+        }
+
+        @Override
+        protected Thread createThread(Runnable runnable) {
+            return new Thread(() -> {
+                threadEntered.countDown();
+                try {
+                    releaseStart.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                runnable.run();
+            });
+        }
+
+        @Override
+        protected boolean runSerially() {
+            return false;
+        }
+
+        private boolean awaitThreadEntry() throws InterruptedException {
+            return threadEntered.await(5, TimeUnit.SECONDS);
+        }
+
+        private boolean hasRetainedResources() {
+            return fd > -1;
+        }
+
+        private void releaseStart() {
+            releaseStart.countDown();
+        }
     }
 
     private static class FailingStartLineUdpReceiver extends AbstractLineProtoUdpReceiver {

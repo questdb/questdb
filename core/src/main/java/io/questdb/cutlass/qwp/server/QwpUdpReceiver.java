@@ -26,6 +26,7 @@ package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
@@ -76,6 +77,12 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     private final SOCountDownLatch halted = new SOCountDownLatch(1);
     private final QwpMessageCursor messageCursor;
     private final QwpMessageHeader messageHeader;
+    private boolean isBufferFreed;
+    private boolean isCommitAttempted;
+    private boolean isSocketClosed;
+    private boolean isStartAttempted;
+    private boolean isTudCacheFreed;
+    private boolean isWalAppenderFreed;
     protected final MillisecondClock millisecondClock;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final SOCountDownLatch started = new SOCountDownLatch(1);
@@ -191,40 +198,110 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
+        if (!closeBy(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
+            throw new IllegalStateException("QWP UDP receiver did not halt");
+        }
+    }
+
+    public synchronized boolean closeBy(long deadlineNanos) {
         if (fd > -1) {
-            boolean wasRunning = running.compareAndSet(true, false);
+            running.set(false);
             closed = true;
-
-            // Close socket to unblock any blocking recvRaw() call
-            if (nf.close(fd) != 0) {
-                LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-            } else {
-                LOG.info().$("closed [fd=").$(fd).$(']').$();
+            if (isStartAttempted
+                    && (!started.await(Math.max(0, deadlineNanos - System.nanoTime()))
+                    || !halted.await(Math.max(0, deadlineNanos - System.nanoTime())))) {
+                return false;
             }
 
-            if (wasRunning) {
-                started.await();
-                halted.await();
-            }
-
-            // Ensure no in-flight runSerially() before freeing resources.
-            // After setting closed=true and closing the fd, recvRaw() returns
-            // promptly and runSerially() exits. We spin-call run() until
-            // runSerially() executes under the SynchronizedJob lock with
-            // closed=true, confirming no concurrent access to shared resources.
             while (!closedAcknowledged) {
                 this.run();
+                if (closedAcknowledged) {
+                    break;
+                }
+                if (System.nanoTime() >= deadlineNanos) {
+                    return false;
+                }
                 Os.pause();
             }
 
-            fd = -1;
+            if (!isSocketClosed) {
+                if (nf.close(fd) != 0) {
+                    try {
+                        LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+                    } catch (Throwable ignore) {
+                    }
+                } else {
+                    isSocketClosed = true;
+                }
+            }
 
-            tudCache.commitAllBestEffort();
-            Misc.free(tudCache);
-            Misc.free(walAppender);
-            Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);
+            if (System.nanoTime() >= deadlineNanos) {
+                return false;
+            }
+
+            Throwable cleanupFailure = null;
+            if (!isCommitAttempted) {
+                try {
+                    if (!tudCache.isCommitAllBestEffortComplete(deadlineNanos)) {
+                        return false;
+                    }
+                    isCommitAttempted = true;
+                } catch (Throwable th) {
+                    isCommitAttempted = true;
+                    cleanupFailure = th;
+                }
+            }
+            if (!isTudCacheFreed) {
+                try {
+                    Misc.free(tudCache);
+                    isTudCacheFreed = true;
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
+            }
+            if (!isWalAppenderFreed) {
+                try {
+                    Misc.free(walAppender);
+                    isWalAppenderFreed = true;
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
+            }
+            if (!isBufferFreed) {
+                try {
+                    Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);
+                    isBufferFreed = true;
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
+            }
+            if (isSocketClosed && isBufferFreed && isTudCacheFreed && isWalAppenderFreed) {
+                final long closedFd = fd;
+                fd = -1;
+                try {
+                    LOG.info().$("closed [fd=").$(closedFd).$(']').$();
+                } catch (Throwable ignore) {
+                }
+            }
+            CairoException.rethrowCleanupFailure(cleanupFailure);
+            if (!isSocketClosed) {
+                return false;
+            }
         }
+        return true;
     }
 
     public long getDroppedBadMagicCount() {
@@ -287,6 +364,9 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         boolean ran = false;
         int count;
         while ((count = nf.recvRaw(fd, buf, bufLen)) > 0) {
+            if (checkClosed()) {
+                return ran;
+            }
             ran = true;
             if (!acceptOpen.get()) {
                 return true;
@@ -302,10 +382,16 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                 totalCount++;
             }
             if (totalCount >= maxUncommittedDatagrams) {
+                if (checkClosed()) {
+                    return true;
+                }
                 totalCount = 0;
                 forceCommitAll();
                 return true;
             }
+        }
+        if (checkClosed()) {
+            return ran;
         }
         if (nextCommitTime != Long.MAX_VALUE) {
             long wallClockMillis = millisecondClock.getTicks();
@@ -317,8 +403,10 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         return ran;
     }
 
-    public void start() {
-        if (configuration.isOwnThread() && running.compareAndSet(false, true)) {
+    public synchronized void start() {
+        if (configuration.isOwnThread() && fd > -1 && !isSocketClosed && !isStartAttempted) {
+            isStartAttempted = true;
+            running.set(true);
             final Thread thread;
             try {
                 thread = createThread(() -> {

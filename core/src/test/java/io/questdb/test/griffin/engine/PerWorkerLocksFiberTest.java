@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.groupby.vect.VectorAggregateEntry;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
@@ -252,6 +253,33 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSupplementalCancellationWakesSlotWaiterAndDoesNotLeakSlot() {
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, 1);
+        final int heldSlot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
+        final FiberCancellationSignal supplementalCancellationSignal = new FiberCancellationSignal();
+        final FiberRuntime runtime = new FiberRuntime(2, 2);
+        final SlotTask task = new SlotTask(locks, cancellationSignal, supplementalCancellationSignal);
+        try {
+            Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertEquals(1, runtime.getParkedFiberCount());
+
+            supplementalCancellationSignal.cancel();
+            Assert.assertEquals(1, runtime.drain(1));
+
+            Assert.assertTrue(task.hasError);
+            Assert.assertFalse(task.hasRun);
+            Assert.assertFalse(cancellationSignal.get());
+            Assert.assertEquals(1, locks.getAcquiredSlotCount());
+        } finally {
+            locks.releaseSlot(heldSlot);
+            close(runtime);
+        }
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+    }
+
+    @Test
     public void testTimerWakesSlotWaiterToObserveCancellation() {
         final PerWorkerLocks locks = new PerWorkerLocks(new CairoConfigurationWrapper(configuration) {
             @Override
@@ -431,12 +459,27 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
         private final @Nullable FiberCancellationSignal cancellationSignal;
         private final SqlExecutionCircuitBreaker circuitBreaker;
         private final PerWorkerLocks locks;
+        private final @Nullable FiberCancellationSignal supplementalCancellationSignal;
         private final @Nullable TimerShards timerShards;
         private boolean hasError;
         private boolean hasRun;
 
         private SlotTask(PerWorkerLocks locks, @Nullable FiberCancellationSignal cancellationSignal) {
-            this(locks, cancellationSignal, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER, null);
+            this(locks, cancellationSignal, null);
+        }
+
+        private SlotTask(
+                PerWorkerLocks locks,
+                @Nullable FiberCancellationSignal cancellationSignal,
+                @Nullable FiberCancellationSignal supplementalCancellationSignal
+        ) {
+            this(
+                    locks,
+                    cancellationSignal,
+                    supplementalCancellationSignal,
+                    SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER,
+                    null
+            );
         }
 
         private SlotTask(
@@ -445,9 +488,20 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
                 SqlExecutionCircuitBreaker circuitBreaker,
                 @Nullable TimerShards timerShards
         ) {
+            this(locks, cancellationSignal, null, circuitBreaker, timerShards);
+        }
+
+        private SlotTask(
+                PerWorkerLocks locks,
+                @Nullable FiberCancellationSignal cancellationSignal,
+                @Nullable FiberCancellationSignal supplementalCancellationSignal,
+                SqlExecutionCircuitBreaker circuitBreaker,
+                @Nullable TimerShards timerShards
+        ) {
             this.cancellationSignal = cancellationSignal;
             this.circuitBreaker = circuitBreaker;
             this.locks = locks;
+            this.supplementalCancellationSignal = supplementalCancellationSignal;
             this.timerShards = timerShards;
         }
 
@@ -463,6 +517,11 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
 
         @Override
         protected boolean runStep() {
+            final FiberCancellationSignal signal = supplementalCancellationSignal;
+            SuspensionScope.enterSupplementalCancellationSignal(
+                    signal,
+                    signal != null ? signal.getGeneration() : CancellationBinding.NO_GENERATION
+            );
             SuspensionScope.enterTimerShards(timerShards);
             final int slot = locks.acquireSlot(0, circuitBreaker);
             try {

@@ -56,6 +56,10 @@ public class NoOpViewStateStore implements ViewStateStore {
     }
 
     @Override
+    public void reenqueueCompileTask(ViewCompilerTask task) {
+    }
+
+    @Override
     public boolean tryDequeueCompilerTask(ViewCompilerTask task) {
         return false;
     }

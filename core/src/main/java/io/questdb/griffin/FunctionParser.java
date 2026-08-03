@@ -160,6 +160,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final IntStack positionStack = new IntStack();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntList undefinedVariables = new IntList();
+    private int executionRequirementPosition = -1;
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
@@ -224,6 +225,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     @Override
     public void clear() {
         this.executionRequirements.clear();
+        this.executionRequirementPosition = -1;
         this.positionStack.clear();
         this.functionStack.clear();
         this.sqlExecutionContext = null;
@@ -432,6 +434,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
         }
         positionStack.push(node.position);
+    }
+
+    int enterExecutionRequirementPosition(int position) {
+        final int previousPosition = executionRequirementPosition;
+        if (previousPosition < 0) {
+            executionRequirementPosition = position;
+        }
+        return previousPosition;
+    }
+
+    void restoreExecutionRequirementPosition(int position) {
+        executionRequirementPosition = position;
     }
 
     private static int countWindowOverloads(ObjList<FunctionFactoryDescriptor> overload) {
@@ -651,10 +665,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             Misc.freeObjList(args);
             throw SqlException.position(position).put("bad function factory (NULL), check log");
         } else if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
-            Misc.freeObjList(args);
-            throw SqlException.nonDeterministicColumn(node.position, node.token);
+            final SqlException exception = SqlException.nonDeterministicColumn(node.position, node.token);
+            Misc.free(function, exception);
+            if (args != null) {
+                args.clear();
+            }
+            throw exception;
         }
-        executionRequirements.add(factory.getExecutionRequirements(), position);
+        executionRequirements.add(
+                factory.getExecutionRequirements(),
+                executionRequirementPosition > -1 ? executionRequirementPosition : position
+        );
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
         }

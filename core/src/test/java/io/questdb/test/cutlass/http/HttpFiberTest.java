@@ -52,6 +52,8 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.network.Net;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.LongList;
@@ -253,6 +255,50 @@ public class HttpFiberTest extends AbstractTest {
     }
 
     @Test
+    public void testClearedRetryPublishesPendingWriteInsteadOfReschedule() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final DefaultHttpServerConfiguration configuration =
+                    new DefaultHttpServerConfiguration(new DefaultTestCairoConfiguration(root));
+            final TestHttpDispatcher dispatcher = new TestHttpDispatcher();
+            final WaitProcessor waitProcessor = new WaitProcessor(
+                    configuration.getWaitProcessorConfiguration(),
+                    dispatcher
+            );
+            final HttpConnectionContext context = new HttpConnectionContext(configuration, PlainSocketFactory.INSTANCE) {
+                @Override
+                public boolean handleClientOperation(
+                        int operation,
+                        HttpRequestProcessorSelector selector,
+                        RescheduleContext rescheduleContext
+                ) throws PeerIsSlowToReadException, ServerDisconnectException {
+                    scheduleRetry(getRejectProcessor(), rescheduleContext);
+                    abandonRetry();
+                    throw PeerIsSlowToReadException.INSTANCE;
+                }
+            };
+            final HttpConnectionFiberTask task = HttpConnectionFiberTask.createForTesting(
+                    context,
+                    dispatcher,
+                    waitProcessor,
+                    null
+            );
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, task.launchForTesting(runtime, IOOperation.READ));
+                Assert.assertEquals(1, runtime.drain(8));
+                Assert.assertEquals(0, waitProcessor.getRescheduleCount());
+                Assert.assertEquals(1, dispatcher.registerCount);
+                Assert.assertEquals(IOOperation.WRITE, dispatcher.registeredOperation);
+            } finally {
+                closeFiberRuntime(runtime);
+                waitProcessor.close();
+                task.closeForTesting();
+                context.close();
+            }
+        });
+    }
+
+    @Test
     public void testCsvImportRetryResumesMultipartOnFiber() throws Exception {
         final HttpQueryTestBuilder builder = new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -431,6 +477,47 @@ public class HttpFiberTest extends AbstractTest {
     }
 
     @Test
+    public void testQuiescingDuringRearmLeavesDisconnectToDispatcher() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(2);
+            final DefaultHttpServerConfiguration configuration =
+                    new DefaultHttpServerConfiguration(new DefaultTestCairoConfiguration(root));
+            final TestHttpDispatcher dispatcher = new TestHttpDispatcher();
+            final HttpConnectionContext context = new HttpConnectionContext(configuration, PlainSocketFactory.INSTANCE) {
+                @Override
+                public boolean handleClientOperation(
+                        int operation,
+                        HttpRequestProcessorSelector selector,
+                        RescheduleContext rescheduleContext
+                ) throws PeerIsSlowToWriteException {
+                    throw PeerIsSlowToWriteException.INSTANCE;
+                }
+            };
+            final HttpConnectionFiberTask task = HttpConnectionFiberTask.createForTesting(context, dispatcher);
+            final Fiber reservedFiber = runtime.tryReserveFiber();
+            Assert.assertNotNull(reservedFiber);
+            dispatcher.isQuiesceBeforeWake = true;
+            dispatcher.reservationEpoch = reservedFiber.getReservationEpoch();
+            dispatcher.reservedFiber = reservedFiber;
+            dispatcher.runtime = runtime;
+            dispatcher.task = task;
+            dispatcher.wakeOperation = IOOperation.WRITE;
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, task.launchForTesting(runtime, IOOperation.READ));
+                Assert.assertTrue(runtime.drain(8) > 0);
+                Assert.assertEquals(LaunchResult.ALREADY_OWNED, dispatcher.wakeResult);
+                Assert.assertTrue(task.isCancelled());
+                Assert.assertEquals(1, dispatcher.registerCount);
+                Assert.assertEquals(0, dispatcher.disconnectCount);
+            } finally {
+                closeFiberRuntime(runtime);
+                task.closeForTesting();
+                context.close();
+            }
+        });
+    }
+
+    @Test
     public void testRequestJobReservesFiberForEachIoEvent() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(2);
@@ -531,10 +618,40 @@ public class HttpFiberTest extends AbstractTest {
     }
 
     @Test
+    public void testRerunWithoutPendingRetryRegistersRead() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final DefaultHttpServerConfiguration configuration =
+                    new DefaultHttpServerConfiguration(new DefaultTestCairoConfiguration(root));
+            final TestHttpDispatcher dispatcher = new TestHttpDispatcher();
+            final HttpConnectionContext context = new HttpConnectionContext(configuration, PlainSocketFactory.INSTANCE) {
+                @Override
+                public boolean tryRerun(
+                        HttpRequestProcessorSelector selector,
+                        RescheduleContext rescheduleContext
+                ) {
+                    return true;
+                }
+            };
+            final HttpConnectionFiberTask task = HttpConnectionFiberTask.createForTesting(context, dispatcher);
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, task.launchRerunForTesting(runtime));
+                Assert.assertEquals(1, runtime.drain(8));
+                Assert.assertEquals(1, dispatcher.registerCount);
+                Assert.assertEquals(IOOperation.READ, dispatcher.registeredOperation);
+            } finally {
+                closeFiberRuntime(runtime);
+                task.closeForTesting();
+                context.close();
+            }
+        });
+    }
+
+    @Test
     public void testWorkerPoolModeControlsFiberExecution() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             assertQueryExecutionMode(false, WorkerPoolMode.LEGACY, false);
-            assertQueryExecutionMode(false, WorkerPoolMode.FIBER_HOST, true);
+            assertQueryExecutionMode(false, WorkerPoolMode.FIBER_HOST, false);
             assertQueryExecutionMode(true, WorkerPoolMode.LEGACY, false);
             assertQueryExecutionMode(true, WorkerPoolMode.FIBER_HOST, true);
         });
@@ -895,6 +1012,15 @@ public class HttpFiberTest extends AbstractTest {
     private static class TestHttpDispatcher implements IODispatcher<HttpConnectionContext> {
         private int disconnectCount;
         private int disconnectReason;
+        private boolean isQuiesceBeforeWake;
+        private int registerCount;
+        private int registeredOperation = -1;
+        private long reservationEpoch;
+        private Fiber reservedFiber;
+        private FiberRuntime runtime;
+        private HttpConnectionFiberTask task;
+        private int wakeOperation;
+        private LaunchResult wakeResult;
 
         @Override
         public void close() {
@@ -932,6 +1058,26 @@ public class HttpFiberTest extends AbstractTest {
 
         @Override
         public void registerChannel(HttpConnectionContext context, int operation) {
+            registerCount++;
+            registeredOperation = operation;
+            if (wakeOperation != 0) {
+                final int nextOperation = wakeOperation;
+                wakeOperation = 0;
+                if (isQuiesceBeforeWake) {
+                    runtime.beginQuiesce();
+                }
+                if (reservedFiber != null) {
+                    wakeResult = task.launchReservedForTesting(
+                            runtime,
+                            reservedFiber,
+                            reservationEpoch,
+                            nextOperation
+                    );
+                    reservedFiber = null;
+                } else {
+                    wakeResult = task.launchForTesting(runtime, nextOperation);
+                }
+            }
         }
 
         @Override

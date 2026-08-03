@@ -152,6 +152,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
     private final int maxRecompileAttempts;
+    private final PGMessageProcessingException messageProcessingException;
     private final BitSet msgBindParameterFormatCodes = new BitSet();
     // stores result format codes (0=Text,1=Binary) from the latest bind message
     // we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
@@ -242,6 +243,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.isCopy = false;
         this.engine = engine;
         this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
+        this.messageProcessingException = new PGMessageProcessingException(this, errorMessageSink);
         this.msgParseParameterTypeOIDs = new IntList();
         this.outParameterTypeDescriptionTypes = new LongList();
         this.pgResultSetColumnTypes = new IntList();
@@ -1472,24 +1474,29 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
         long affectedRowCount = 0;
         engine.getMetrics().pgWireMetrics().markStart();
-        final Lock lock = engine.getRoleSwitchReadLock();
-        lock.lock();
         try {
-            // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
-            // lock around the REPLICA flag publish. The execute runs inside the read hold so the flip
-            // cannot interleave (its write acquire waits), while other commits share the read side.
-            if (engine.isReadOnlyMode()
-                    && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
-                throw CairoException.readOnlyAccess();
+            final Lock lock = engine.getRoleSwitchReadLock();
+            final OperationFuture future;
+            lock.lock();
+            try {
+                // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
+                // lock around the REPLICA flag publish. The execute runs inside the read hold so the flip
+                // cannot interleave (its write acquire waits), while other commits share the read side.
+                if (engine.isReadOnlyMode()
+                        && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
+                    throw CairoException.readOnlyAccess();
+                }
+                future = operation.execute(sqlExecutionContext, tempSequence);
+            } finally {
+                lock.unlock();
             }
-            try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
-                fut.await();
+            try (future) {
+                future.await();
                 if (reportAffectedRows) {
-                    affectedRowCount = fut.getAffectedRowsCount();
+                    affectedRowCount = future.getAffectedRowsCount();
                 }
             }
         } finally {
-            lock.unlock();
             engine.getMetrics().pgWireMetrics().markComplete();
         }
         return affectedRowCount;
@@ -3800,6 +3807,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateDesc = that.stateDesc;
         stateExec = that.stateExec;
         stateClosed = that.stateClosed;
+    }
+
+    PGMessageProcessingException getMessageProcessingException() {
+        getErrorMessageSink();
+        return messageProcessingException;
     }
 
     boolean isDirty() {

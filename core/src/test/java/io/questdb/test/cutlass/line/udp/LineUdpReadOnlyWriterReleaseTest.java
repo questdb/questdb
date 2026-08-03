@@ -38,7 +38,10 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Lock;
 
 /**
  * Verifies the C8 fix: LineUdpParserImpl releases its cached writers on the read-only (demoting)
@@ -58,6 +61,51 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class LineUdpReadOnlyWriterReleaseTest extends AbstractCairoTest {
 
     private final AtomicBoolean readOnly = new AtomicBoolean(false);
+
+    @Test
+    public void testCommitAllDeadlineRetainsCachedWriterForRetry() throws Exception {
+        assertMemoryLeak(() -> {
+            readOnly.set(false);
+            final CairoConfiguration cfg = new DefaultTestCairoConfiguration(root);
+            final LineUdpReceiverConfiguration udpCfg = new DefaultLineUdpReceiverConfiguration();
+            try (CairoEngine engine = buildFlippableEngine(cfg)) {
+                try (LineUdpParserImpl parser = new LineUdpParserImpl(engine, udpCfg)) {
+                    ingest(parser, "udp_deadline,tag=a field=1i 100000000000\n");
+                    Assert.assertEquals(1, engine.getBusyWriterCount());
+
+                    final CountDownLatch lockAcquired = new CountDownLatch(1);
+                    final CountDownLatch releaseLock = new CountDownLatch(1);
+                    final Lock writeLock = engine.getRoleSwitchWriteLock();
+                    final Thread holder = new Thread(() -> {
+                        writeLock.lock();
+                        try {
+                            lockAcquired.countDown();
+                            try {
+                                releaseLock.await();
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                        } finally {
+                            writeLock.unlock();
+                        }
+                    });
+                    holder.start();
+                    try {
+                        Assert.assertTrue(lockAcquired.await(5, TimeUnit.SECONDS));
+                        Assert.assertFalse(parser.isCommitAllComplete(
+                                System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20)));
+                        Assert.assertEquals(1, engine.getBusyWriterCount());
+                    } finally {
+                        releaseLock.countDown();
+                        holder.join(5_000);
+                    }
+                    Assert.assertFalse(holder.isAlive());
+                    Assert.assertTrue(parser.isCommitAllComplete(
+                            System.nanoTime() + TimeUnit.SECONDS.toNanos(5)));
+                }
+            }
+        });
+    }
 
     /**
      * Drives an idempotent read-only commitAll() tick after release: the cache is empty, so the

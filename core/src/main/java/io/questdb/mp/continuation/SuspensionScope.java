@@ -25,6 +25,8 @@
 package io.questdb.mp.continuation;
 
 import io.questdb.std.CarrierLocal;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.locks.Lock;
@@ -60,33 +62,34 @@ public final class SuspensionScope {
     }
 
     public static void enterRoleSwitchReadLock(CarrierScope scope, Lock lock) {
-        final Fiber fiber = scope.fiber;
-        final Lock currentLock = fiber != null ? fiber.getRoleSwitchReadLock() : scope.roleSwitchReadLock;
-        final int currentDepth = fiber != null
-                ? fiber.getRoleSwitchReadLockDepth()
-                : scope.roleSwitchReadLockDepth;
-        if (currentLock != null && currentLock != lock) {
-            throw new IllegalStateException("another role-switch read lock is already held");
-        }
-        if (currentDepth == Integer.MAX_VALUE) {
-            throw new IllegalStateException("role-switch read lock depth overflow");
-        }
-        if (fiber != null) {
-            fiber.setRoleSwitchReadLock(lock, currentDepth + 1);
-        } else {
-            scope.roleSwitchReadLock = lock;
-            scope.roleSwitchReadLockDepth = currentDepth + 1;
-        }
-        if (currentDepth == 0) {
-            if (fiber != null) {
-                fiber.setRoleSwitchReadLockMode(scope.mode);
-            } else {
-                scope.roleSwitchReadLockMode = scope.mode;
-            }
+        final RoleSwitchReadLockState state = getRoleSwitchReadLockState(scope);
+        final boolean isFirstLock = !state.hasAny();
+        state.enter(lock);
+        if (isFirstLock) {
+            state.setPreviousMode(scope.mode);
             if (scope.mode == Mode.FIBER) {
                 scope.mode = Mode.BLOCKING;
             }
         }
+    }
+
+    public static void enterRoleSwitchWriteLock(CarrierScope scope) {
+        if (scope.fiber != null) {
+            throw new IllegalStateException("fiber cannot own a role-switch write lock");
+        }
+        if (scope.roleSwitchWriteLockDepth == Integer.MAX_VALUE) {
+            throw new IllegalStateException("role-switch write lock depth overflow");
+        }
+        scope.roleSwitchWriteLockDepth++;
+    }
+
+    public static void enterSupplementalCancellationSignal(
+            @Nullable FiberCancellationSignal cancellationSignal,
+            long cancellationSignalGeneration
+    ) {
+        final CarrierScope scope = SCOPE.get();
+        scope.supplementalCancellationSignal = cancellationSignal;
+        scope.supplementalCancellationSignalGeneration = cancellationSignalGeneration;
     }
 
     public static void enterTimerShards(@Nullable TimerShards timerShards) {
@@ -94,7 +97,10 @@ public final class SuspensionScope {
     }
 
     public static CancellationBinding getCancellationBindingScratch() {
-        return SCOPE.get().cancellationBindingScratch;
+        final CarrierScope scope = SCOPE.get();
+        return scope.fiber != null
+                ? scope.fiber.getCancellationBindingScratch()
+                : scope.cancellationBindingScratch;
     }
 
     public static @Nullable FiberCancellationSignal getCancellationSignal() {
@@ -110,12 +116,15 @@ public final class SuspensionScope {
     }
 
     public static int getRoleSwitchReadLockDepth(CarrierScope scope, Lock lock) {
-        final Fiber fiber = scope.fiber;
-        final Lock currentLock = fiber != null ? fiber.getRoleSwitchReadLock() : scope.roleSwitchReadLock;
-        if (currentLock != lock) {
-            return 0;
-        }
-        return fiber != null ? fiber.getRoleSwitchReadLockDepth() : scope.roleSwitchReadLockDepth;
+        return getRoleSwitchReadLockState(scope).getDepth(lock);
+    }
+
+    public static @Nullable FiberCancellationSignal getSupplementalCancellationSignal() {
+        return SCOPE.get().supplementalCancellationSignal;
+    }
+
+    public static long getSupplementalCancellationSignalGeneration() {
+        return SCOPE.get().supplementalCancellationSignalGeneration;
     }
 
     public static @Nullable TimerShards getTimerShards() {
@@ -123,13 +132,11 @@ public final class SuspensionScope {
     }
 
     public static boolean hasRoleSwitchReadLock(CarrierScope scope) {
-        final Fiber fiber = scope.fiber;
-        return fiber != null ? fiber.getRoleSwitchReadLock() != null : scope.roleSwitchReadLock != null;
+        return getRoleSwitchReadLockState(scope).hasAny();
     }
 
     public static boolean hasRoleSwitchReadLock(CarrierScope scope, Lock lock) {
-        final Fiber fiber = scope.fiber;
-        return (fiber != null ? fiber.getRoleSwitchReadLock() : scope.roleSwitchReadLock) == lock;
+        return getRoleSwitchReadLockState(scope).hasLock(lock);
     }
 
     public static void initializeCarrier() {
@@ -143,30 +150,18 @@ public final class SuspensionScope {
     }
 
     public static void leaveRoleSwitchReadLock(CarrierScope scope, Lock lock) {
-        final Fiber fiber = scope.fiber;
-        final Lock currentLock = fiber != null ? fiber.getRoleSwitchReadLock() : scope.roleSwitchReadLock;
-        final int currentDepth = fiber != null
-                ? fiber.getRoleSwitchReadLockDepth()
-                : scope.roleSwitchReadLockDepth;
-        if (currentLock != lock || currentDepth < 1) {
-            throw new IllegalMonitorStateException("role-switch read lock is not held by this execution");
+        final RoleSwitchReadLockState state = getRoleSwitchReadLockState(scope);
+        state.leave(lock);
+        if (!state.hasAny()) {
+            scope.mode = state.takePreviousMode();
         }
-        final boolean isFinalRelease = currentDepth == 1;
-        if (fiber != null) {
-            fiber.setRoleSwitchReadLock(isFinalRelease ? null : lock, currentDepth - 1);
-        } else {
-            scope.roleSwitchReadLock = isFinalRelease ? null : lock;
-            scope.roleSwitchReadLockDepth = currentDepth - 1;
+    }
+
+    public static void leaveRoleSwitchWriteLock(CarrierScope scope) {
+        if (scope.roleSwitchWriteLockDepth < 1) {
+            throw new IllegalMonitorStateException("role-switch write lock is not held by this carrier");
         }
-        if (isFinalRelease) {
-            if (fiber != null) {
-                scope.mode = fiber.getRoleSwitchReadLockMode();
-                fiber.setRoleSwitchReadLockMode(null);
-            } else {
-                scope.mode = scope.roleSwitchReadLockMode;
-                scope.roleSwitchReadLockMode = null;
-            }
-        }
+        scope.roleSwitchWriteLockDepth--;
     }
 
     public static void restore(@Nullable Mode mode) {
@@ -195,8 +190,28 @@ public final class SuspensionScope {
         scope.mode = mode;
     }
 
+    public static void restoreSupplementalCancellationSignal(
+            @Nullable FiberCancellationSignal cancellationSignal,
+            long cancellationSignalGeneration
+    ) {
+        final CarrierScope scope = SCOPE.get();
+        scope.supplementalCancellationSignal = cancellationSignal;
+        scope.supplementalCancellationSignalGeneration = cancellationSignalGeneration;
+    }
+
     public static CarrierScope scope() {
         return SCOPE.get();
+    }
+
+    static boolean hasAnyRoleSwitchLock(CarrierScope scope) {
+        return scope.roleSwitchReadLocks.hasAny()
+                || scope.roleSwitchWriteLockDepth > 0
+                || (scope.fiber != null && scope.fiber.getRoleSwitchReadLockState().hasAny());
+    }
+
+    private static RoleSwitchReadLockState getRoleSwitchReadLockState(CarrierScope scope) {
+        final Fiber fiber = scope.fiber;
+        return fiber != null ? fiber.getRoleSwitchReadLockState() : scope.roleSwitchReadLocks;
     }
 
     private SuspensionScope() {
@@ -215,9 +230,145 @@ public final class SuspensionScope {
         long cancellationSignalGeneration = CancellationBinding.NO_GENERATION;
         Fiber fiber;
         Mode mode;
-        Lock roleSwitchReadLock;
-        int roleSwitchReadLockDepth;
-        Mode roleSwitchReadLockMode;
+        final RoleSwitchReadLockState roleSwitchReadLocks = new RoleSwitchReadLockState();
+        int roleSwitchWriteLockDepth;
+        FiberCancellationSignal supplementalCancellationSignal;
+        long supplementalCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
         TimerShards timerShards;
+    }
+
+    static final class RoleSwitchReadLockState {
+        private IntList extraDepths;
+        private ObjList<Lock> extraLocks;
+        private int holdCount;
+        private @Nullable Mode previousMode;
+        private int primaryDepth;
+        private Lock primaryLock;
+
+        void clear() {
+            if (extraDepths != null) {
+                extraDepths.clear();
+                extraLocks.clear();
+            }
+            holdCount = 0;
+            previousMode = null;
+            primaryDepth = 0;
+            primaryLock = null;
+        }
+
+        void enter(Lock lock) {
+            if (holdCount == Integer.MAX_VALUE) {
+                throw new IllegalStateException("role-switch read lock depth overflow");
+            }
+            if (primaryLock == lock) {
+                primaryDepth++;
+            } else {
+                final int index = indexOf(lock);
+                if (index > -1) {
+                    extraDepths.setQuick(index, extraDepths.getQuick(index) + 1);
+                } else if (primaryLock == null) {
+                    primaryDepth = 1;
+                    primaryLock = lock;
+                } else {
+                    addExtra(lock);
+                }
+            }
+            holdCount++;
+        }
+
+        @Nullable
+        Lock getAnyLock() {
+            if (primaryLock != null) {
+                return primaryLock;
+            }
+            return extraLocks != null && extraLocks.size() > 0 ? extraLocks.getLast() : null;
+        }
+
+        int getDepth(Lock lock) {
+            if (primaryLock == lock) {
+                return primaryDepth;
+            }
+            final int index = indexOf(lock);
+            return index > -1 ? extraDepths.getQuick(index) : 0;
+        }
+
+        int getHoldCount() {
+            return holdCount;
+        }
+
+        @Nullable
+        Mode getPreviousMode() {
+            return previousMode;
+        }
+
+        boolean hasAny() {
+            return holdCount > 0;
+        }
+
+        boolean hasLock(Lock lock) {
+            return getDepth(lock) > 0;
+        }
+
+        void leave(Lock lock) {
+            if (primaryLock == lock) {
+                if (--primaryDepth == 0) {
+                    primaryLock = null;
+                }
+            } else {
+                final int index = indexOf(lock);
+                if (index < 0) {
+                    throw new IllegalMonitorStateException("role-switch read lock is not held by this execution");
+                }
+                final int depth = extraDepths.getQuick(index) - 1;
+                if (depth == 0) {
+                    extraDepths.removeIndex(index);
+                    extraLocks.remove(index);
+                } else {
+                    extraDepths.setQuick(index, depth);
+                }
+            }
+            holdCount--;
+        }
+
+        void setPreviousMode(@Nullable Mode previousMode) {
+            this.previousMode = previousMode;
+        }
+
+        @Nullable
+        Mode takePreviousMode() {
+            final Mode mode = previousMode;
+            previousMode = null;
+            return mode;
+        }
+
+        private void addExtra(Lock lock) {
+            if (extraLocks == null) {
+                final ObjList<Lock> locks = new ObjList<>();
+                final IntList depths = new IntList();
+                locks.add(lock);
+                depths.add(1);
+                extraDepths = depths;
+                extraLocks = locks;
+                return;
+            }
+            extraLocks.add(lock);
+            try {
+                extraDepths.add(1);
+            } catch (Throwable th) {
+                extraLocks.remove(extraLocks.size() - 1);
+                throw th;
+            }
+        }
+
+        private int indexOf(Lock lock) {
+            if (extraLocks != null) {
+                for (int i = 0, n = extraLocks.size(); i < n; i++) {
+                    if (extraLocks.getQuick(i) == lock) {
+                        return i;
+                    }
+                }
+            }
+            return -1;
+        }
     }
 }

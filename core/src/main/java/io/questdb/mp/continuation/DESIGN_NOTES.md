@@ -179,6 +179,28 @@ The mount driver must never leave a failed fiber in `MOUNTED`. If driver code
 cannot recover or retry a mount, it must terminally complete the owned task,
 retire the fiber, unregister it, and balance all runtime counters.
 
+## Page-frame owner execution
+
+A Fiber-host PageFrame reducer has two valid execution boundaries:
+
+- an ordinary query worker claims the ring task and transfers it to a pooled
+  `PageFrameFiberTask`;
+- an already mounted query owner claims local or stolen work and runs the
+  reducer inline on its current Fiber.
+
+The owner path preserves Legacy work stealing without mounting a nested Fiber.
+It runs CPU work directly and unmounts only when reducer code reaches a deep
+wait. Before stealing or waiting, the owner releases its publication permit.
+An ordered owner keeps the claimed ring cursor on its frozen stack; an
+unordered owner releases the ring slot before invoking the reducer.
+
+Foreign work temporarily replaces the owner's cancellation scope with the
+claimed frame sequence's cancellation signal plus the claimed query's signal,
+when available. The Fiber captures both bindings at unmount and installs them
+on any resume carrier. Reducer completion restores the owner's exact signal
+and generation. Sequence cancellation wakes deep waits but does not mutate the
+shared query circuit breaker.
+
 ## Wait publication
 
 `FiberWaitCoordinator` owns one tokenized wait at a time. The protocol is:

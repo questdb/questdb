@@ -67,16 +67,23 @@ public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
     }
 
     @Override
-    public void close() {
-        super.close();
-        if (buf != 0) {
-            Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);
-            buf = 0;
+    public synchronized boolean closeBy(long deadlineNanos) {
+        if (!super.closeBy(deadlineNanos)) {
+            return false;
         }
+        final long buffer = buf;
+        buf = 0;
+        if (buffer != 0) {
+            Unsafe.free(buffer, bufLen, MemoryTag.NATIVE_ILP_RSS);
+        }
+        return true;
     }
 
     @Override
     protected boolean runSerially() {
+        if (checkClosed()) {
+            return false;
+        }
         if (!acceptOpen.get()) {
             // Mirror the worker-path acceptOpen gate (AbstractLineProtoUdpReceiver.run)
             // so the own-thread driver also quiesces after switchRole publishes
@@ -87,12 +94,18 @@ public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
         boolean ran = false;
         int count;
         while ((count = nf.recvRaw(fd, buf, bufLen)) > 0) {
+            if (checkClosed()) {
+                return ran;
+            }
             lexer.parse(buf, buf + count);
             lexer.parseLast();
 
             totalCount++;
 
             if (totalCount > commitRate) {
+                if (checkClosed()) {
+                    return ran;
+                }
                 totalCount = 0;
                 parser.commitAll();
             }
@@ -102,6 +115,9 @@ public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
             }
 
             ran = true;
+        }
+        if (checkClosed()) {
+            return ran;
         }
         parser.commitAll();
         return ran;

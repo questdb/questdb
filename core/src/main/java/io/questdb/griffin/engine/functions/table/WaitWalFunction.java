@@ -156,6 +156,20 @@ class WaitWalFunction extends BooleanFunction implements Function {
                 .put(']');
     }
 
+    private void throwIfCancelled(
+            @Nullable FiberCancellationSignal cancellationSignal,
+            long cancellationSignalGeneration,
+            @Nullable FiberCancellationSignal supplementalCancellationSignal,
+            long supplementalCancellationSignalGeneration
+    ) {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+        if ((cancellationSignal != null && cancellationSignal.isCancelled(cancellationSignalGeneration))
+                || (supplementalCancellationSignal != null
+                && supplementalCancellationSignal.isCancelled(supplementalCancellationSignalGeneration))) {
+            throw CairoException.queryCancelled();
+        }
+    }
+
     private void throwIfTerminated() {
         if (seqTxnTracker.isSuspended()) {
             throw CairoException.nonCritical().put("table is suspended [tableName=").put(tableName).put("]");
@@ -175,6 +189,9 @@ class WaitWalFunction extends BooleanFunction implements Function {
         final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
         FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
         long cancellationSignalGeneration = SuspensionScope.getCancellationSignalGeneration();
+        FiberCancellationSignal supplementalCancellationSignal = SuspensionScope.getSupplementalCancellationSignal();
+        final long supplementalCancellationSignalGeneration =
+                SuspensionScope.getSupplementalCancellationSignalGeneration();
         if (cancellationSignal == null) {
             final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
             executionContext.getCircuitBreaker().copyCancelledFlagTo(cancellationBinding);
@@ -184,11 +201,22 @@ class WaitWalFunction extends BooleanFunction implements Function {
                 cancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
             }
         }
+        if (supplementalCancellationSignal == cancellationSignal) {
+            supplementalCancellationSignal = null;
+        }
         while (seqTxnTracker.getWriterTxn() < seqTxn) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+            throwIfCancelled(
+                    cancellationSignal,
+                    cancellationSignalGeneration,
+                    supplementalCancellationSignal,
+                    supplementalCancellationSignalGeneration
+            );
             throwIfTerminated();
 
-            long token = fiber.tryBeginWaitBuild(cancellationSignal == null ? 2 : 3);
+            final int sourceCount = 2
+                    + (cancellationSignal != null ? 1 : 0)
+                    + (supplementalCancellationSignal != null ? 1 : 0);
+            long token = fiber.tryBeginWaitBuild(sourceCount);
             if (token == Fiber.TOKEN_REFUSED) {
                 throw abortedException();
             }
@@ -198,6 +226,14 @@ class WaitWalFunction extends BooleanFunction implements Function {
                         token,
                         cancellationSignal,
                         cancellationSignalGeneration
+                )) {
+                    throw abortedException();
+                }
+                if (supplementalCancellationSignal != null
+                        && !coordinator.armCancellation(
+                        token,
+                        supplementalCancellationSignal,
+                        supplementalCancellationSignalGeneration
                 )) {
                     throw abortedException();
                 }
@@ -213,11 +249,22 @@ class WaitWalFunction extends BooleanFunction implements Function {
                 if (reason == FiberWaitCoordinator.REASON_SHUTDOWN) {
                     throw abortedException();
                 }
+                if (reason == FiberWaitCoordinator.REASON_CANCEL) {
+                    executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                    throw CairoException.queryCancelled();
+                }
             } finally {
                 coordinator.teardownWait(token);
             }
         }
+        throwIfCancelled(
+                cancellationSignal,
+                cancellationSignalGeneration,
+                supplementalCancellationSignal,
+                supplementalCancellationSignalGeneration
+        );
         throwIfTerminated();
         return true;
     }
+
 }

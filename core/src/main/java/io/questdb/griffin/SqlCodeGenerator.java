@@ -7891,6 +7891,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
         // several levels up from the model that holds the join clause.
         boolean pushed = false;
+        final ExpressionNode originatingViewNameExpr = model.getOriginatingViewNameExpr();
+        final int previousExecutionRequirementPosition = originatingViewNameExpr != null
+                ? functionParser.enterExecutionRequirementPosition(originatingViewNameExpr.position)
+                : -1;
         final IQueryModel savedOrderByModel = lastSeenOrderByModel;
         try {
             final ObjList<ExpressionNode> orderBy = model.getOrderBy();
@@ -7912,6 +7916,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             return factory;
         } finally {
+            if (originatingViewNameExpr != null) {
+                functionParser.restoreExecutionRequirementPosition(previousExecutionRequirementPosition);
+            }
             lastSeenOrderByModel = savedOrderByModel;
             if (pushed) {
                 executionContext.popTimestampRequiredFlag();

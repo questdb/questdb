@@ -46,6 +46,8 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
+import io.questdb.mp.continuation.CancellationBinding;
+import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
@@ -146,6 +148,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // Sampled before the work checks below: a producer that signals progress after the
             // checks but before the sample would otherwise be missed and this fiber would park.
             final long observedProgress = canPark ? getProgressVersion() : 0;
+            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
             // First check the local task: maybe we were reducing locally and got interrupted by an exception?
             if (localTask != null && localTask.getFrameSequence() == this && dispatchStartFrameIndex == localTask.getFrameIndex() + 1) {
                 collectedFrameIndex = localTask.getFrameIndex();
@@ -165,14 +168,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // We were asked to steal work from the reduce queue and beyond, as much as we can.
             boolean nothingProcessed = true;
             try {
-                nothingProcessed = dispatcher != null
-                        ? dispatcher.consumeOrdered(-1, reduceQueue, pageFrameReduceSubSeq, this)
-                        : PageFrameReduceJob.consumeQueue(
+                nothingProcessed = PageFrameReduceJob.consumeQueue(
                         reduceQueue,
                         pageFrameReduceSubSeq,
                         localRecord,
                         workStealCircuitBreaker,
-                        this
+                        this,
+                        dispatcher
                 );
             } catch (Throwable th) {
                 LOG.error()
@@ -201,7 +203,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                         }
                     }
                 } else if (canPark) {
-                    awaitProgress(dispatcher, observedProgress, true);
+                    awaitProgress(dispatcher, observedProgress, observedGlobalProgress, true);
                 } else {
                     Os.pause();
                 }
@@ -212,11 +214,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         // but haven't incremented reduce counter yet. In this case, we wait for the desired counter value.
         while (true) {
             final long observedProgress = canPark ? getProgressVersion() : 0;
+            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
             if (reduceFinishedCounter.get() == dispatchStartFrameIndex) {
                 break;
             }
             if (canPark) {
-                awaitProgress(dispatcher, observedProgress, true);
+                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, true);
             } else {
                 Os.pause();
             }
@@ -375,6 +378,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // Sampled before collectSubSeq.next() so a producer signalling progress between the
             // failed collect and the sample cannot be missed.
             final long observedProgress = canPark ? getProgressVersion() : 0;
+            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
             long cursor = collectSubSeq.next();
             if (cursor > -1) {
                 PageFrameReduceTask task = reduceQueue.get(cursor);
@@ -413,7 +417,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     }
                     if (canPark) {
                         final boolean isDraining = !isActive();
-                        awaitProgress(dispatcher, observedProgress, isDraining);
+                        awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining);
                         continue;
                     }
                     if (!isActive()) {
@@ -781,9 +785,28 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
         localTask.of(this, dispatchStartFrameIndex++, countOnly);
 
-        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-
-        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
+        final boolean isFiberSuspendable = isFiberSuspendable();
+        final SuspensionScope.CarrierScope suspensionScope = isFiberSuspendable
+                ? null
+                : SuspensionScope.scope();
+        final SuspensionScope.Mode previousMode = isFiberSuspendable
+                ? null
+                : SuspensionScope.enterBlocking(suspensionScope);
+        final FiberCancellationSignal previousCancellationSignal = isFiberSuspendable
+                ? SuspensionScope.getCancellationSignal()
+                : null;
+        final long previousCancellationSignalGeneration = isFiberSuspendable
+                ? SuspensionScope.getCancellationSignalGeneration()
+                : CancellationBinding.NO_GENERATION;
+        final FiberCancellationSignal previousSupplementalCancellationSignal = isFiberSuspendable
+                ? SuspensionScope.getSupplementalCancellationSignal()
+                : null;
+        final long previousSupplementalCancellationSignalGeneration = isFiberSuspendable
+                ? SuspensionScope.getSupplementalCancellationSignalGeneration()
+                : CancellationBinding.NO_GENERATION;
+        if (isFiberSuspendable) {
+            enterReducerCancellationScope();
+        }
         try {
             LOG.debug()
                     .$("reducing locally [shard=").$(shard)
@@ -798,21 +821,34 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 PageFrameReduceJob.reduce(localRecord, workStealCircuitBreaker, localTask, this, this);
             }
         } catch (Throwable th) {
-            LOG.error()
-                    .$("local reduce error [error=").$(th)
-                    .$(", id=").$(id)
-                    .$(", taskType=").$(taskType)
-                    .$(", frameIndex=").$(localTask.getFrameIndex())
-                    .$(", frameCount=").$(frameCount)
-                    .I$();
-            // Route the error through the local task so the collector sees it via
-            // task.hasError() and can re-throw the original class via task.buildError().
-            // Re-throwing here would let the outer catch in the collector wrap the
-            // typed exception into a generic CairoException, losing the original class.
-            localTask.setErrorMsg(th);
-            cancelOnReducerError(th);
+            if (isReducerFailureReportable(th)) {
+                LOG.error()
+                        .$("local reduce error [error=").$(th)
+                        .$(", id=").$(id)
+                        .$(", taskType=").$(taskType)
+                        .$(", frameIndex=").$(localTask.getFrameIndex())
+                        .$(", frameCount=").$(frameCount)
+                        .I$();
+                // Route the error through the local task so the collector sees it via
+                // task.hasError() and can re-throw the original class via task.buildError().
+                // Re-throwing here would let the outer catch in the collector wrap the
+                // typed exception into a generic CairoException, losing the original class.
+                localTask.setErrorMsg(th);
+                cancelOnReducerError(th);
+            }
         } finally {
-            SuspensionScope.restoreMode(suspensionScope, previousMode);
+            if (isFiberSuspendable) {
+                SuspensionScope.restoreCancellationSignal(
+                        previousCancellationSignal,
+                        previousCancellationSignalGeneration
+                );
+                SuspensionScope.restoreSupplementalCancellationSignal(
+                        previousSupplementalCancellationSignal,
+                        previousSupplementalCancellationSignalGeneration
+                );
+            } else {
+                SuspensionScope.restoreMode(suspensionScope, previousMode);
+            }
             reduceFinishedCounter.incrementAndGet();
         }
     }
@@ -824,9 +860,14 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             SqlExecutionCircuitBreakerWrapper circuitBreaker
     ) {
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        final boolean isEmpty = dispatcher != null
-                ? dispatcher.consumeOrdered(-1, queue, reduceSubSeq, this)
-                : PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker, this);
+        final boolean isEmpty = PageFrameReduceJob.consumeQueue(
+                queue,
+                reduceSubSeq,
+                record,
+                circuitBreaker,
+                this,
+                dispatcher
+        );
         if (isEmpty) {
             Os.pause();
             return false;

@@ -115,12 +115,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long authenticationNanos = 0L;
     private boolean connectionCounted;
     private int currentHandlerId = HttpRequestProcessorSelector.REJECT_PROCESSOR_ID;
+    private volatile HttpConnectionFiberTask fiberTask;
     private boolean forceDisconnectOnComplete;
     private NetworkSqlExecutionCircuitBreaker httpCircuitBreaker;
     private SqlExecutionContextImpl httpSqlExecutionContext;
     private boolean isProtocolSwitched = false;  // WebSocket protocol switch flag
     private int nCompletedRequests;
-    private HttpConnectionFiberTask fiberTask;
     private boolean pendingRetry = false;
     private String processorName;
     private int receivedBytes;
@@ -302,6 +302,22 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return cookieHandler;
     }
 
+    /**
+     * Lazily creates the per-connection fiber task. The task follows this context's
+     * pooled lifecycle: recycled together, reopened by the dispatch job when a new
+     * connection incarnation finds its gate terminal.
+     */
+    public HttpConnectionFiberTask getFiberTask(
+            IODispatcher<HttpConnectionContext> dispatcher,
+            HttpServer.HttpRequestProcessorSelectorFactory selectorFactory,
+            WaitProcessor rescheduleContext
+    ) {
+        if (fiberTask == null) {
+            fiberTask = new HttpConnectionFiberTask(this, dispatcher, selectorFactory, rescheduleContext);
+        }
+        return fiberTask;
+    }
+
     public long getLastRequestBytesSent() {
         return responseSink.getTotalBytesSent();
     }
@@ -400,22 +416,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public long getTotalReceived() {
         return totalReceived;
-    }
-
-    /**
-     * Lazily creates the per-connection fiber task. The task follows this context's
-     * pooled lifecycle: recycled together, reopened by the dispatch job when a new
-     * connection incarnation finds its gate terminal.
-     */
-    public HttpConnectionFiberTask getFiberTask(
-            IODispatcher<HttpConnectionContext> dispatcher,
-            HttpServer.HttpRequestProcessorSelectorFactory selectorFactory,
-            WaitProcessor rescheduleContext
-    ) {
-        if (fiberTask == null) {
-            fiberTask = new HttpConnectionFiberTask(this, dispatcher, selectorFactory, rescheduleContext);
-        }
-        return fiberTask;
     }
 
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
@@ -578,6 +578,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
         }
         return true;
+    }
+
+    boolean hasPendingRetry() {
+        return pendingRetry;
     }
 
     @SuppressWarnings("StatementWithEmptyBody")

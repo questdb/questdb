@@ -62,6 +62,9 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Lock;
+
 /**
  * Cache for table update details in QWP v1 processing.
  */
@@ -387,6 +390,25 @@ public class QwpTudCache implements QuietCloseable {
         }
     }
 
+    public boolean isCommitAllBestEffortComplete(long deadlineNanos) {
+        if (tableUpdateDetails.size() == 0 || engine.isReadOnlyMode()) {
+            return true;
+        }
+        final Lock lock = engine.getRoleSwitchReadLock();
+        if (!isLockAcquiredBy(lock, deadlineNanos)) {
+            return false;
+        }
+        try {
+            if (System.nanoTime() >= deadlineNanos) {
+                return false;
+            }
+            commitAllBestEffort();
+            return true;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     public void reset() {
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
@@ -408,6 +430,29 @@ public class QwpTudCache implements QuietCloseable {
     @FunctionalInterface
     public interface CommittedTxnConsumer {
         void accept(String tableName, String tableDirName, long seqTxn);
+    }
+
+    private static boolean isLockAcquiredBy(Lock lock, long deadlineNanos) {
+        boolean isInterrupted = false;
+        try {
+            while (true) {
+                final long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    return false;
+                }
+                try {
+                    if (lock.tryLock(remainingNanos, TimeUnit.NANOSECONDS)) {
+                        return true;
+                    }
+                } catch (InterruptedException e) {
+                    isInterrupted = true;
+                }
+            }
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     private static boolean isValidQwpSchemaColumnName(QwpColumnDef columnDef, int maxFileNameLength) {

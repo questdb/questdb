@@ -287,6 +287,33 @@ public class TimerShardsTest {
     }
 
     @Test
+    public void testShutdownFromShardDoesNotSelfJoin() throws InterruptedException {
+        final AtomicReference<Throwable> shutdownFailure = new AtomicReference<>();
+        final CountDownLatch shutdownReturned = new CountDownLatch(1);
+        final TimerShards shards = new TimerShards(1, "test-timer", LOG);
+        shards.start();
+        try {
+            Assert.assertSame(
+                    SourceRegistrationResult.ACCEPTED,
+                    shards.register(new TestEntry(System.currentTimeMillis(), () -> {
+                        try {
+                            shards.shutdown();
+                        } catch (Throwable th) {
+                            shutdownFailure.set(th);
+                        } finally {
+                            shutdownReturned.countDown();
+                        }
+                    }, null))
+            );
+            Assert.assertTrue(shutdownReturned.await(5, TimeUnit.SECONDS));
+            Assert.assertTrue(shutdownFailure.get() instanceof IllegalStateException);
+            Assert.assertTrue(shards.shutdown(System.nanoTime() + TimeUnit.SECONDS.toNanos(5)));
+        } finally {
+            shards.shutdown();
+        }
+    }
+
+    @Test
     public void testShutdownIsIdempotent() {
         TimerShards shards = new TimerShards(2, "test-timer", LOG);
         shards.start();
@@ -331,6 +358,9 @@ public class TimerShardsTest {
             );
             Assert.assertTrue(entered.await(5, TimeUnit.SECONDS));
             Assert.assertFalse(shards.shutdown(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
+            Assert.assertEquals(1, shards.size());
+            Assert.assertFalse(shards.shutdown(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
+            Assert.assertEquals(1, shards.size());
             Assert.assertEquals(0, expired.get());
             release.countDown();
             Assert.assertTrue(shards.shutdown(System.nanoTime() + TimeUnit.SECONDS.toNanos(5)));

@@ -356,18 +356,19 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         if (runtime == null || task == null || !task.isAvailable()) {
             return false;
         }
-        final Fiber fiber = runtime.tryReserveFiber();
-        if (fiber == null) {
+        if (!stateStore.tryDequeueCompilerTask(compilerTask)) {
             return false;
         }
 
-        final long reservationEpoch = fiber.getReservationEpoch();
-        TableToken dequeuedToken = null;
+        Fiber fiber = null;
+        long reservationEpoch = 0;
+        boolean isDequeued = true;
         try {
-            if (!stateStore.tryDequeueCompilerTask(compilerTask)) {
+            fiber = runtime.tryReserveFiber();
+            if (fiber == null) {
                 return false;
             }
-            dequeuedToken = compilerTask.tableToken;
+            reservationEpoch = fiber.getReservationEpoch();
             if (!task.prepare(compilerTask)) {
                 return false;
             }
@@ -378,15 +379,17 @@ public class ViewCompilerJob implements Job, QuietCloseable {
                     task.getIncarnation()
             );
             if (result == LaunchResult.LAUNCHED) {
-                dequeuedToken = null;
+                isDequeued = false;
                 return true;
             }
             task.releaseAfterLaunchFailure();
             return false;
         } finally {
-            runtime.releaseReservedFiber(fiber, reservationEpoch);
-            if (dequeuedToken != null) {
-                stateStore.enqueueCompile(dequeuedToken);
+            if (fiber != null) {
+                runtime.releaseReservedFiber(fiber, reservationEpoch);
+            }
+            if (isDequeued) {
+                stateStore.reenqueueCompileTask(compilerTask);
             }
         }
     }
@@ -402,7 +405,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         @Override
         protected void onAbandoned() {
             if (notification.tableToken != null) {
-                stateStore.enqueueCompile(notification.tableToken);
+                stateStore.reenqueueCompileTask(notification);
             }
         }
 

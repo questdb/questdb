@@ -83,6 +83,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
     private final HttpServer.HttpRequestProcessorSelectorFactory selectorFactory;
     private int disconnectReason = IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
     private boolean isDisconnectPending;
+    private boolean isRearmed;
     private boolean isRescheduleNextAttempt;
     private boolean isReschedulePending;
     private int nextAction = ACTION_NONE;
@@ -127,11 +128,21 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
             IODispatcher<HttpConnectionContext> dispatcher,
             @Nullable Runnable beforeLaunchFailureSignalForTesting
     ) {
+        return createForTesting(context, dispatcher, null, beforeLaunchFailureSignalForTesting);
+    }
+
+    @TestOnly
+    public static HttpConnectionFiberTask createForTesting(
+            HttpConnectionContext context,
+            IODispatcher<HttpConnectionContext> dispatcher,
+            @Nullable WaitProcessor rescheduleContext,
+            @Nullable Runnable beforeLaunchFailureSignalForTesting
+    ) {
         final HttpConnectionFiberTask task = new HttpConnectionFiberTask(
                 context,
                 dispatcher,
                 new HttpServer.HttpRequestProcessorSelectorFactory(1, 1),
-                null,
+                rescheduleContext,
                 beforeLaunchFailureSignalForTesting
         );
         if (context != null) {
@@ -148,6 +159,21 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
     @TestOnly
     public LaunchResult launchForTesting(FiberRuntime runtime, int operation) {
         return launch(runtime, operation);
+    }
+
+    @TestOnly
+    public LaunchResult launchRerunForTesting(FiberRuntime runtime) {
+        return launchRerun(runtime, getIncarnation());
+    }
+
+    @TestOnly
+    public LaunchResult launchReservedForTesting(
+            FiberRuntime runtime,
+            Fiber fiber,
+            long reservationEpoch,
+            int operation
+    ) {
+        return launchReserved(runtime, fiber, reservationEpoch, operation);
     }
 
     @Override
@@ -381,7 +407,9 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
         if (isDisconnectPending) {
             isDisconnectPending = false;
             context.abandonRetry();
-            dispatcher.disconnect(context, disconnectReason);
+            if (!isRearmed) {
+                dispatcher.disconnect(context, disconnectReason);
+            }
         }
     }
 
@@ -395,6 +423,10 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
 
     @Override
     protected void onParkPrepare() {
+        if (isReschedulePending && !context.hasPendingRetry()) {
+            isRescheduleNextAttempt = false;
+            isReschedulePending = false;
+        }
         if (isReschedulePending) {
             try {
                 preparedRescheduleCursor = isRescheduleNextAttempt
@@ -425,9 +457,18 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
             return;
         }
         switch (nextAction) {
-            case ACTION_READ -> dispatcher.registerChannel(context, IOOperation.READ);
-            case ACTION_WRITE -> dispatcher.registerChannel(context, IOOperation.WRITE);
-            case ACTION_HEARTBEAT -> dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
+            case ACTION_READ -> {
+                dispatcher.registerChannel(context, IOOperation.READ);
+                isRearmed = true;
+            }
+            case ACTION_WRITE -> {
+                dispatcher.registerChannel(context, IOOperation.WRITE);
+                isRearmed = true;
+            }
+            case ACTION_HEARTBEAT -> {
+                dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
+                isRearmed = true;
+            }
             default -> {
             }
         }
@@ -439,6 +480,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
         assert preparedRescheduleCursor == -1;
         disconnectReason = IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
         isDisconnectPending = false;
+        isRearmed = false;
         isRescheduleNextAttempt = false;
         isReschedulePending = false;
         nextAction = ACTION_NONE;
@@ -448,8 +490,9 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
                 if (!context.tryRerun(selector, this)) {
                     isReschedulePending = true;
                     isRescheduleNextAttempt = true;
+                } else {
+                    nextAction = ACTION_READ;
                 }
-                nextAction = ACTION_NONE;
                 return false;
             }
             final int operation = eventAction == EVENT_READ ? IOOperation.READ : IOOperation.WRITE;

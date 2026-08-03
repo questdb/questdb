@@ -77,6 +77,7 @@ public final class PGConnectionFiberTask extends FiberTask {
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
     private int disconnectReason = NO_DISCONNECT;
+    private boolean isRearmed;
     private int nextOperation = IOOperation.READ;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long stagedEvent;
@@ -275,7 +276,7 @@ public final class PGConnectionFiberTask extends FiberTask {
     @Override
     protected void onDone() {
         stagedEvent = 0;
-        if (disconnectReason != NO_DISCONNECT) {
+        if (disconnectReason != NO_DISCONNECT && !isRearmed) {
             dispatcher.disconnect(context, disconnectReason);
         }
     }
@@ -290,6 +291,7 @@ public final class PGConnectionFiberTask extends FiberTask {
     @Override
     protected void onParked() {
         dispatcher.registerChannel(context, nextOperation);
+        isRearmed = true;
     }
 
     @Override
@@ -297,6 +299,7 @@ public final class PGConnectionFiberTask extends FiberTask {
         final int eventAction = takeEvent();
         final int operation = eventAction == EVENT_READ ? IOOperation.READ : IOOperation.WRITE;
         disconnectReason = NO_DISCONNECT;
+        isRearmed = false;
         try {
             context.handleClientOperation(operation);
             nextOperation = IOOperation.READ;

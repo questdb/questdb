@@ -52,6 +52,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
@@ -231,6 +232,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFaultToleranceBrokenConnection() throws Exception {
+        testFaultToleranceBrokenConnection("");
+    }
+
+    @Test
     public void testFaultToleranceImplicitCastException() throws Exception {
         withPool0(
                 (_, compiler, sqlExecutionContext) -> {
@@ -259,6 +265,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }
                 }, 3, 3
         );
+    }
+
+    @Test
+    public void testFaultToleranceNegativeLimitBrokenConnection() throws Exception {
+        testFaultToleranceBrokenConnection(" LIMIT -1");
     }
 
     @Test
@@ -939,6 +950,48 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                 """
                 );
         resetTaskCapacities();
+    }
+
+    private void testFaultToleranceBrokenConnection(String limitClause) throws Exception {
+        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+            @Override
+            public boolean onGet(Record rec, int count) {
+                throw CairoException.queryDisconnected(-1);
+            }
+        });
+        try {
+            withPool0(
+                    (_, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                        execute(
+                                compiler,
+                                "CREATE TABLE x AS (SELECT x FROM long_sequence(4))",
+                                sqlExecutionContext
+                        );
+                        try (
+                                RecordCursorFactory factory = compiler.compile(
+                                        "SELECT * FROM x WHERE test_latched_counter()" + limitClause,
+                                        sqlExecutionContext
+                                ).getRecordCursorFactory();
+                                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                        ) {
+                            Assert.assertTrue(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+                            cursor.hasNext();
+                            Assert.fail("expected a broken-connection interruption");
+                        } catch (CairoException e) {
+                            Assert.assertEquals(
+                                    SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION,
+                                    e.getInterruptionReason()
+                            );
+                            TestUtils.assertContains(e.getFlyweightMessage(), "remote disconnected, query aborted");
+                        }
+                    },
+                    4,
+                    4
+            );
+        } finally {
+            TestLatchedCounterFunctionFactory.reset(null);
+        }
     }
 
     private void testFullQueue(String query) throws Exception {

@@ -64,14 +64,18 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private static final long RETIREMENT_STATE_OFFSET = Unsafe.getFieldOffset(Fiber.class, "retirementState");
     private static final ContinuationScope SCOPE = new ContinuationScope("questdb-fiber");
     private static final long WAIT_ADMISSION_OFFSET = Unsafe.getFieldOffset(Fiber.class, "waitAdmission");
+    private final CancellationBinding cancellationBindingScratch = new CancellationBinding();
     private final PinnableContinuation continuation;
     private final Rnd fiberAsyncRandom;
     private final Rnd fiberRandom;
     private final Outcome outcomeScratch = new Outcome();
     private final FiberPool pool;
+    private final SuspensionScope.RoleSwitchReadLockState roleSwitchReadLocks = new SuspensionScope.RoleSwitchReadLockState();
     private final FiberWaitCoordinator waitCoordinator;
     private FiberCancellationSignal assignedCancellationSignal;
     private long assignedCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
+    private FiberCancellationSignal assignedSupplementalCancellationSignal;
+    private long assignedSupplementalCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
     private FiberTask assignedTask;
     private TimerShards assignedTimerShards;
     @SuppressWarnings("FieldMayBeFinal")
@@ -88,9 +92,6 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private volatile long reservationEpoch;
     @SuppressWarnings("unused")
     private volatile int retirementState;
-    private Lock roleSwitchReadLock;
-    private int roleSwitchReadLockDepth;
-    private SuspensionScope.Mode roleSwitchReadLockMode;
     @SuppressWarnings("unused")
     private volatile int waitAdmission;
     private int yieldReason = YIELD_WAIT;
@@ -344,26 +345,28 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private void clearAssignedTask() {
         assignedCancellationSignal = null;
         assignedCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
+        assignedSupplementalCancellationSignal = null;
+        assignedSupplementalCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
         assignedTask = null;
         assignedTimerShards = null;
     }
 
     private Throwable releaseRoleSwitchReadLock(boolean isTaskLeak) {
-        if (roleSwitchReadLockDepth == 0) {
+        if (!roleSwitchReadLocks.hasAny()) {
             return null;
         }
-        final int leakedDepth = roleSwitchReadLockDepth;
+        final int leakedDepth = roleSwitchReadLocks.getHoldCount();
         Throwable failure = isTaskLeak
                 ? new IllegalStateException("fiber task leaked role-switch read lock [depth=" + leakedDepth + ']')
                 : null;
         final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
         final Fiber previousFiber = scope.fiber;
         final SuspensionScope.Mode previousMode = scope.mode;
-        final SuspensionScope.Mode savedMode = roleSwitchReadLockMode;
+        final SuspensionScope.Mode savedMode = roleSwitchReadLocks.getPreviousMode();
         scope.fiber = this;
         try {
-            final Lock lock = roleSwitchReadLock;
-            while (roleSwitchReadLockDepth > 0) {
+            Lock lock;
+            while ((lock = roleSwitchReadLocks.getAnyLock()) != null) {
                 lock.unlock();
             }
         } catch (Throwable th) {
@@ -373,9 +376,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 failure.addSuppressed(th);
             }
         } finally {
-            roleSwitchReadLock = null;
-            roleSwitchReadLockDepth = 0;
-            roleSwitchReadLockMode = null;
+            roleSwitchReadLocks.clear();
             scope.fiber = previousFiber;
             scope.mode = previousFiber == this ? savedMode : previousMode;
         }
@@ -516,8 +517,16 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         }
     }
 
+    CancellationBinding getCancellationBindingScratch() {
+        return cancellationBindingScratch;
+    }
+
     int getExecutionState() {
         return executionState(executionState);
+    }
+
+    int getNotificationState() {
+        return notificationState;
     }
 
     Outcome getOutcomeScratch() {
@@ -528,18 +537,8 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return registryIndex;
     }
 
-    @Nullable
-    Lock getRoleSwitchReadLock() {
-        return roleSwitchReadLock;
-    }
-
-    int getRoleSwitchReadLockDepth() {
-        return roleSwitchReadLockDepth;
-    }
-
-    @Nullable
-    SuspensionScope.Mode getRoleSwitchReadLockMode() {
-        return roleSwitchReadLockMode;
+    SuspensionScope.RoleSwitchReadLockState getRoleSwitchReadLockState() {
+        return roleSwitchReadLocks;
     }
 
     int getYieldReason() {
@@ -730,15 +729,22 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     void runMounted() {
         final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        if (scope.roleSwitchReadLocks.hasAny() || scope.roleSwitchWriteLockDepth > 0) {
+            throw new IllegalStateException("fiber mount would hide a carrier role-switch lock");
+        }
         final Fiber previousFiber = scope.fiber;
         final FiberCancellationSignal previousCancellationSignal = scope.cancellationSignal;
         final long previousCancellationSignalGeneration = scope.cancellationSignalGeneration;
         final SuspensionScope.Mode previousMode = scope.mode;
+        final FiberCancellationSignal previousSupplementalCancellationSignal = scope.supplementalCancellationSignal;
+        final long previousSupplementalCancellationSignalGeneration = scope.supplementalCancellationSignalGeneration;
         final TimerShards previousTimerShards = scope.timerShards;
         scope.cancellationSignal = assignedCancellationSignal;
         scope.cancellationSignalGeneration = assignedCancellationSignalGeneration;
         scope.fiber = this;
         scope.mode = SuspensionScope.Mode.FIBER;
+        scope.supplementalCancellationSignal = assignedSupplementalCancellationSignal;
+        scope.supplementalCancellationSignalGeneration = assignedSupplementalCancellationSignalGeneration;
         scope.timerShards = assignedTimerShards;
         try {
             continuation.run();
@@ -747,6 +753,8 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 if (assignedTask != null) {
                     assignedCancellationSignal = scope.cancellationSignal;
                     assignedCancellationSignalGeneration = scope.cancellationSignalGeneration;
+                    assignedSupplementalCancellationSignal = scope.supplementalCancellationSignal;
+                    assignedSupplementalCancellationSignalGeneration = scope.supplementalCancellationSignalGeneration;
                     assignedTimerShards = scope.timerShards;
                     assignedTask.updateCancellationBinding(
                             assignedCancellationSignal,
@@ -758,6 +766,8 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 scope.cancellationSignalGeneration = previousCancellationSignalGeneration;
                 scope.fiber = previousFiber;
                 scope.mode = previousMode;
+                scope.supplementalCancellationSignal = previousSupplementalCancellationSignal;
+                scope.supplementalCancellationSignalGeneration = previousSupplementalCancellationSignalGeneration;
                 scope.timerShards = previousTimerShards;
             }
         }
@@ -765,15 +775,6 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     void setRegistryIndex(int registryIndex) {
         this.registryIndex = registryIndex;
-    }
-
-    void setRoleSwitchReadLock(@Nullable Lock lock, int depth) {
-        roleSwitchReadLock = lock;
-        roleSwitchReadLockDepth = depth;
-    }
-
-    void setRoleSwitchReadLockMode(@Nullable SuspensionScope.Mode mode) {
-        roleSwitchReadLockMode = mode;
     }
 
     void stage(FiberTask task, long reservationEpoch) {
@@ -817,7 +818,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                     stage(task, reservationEpoch);
                     return true;
                 } catch (Throwable th) {
-                    notificationState = NOTIFICATION_IDLE;
+                    finishTerminatedProcessing();
                     throw th;
                 }
             }

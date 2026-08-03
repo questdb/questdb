@@ -151,6 +151,21 @@ public class ViewCompilerJobTest extends AbstractViewTest {
     }
 
     @Test
+    public void testFiberHostDoesNotReserveWithoutNotification() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final ViewCompilerJob compilerJob = new ViewCompilerJob(engine, 1, runtime);
+            try {
+                assertFalse(compilerJob.run());
+                assertEquals(0, runtime.getCreatedFiberCount());
+            } finally {
+                closeRuntime(runtime);
+                Misc.free(compilerJob);
+            }
+        });
+    }
+
+    @Test
     public void testFiberHostLeavesNotificationQueuedWhileSaturated() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -185,15 +200,19 @@ public class ViewCompilerJobTest extends AbstractViewTest {
                 if (reservation != null) {
                     runtime.releaseReservedFiber(reservation, reservationEpoch);
                 }
-                runtime.beginQuiesce();
-                final long deadline = System.nanoTime() + 5_000_000_000L;
-                while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
-                    runtime.drain(8);
-                }
-                assertTrue(runtime.awaitClosed(deadline));
-                runtime.closeAfterDrained();
+                closeRuntime(runtime);
                 Misc.free(compilerJob);
             }
         });
+    }
+
+    private static void closeRuntime(FiberRuntime runtime) {
+        runtime.beginQuiesce();
+        final long deadline = System.nanoTime() + 5_000_000_000L;
+        while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
+            runtime.drain(8);
+        }
+        assertTrue(runtime.awaitClosed(deadline));
+        runtime.closeAfterDrained();
     }
 }

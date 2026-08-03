@@ -52,6 +52,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -203,6 +204,10 @@ public class SleepFunctionFactory implements FunctionFactory {
                 final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
                 FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
                 long cancellationSignalGeneration = SuspensionScope.getCancellationSignalGeneration();
+                FiberCancellationSignal supplementalCancellationSignal =
+                        SuspensionScope.getSupplementalCancellationSignal();
+                final long supplementalCancellationSignalGeneration =
+                        SuspensionScope.getSupplementalCancellationSignalGeneration();
                 if (cancellationSignal == null) {
                     final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
                     executionContext.getCircuitBreaker().copyCancelledFlagTo(cancellationBinding);
@@ -212,15 +217,27 @@ public class SleepFunctionFactory implements FunctionFactory {
                         cancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
                     }
                 }
+                if (supplementalCancellationSignal == cancellationSignal) {
+                    supplementalCancellationSignal = null;
+                }
                 while (true) {
+                    throwIfCancelled(
+                            executionContext,
+                            cancellationSignal,
+                            cancellationSignalGeneration,
+                            supplementalCancellationSignal,
+                            supplementalCancellationSignalGeneration
+                    );
                     long now = clock.getTicks();
                     long remaining = deadline - now;
                     if (remaining <= 0) {
                         return;
                     }
-                    executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
                     long chunk = Math.min(remaining, wakeIntervalMillis);
-                    long token = fiber.tryBeginWaitBuild(cancellationSignal == null ? 1 : 2);
+                    final int sourceCount = 1
+                            + (cancellationSignal != null ? 1 : 0)
+                            + (supplementalCancellationSignal != null ? 1 : 0);
+                    long token = fiber.tryBeginWaitBuild(sourceCount);
                     if (token == Fiber.TOKEN_REFUSED) {
                         throw CairoException.nonCritical().put("sleep aborted, connection closing");
                     }
@@ -230,6 +247,14 @@ public class SleepFunctionFactory implements FunctionFactory {
                                 token,
                                 cancellationSignal,
                                 cancellationSignalGeneration
+                        )) {
+                            throw CairoException.nonCritical().put("sleep aborted, connection closing");
+                        }
+                        if (supplementalCancellationSignal != null
+                                && !coordinator.armCancellation(
+                                token,
+                                supplementalCancellationSignal,
+                                supplementalCancellationSignalGeneration
                         )) {
                             throw CairoException.nonCritical().put("sleep aborted, connection closing");
                         }
@@ -243,6 +268,10 @@ public class SleepFunctionFactory implements FunctionFactory {
                         if (reason == FiberWaitCoordinator.REASON_SHUTDOWN) {
                             throw CairoException.nonCritical().put("sleep aborted, connection closing");
                         }
+                        if (reason == FiberWaitCoordinator.REASON_CANCEL) {
+                            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                            throw CairoException.queryCancelled();
+                        }
                     } finally {
                         coordinator.teardownWait(token);
                     }
@@ -253,6 +282,21 @@ public class SleepFunctionFactory implements FunctionFactory {
             while (clock.getTicks() < deadline) {
                 executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
                 Os.sleep(1);
+            }
+        }
+
+        private static void throwIfCancelled(
+                SqlExecutionContext executionContext,
+                @Nullable FiberCancellationSignal cancellationSignal,
+                long cancellationSignalGeneration,
+                @Nullable FiberCancellationSignal supplementalCancellationSignal,
+                long supplementalCancellationSignalGeneration
+        ) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+            if ((cancellationSignal != null && cancellationSignal.isCancelled(cancellationSignalGeneration))
+                    || (supplementalCancellationSignal != null
+                    && supplementalCancellationSignal.isCancelled(supplementalCancellationSignalGeneration))) {
+                throw CairoException.queryCancelled();
             }
         }
     }

@@ -145,10 +145,8 @@ public final class FiberWaitCoordinator {
 
     public synchronized FiberSlotWaitRegistration acquireSlot(long token) {
         checkBuilding(token);
-        // The lock graph is acyclic only while a wait build holds at most one cancellable slot registration:
-        // cancelInFlightRegistrations() runs under this monitor and a granted slot's release can take
-        // a peer coordinator's monitor. A FIRING_CANCELLED registration only awaits peer cleanup
-        // outside this monitor and no longer participates in that graph.
+        // A granted slot may remain active while peer handoff completes. At most one other
+        // cancellable slot registration may belong to the current build.
         FiberSlotWaitRegistration activeRegistration = activeSlotRegistrations;
         while (activeRegistration != null) {
             if (!activeRegistration.isHandoffPending()) {
@@ -485,12 +483,29 @@ public final class FiberWaitCoordinator {
         return head;
     }
 
-    private synchronized void cancelInFlightRegistrations() {
-        cancelAllActive(activeCancellationRegistrations);
-        cancelAllActive(activeEventRegistrations);
-        cancelAllActive(activeSlotRegistrations);
-        cancelAllActive(activeTimerRegistrations);
-        cancelAllActive(activeWalRegistrations);
+    private void cancelInFlightRegistrations() {
+        final FiberSlotWaitRegistration slotRegistration;
+        synchronized (this) {
+            cancelAllActive(activeCancellationRegistrations);
+            cancelAllActive(activeEventRegistrations);
+            cancelAllActive(activeTimerRegistrations);
+            cancelAllActive(activeWalRegistrations);
+            FiberSlotWaitRegistration registration = activeSlotRegistrations;
+            FiberSlotWaitRegistration cancellableRegistration = null;
+            while (registration != null) {
+                if (!registration.isHandoffPending()) {
+                    if (cancellableRegistration != null) {
+                        throw new IllegalStateException("wait coordinator has multiple slot registrations");
+                    }
+                    cancellableRegistration = registration;
+                }
+                registration = registration.nextActive;
+            }
+            slotRegistration = cancellableRegistration;
+        }
+        if (slotRegistration != null) {
+            slotRegistration.cancel();
+        }
     }
 
     private void checkBuilding(long token) {

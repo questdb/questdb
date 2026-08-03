@@ -78,9 +78,9 @@ public final class AsyncQueryErrorState {
         return hasError;
     }
 
-    public synchronized void setError(Throwable th) {
+    public synchronized boolean setError(Throwable th) {
         if (hasError) {
-            return;
+            return false;
         }
 
         errorKind = AsyncQueryErrorKind.of(th);
@@ -112,6 +112,7 @@ public final class AsyncQueryErrorState {
             copyUnexpectedMessage(th);
         }
         hasError = true;
+        return true;
     }
 
     /**

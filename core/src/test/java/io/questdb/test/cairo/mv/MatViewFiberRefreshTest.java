@@ -57,6 +57,34 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
             """;
 
     @Test
+    public void testFiberHostReservesOnlyForRefreshWork() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_BASE_TABLE);
+            execute(CREATE_MAT_VIEW);
+            drainWalAndMatViewQueues();
+
+            final WorkerPool pool = newFiberHostPool();
+            final FiberRuntime runtime = pool.getFiberRuntime();
+            final MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, runtime);
+            pool.assign(job);
+            try {
+                Assert.assertFalse(job.run());
+                Assert.assertEquals(0, runtime.getCreatedFiberCount());
+
+                engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(engine.verifyTableName("price_1h"));
+                Assert.assertFalse(job.run());
+                Assert.assertEquals(0, runtime.getCreatedFiberCount());
+
+                engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("price_1h"), "test");
+                Assert.assertFalse(job.run());
+                Assert.assertEquals(0, runtime.getCreatedFiberCount());
+            } finally {
+                Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
+            }
+        });
+    }
+
+    @Test
     public void testFiberModeIncrementalAndFullRefresh() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_BASE_TABLE);

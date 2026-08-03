@@ -38,6 +38,7 @@ import io.questdb.mp.continuation.FiberWalWaitQueue;
 import io.questdb.mp.continuation.FiberWalWaitRegistration;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SourceRegistrationResult;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.ObjList;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -49,8 +50,27 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class FiberWorkerPoolTest {
+
+    @Test
+    public void testCloseReportsHaltFailure() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicBoolean isFirstHalt = new AtomicBoolean(true);
+            try (
+                    TestWorkerPool pool = new TestWorkerPool(1, WorkerPoolMode.LEGACY) {
+                        @Override
+                        public boolean haltWithin(long timeoutNanos) {
+                            return isFirstHalt.getAndSet(false) ? false : super.haltWithin(timeoutNanos);
+                        }
+                    }
+            ) {
+                final IllegalStateException exception = Assert.assertThrows(IllegalStateException.class, pool::close);
+                TestUtils.assertContains(exception.getMessage(), "worker pool did not halt");
+            }
+        });
+    }
 
     @Test
     public void testFiberHostHaltRetriesAfterRuntimeDrainTimeout() throws Exception {
@@ -88,6 +108,7 @@ public class FiberWorkerPoolTest {
                 Assert.assertEquals(FiberRuntimeState.QUIESCING, runtime.state());
 
                 releaseTask.countDown();
+                TestUtils.assertEventually(() -> Assert.assertTrue(isCleanerClosed.get()), 10);
                 Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
                 Assert.assertTrue(isCleanerClosed.get());
                 Assert.assertEquals(FiberRuntimeState.CLOSED, runtime.state());
@@ -129,11 +150,11 @@ public class FiberWorkerPoolTest {
             try {
                 Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
                 Assert.assertTrue(taskEntered.await(10, TimeUnit.SECONDS));
-                try {
-                    pool.haltAndAssertCleanForTest(TimeUnit.MILLISECONDS.toNanos(1));
-                    Assert.fail();
-                } catch (AssertionError ignored) {
-                }
+                final AssertionError failure = Assert.assertThrows(
+                        AssertionError.class,
+                        () -> pool.haltAndAssertCleanForTest(TimeUnit.MILLISECONDS.toNanos(1))
+                );
+                TestUtils.assertContains(failure.getMessage(), "fiber runtime to drain");
 
                 releaseTask.countDown();
                 Assert.assertTrue(cleanerClosed.await(10, TimeUnit.SECONDS));
@@ -191,6 +212,48 @@ public class FiberWorkerPoolTest {
                 releaseTask.countDown();
                 pool.haltWithin(TimeUnit.SECONDS.toNanos(10));
             }
+        });
+    }
+
+    @Test
+    public void testHaltByBoundsConcurrentHaltLockWait() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CountDownLatch haltEntered = new CountDownLatch(1);
+            final CountDownLatch releaseHalt = new CountDownLatch(1);
+            final AtomicReference<Boolean> firstHaltResult = new AtomicReference<>();
+            final AtomicReference<Throwable> firstHaltFailure = new AtomicReference<>();
+            final TestWorkerPool pool = new TestWorkerPool(1, WorkerPoolMode.LEGACY);
+            pool.setAfterClosedSignalForTesting(() -> {
+                haltEntered.countDown();
+                try {
+                    releaseHalt.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+            });
+            final Thread firstHalt = new Thread(() -> {
+                try {
+                    firstHaltResult.set(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
+                } catch (Throwable th) {
+                    firstHaltFailure.set(th);
+                }
+            });
+            firstHalt.start();
+            try {
+                Assert.assertTrue(haltEntered.await(10, TimeUnit.SECONDS));
+                final long startNanos = System.nanoTime();
+                Assert.assertFalse(pool.haltBy(startNanos + TimeUnit.MILLISECONDS.toNanos(1)));
+                Assert.assertTrue(System.nanoTime() - startNanos < TimeUnit.SECONDS.toNanos(5));
+            } finally {
+                releaseHalt.countDown();
+                firstHalt.join(10_000L);
+                pool.setAfterClosedSignalForTesting(null);
+                pool.haltWithin(TimeUnit.SECONDS.toNanos(10));
+            }
+            Assert.assertFalse(firstHalt.isAlive());
+            Assert.assertNull(firstHaltFailure.get());
+            Assert.assertEquals(Boolean.TRUE, firstHaltResult.get());
         });
     }
 
@@ -273,8 +336,12 @@ public class FiberWorkerPoolTest {
             ));
             final AtomicBoolean hasRunPlainJob = new AtomicBoolean();
             final AtomicBoolean isPlainJobFrame = new AtomicBoolean();
+            final AtomicBoolean isPlainJobSuspensionForbidden = new AtomicBoolean();
             pool.assign(workerContext -> {
                 isPlainJobFrame.set(Fiber.current() == null);
+                isPlainJobSuspensionForbidden.set(
+                        SuspensionScope.getMode() == SuspensionScope.Mode.FORBIDDEN
+                );
                 hasRunPlainJob.set(true);
                 return false;
             });
@@ -287,6 +354,7 @@ public class FiberWorkerPoolTest {
                 Assert.assertEquals(FiberTask.STATE_OWNED, waiting.getScheduleState());
                 Assert.assertTrue(hasRunPlainJob.get());
                 Assert.assertTrue(isPlainJobFrame.get());
+                Assert.assertTrue(isPlainJobSuspensionForbidden.get());
 
                 waiting.fire();
                 TestUtils.assertEventually(() -> Assert.assertTrue(waiting.isDone()));

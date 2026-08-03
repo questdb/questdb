@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGConnectionContext;
 import io.questdb.cutlass.pgwire.PGConnectionFiberTask;
+import io.questdb.cutlass.pgwire.PGMessageProcessingException;
+import io.questdb.cutlass.pgwire.PGPipelineEntry;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.pgwire.TypesAndSelect;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -114,6 +116,26 @@ public class PGConnectionFiberTaskTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMessageProcessingExceptionIsPipelineEntryOwned() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGPipelineEntry firstEntry = new PGPipelineEntry(engine);
+                    final PGPipelineEntry secondEntry = new PGPipelineEntry(engine)
+            ) {
+                final PGMessageProcessingException first = PGMessageProcessingException.instance(firstEntry).put("first");
+                final PGMessageProcessingException second = PGMessageProcessingException.instance(secondEntry).put("second");
+
+                Assert.assertSame(first, PGMessageProcessingException.instance(firstEntry));
+                Assert.assertNotSame(first, second);
+                first.put("-tail");
+
+                Assert.assertEquals("first-tail", firstEntry.getErrorMessageSink().toString());
+                Assert.assertEquals("second", secondEntry.getErrorMessageSink().toString());
+            }
+        });
+    }
+
+    @Test
     public void testOwnedLaunchDoesNotOverwriteCurrentOperation() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(2);
@@ -134,13 +156,17 @@ public class PGConnectionFiberTaskTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testQuiescingDuringEarlyReadyCancelsTask() throws Exception {
+    public void testQuiescingDuringRearmLeavesDisconnectToDispatcher() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(2);
             try (final TestContext context = newTestContext()) {
                 final TestDispatcher dispatcher = new TestDispatcher();
                 final PGConnectionFiberTask task = context.getFiberTask(dispatcher, Metrics.DISABLED);
+                final Fiber reservedFiber = runtime.tryReserveFiber();
+                Assert.assertNotNull(reservedFiber);
                 dispatcher.isQuiesceBeforeWake = true;
+                dispatcher.reservationEpoch = reservedFiber.getReservationEpoch();
+                dispatcher.reservedFiber = reservedFiber;
                 dispatcher.task = task;
                 dispatcher.runtime = runtime;
                 dispatcher.wakeOperation = IOOperation.WRITE;
@@ -149,7 +175,8 @@ public class PGConnectionFiberTaskTest extends AbstractCairoTest {
                 Assert.assertTrue(runtime.drain(8) > 0);
                 Assert.assertEquals(LaunchResult.ALREADY_OWNED, dispatcher.wakeResult);
                 Assert.assertTrue(task.isCancelled());
-                Assert.assertEquals(IODispatcher.DISCONNECT_REASON_SERVER_SHUTDOWN, dispatcher.disconnectReason);
+                Assert.assertEquals(1, dispatcher.registerCount);
+                Assert.assertEquals(0, dispatcher.disconnectCount);
                 Assert.assertEquals(0, runtime.getOutstandingTaskCount());
 
                 close(runtime);
@@ -336,12 +363,15 @@ public class PGConnectionFiberTaskTest extends AbstractCairoTest {
     }
 
     private static class TestDispatcher implements IODispatcher<PGConnectionContext> {
-        private int disconnectReason;
+        private int disconnectCount;
         private TestContext firstRequestContext;
         private boolean isQuiesceBeforeWake;
+        private long reservationEpoch;
+        private Fiber reservedFiber;
         private FiberRuntime runtime;
         private TestContext secondRequestContext;
         private PGConnectionFiberTask task;
+        private int registerCount;
         private int wakeOperation;
         private LaunchResult wakeResult;
 
@@ -351,7 +381,7 @@ public class PGConnectionFiberTaskTest extends AbstractCairoTest {
 
         @Override
         public void disconnect(PGConnectionContext context, int reason) {
-            disconnectReason = reason;
+            disconnectCount++;
         }
 
         @Override
@@ -384,13 +414,19 @@ public class PGConnectionFiberTaskTest extends AbstractCairoTest {
 
         @Override
         public void registerChannel(PGConnectionContext context, int operation) {
+            registerCount++;
             if (wakeOperation != 0) {
                 final int nextOperation = wakeOperation;
                 wakeOperation = 0;
                 if (isQuiesceBeforeWake) {
                     runtime.beginQuiesce();
                 }
-                wakeResult = task.launch(runtime, nextOperation);
+                if (reservedFiber != null) {
+                    wakeResult = task.launchReserved(runtime, reservedFiber, reservationEpoch, nextOperation);
+                    reservedFiber = null;
+                } else {
+                    wakeResult = task.launch(runtime, nextOperation);
+                }
             }
         }
 

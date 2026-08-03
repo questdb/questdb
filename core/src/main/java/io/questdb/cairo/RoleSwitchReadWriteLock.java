@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.SuspensionScope;
 
 import java.util.Objects;
@@ -36,8 +37,8 @@ import java.util.concurrent.locks.StampedLock;
 
 /**
  * Adds logical-execution read reentrancy to an ownerless {@link StampedLock}. One logical
- * execution may hold one engine's role-switch read lock at a time. A fiber executes in blocking
- * mode while it holds the read lock, so a role-switch writer cannot wait on a parked read holder.
+ * execution may hold multiple engines' role-switch read locks. A fiber executes in blocking mode
+ * while it holds any read lock, so a role-switch writer cannot wait on a parked read holder.
  */
 final class RoleSwitchReadWriteLock {
     private final StampedLock delegate = new StampedLock();
@@ -124,7 +125,6 @@ final class RoleSwitchReadWriteLock {
                 SuspensionScope.enterRoleSwitchReadLock(scope, this);
                 return;
             }
-            checkNoOtherRoleSwitchReadLock(scope);
             if (writeLock.isHeldByCurrentThread()) {
                 if (Thread.interrupted()) {
                     throw new InterruptedException();
@@ -184,7 +184,6 @@ final class RoleSwitchReadWriteLock {
                 SuspensionScope.enterRoleSwitchReadLock(scope, this);
                 return true;
             }
-            checkNoOtherRoleSwitchReadLock(scope);
             if (writeLock.isHeldByCurrentThread()) {
                 if (Thread.interrupted()) {
                     throw new InterruptedException();
@@ -262,12 +261,6 @@ final class RoleSwitchReadWriteLock {
             }
         }
 
-        private void checkNoOtherRoleSwitchReadLock(SuspensionScope.CarrierScope scope) {
-            if (SuspensionScope.hasRoleSwitchReadLock(scope)) {
-                throw new IllegalStateException("another role-switch read lock is already held");
-            }
-        }
-
         private void enter(SuspensionScope.CarrierScope scope) {
             try {
                 SuspensionScope.enterRoleSwitchReadLock(scope, this);
@@ -297,7 +290,6 @@ final class RoleSwitchReadWriteLock {
                 SuspensionScope.enterRoleSwitchReadLock(scope, this);
                 return true;
             }
-            checkNoOtherRoleSwitchReadLock(scope);
             return false;
         }
     }
@@ -324,8 +316,9 @@ final class RoleSwitchReadWriteLock {
 
         @Override
         public void lock() {
+            rejectFiberOwner();
             if (isHeldByCurrentThread()) {
-                holdCount++;
+                reenter();
                 return;
             }
             pendingWriterCount.incrementAndGet();
@@ -347,11 +340,12 @@ final class RoleSwitchReadWriteLock {
 
         @Override
         public void lockInterruptibly() throws InterruptedException {
+            rejectFiberOwner();
             if (isHeldByCurrentThread()) {
                 if (Thread.interrupted()) {
                     throw new InterruptedException();
                 }
-                holdCount++;
+                reenter();
                 return;
             }
             pendingWriterCount.incrementAndGet();
@@ -378,8 +372,9 @@ final class RoleSwitchReadWriteLock {
 
         @Override
         public boolean tryLock() {
+            rejectFiberOwner();
             if (isHeldByCurrentThread()) {
-                holdCount++;
+                reenter();
                 return true;
             }
             pendingWriterCount.incrementAndGet();
@@ -408,11 +403,12 @@ final class RoleSwitchReadWriteLock {
         @Override
         public boolean tryLock(long time, TimeUnit unit) throws InterruptedException {
             Objects.requireNonNull(unit, "unit");
+            rejectFiberOwner();
             if (isHeldByCurrentThread()) {
                 if (Thread.interrupted()) {
                     throw new InterruptedException();
                 }
-                holdCount++;
+                reenter();
                 return true;
             }
             final long timeoutNanos = unit.toNanos(time);
@@ -447,7 +443,9 @@ final class RoleSwitchReadWriteLock {
             if (!isHeldByCurrentThread()) {
                 throw new IllegalMonitorStateException("role-switch write lock is not held by this thread");
             }
-            if (--holdCount > 0) {
+            if (holdCount > 1) {
+                SuspensionScope.leaveRoleSwitchWriteLock(SuspensionScope.scope());
+                holdCount--;
                 return;
             }
             if (isReadDowngradePending) {
@@ -458,6 +456,7 @@ final class RoleSwitchReadWriteLock {
                         readLock.cancelDowngrade();
                     } finally {
                         clear();
+                        SuspensionScope.leaveRoleSwitchWriteLock(SuspensionScope.scope());
                         releaseWriterGate();
                     }
                     throw new IllegalStateException("could not downgrade role-switch write lock");
@@ -466,6 +465,7 @@ final class RoleSwitchReadWriteLock {
                 delegate.unlockWrite(stamp);
             }
             clear();
+            SuspensionScope.leaveRoleSwitchWriteLock(SuspensionScope.scope());
             releaseWriterGate();
         }
 
@@ -477,6 +477,7 @@ final class RoleSwitchReadWriteLock {
         }
 
         private void enter(long stamp) {
+            SuspensionScope.enterRoleSwitchWriteLock(SuspensionScope.scope());
             this.stamp = stamp;
             holdCount = 1;
             isReadDowngradePending = false;
@@ -492,6 +493,20 @@ final class RoleSwitchReadWriteLock {
 
         private boolean isHeldByCurrentThread() {
             return owner == Thread.currentThread();
+        }
+
+        private void reenter() {
+            if (holdCount == Integer.MAX_VALUE) {
+                throw new IllegalStateException("role-switch write lock depth overflow");
+            }
+            SuspensionScope.enterRoleSwitchWriteLock(SuspensionScope.scope());
+            holdCount++;
+        }
+
+        private void rejectFiberOwner() {
+            if (Fiber.isMounted()) {
+                throw new IllegalStateException("fiber cannot own a role-switch write lock");
+            }
         }
 
         private void releaseWriterGate() {
