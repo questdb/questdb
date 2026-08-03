@@ -54,6 +54,36 @@ public class ScalarSubqueryBoundNestingDepthTest extends AbstractCairoTest {
         return sb.toString();
     }
 
+    // ts = (subquery) OR <sibling that declines extraction>, nested
+    private static String nestedOr(int depth) {
+        return "SELECT i, ts FROM t WHERE ts = " + orBound(depth) + " OR ts = rnd_int()";
+    }
+
+    private static String orBound(int depth) {
+        StringBuilder sb = new StringBuilder();
+        StringBuilder tail = new StringBuilder();
+        for (int i = 0; i < depth; i++) {
+            sb.append("(SELECT max(ts) FROM t WHERE ts = ");
+            tail.append(" OR ts = rnd_int())");
+        }
+        return sb.append("'2020-06-01T00:00:00.000000Z'").append(tail).toString();
+    }
+
+    // ts BETWEEN (subquery) AND <boundary that fails to translate>, nested
+    private static String nestedBetween(int depth) {
+        return "SELECT i, ts FROM t WHERE ts BETWEEN " + betweenBound(depth) + " AND dateadd('h', 1, ts)";
+    }
+
+    private static String betweenBound(int depth) {
+        StringBuilder sb = new StringBuilder();
+        StringBuilder tail = new StringBuilder();
+        for (int i = 0; i < depth; i++) {
+            sb.append("(SELECT max(ts) FROM t WHERE ts BETWEEN ");
+            tail.append(" AND dateadd('h', 1, ts))");
+        }
+        return sb.append("'2020-06-01T00:00:00.000000Z'").append(tail).toString();
+    }
+
     private void createTable() throws Exception {
         execute("CREATE TABLE t (i INT, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("INSERT INTO t VALUES (1, '2020-06-01T00:00:00.000000Z', '2020-06-01T00:00:00.000000Z')," +
@@ -139,6 +169,67 @@ public class ScalarSubqueryBoundNestingDepthTest extends AbstractCairoTest {
                     "(SELECT lo FROM bounds ORDER BY lo DESC LIMIT 1)")
                     .timestamp("ts")
                     .returns(expected);
+        });
+    }
+
+    /**
+     * The OR channel speculatively compiles a sub-query too, and its compile is discarded whenever
+     * any sibling disjunct turns out not to be extractable - here {@code ts = rnd_int()}, which
+     * passes the structural pre-screen but is not a timestamp - so the whole OR extraction rolls
+     * back and the predicate stays a residual filter. Uncharged, that doubled per nesting level:
+     * ~1.1 s at depth 11 and unusable beyond.
+     */
+    @Test
+    public void testOrChannelCompilesInBoundedTime() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            for (int i = 0; i < 3; i++) {
+                Misc.free(select(nestedOr(2)));
+            }
+            final long start = System.nanoTime();
+            try (RecordCursorFactory f = select(nestedOr(20))) {
+                Assert.assertNotNull(f);
+            }
+            final long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            Assert.assertTrue("depth-20 OR compile took " + elapsedMs + "ms, expected bounded", elapsedMs < 5_000);
+        });
+    }
+
+    /**
+     * Same for the BETWEEN channel, whose sub-query boundary compile is discarded when the OTHER
+     * boundary fails to translate - here a column expression, which is neither constant nor
+     * runtime-constant. Uncharged, ~2.6 s at depth 13.
+     */
+    @Test
+    public void testBetweenChannelCompilesInBoundedTime() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            for (int i = 0; i < 3; i++) {
+                Misc.free(select(nestedBetween(2)));
+            }
+            final long start = System.nanoTime();
+            try (RecordCursorFactory f = select(nestedBetween(20))) {
+                Assert.assertNotNull(f);
+            }
+            final long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            Assert.assertTrue("depth-20 BETWEEN compile took " + elapsedMs + "ms, expected bounded", elapsedMs < 5_000);
+        });
+    }
+
+    /**
+     * Declining to translate, and reusing the parked compile, must not change what the BETWEEN
+     * returns. {@code max(ts)} is 2020-06-03, so only that row falls in [max(ts), ts + 1h].
+     */
+    @Test
+    public void testBetweenChannelResultsUnchanged() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            final String expected = "i\tts\n3\t2020-06-03T00:00:00.000000Z\n";
+            for (int depth : new int[]{1, 2, 4, 5, 8}) {
+                assertQuery("SELECT i, ts FROM t WHERE ts BETWEEN " + betweenBound(depth) + " AND dateadd('h', 1, ts)")
+                        .timestamp("ts")
+                        .returns(expected);
+            }
         });
     }
 

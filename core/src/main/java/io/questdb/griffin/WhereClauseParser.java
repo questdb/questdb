@@ -2334,6 +2334,16 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata metadata,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        // Same speculation budget as the monotonic channel: this compile is discarded whenever the
+        // OR extraction is rolled back - which happens whenever ANY sibling disjunct turns out not
+        // to be extractable - and the predicate then stays a residual filter that generates this
+        // very sub-query again. Uncharged, that doubles compile time per nesting level.
+        if (scalarBoundDepth >= MAX_SPECULATIVE_SCALAR_BOUND_DEPTH) {
+            // "cannot accumulate": the caller reverts the OR extraction to a residual filter, which
+            // is always sound - it only forgoes the interval-union optimization.
+            return true;
+        }
+        scalarBoundSpeculated = true;
         Function func = parseScalarSubQueryBound(queryNode, functionParser, metadata, executionContext);
         try {
             if (checkCursorFunctionReturnsSingleTimestamp(func)) {
@@ -2344,7 +2354,9 @@ public final class WhereClauseParser implements Mutable {
             }
             final Function ownedFunc = func;
             func = null;
-            Misc.free(ownedFunc);
+            // Declined: the residual filter is about to generate this same sub-query, so hand the
+            // compile over rather than discarding it.
+            parkDeclinedScalarBound(ownedFunc, queryNode);
             return true;
         } catch (Throwable th) {
             Misc.free(func, th);
@@ -3653,6 +3665,17 @@ public final class WhereClauseParser implements Mutable {
             // scalar subquery bound, e.g. ts BETWEEN (select ...) AND (select ...). Only a
             // single-timestamp-column cursor qualifies; it is evaluated at scan open, exactly
             // like a runtime-constant (bind variable) bound.
+            //
+            // Same speculation budget as the monotonic channel: this compile is discarded whenever
+            // the BETWEEN translation is abandoned - notably when the OTHER boundary turns out not
+            // to be translatable - and the predicate then stays a residual filter that generates
+            // this very sub-query again. Uncharged, that doubles compile time per nesting level.
+            if (scalarBoundDepth >= MAX_SPECULATIVE_SCALAR_BOUND_DEPTH) {
+                // decline: the caller keeps the predicate as a residual filter, which is always
+                // sound - it only forgoes the interval-pruning optimization.
+                return false;
+            }
+            scalarBoundSpeculated = true;
             final Function func = parseScalarSubQueryBound(node, functionParser, metadata, executionContext);
             boolean isRetained = false;
             Throwable failure = null;
@@ -3675,9 +3698,13 @@ public final class WhereClauseParser implements Mutable {
                 throw th;
             } finally {
                 if (!isRetained) {
-                    final Throwable cleanupFailure = Misc.freeBestEffort(failure, func);
                     if (failure == null) {
-                        CairoException.rethrowCleanupFailure(cleanupFailure);
+                        // Graceful decline: the predicate stays a residual filter that would
+                        // otherwise generate this same sub-query, so hand the compile over. Parking
+                        // only stores a reference, so unlike the free below it cannot throw.
+                        parkDeclinedScalarBound(func, node);
+                    } else {
+                        Misc.freeBestEffort(failure, func);
                     }
                 }
             }
