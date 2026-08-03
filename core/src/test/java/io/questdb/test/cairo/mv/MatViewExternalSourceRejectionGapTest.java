@@ -43,10 +43,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Reject-side regression corpus for factory-tree shapes that used to hide {@code read_parquet()}
  * from the mat-view external-source guard ({@code usesExternalDataSource()} walked from the
  * sub-query's top factory). Window joins are two-child shapes outside the
- * {@code AbstractJoinRecordCursorFactory} hierarchy, and unnest and select-cursor wrappers hold
- * their input without exposing it through {@code getBaseFactory()}, so each propagates the
- * property explicitly; this corpus is what proves it. Without the explicit overrides, every
- * CREATE below was accepted and produced a view refreshing against an untracked external file.
+ * {@code AbstractJoinRecordCursorFactory} hierarchy, and unnest, select-cursor and LATEST BY
+ * key sub-query wrappers hold their input without exposing it through {@code getBaseFactory()},
+ * so each propagates the property explicitly; this corpus is what proves it. Without the explicit
+ * overrides, every CREATE below was accepted and produced a view refreshing against an untracked
+ * external file.
  *
  * @see MatViewExternalSourceRejectionTest for the join/set-op/wrapper shapes pinned with the
  * original guard
@@ -70,6 +71,24 @@ public class MatViewExternalSourceRejectionGapTest extends AbstractCairoTest {
                 null,
                 "v > (SELECT count() FROM (SELECT read_parquet('x.parquet') r FROM cfg))",
                 "v > (SELECT count() FROM (SELECT read_parquet('x.parquet') r FROM long_sequence(1)))"
+        );
+    }
+
+    @Test
+    public void testRejectsExternalSourceUnderLatestBySubQuery() throws Exception {
+        // LATEST ON ... PARTITION BY key with "key IN (sub-query)" compiles to
+        // LatestBySubQueryRecordCursorFactory, which holds the key sub-query in a private field.
+        // Its base is the partition frame scan, not the sub-query, so getBaseFactory() cannot
+        // reach the parquet leaf and the property is propagated explicitly instead. Both the
+        // indexed and non-indexed symbol paths build the same factory and both must reject.
+        assertRejected(
+                null,
+                // SYMBOL INDEX -> LatestByValuesIndexed* cursor
+                "v > (SELECT count() FROM (SELECT i, s, ts FROM a WHERE s IN "
+                        + "(SELECT sym FROM read_parquet('xs.parquet')) LATEST ON ts PARTITION BY s))",
+                // plain SYMBOL -> LatestByValues* cursor
+                "v > (SELECT count() FROM (SELECT i, s, ts FROM a2 WHERE s IN "
+                        + "(SELECT sym FROM read_parquet('xs.parquet')) LATEST ON ts PARTITION BY s))"
         );
     }
 
@@ -132,6 +151,8 @@ public class MatViewExternalSourceRejectionGapTest extends AbstractCairoTest {
             execute("create table xs as (select rnd_symbol('a','b') sym, x::double v2, (x * 1_000_000)::timestamp ts from long_sequence(10))");
             encodeTable("xs", "xs.parquet");
             execute("CREATE TABLE prices (pts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(pts) PARTITION BY DAY");
+            execute("CREATE TABLE a (i INT, s SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE a2 (i INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE cfg (ts TIMESTAMP, k SYMBOL, lim TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             for (String predicate : predicates) {
