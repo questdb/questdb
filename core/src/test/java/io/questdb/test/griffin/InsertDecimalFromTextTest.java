@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.test.AbstractCairoTest;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -36,8 +37,9 @@ import java.util.Collection;
 
 /**
  * Inserts into decimal columns from CHAR, STRING and VARCHAR sources, against every record-to-row copier
- * implementation. The narrow table stays under the bytecode method size limit, the wide one exceeds it
- * and falls back to the chunked or the looping copier depending on configuration.
+ * implementation and against both row writers. The narrow table stays under the bytecode method size limit,
+ * the wide one exceeds it and falls back to the chunked or the looping copier depending on configuration.
+ * The plain tables drive {@code TableWriter.RowImpl}, the WAL ones {@code WalWriter.RowImpl}.
  */
 @RunWith(Parameterized.class)
 public class InsertDecimalFromTextTest extends AbstractCairoTest {
@@ -234,16 +236,73 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testVarcharIntoDecimalWal() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTables("varchar", "decimal(10,2)");
+            insertRow("'123.45'", "'2024-01-01T00:00:00.000000Z'");
+            insertRow("null", "'2024-01-01T00:00:01.000000Z'");
+            drainWalQueue();
+
+            execute("insert into dst select * from src");
+            drainWalQueue();
+
+            assertQuery("select c0 from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c0\n123.45\n\n");
+
+            String lastColumn = "c" + (columnCount() - 1);
+            assertQuery("select " + lastColumn + " from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(lastColumn + "\n123.45\n\n");
+        });
+    }
+
+    @Test
+    public void testVarcharIntoDecimalWalNonNumeric() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTables("varchar", "decimal(10,2)");
+            insertRow("'abc'", "'2024-01-01T00:00:00.000000Z'");
+            drainWalQueue();
+
+            assertExceptionNoLeakCheck(
+                    "insert into dst select * from src",
+                    -1,
+                    "inconvertible value: `abc` [VARCHAR -> DECIMAL(10,2)]"
+            );
+
+            drainWalQueue();
+            assertQuery("select c0 from dst").noLeakCheck().expectSize().returns("c0\n");
+        });
+    }
+
+    @Test
+    public void testVarcharIntoDecimalWalOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTables("varchar", "decimal(4,2)");
+            insertRow("'12345.67'", "'2024-01-01T00:00:00.000000Z'");
+            drainWalQueue();
+
+            assertExceptionNoLeakCheck(
+                    "insert into dst select * from src",
+                    -1,
+                    "inconvertible value: `12345.67` [VARCHAR -> DECIMAL(4,2)]"
+            );
+        });
+    }
+
     private int columnCount() {
         return copierMode == CopierMode.BYTECODE ? 1 : WIDE_COLUMN_COUNT;
     }
 
     private void createTables(String srcType, String dstType) throws Exception {
-        execute(createTableSql("src", srcType));
-        execute(createTableSql("dst", dstType));
+        execute(createTableSql("src", srcType, false));
+        execute(createTableSql("dst", dstType, false));
     }
 
-    private String createTableSql(String tableName, String type) {
+    private String createTableSql(String tableName, String type, boolean isWal) {
         StringBuilder b = new StringBuilder("create table ").append(tableName).append(" (");
         for (int i = 0, n = columnCount(); i < n; i++) {
             if (i > 0) {
@@ -251,16 +310,31 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
             }
             b.append('c').append(i).append(' ').append(type);
         }
+        if (isWal) {
+            return b.append(", ts timestamp) timestamp(ts) partition by day wal").toString();
+        }
         return b.append(')').toString();
     }
 
+    private void createWalTables(String srcType, String dstType) throws Exception {
+        execute(createTableSql("src", srcType, true));
+        execute(createTableSql("dst", dstType, true));
+    }
+
     private void insertRow(String value) throws Exception {
+        insertRow(value, null);
+    }
+
+    private void insertRow(String value, @Nullable String timestamp) throws Exception {
         StringBuilder b = new StringBuilder("insert into src values (");
         for (int i = 0, n = columnCount(); i < n; i++) {
             if (i > 0) {
                 b.append(", ");
             }
             b.append(value);
+        }
+        if (timestamp != null) {
+            b.append(", ").append(timestamp);
         }
         execute(b.append(')').toString());
     }

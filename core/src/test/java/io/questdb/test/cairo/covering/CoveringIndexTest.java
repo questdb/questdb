@@ -89,6 +89,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     private static final ColumnVersionReader EMPTY_CVR = new ColumnVersionReader();
 
+    @Override
+    public void setUp() {
+        node1.setProperty(io.questdb.PropertyKey.DEV_MODE_ENABLED, true);
+        super.setUp();
+    }
+
     @Test
     public void testAddPostingCoveringIndexAcrossManyParquetRowGroupsAllVarSizeWal() throws Exception {
         // The VARCHAR-only multi-row-group test pins ONE aux vector format
@@ -11401,8 +11407,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
     public void testFilterOnExcludedValuesThrowingFilterDoesNotLeakIndexReader() throws Exception {
         // Regression: FilterOnExcludedValues opens per-symbol index cursors via
         // HeapRowCursor.of(), whose first hasNext() evaluates the post-filter on each
-        // sub-cursor. When that filter throws (here, a DECIMAL scale-adjustment overflow
-        // on small < big), the singleton HeapRowCursor was left un-closed because
+        // sub-cursor. When that filter throws (here, the dev-mode npe() test function),
+        // the singleton HeapRowCursor was left un-closed because
         // PageFrameRecordCursorImpl.rowCursor never got assigned. The per-symbol index
         // cursors then stayed outside the PostingIndexFwdReader.freeCursors pool and
         // their block buffers leaked. The fix closes the row cursor factory from
@@ -11411,20 +11417,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE t_excl_leak (
                         sym SYMBOL INDEX TYPE POSTING DELTA INCLUDE (v),
-                        small DECIMAL(38, 3),
-                        big DECIMAL(76, 2),
                         v DOUBLE,
                         ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY WAL
                     """);
-            // big holds the maximum value of DECIMAL(76, 2). Scaling it up by 10^1 to
-            // match small's scale overflows the 256-bit intermediate at filter time.
             execute("""
                     INSERT INTO t_excl_leak
                     SELECT
                         rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7',null),
-                        '1.000'::DECIMAL(38, 3),
-                        '99999999999999999999999999999999999999999999999999999999999999999999999999.99'::DECIMAL(76, 2),
                         rnd_double(),
                         timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1_800_000_000L)
                     FROM long_sequence(120)
@@ -11436,14 +11436,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
             Throwable caught = null;
             try (RecordCursorFactory f = select(
                     "SELECT v FROM t_excl_leak " +
-                            "WHERE NOT ((sym IN ('s7', null) OR small < big))");
+                            "WHERE NOT ((sym IN ('s7', null) OR npe()))");
                  RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
                 while (cursor.hasNext()) {
                 }
             } catch (Throwable t) {
                 caught = t;
             }
-            assertNotNull("expected DECIMAL scale-adjustment overflow", caught);
+            assertNotNull("expected injected filter failure", caught);
         });
     }
 
@@ -11452,7 +11452,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
         // Regression: FilterOnSubQuery builds a per-symbol index cursor for every key
         // returned by the sub-query through HeapRowCursorFactory.getCursor, whose call into
         // HeapRowCursor.of evaluates the post-filter on each sub-cursor. When that filter
-        // throws (here, a DECIMAL scale-adjustment overflow on small < big), the throw fires
+        // throws (here, the dev-mode npe() test function), the throw fires
         // inside getCursor before its return assigns PageFrameRecordCursorImpl.rowCursor, so
         // the singleton HeapRowCursor is left with populated per-symbol SymbolIndexFiltered
         // RowCursor sub-cursors that each hold an open index reader cursor. The fix frees
@@ -11462,20 +11462,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE t_sub_leak (
                         sym SYMBOL INDEX TYPE POSTING DELTA,
-                        small DECIMAL(38, 3),
-                        big DECIMAL(76, 2),
                         v DOUBLE,
                         ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY WAL
                     """);
-            // big holds the maximum value of DECIMAL(76, 2). Scaling it up by 10^1 to
-            // match small's scale overflows the 256-bit intermediate at filter time.
             execute("""
                     INSERT INTO t_sub_leak
                     SELECT
                         rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7',null),
-                        '1.000'::DECIMAL(38, 3),
-                        '99999999999999999999999999999999999999999999999999999999999999999999999999.99'::DECIMAL(76, 2),
                         rnd_double(),
                         timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1_800_000_000L)
                     FROM long_sequence(120)
@@ -11485,14 +11479,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
             Throwable caught = null;
             try (RecordCursorFactory f = select(
                     "SELECT v FROM t_sub_leak " +
-                            "WHERE sym IN (SELECT 's0' UNION SELECT 's1') AND small < big");
+                            "WHERE sym IN (SELECT 's0' UNION SELECT 's1') AND npe()");
                  RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
                 while (cursor.hasNext()) {
                 }
             } catch (Throwable t) {
                 caught = t;
             }
-            assertNotNull("expected DECIMAL scale-adjustment overflow", caught);
+            assertNotNull("expected injected filter failure", caught);
         });
     }
 
@@ -11500,8 +11494,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
     public void testFilterOnValuesThrowingFilterDoesNotLeakIndexReader() throws Exception {
         // Regression: FilterOnValues opens a per-symbol index cursor for every IN-list key
         // through HeapRowCursorFactory.getCursor, whose call into HeapRowCursor.of evaluates
-        // the post-filter on each sub-cursor. When that filter throws (here, a DECIMAL
-        // scale-adjustment overflow on small < big), the throw fires inside getCursor before
+        // the post-filter on each sub-cursor. When that filter throws (here, the dev-mode
+        // npe() test function), the throw fires inside getCursor before
         // its return assigns PageFrameRecordCursorImpl.rowCursor, so the singleton
         // HeapRowCursor is left with populated per-symbol SymbolIndexFilteredRowCursor
         // sub-cursors that each hold an open index reader cursor. The fix frees
@@ -11511,20 +11505,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE t_val_leak (
                         sym SYMBOL INDEX TYPE POSTING DELTA,
-                        small DECIMAL(38, 3),
-                        big DECIMAL(76, 2),
                         v DOUBLE,
                         ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY WAL
                     """);
-            // big holds the maximum value of DECIMAL(76, 2). Scaling it up by 10^1 to
-            // match small's scale overflows the 256-bit intermediate at filter time.
             execute("""
                     INSERT INTO t_val_leak
                     SELECT
                         rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7',null),
-                        '1.000'::DECIMAL(38, 3),
-                        '99999999999999999999999999999999999999999999999999999999999999999999999999.99'::DECIMAL(76, 2),
                         rnd_double(),
                         timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1_800_000_000L)
                     FROM long_sequence(120)
@@ -11534,14 +11522,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
             Throwable caught = null;
             try (RecordCursorFactory f = select(
                     "SELECT v FROM t_val_leak " +
-                            "WHERE sym IN ('s0', 's1') AND small < big");
+                            "WHERE sym IN ('s0', 's1') AND npe()");
                  RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
                 while (cursor.hasNext()) {
                 }
             } catch (Throwable t) {
                 caught = t;
             }
-            assertNotNull("expected DECIMAL scale-adjustment overflow", caught);
+            assertNotNull("expected injected filter failure", caught);
         });
     }
 
