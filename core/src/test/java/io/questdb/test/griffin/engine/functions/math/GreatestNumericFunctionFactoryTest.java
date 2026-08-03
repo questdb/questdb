@@ -73,6 +73,73 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
     }
 
     @Test
+    public void testGreatestNumericFunctionFactoryDecimalNulls() throws Exception {
+        // NULL arguments are skipped, the result is NULL only when every argument is NULL
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(2,0), null::decimal(2,0)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(4,0), null::decimal(4,0)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(9,0), null::decimal(9,0)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(18,0), null::decimal(18,0)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(38,0), null::decimal(38,0)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(76,0), null::decimal(76,0)) is null n");
+
+        // single argument
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(2,0)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(4,0)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(9,0)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(18,0)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(38,0)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(76,0)) is null n");
+
+        // differing scales
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(1,0), null::decimal(2,1)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(2,0), null::decimal(4,2)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(5,0), null::decimal(9,4)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(9,0), null::decimal(18,9)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(19,0), null::decimal(38,19)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(38,0), null::decimal(76,38)) is null n");
+
+        // mixed NULL and non-NULL, the non-NULL argument wins
+        assertSqlWithTypes("greatest\n1.0:DECIMAL(2,1)\n", "select greatest(1::decimal(1,0), null::decimal(2,1))");
+        assertSqlWithTypes("greatest\n1.00:DECIMAL(4,2)\n", "select greatest(null::decimal(2,0), 1::decimal(4,2))");
+        assertSqlWithTypes("greatest\n1.0000:DECIMAL(9,4)\n", "select greatest(1::decimal(5,0), null::decimal(9,4))");
+        assertSqlWithTypes("greatest\n1.000000000:DECIMAL(18,9)\n", "select greatest(null::decimal(9,0), 1::decimal(18,9))");
+        assertSqlWithTypes("greatest\n1.0000000000000000000:DECIMAL(38,19)\n", "select greatest(1::decimal(19,0), null::decimal(38,19))");
+        assertSqlWithTypes("greatest\n1.00000000000000000000000000000000000000:DECIMAL(76,38)\n", "select greatest(null::decimal(38,0), 1::decimal(76,38))");
+    }
+
+    @Test
+    public void testGreatestNumericFunctionFactoryDecimalNullsMixedWithDouble() throws Exception {
+        // a NULL decimal must be skipped, not treated as a value, once the result is promoted to double
+        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5, null::decimal(2,0)) = -1.5 v");
+        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5, null::decimal(4,1)) = -1.5 v");
+        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5, null::decimal(9,2)) = -1.5 v");
+        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5, null::decimal(18,3)) = -1.5 v");
+        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5, null::decimal(38,2)) = -1.5 v");
+        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5, null::decimal(76,2)) = -1.5 v");
+
+        // reversed argument order
+        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(null::decimal(2,0), -1.5) = -1.5 v");
+        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(null::decimal(38,2), -1.5) = -1.5 v");
+        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(null::decimal(76,2), -1.5) = -1.5 v");
+
+        // float promotes to the double path too
+        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5f, null::decimal(38,2)) = -1.5 v");
+
+        // a NULL decimal next to a non-NULL decimal, both widened to the double path
+        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-9.5, -2::decimal(9,2), null::decimal(9,2)) = -2.0 v");
+        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-9.5, null::decimal(76,2), -2::decimal(38,2)) = -2.0 v");
+
+        // NULL only when every argument is NULL
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::double, null::decimal(38,2)) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(2,0), null::double) is null n");
+        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(76,2), null::decimal(2,0), null::double) is null n");
+
+        // no-regression guard, no NULL argument at all
+        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-9.5, -2::decimal(38,2)) = -2.0 v");
+        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5, -2::decimal(38,2)) = -1.5 v");
+    }
+
+    @Test
     public void testGreatestNumericFunctionFactoryDecimalOverflow() throws Exception {
         assertQuery("select greatest(123.456::decimal(76,73), 99999::int)")
                 .fails(46, "inconvertible value: 99999 [INT -> DECIMAL(76,73)]");
