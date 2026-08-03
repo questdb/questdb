@@ -547,11 +547,20 @@ public final class LiveViewWindowStatePlan {
             if (kept == components.size()) {
                 return;
             }
-            for (int i = projectionComponents.size() - 1; i >= 0; i--) {
+            final int[] newProjectionIndexOfOld = new int[projectionComponents.size()];
+            int surviving = 0;
+            for (int i = 0, n = projectionComponents.size(); i < n; i++) {
                 if (projectionComponents.getQuick(i) < kept) {
+                    newProjectionIndexOfOld[i] = surviving++;
+                } else {
+                    newProjectionIndexOfOld[i] = -1;
+                    residualFunctions.add(projectionFunctions.getQuick(i));
+                }
+            }
+            for (int i = newProjectionIndexOfOld.length - 1; i >= 0; i--) {
+                if (newProjectionIndexOfOld[i] >= 0) {
                     continue;
                 }
-                residualFunctions.add(projectionFunctions.getQuick(i));
                 projectionComponents.removeIndex(i);
                 projectionFunctionComponents.remove(i);
                 projectionFunctions.remove(i);
@@ -564,26 +573,12 @@ public final class LiveViewWindowStatePlan {
                 componentContributors.removeIndex(last);
                 componentContributorOutputPositions.removeIndex(last);
             }
-            // Removing projections renumbered nothing above the prefix, but it did move the
-            // contributor indexes the kept components point at, so they are re-derived from
-            // the projections that survived.
+            // A contributor is one of the projections that reads its own component, so a
+            // kept component's contributor is a survivor by construction and only its index
+            // moved. Remapping it is therefore exact, where re-deriving it would have to
+            // re-answer a question the earlier passes already settled.
             for (int c = 0; c < kept; c++) {
-                componentContributors.setQuick(c, -1);
-                componentContributorOutputPositions.setQuick(c, Integer.MAX_VALUE);
-            }
-            for (int i = 0, n = projectionComponents.size(); i < n; i++) {
-                final int c = projectionComponents.getQuick(i);
-                if (!projectionFunctionComponents.getQuick(i).isSameIdentity(components.getQuick(c))) {
-                    // Derived: its function's image is a slice of the component rather than
-                    // the whole of it, so it could not write one. A component always has a
-                    // projection that is not, because a component only exists where one
-                    // created it.
-                    continue;
-                }
-                if (projectionOutputPositions.getQuick(i) < componentContributorOutputPositions.getQuick(c)) {
-                    componentContributors.setQuick(c, i);
-                    componentContributorOutputPositions.setQuick(c, projectionOutputPositions.getQuick(i));
-                }
+                componentContributors.setQuick(c, newProjectionIndexOfOld[componentContributors.getQuick(c)]);
             }
         }
 

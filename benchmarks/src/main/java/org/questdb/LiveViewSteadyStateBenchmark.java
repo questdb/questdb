@@ -999,6 +999,14 @@ public class LiveViewSteadyStateBenchmark {
          */
         SINGLE_SUM("sum"),
         /**
+         * The same single {@code sum} over an expression rather than a column reference,
+         * which the plan declines for want of an argument key. It is the unfused control
+         * to read {@link #SINGLE_SUM} against: same arithmetic, same rows, one function,
+         * and the only difference is whether the window owns the state or the function
+         * does.
+         */
+        SINGLE_SUM_UNFUSED("sum-unfused"),
+        /**
          * Three projections onto one {@code (sum, nonNullCount)} component: the shape the
          * cross-family derivation exists for.
          */
@@ -1027,7 +1035,7 @@ public class LiveViewSteadyStateBenchmark {
 
         String extraWindows() {
             return this == MIXED
-                    ? ", r as (partition by cod_acct_no order by created_at rows between 999 preceding and current row)"
+                    ? ", r as (partition by cod_acct_no order by created_at rows between 63 preceding and current row)"
                     : "";
         }
 
@@ -1040,6 +1048,7 @@ public class LiveViewSteadyStateBenchmark {
                 case ROW_COUNT -> "count(*) over w as n, row_number() over w as rn";
                 case SINGLE_COUNT -> "count(cod_acct_no) over w as cumulative_count";
                 case SINGLE_SUM -> "sum(amt_txn) over w as cumulative_sum";
+                case SINGLE_SUM_UNFUSED -> "sum(amt_txn + 0.0) over w as cumulative_sum";
                 case SUM_AVG_COUNT -> "sum(amt_txn) over w as s, avg(amt_txn) over w as a, "
                         + "count(amt_txn) over w as c";
                 case TARGET -> "sum(amt_txn) over w as cumulative_sum, count(cod_acct_no) over w as cumulative_count";
