@@ -477,7 +477,7 @@ public class HttpFiberTest extends AbstractTest {
     }
 
     @Test
-    public void testQuiescingDuringRearmLeavesDisconnectToDispatcher() throws Exception {
+    public void testQuiescingDisconnectsConsumedRearmEvent() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(2);
             final DefaultHttpServerConfiguration configuration =
@@ -508,7 +508,7 @@ public class HttpFiberTest extends AbstractTest {
                 Assert.assertEquals(LaunchResult.ALREADY_OWNED, dispatcher.wakeResult);
                 Assert.assertTrue(task.isCancelled());
                 Assert.assertEquals(1, dispatcher.registerCount);
-                Assert.assertEquals(0, dispatcher.disconnectCount);
+                Assert.assertEquals(1, dispatcher.disconnectCount);
             } finally {
                 closeFiberRuntime(runtime);
                 task.closeForTesting();
@@ -651,7 +651,7 @@ public class HttpFiberTest extends AbstractTest {
     public void testWorkerPoolModeControlsFiberExecution() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             assertQueryExecutionMode(false, WorkerPoolMode.LEGACY, false);
-            assertQueryExecutionMode(false, WorkerPoolMode.FIBER_HOST, false);
+            assertQueryExecutionMode(false, WorkerPoolMode.FIBER_HOST, true);
             assertQueryExecutionMode(true, WorkerPoolMode.LEGACY, false);
             assertQueryExecutionMode(true, WorkerPoolMode.FIBER_HOST, true);
         });

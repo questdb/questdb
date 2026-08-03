@@ -156,7 +156,7 @@ public class PGConnectionFiberTaskTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testQuiescingDuringRearmLeavesDisconnectToDispatcher() throws Exception {
+    public void testQuiescingDisconnectsConsumedRearmEvent() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(2);
             try (final TestContext context = newTestContext()) {
@@ -176,7 +176,7 @@ public class PGConnectionFiberTaskTest extends AbstractCairoTest {
                 Assert.assertEquals(LaunchResult.ALREADY_OWNED, dispatcher.wakeResult);
                 Assert.assertTrue(task.isCancelled());
                 Assert.assertEquals(1, dispatcher.registerCount);
-                Assert.assertEquals(0, dispatcher.disconnectCount);
+                Assert.assertEquals(1, dispatcher.disconnectCount);
                 Assert.assertEquals(0, runtime.getOutstandingTaskCount());
 
                 close(runtime);

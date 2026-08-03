@@ -155,6 +155,7 @@ public final class PGConnectionFiberTask extends FiberTask {
                     return LaunchResult.ALREADY_OWNED;
                 }
                 if (Unsafe.cas(this, STAGED_EVENT_OFFSET, 0L, pendingEvent)) {
+                    isRearmed = false;
                     break;
                 }
             }
@@ -290,8 +291,8 @@ public final class PGConnectionFiberTask extends FiberTask {
 
     @Override
     protected void onParked() {
-        dispatcher.registerChannel(context, nextOperation);
         isRearmed = true;
+        dispatcher.registerChannel(context, nextOperation);
     }
 
     @Override

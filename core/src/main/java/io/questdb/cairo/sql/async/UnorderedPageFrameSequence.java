@@ -70,7 +70,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
     private final MillisecondClock clock;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
-    private final AsyncQueryErrorState errorState = new AsyncQueryErrorState();
+    private final AsyncQueryErrorState errorState = new AsyncQueryErrorState("unexpected reduce error");
     private final LongList frameRowCounts = new LongList();
     private final MessageBus messageBus;
     private final MPSequence reducePubSeq;
@@ -333,7 +333,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
 
         // Phase 3: Check for errors.
         if (errorState.hasError()) {
-            errorState.throwError();
+            throw buildError();
         }
 
         if (!isActive() && getCancelReason() != SqlExecutionCircuitBreaker.STATE_OK) {

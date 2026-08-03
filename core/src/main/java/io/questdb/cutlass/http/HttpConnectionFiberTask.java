@@ -250,6 +250,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
                     return LaunchResult.ALREADY_OWNED;
                 }
                 if (Unsafe.cas(this, STAGED_EVENT_OFFSET, 0L, pendingEvent)) {
+                    isRearmed = false;
                     break;
                 }
             }
@@ -458,16 +459,16 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
         }
         switch (nextAction) {
             case ACTION_READ -> {
-                dispatcher.registerChannel(context, IOOperation.READ);
                 isRearmed = true;
+                dispatcher.registerChannel(context, IOOperation.READ);
             }
             case ACTION_WRITE -> {
-                dispatcher.registerChannel(context, IOOperation.WRITE);
                 isRearmed = true;
+                dispatcher.registerChannel(context, IOOperation.WRITE);
             }
             case ACTION_HEARTBEAT -> {
-                dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
                 isRearmed = true;
+                dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
             }
             default -> {
             }
