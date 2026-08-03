@@ -60,7 +60,14 @@ public class TypeOfFunctionFactory implements FunctionFactory {
             if (argType == UNDEFINED) {
                 throw SqlException.$(position, "bind variables are not supported");
             }
-            return isNull(argType) ? NULL : TYPE_NAMES.get(argType);
+            if (isNull(argType)) {
+                return NULL;
+            }
+            if (isDecimal(argType)) {
+                // there are thousands of DECIMAL(p,s) types, resolve the name on demand
+                return new StrConstant(nameOf(argType));
+            }
+            return TYPE_NAMES.get(argType);
         }
         throw SqlException.$(position, "exactly one argument expected");
     }
