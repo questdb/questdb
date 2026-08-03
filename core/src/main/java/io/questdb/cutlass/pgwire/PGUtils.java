@@ -30,6 +30,9 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
@@ -47,6 +50,9 @@ class PGUtils {
     private static final int MAX_GEOINT_TEXT_LEN = 32;
     private static final int MAX_GEOLONG_TEXT_LEN = 64;
     private static final int MAX_GEOSHORT_TEXT_LEN = 16;
+    // "('<timestamp>', '<timestamp>')": two quoted timestamps (31 chars each, see MAX_TIMESTAMP_TEXT_LEN)
+    // plus the brackets and the separator. A "null" bound and a raw long bound are both shorter than that.
+    private static final int MAX_INTERVAL_TEXT_LEN = 2 * (31 + 2) + 4;
     private static final int MAX_INT_TEXT_LEN = String.valueOf(Integer.MIN_VALUE).length();
     private static final int MAX_IPv4_TEXT_LEN = 15; // "255.255.255.255"
     private static final int MAX_LONG256_TEXT_LEN = 66; // "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
@@ -144,9 +150,56 @@ class PGUtils {
                 int vcResumePoint = Math.max(0, resumePoint);
                 int vcRemaining = vcValue.size() - vcResumePoint;
                 return resumePoint == -1 ? Integer.BYTES + vcRemaining : vcRemaining;
+            case ColumnType.ARRAY_STRING:
+                // ARRAY_STRING travels the wire as a STRING, see outRecord()
             case ColumnType.STRING:
                 final CharSequence strValue = record.getStrA(columnIndex);
                 return strValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(strValue);
+            case ColumnType.DECIMAL8:
+                final byte dec8Value = record.getDecimal8(columnIndex);
+                return dec8Value == Decimals.DECIMAL8_NULL
+                        ? Integer.BYTES
+                        : decimalBinSize(topDigitPow(Math.abs((long) dec8Value), columnType), columnType);
+            case ColumnType.DECIMAL16:
+                final short dec16Value = record.getDecimal16(columnIndex);
+                return dec16Value == Decimals.DECIMAL16_NULL
+                        ? Integer.BYTES
+                        : decimalBinSize(topDigitPow(Math.abs((long) dec16Value), columnType), columnType);
+            case ColumnType.DECIMAL32:
+                final int dec32Value = record.getDecimal32(columnIndex);
+                return dec32Value == Decimals.DECIMAL32_NULL
+                        ? Integer.BYTES
+                        : decimalBinSize(topDigitPow(Math.abs((long) dec32Value), columnType), columnType);
+            case ColumnType.DECIMAL64:
+                final long dec64Value = record.getDecimal64(columnIndex);
+                return dec64Value == Decimals.DECIMAL64_NULL
+                        ? Integer.BYTES
+                        : decimalBinSize(topDigitPow(Math.abs(dec64Value), columnType), columnType);
+            case ColumnType.DECIMAL128:
+                final Decimal128 dec128Value = pipelineEntry.binSizeDecimal128;
+                record.getDecimal128(columnIndex, dec128Value);
+                if (dec128Value.isNull()) {
+                    return Integer.BYTES;
+                }
+                if (dec128Value.isNegative()) {
+                    // getDigitAtPowerOfTen() requires a positive value, and outColBinDecimal() negates too
+                    dec128Value.negate();
+                }
+                return decimalBinSize(topDigitPow(dec128Value, columnType), columnType);
+            case ColumnType.DECIMAL256:
+                final Decimal256 dec256Value = pipelineEntry.binSizeDecimal256;
+                record.getDecimal256(columnIndex, dec256Value);
+                if (dec256Value.isNull()) {
+                    return Integer.BYTES;
+                }
+                if (dec256Value.isNegative()) {
+                    dec256Value.negate();
+                }
+                return decimalBinSize(topDigitPow(dec256Value, columnType), columnType);
+            case ColumnType.INTERVAL:
+                // outColInterval() renders the interval as text, so its length is only known once it
+                // has been rendered. Bail out and let the caller re-send the whole record after a flush.
+                return -1;
             case ColumnType.SYMBOL:
                 final CharSequence symValue = record.getSymA(columnIndex);
                 return symValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(symValue);
@@ -240,11 +293,17 @@ class PGUtils {
                 final Utf8Sequence vcValue = record.getVarcharA(columnIndex);
                 yield vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();
             }
-            case ColumnType.STRING -> {
+            case ColumnType.ARRAY_STRING, ColumnType.STRING -> {
                 final CharSequence strValue = record.getStrA(columnIndex);
                 // take a rough upper estimate based on the string length
                 yield strValue == null ? Integer.BYTES : Integer.BYTES + 3L * strValue.length();
             }
+            case ColumnType.INTERVAL -> Integer.BYTES + MAX_INTERVAL_TEXT_LEN;
+            // the sign, a possible leading zero, the decimal point and at most precision + 1 digits,
+            // see Decimal64.toSink() and its Decimal128 / Decimal256 counterparts
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32,
+                 ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
+                    Integer.BYTES + Decimals.getDecimalTagPrecision(typeTag) + 4;
             case ColumnType.SYMBOL -> {
                 final CharSequence symValue = record.getSymA(columnIndex);
                 // take a rough upper estimate based on the string length
@@ -300,6 +359,27 @@ class PGUtils {
         return count;
     }
 
+    /**
+     * Mirrors {@link PGPipelineEntry}'s {@code outColBinDecimal()}: a 4-byte length prefix, the 8-byte
+     * NUMERIC header (ndigits, weight, sign, dscale) and 2 bytes per base-10000 digit group. The groups
+     * align on the decimal point; the encoder skips the leading all-zero ones but writes the trailing
+     * ones, so the group count follows from the position of the most significant non-zero digit.
+     *
+     * @param topDigitPow power of ten of the most significant non-zero digit, -1 for a zero value
+     */
+    private static int decimalBinSize(int topDigitPow, int columnType) {
+        final int headerSize = Integer.BYTES + 4 * Short.BYTES;
+        if (topDigitPow < 0) {
+            // the encoder returns right after the header, leaving ndigits at zero
+            return headerSize;
+        }
+        final int scale = ColumnType.getDecimalScale(columnType);
+        final int groupCount = topDigitPow >= scale
+                ? (topDigitPow - scale) / 4 + 1 + (scale + 3) / 4 // whole part groups plus every fraction group
+                : (scale + 3) / 4 - (scale - topDigitPow - 1) / 4; // purely fractional, leading groups dropped
+        return headerSize + groupCount * Short.BYTES;
+    }
+
     private static int geoHashBytes(long value, int size) {
         if (value == GeoHashes.NULL) {
             return Integer.BYTES;
@@ -308,5 +388,48 @@ class PGUtils {
             // chars or bits
             return Integer.BYTES + size;
         }
+    }
+
+    /**
+     * Returns the power of ten of the most significant non-zero digit of the given non-null decimal,
+     * or -1 when the decimal is zero. The result is clamped to {@code precision - 1}, which is what the
+     * encoder sees: it never inspects a higher digit, and {@code getDigitAtPowerOfTen()} saturates at 9
+     * for a value that overflows the declared precision.
+     */
+    private static int topDigitPow(Decimal128 value, int columnType) {
+        if (value.isZero()) {
+            return -1;
+        }
+        for (int pow = ColumnType.getDecimalPrecision(columnType) - 1; pow > 0; pow--) {
+            if (value.getDigitAtPowerOfTen(pow) != 0) {
+                return pow;
+            }
+        }
+        return 0;
+    }
+
+    private static int topDigitPow(Decimal256 value, int columnType) {
+        if (value.isZero()) {
+            return -1;
+        }
+        for (int pow = ColumnType.getDecimalPrecision(columnType) - 1; pow > 0; pow--) {
+            if (value.getDigitAtPowerOfTen(pow) != 0) {
+                return pow;
+            }
+        }
+        return 0;
+    }
+
+    private static int topDigitPow(long absUnscaledValue, int columnType) {
+        if (absUnscaledValue == 0) {
+            return -1;
+        }
+        final int maxPow = ColumnType.getDecimalPrecision(columnType) - 1;
+        int pow = 0;
+        while (pow < maxPow && absUnscaledValue >= 10) {
+            absUnscaledValue /= 10;
+            pow++;
+        }
+        return pow;
     }
 }

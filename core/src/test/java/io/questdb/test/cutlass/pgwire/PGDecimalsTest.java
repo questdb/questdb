@@ -228,6 +228,44 @@ public class PGDecimalsTest extends BasePGTest {
     }
 
     @Test
+    public void testDecimalAcrossSendBufferBoundaryBinary() throws Exception {
+        // The send buffer holds only a handful of rows, so some row is guaranteed to run out of
+        // space mid-record. That drives PGPipelineEntry.outRecord into its
+        // NoSpaceLeftInResponseBufferException handler, which asks PGUtils.calculateColumnBinSize
+        // for the size of the record tail. PGUtils has no DECIMAL branch, so it falls through to
+        // "assert false : unsupported type: <tag>" and the client sees "unsupported type: 31"
+        // (ColumnType.DECIMAL64) instead of the result set.
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute(
+                        """
+                                CREATE TABLE tango AS (
+                                  SELECT
+                                    (x * 1_000_000)::timestamp AS ts,
+                                    CAST(x || '.1234' AS decimal(18, 4)) AS dec
+                                  FROM long_sequence(1000)
+                                ) TIMESTAMP(ts) PARTITION BY DAY"""
+                );
+            }
+            // run it twice: pgjdbc only switches the result set to binary once the statement
+            // is server-prepared, so the first pass may still travel as text
+            for (int i = 0; i < 2; i++) {
+                int rowCount = 0;
+                try (
+                        PreparedStatement statement = connection.prepareStatement("SELECT ts, dec FROM tango");
+                        ResultSet rs = statement.executeQuery()
+                ) {
+                    while (rs.next()) {
+                        rowCount++;
+                        Assert.assertEquals(new BigDecimal(rowCount + ".1234"), rs.getBigDecimal(2));
+                    }
+                }
+                Assert.assertEquals(1000, rowCount);
+            }
+        }, () -> sendBufferSize = 1024);
+    }
+
+    @Test
     public void testDecimalBind() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
@@ -345,6 +383,26 @@ public class PGDecimalsTest extends BasePGTest {
         });
     }
 
+    @Test
+    public void testDecimalsAcrossSendBufferBoundaryBinary() throws Exception {
+        // PGUtils.calculateColumnBinSize() has to report the exact number of bytes outColBinDecimal()
+        // will write, because calculateRecordTailSize() patches that number into the DataRow length
+        // before the tail is serialized. These values cover the cases the base-10000 group count turns
+        // on: zero (no groups at all), NULL, a value small enough to drop the leading fraction groups,
+        // a value with trailing zero groups (which are written, unlike the leading ones), a negative
+        // one and the widest value the precision allows.
+        assertDecimalsSurviveSendBufferBoundary(2, 1, null, "0", "9.9", "-9.9", "0.1");
+        assertDecimalsSurviveSendBufferBoundary(4, 0, null, "0", "9999", "-9999", "1");
+        assertDecimalsSurviveSendBufferBoundary(9, 4, null, "0", "99999.9999", "-123.0000", "0.0001");
+        assertDecimalsSurviveSendBufferBoundary(18, 4, null, "0", "99999999999999.9999", "-123.0000", "0.0001");
+        // the largest scale the precision leaves room for, i.e. a single whole-part digit
+        assertDecimalsSurviveSendBufferBoundary(19, 18, null, "0", "0.999999999999999999", "-0.000000000000000001");
+        assertDecimalsSurviveSendBufferBoundary(38, 6, null, "0", "99999999999999999999999999999999.999999", "-1.000000", "0.000001");
+        assertDecimalsSurviveSendBufferBoundary(76, 8, null, "0",
+                "99999999999999999999999999999999999999999999999999999999999999999999.99999999",
+                "-1.00000000", "0.00000001");
+    }
+
     // Test fractional values
     @Test
     public void testFractionalValues() throws Exception {
@@ -456,6 +514,55 @@ public class PGDecimalsTest extends BasePGTest {
                 }
             }
         });
+    }
+
+    /**
+     * Fills a table with the given values, cycling through them, and reads it back over a send buffer
+     * far too small to hold the whole result set. Every buffer boundary lands mid-record and drives
+     * PGPipelineEntry.outRecord() into its NoSpaceLeftInResponseBufferException handler, which is the
+     * only caller of the PGUtils size calculators.
+     */
+    private void assertDecimalsSurviveSendBufferBoundary(int precision, int scale, String... values) throws Exception {
+        final int rowCount = 200;
+        final StringBuilder insert = new StringBuilder("INSERT INTO tango VALUES ");
+        for (int i = 0; i < rowCount; i++) {
+            final String value = values[i % values.length];
+            insert.append(i > 0 ? ",(" : "(").append(i * 1_000_000L).append("::timestamp,");
+            if (value == null) {
+                insert.append("NULL");
+            } else {
+                insert.append("CAST('").append(value).append("' AS decimal(").append(precision).append(", ").append(scale).append("))");
+            }
+            insert.append(')');
+        }
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute(String.format(
+                        "CREATE TABLE tango (ts TIMESTAMP, dec decimal(%d, %d)) TIMESTAMP(ts) PARTITION BY YEAR",
+                        precision,
+                        scale
+                ));
+                statement.execute(insert.toString());
+            }
+            drainWalQueue();
+            int readCount = 0;
+            try (
+                    PreparedStatement statement = connection.prepareStatement("SELECT ts, dec FROM tango");
+                    ResultSet rs = statement.executeQuery()
+            ) {
+                while (rs.next()) {
+                    final String expected = values[readCount % values.length];
+                    final BigDecimal actual = rs.getBigDecimal(2);
+                    if (expected == null) {
+                        Assert.assertNull(actual);
+                    } else {
+                        Assert.assertEquals(expected, 0, new BigDecimal(expected).compareTo(actual));
+                    }
+                    readCount++;
+                }
+            }
+            Assert.assertEquals(rowCount, readCount);
+        }, () -> sendBufferSize = 512);
     }
 
     private void assertNull(int precision, int scale) throws Exception {

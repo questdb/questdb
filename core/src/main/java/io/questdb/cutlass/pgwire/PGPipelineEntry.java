@@ -174,6 +174,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final IntList pgResultSetColumnTypes;
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
+    // scratch decimals PGUtils.calculateColumnBinSize() reads a DECIMAL128 / DECIMAL256 column into.
+    // They cannot share sqlExecutionContext.getDecimal128() / getDecimal256() with outColBinDecimal():
+    // that encoder consumes the value it is given, and the size calculation runs while a partially
+    // written record still holds the encoder's scratch.
+    final Decimal128 binSizeDecimal128 = new Decimal128();
+    final Decimal256 binSizeDecimal256 = new Decimal256();
     boolean isCopy;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;

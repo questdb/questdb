@@ -24,7 +24,10 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
+import org.postgresql.util.PSQLException;
 
 import java.sql.PreparedStatement;
 
@@ -42,5 +45,24 @@ public class IntervalPGTest extends BasePGTest {
                 );
             }
         });
+    }
+
+    @Test
+    public void testIntervalTooLargeForSendBuffer() throws Exception {
+        // An INTERVAL renders as text, so its length is only known once rendered and the send buffer
+        // size calculators cannot predict it. A row that outgrows the whole buffer has to come back as
+        // the actionable "not enough space" message, not as an internal "unsupported type: 39".
+        final StringBuilder columns = new StringBuilder();
+        for (int i = 0; i < 10; i++) {
+            columns.append(i > 0 ? ", " : "").append("interval(100, 200) i").append(i);
+        }
+        assertWithPgServer(Mode.EXTENDED, false, -1, (connection, binary, mode, port) -> {
+            try (PreparedStatement ps = connection.prepareStatement("SELECT " + columns + " FROM long_sequence(5)")) {
+                ps.executeQuery();
+                Assert.fail("expected the server to reject a record larger than the send buffer");
+            } catch (PSQLException e) {
+                TestUtils.assertContains(e.getMessage(), "not enough space in send buffer");
+            }
+        }, () -> sendBufferSize = 512);
     }
 }
