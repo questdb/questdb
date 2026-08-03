@@ -197,16 +197,16 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
     /**
      * Starts one window root.
      *
-     * @param oldStateRootRef  the boundary's predecessor state root. A reference this
-     *                         build is not {@link #isCompatiblePredecessor compatible}
-     *                         with is treated as absent: the tree is built from empty
-     *                         and every live key is imaged, which is what conversion
-     *                         from a legacy predecessor or across a manifest change
-     *                         means
+     * @param oldStateRootRef    the boundary's predecessor state root. A reference this
+     *                           build is not {@link #isCompatiblePredecessor compatible}
+     *                           with is treated as absent: the tree is built from empty
+     *                           and every live key is imaged, which is what conversion
+     *                           from a legacy predecessor or across a manifest change
+     *                           means
      * @param isCompleteSnapshot whether the puts that follow are the whole truth, so
-     *                         {@link #build} may remove by omission
-     * @param outputKeys       the repair's key domain, narrowing that removal to the
-     *                         keys its replay describes; null for a whole-truth build
+     *                           {@link #build} may remove by omission
+     * @param outputKeys         the repair's key domain, narrowing that removal to the
+     *                           keys its replay describes; null for a whole-truth build
      */
     public void of(
             @Transient @NotNull Path checkpointsDir,
