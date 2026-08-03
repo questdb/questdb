@@ -108,6 +108,32 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAGroupWiderThanOneRangeRingEntryStillFuses() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wide (ts timestamp, sym symbol, a double, b double, c double, d double) "
+                    + "timestamp(ts) partition by day wal");
+            // Four (sum, nonNullCount) components beside the anchor is 72 bytes, past what
+            // a RANGE ring entry inlines at its widest and past the budget the first fused
+            // release carried. What admits it is the measurement behind
+            // MAX_INLINE_LEAF_STATE_BYTES: inside the budget a wider entry costs linearly
+            // more and nothing else changes, while declining the group sends every
+            // function back to a root of its own and costs several times the seal.
+            assertPlan(
+                    "select ts, sym, sum(a) over w as sa, sum(b) over w as sb, "
+                            + "sum(c) over w as sc, sum(d) over w as sd from wide "
+                            + "window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(4, plan.getComponentCount());
+                        Assert.assertEquals(4, plan.getProjectionCount());
+                        Assert.assertEquals(0, plan.getResidualFunctions().size());
+                        Assert.assertEquals(ANCHOR_BYTES + 4 * SUM_STATE_BYTES, plan.getTotalInlineStateBytes());
+                    }
+            );
+        });
+    }
+
+    @Test
     public void testASecondFusedGroupIsUnreachableFromTheLiveViewSyntax() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();
@@ -794,15 +820,18 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
 
     @Test
     public void testLeafBudgetDeclinesAGroupThatDoesNotFit() {
-        // Three (sum, nonNullCount) components plus the anchor is 56 bytes and fits; a
-        // fourth takes it to 72 and the whole group falls back, because a window root is
-        // complete or absent and the format has no combined overflow page yet.
-        Assert.assertNotNull(buildSumGroup(3));
+        // The budget is derived from the constant rather than written out, so a later
+        // measurement can move it without rewriting the case - what the case is about is
+        // that the last group inside it fuses and the first group past it declines whole,
+        // because a window root is complete or absent and the format has no combined
+        // overflow page yet.
+        final int widest = (LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES - ANCHOR_BYTES) / SUM_STATE_BYTES;
+        Assert.assertNotNull(buildSumGroup(widest));
         Assert.assertEquals(
-                ANCHOR_BYTES + 3 * SUM_STATE_BYTES,
-                buildSumGroup(3).getTotalInlineStateBytes()
+                ANCHOR_BYTES + widest * SUM_STATE_BYTES,
+                buildSumGroup(widest).getTotalInlineStateBytes()
         );
-        Assert.assertNull(buildSumGroup(4));
+        Assert.assertNull(buildSumGroup(widest + 1));
     }
 
     @Test

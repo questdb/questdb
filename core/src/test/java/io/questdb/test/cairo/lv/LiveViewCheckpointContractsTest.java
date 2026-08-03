@@ -138,8 +138,8 @@ public class LiveViewCheckpointContractsTest {
      */
     @Test
     public void testInlineStateBudgetsAreFrozen() {
-        Assert.assertEquals(32, LiveViewCheckpointContracts.MAX_INLINE_COMPONENT_STATE_BYTES);
-        Assert.assertEquals(64, LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES);
+        Assert.assertEquals(64, LiveViewCheckpointContracts.MAX_INLINE_COMPONENT_STATE_BYTES);
+        Assert.assertEquals(256, LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES);
         // One component can never be wider than the whole leaf it would sit in.
         Assert.assertTrue(
                 LiveViewCheckpointContracts.MAX_INLINE_COMPONENT_STATE_BYTES
