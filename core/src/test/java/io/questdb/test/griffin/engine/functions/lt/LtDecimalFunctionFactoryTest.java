@@ -40,7 +40,11 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.math.BigDecimal;
+
 public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
+    // widest precision of each decimal storage width
+    private static final int[] WIDTH_PRECISIONS = {2, 4, 9, 18, 38, 76};
     private static final LtDecimalFunctionFactory factory = new LtDecimalFunctionFactory();
     private final ObjList<Function> args = new ObjList<>();
 
@@ -947,6 +951,56 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testLtScaleAlignmentAcrossWidths() throws Exception {
+        for (int leftPrecision : WIDTH_PRECISIONS) {
+            for (int rightPrecision : WIDTH_PRECISIONS) {
+                assertOrderingAtWidths(leftPrecision, rightPrecision);
+            }
+        }
+    }
+
+    @Test
+    public void testLtScaleAlignmentMaxPrecisionOrderBy() throws Exception {
+        execute("create table lt_order (a decimal(76,0), b decimal(76,1))");
+        execute("insert into lt_order values " +
+                "(1m, 1.0m)," +
+                "(" + nines(76) + "m, " + nines(75) + ".9m)," +
+                "(-" + nines(76) + "m, -" + nines(75) + ".9m)");
+        assertQuery("select a from lt_order order by a")
+                .expectSize()
+                .returns("a\n" +
+                        "-" + nines(76) + "\n" +
+                        "1\n" +
+                        nines(76) + "\n");
+        assertQuery("select a from lt_order where a < b order by a")
+                .returns("a\n" +
+                        "-" + nines(76) + "\n");
+    }
+
+    @Test
+    public void testLtScaleAlignmentNulls() throws Exception {
+        execute("create table lt_nulls (id int, a decimal(18,0), b decimal(18,1))");
+        execute("insert into lt_nulls values " +
+                "(1, null, " + nines(17) + ".9m)," +
+                "(2, " + nines(18) + "m, null)," +
+                "(3, null, null)");
+        assertQuery("select a < b lt, a <= b le, a > b gt, a >= b ge from lt_nulls order by id")
+                .expectSize()
+                .returns("lt\tle\tgt\tge\n" +
+                        "false\tfalse\tfalse\tfalse\n" +
+                        "false\tfalse\tfalse\tfalse\n" +
+                        "false\ttrue\tfalse\ttrue\n");
+    }
+
+    private static String nines(int count) {
+        final StringBuilder sb = new StringBuilder(count);
+        for (int i = 0; i < count; i++) {
+            sb.append('9');
+        }
+        return sb.toString();
+    }
+
     private void assertNegated(Function left, Function right, boolean expected) {
         args.clear();
         args.add(left);
@@ -955,6 +1009,40 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
             ((NegatableBooleanFunction) func).setNegated();
             Assert.assertEquals(expected, func.getBool(null));
         }
+    }
+
+    private void assertOrderingAtWidths(int leftPrecision, int rightPrecision) throws Exception {
+        final String table = "lt_cmp_" + leftPrecision + "_" + rightPrecision;
+        // a holds max(leftPrecision) integer digits, b one fractional digit: aligning them needs
+        // leftPrecision + 1 digits, which no longer fits the operand width
+        final String maxA = nines(leftPrecision);
+        final String maxB = nines(rightPrecision - 1) + ".9";
+        execute("create table " + table + " (id int, a decimal(" + leftPrecision + ",0), b decimal(" + rightPrecision + ",1))");
+        execute("insert into " + table + " values " +
+                "(1, " + maxA + "m, " + maxB + "m)," +
+                "(2, -" + maxA + "m, -" + maxB + "m)," +
+                "(3, " + maxA + "m, -" + maxB + "m)," +
+                "(4, -" + maxA + "m, " + maxB + "m)," +
+                "(5, 1m, 1.0m)");
+
+        final BigDecimal[][] rows = {
+                {new BigDecimal(maxA), new BigDecimal(maxB)},
+                {new BigDecimal(maxA).negate(), new BigDecimal(maxB).negate()},
+                {new BigDecimal(maxA), new BigDecimal(maxB).negate()},
+                {new BigDecimal(maxA).negate(), new BigDecimal(maxB)},
+                {BigDecimal.ONE, BigDecimal.ONE}
+        };
+        final StringBuilder expected = new StringBuilder("lt\tle\tgt\tge\n");
+        for (BigDecimal[] row : rows) {
+            final int cmp = row[0].compareTo(row[1]);
+            expected.append(cmp < 0).append('\t')
+                    .append(cmp <= 0).append('\t')
+                    .append(cmp > 0).append('\t')
+                    .append(cmp >= 0).append('\n');
+        }
+        assertQuery("select a < b lt, a <= b le, a > b gt, a >= b ge from " + table + " order by id")
+                .expectSize()
+                .returns(expected);
     }
 
     private void createFunctionAndAssert(Function left, Function right, boolean expected) {
