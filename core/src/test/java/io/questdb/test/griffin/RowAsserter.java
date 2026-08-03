@@ -101,6 +101,11 @@ public class RowAsserter implements TableWriter.Row {
     }
 
     @Override
+    public void putDecimalVarchar(int columnIndex, Utf8Sequence decimalValue) {
+        Assert.fail("Unexpected call to putDecimalVarchar");
+    }
+
+    @Override
     public void putDouble(int columnIndex, double value) {
         Assert.fail("Unexpected call to putDouble");
     }

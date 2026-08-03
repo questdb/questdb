@@ -557,8 +557,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
                     row.putGeoVarchar(toIndex, value);
             case ColumnType.LONG256 -> row.putLong256Utf8(toIndex, value);
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
-                    RecordToRowCopierUtils.transferVarcharToDecimalCol(row, toIndex, value);
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> row.putDecimalVarchar(toIndex, value);
             default -> throw new IllegalStateException("Unexpected value: " + toTypeTag);
         }
     }
