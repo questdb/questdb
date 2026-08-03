@@ -30,7 +30,9 @@ import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.std.Decimal256;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -44,12 +46,21 @@ public class LineDecimalTargetColumnTypeTest extends AbstractBootstrapTest {
     // zero passes the precision and scale bits that non-decimal types happen to carry, so it reaches the store
     private static final Decimal256 SNEAKY = Decimal256.fromLong(0, 0);
     private static final Decimal256 VALID = Decimal256.fromLong(12345, 2);
+    private static final LogCapture capture = new LogCapture();
 
     @Before
     public void setUp() {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+        capture.start();
+    }
+
+    @After
+    @Override
+    public void tearDown() throws Exception {
+        capture.stop();
+        super.tearDown();
     }
 
     @Test
@@ -75,19 +86,56 @@ public class LineDecimalTargetColumnTypeTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testTcpDecimalIntoNewColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startServer()) {
+                createTable(serverMain, "tcp_new_col", true);
+
+                assertNewColumnRejected(serverMain, "tcp_new_col", "zero", SNEAKY);
+                assertNewColumnRejected(serverMain, "tcp_new_col", "scaled", VALID);
+                assertColumnsUnchanged(serverMain, "tcp_new_col");
+                serverMain.assertSql("SELECT count() FROM tcp_new_col", "count\n0\n");
+
+                sendOverTcp(serverMain, "tcp_new_col", "dec", VALID);
+                serverMain.awaitTxn("tcp_new_col", 1);
+                serverMain.assertSql("SELECT dec FROM tcp_new_col", "dec\n123.45\n");
+            }
+        });
+    }
+
+    @Test
     public void testTcpDecimalIntoNonDecimalColumn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startServer()) {
                 createTable(serverMain, "tcp_guard", true);
 
-                sendOverTcp(serverMain, "tcp_guard", "g", SNEAKY);
-                sendOverTcp(serverMain, "tcp_guard", "l", SNEAKY);
-                sendOverTcp(serverMain, "tcp_guard", "d", SNEAKY);
-                sendOverTcp(serverMain, "tcp_guard", "arr", SNEAKY);
-                sendOverTcp(serverMain, "tcp_guard", "dec", VALID);
+                assertTcpRejected(serverMain, "tcp_guard", "g", "GEOHASH(1c)");
+                assertTcpRejected(serverMain, "tcp_guard", "l", "LONG");
+                assertTcpRejected(serverMain, "tcp_guard", "d", "DOUBLE");
+                assertTcpRejected(serverMain, "tcp_guard", "arr", "DOUBLE[]");
 
+                sendOverTcp(serverMain, "tcp_guard", "dec", VALID);
                 serverMain.awaitTxn("tcp_guard", 1);
-                serverMain.assertSql("select dec from tcp_guard", "dec\n123.45\n");
+                serverMain.assertSql("SELECT count() FROM tcp_guard", "count\n1\n");
+                serverMain.assertSql("SELECT dec FROM tcp_guard", "dec\n123.45\n");
+            }
+        });
+    }
+
+    @Test
+    public void testTcpNonWalDecimalIntoNewColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startServer()) {
+                createTable(serverMain, "tcp_new_col_nowal", false);
+
+                assertNewColumnRejected(serverMain, "tcp_new_col_nowal", "zero", SNEAKY);
+                assertNewColumnRejected(serverMain, "tcp_new_col_nowal", "scaled", VALID);
+                assertColumnsUnchanged(serverMain, "tcp_new_col_nowal");
+                serverMain.assertSql("SELECT count() FROM tcp_new_col_nowal", "count\n0\n");
+
+                sendOverTcp(serverMain, "tcp_new_col_nowal", "dec", VALID);
+                TestUtils.assertEventually(() -> serverMain.assertSql("SELECT count() FROM tcp_new_col_nowal", "count\n1\n"));
+                serverMain.assertSql("SELECT dec FROM tcp_new_col_nowal", "dec\n123.45\n");
             }
         });
     }
@@ -98,15 +146,32 @@ public class LineDecimalTargetColumnTypeTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startServer()) {
                 createTable(serverMain, "tcp_guard_nowal", false);
 
-                sendOverTcp(serverMain, "tcp_guard_nowal", "g", SNEAKY);
-                sendOverTcp(serverMain, "tcp_guard_nowal", "l", SNEAKY);
-                sendOverTcp(serverMain, "tcp_guard_nowal", "d", SNEAKY);
-                sendOverTcp(serverMain, "tcp_guard_nowal", "arr", SNEAKY);
-                sendOverTcp(serverMain, "tcp_guard_nowal", "dec", VALID);
+                assertTcpRejected(serverMain, "tcp_guard_nowal", "g", "GEOHASH(1c)");
+                assertTcpRejected(serverMain, "tcp_guard_nowal", "l", "LONG");
+                assertTcpRejected(serverMain, "tcp_guard_nowal", "d", "DOUBLE");
+                assertTcpRejected(serverMain, "tcp_guard_nowal", "arr", "DOUBLE[]");
 
-                TestUtils.assertEventually(() -> serverMain.assertSql("select dec from tcp_guard_nowal", "dec\n123.45\n"));
+                sendOverTcp(serverMain, "tcp_guard_nowal", "dec", VALID);
+                TestUtils.assertEventually(() -> serverMain.assertSql("SELECT count() FROM tcp_guard_nowal", "count\n1\n"));
+                serverMain.assertSql("SELECT dec FROM tcp_guard_nowal", "dec\n123.45\n");
             }
         });
+    }
+
+    /**
+     * A decimal that ILP refuses must leave no trace: an auto-added column of a broken type would
+     * survive the rejected row and poison every later write to that table.
+     */
+    private static void assertColumnsUnchanged(TestServerMain serverMain, String tableName) {
+        serverMain.assertSql("SELECT \"column\", type FROM table_columns('" + tableName + "')", """
+                column\ttype
+                g\tGEOHASH(1c)
+                l\tLONG
+                d\tDOUBLE
+                arr\tDOUBLE[]
+                dec\tDECIMAL(10,2)
+                ts\tTIMESTAMP
+                """);
     }
 
     private static void assertHttpRejected(TestServerMain serverMain, String tableName, String columnName, String columnTypeName) {
@@ -117,6 +182,28 @@ public class LineDecimalTargetColumnTypeTest extends AbstractBootstrapTest {
         } catch (LineSenderException e) {
             TestUtils.assertContains(e.getMessage(), "cast error from protocol type: DECIMAL to column type: " + columnTypeName);
         }
+    }
+
+    private static void assertNewColumnRejected(TestServerMain serverMain, String tableName, String columnName, Decimal256 value) {
+        sendOverTcp(serverMain, tableName, columnName, value);
+        awaitLogged("decimal columns cannot be created automatically [table=" + tableName + ", columnName=" + columnName + "]");
+    }
+
+    private static void assertTcpRejected(TestServerMain serverMain, String tableName, String columnName, String columnTypeName) {
+        sendOverTcp(serverMain, tableName, columnName, SNEAKY);
+        awaitLogged("table: " + tableName + ", column: " + columnName
+                + "; cast error from protocol type: DECIMAL to column type: " + columnTypeName);
+    }
+
+    /**
+     * ILP TCP reports errors by disconnecting, so the server log carries the rejection. Waiting for the
+     * message also sequences it ahead of every later row, which stops a wrongly accepted row from
+     * remaining in flight past the row-count assertions. waitFor() can return without a match on
+     * timeout, so assertLogged() carries the assertion.
+     */
+    private static void awaitLogged(String message) {
+        capture.waitFor(message);
+        capture.assertLogged(message);
     }
 
     private static void createTable(TestServerMain serverMain, String tableName, boolean wal) {
@@ -133,9 +220,6 @@ public class LineDecimalTargetColumnTypeTest extends AbstractBootstrapTest {
                 .build();
     }
 
-    /**
-     * ILP TCP reports errors by disconnecting, so rejection is asserted by the row's absence.
-     */
     private static void sendOverTcp(TestServerMain serverMain, String tableName, String columnName, Decimal256 value) {
         try (Sender sender = Sender.builder(Sender.Transport.TCP)
                 .address("localhost")

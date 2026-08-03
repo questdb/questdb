@@ -49,7 +49,7 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 
 public class LineTcpEventBuffer {
     // size of a decimal entity, excluding the leading entity type byte
-    private static final int DECIMAL_VALUE_LENGTH = Integer.BYTES + Byte.BYTES + Decimal256.BYTES;
+    static final int DECIMAL_VALUE_LENGTH = Integer.BYTES + Byte.BYTES + Decimal256.BYTES;
     private final BorrowedArray borrowedDirectArrayView = new BorrowedArray();
     private final long bufLo;
     private final long bufSize;
@@ -358,6 +358,8 @@ public class LineTcpEventBuffer {
             case LineTcpParser.ENTITY_TYPE_DOUBLE -> Double.BYTES;
             case LineTcpParser.ENTITY_TYPE_UUID -> Long128.BYTES;
             case LineTcpParser.ENTITY_TYPE_DECIMAL -> DECIMAL_VALUE_LENGTH;
+            // ascii flag, then the utf8 size, then the utf8 payload
+            case LineTcpParser.ENTITY_TYPE_VARCHAR -> Byte.BYTES + Integer.BYTES + readInt(offset + Byte.BYTES);
             case LineTcpParser.ENTITY_TYPE_ARRAY -> readInt(offset);
             case ENTITY_TYPE_NULL -> 0;
             default -> throw new UnsupportedOperationException("entityType " + entityType + " is not implemented!");
