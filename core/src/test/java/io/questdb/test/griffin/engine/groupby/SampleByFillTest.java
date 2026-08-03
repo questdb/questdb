@@ -198,6 +198,23 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillConstCharValueRejectedAgainstDecimalTarget() throws Exception {
+        assertMemoryLeak(() -> {
+            // CHAR carries no decimal digits, so no CHAR -> DECIMAL conversion exists. The upfront
+            // type check reports it against the fill literal instead of letting
+            // CharFunction.getDecimal64 raise UnsupportedOperationException per filled row.
+            execute("CREATE TABLE x (val DECIMAL(10, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.00::DECIMAL(10,2), '2024-01-01T00:00:00.000000Z')," +
+                    "(3.00::DECIMAL(10,2), '2024-01-01T02:00:00.000000Z')");
+            String sql = "SELECT first(val), ts FROM x SAMPLE BY 1h FILL('a') ALIGN TO CALENDAR";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("'a'"), "fill value of type CHAR cannot fill column of type DECIMAL(10,2)");
+        });
+    }
+
+    @Test
     public void testFillConstDecimal128Value() throws Exception {
         assertMemoryLeak(() -> {
             // Non-keyed FILL with a DECIMAL128 constant covers
