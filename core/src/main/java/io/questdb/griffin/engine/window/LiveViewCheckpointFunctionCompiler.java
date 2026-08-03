@@ -867,12 +867,17 @@ public final class LiveViewCheckpointFunctionCompiler {
      * Resolves {@code argument} to the base column it reads, or {@code -1} when it is
      * not a direct compiled column reference of that column's own type.
      * <p>
-     * The type check is not redundant with the {@code instanceof}. A signature match
-     * can hand a narrower column straight to a wider factory without wrapping it in a
-     * cast - a LONG column reaching {@code count(D)}, say - and the contribution
-     * predicate then belongs to the factory's type rather than the column's. Requiring
-     * the two to agree keeps the argument key's type the one the runtime actually
-     * evaluates the predicate against.
+     * The type check is not redundant with the {@code instanceof}. It is what keeps the
+     * argument key's type the one the runtime really evaluates the predicate against, so
+     * a column function carrying a type its base column does not have cannot key a
+     * component under the wrong contribution semantics.
+     * <p>
+     * A signature match handing a narrower column straight to a wider factory - a LONG
+     * column reaching {@code sum(D)} and {@code count(D)} - passes both halves, because
+     * no cast wrapper is inserted and the column function is still the column's own
+     * type. Whether that widening is fusible is not this method's answer but
+     * {@link LiveViewAccumulatorDescriptor#contributionKindFor}'s, which names a
+     * predicate only for the types it has been proved over.
      */
     private static int directColumnIndex(@Nullable Function argument, RecordMetadata baseMetadata) {
         if (!(argument instanceof ColumnFunction columnFunction)) {

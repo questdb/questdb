@@ -261,6 +261,62 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnIntegralArgumentSumsAndCountsExactlyTheSameRows() throws Exception {
+        assertMemoryLeak(() -> {
+            // A LONG column reaches sum(D), avg(D) and count(D) by widening, so the
+            // three share one accumulator here as they do over a DOUBLE column. What
+            // the sharing rests on is that the widening carries the null across:
+            // LongFunction.getDouble answers NaN for LONG NULL, so such a row joins
+            // neither the sum nor the counter, and the folded count reads the counter
+            // the sum keeps. The recompute below runs the unfused implementations, so
+            // a predicate that differed between the two would surface as a mismatch.
+            execute("create table tx (created_at timestamp, cod_acct_no symbol, amt_txn long) "
+                    + "timestamp(created_at) partition by hour wal");
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, cod_acct_no, sum(amt_txn) over w as s, "
+                    + "avg(amt_txn) over w as a, count(amt_txn) over w as c "
+                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", 5L);
+                insertAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-2", 7L);
+                insertAccount(job, DAILY_ANCHOR + "09:00:20.000000Z", "acct-1", 11L);
+                insertAccount(job, DAILY_ANCHOR + "09:00:30.000000Z", "acct-1", null);
+                // The largest value a LONG carries beside its null sentinel, so a
+                // widening that confused the two would move the sum and not only the
+                // count.
+                insertAccount(job, DAILY_ANCHOR + "09:00:40.000000Z", "acct-2", Long.MAX_VALUE);
+                // A bucket crossing, so the accumulator is reset in place.
+                insertAccount(job, "2026-01-02T09:00:00.000000Z", "acct-1", 3L);
+
+                final LiveViewWindowStatePlan plan = window().getCheckpointWindowStatePlan();
+                Assert.assertNotNull(plan);
+                Assert.assertEquals("one accumulator serves all three calls", 1, plan.getComponentCount());
+                Assert.assertEquals(3, plan.getProjectionCount());
+                // Keyed by the column's own type: the widening is what the shared
+                // predicate was proved through, so it is part of the identity.
+                Assert.assertEquals(ColumnType.LONG, plan.getComponent(0).getArgumentColumnType());
+                for (int i = 0; i < 3; i++) {
+                    final WindowFunction function = plan.getProjectionFunction(i);
+                    Assert.assertTrue("projection " + i + " must be fused", function.isWindowStateOwned());
+                    Assert.assertFalse(
+                            "a fused projection must never allocate its private map",
+                            function.getPartitionMap().isOpen()
+                    );
+                }
+                assertDerivedViewMatchesRecompute();
+
+                // And the head that seals it restores on its own.
+                final byte[] before = snapshotWindow(window());
+                restoreHead();
+                Assert.assertArrayEquals(before, snapshotWindow(window()));
+                assertDerivedViewMatchesRecompute();
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
     public void testTheComponentCodecWritesExactlyTheContributorsImage() throws Exception {
         assertMemoryLeak(() -> {
             // The claim the fused leaf rests on: what the descriptor packs into the
@@ -622,7 +678,13 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
     }
 
-    private void insertAccount(LiveViewRefreshJob job, String timestamp, String account, Double amount) throws Exception {
+    /**
+     * Appends one row and drives the view to quiescence. The amount is a {@link Number}
+     * rather than a {@code Double} because the amount column's type is a case's to
+     * choose - a DOUBLE for most of them, a LONG for the one that covers widening - and
+     * the literal is written out the same way either way.
+     */
+    private void insertAccount(LiveViewRefreshJob job, String timestamp, String account, Number amount) throws Exception {
         execute("insert into tx values ('" + timestamp + "', '" + account + "', "
                 + (amount == null ? "null" : amount.toString()) + ")");
         drainWalQueue();

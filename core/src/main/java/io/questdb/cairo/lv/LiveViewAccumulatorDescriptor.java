@@ -101,6 +101,11 @@ public final class LiveViewAccumulatorDescriptor {
      * {@code count(double)} uses too, so the three agree on infinities as well as on
      * NULL. Distinct from {@link #CONTRIBUTION_TYPED_NOT_NULL} precisely because a
      * plain null test would admit an infinity a finite-sum accumulator never counted.
+     * <p>
+     * It is not confined to a DOUBLE argument. Every type
+     * {@link #isWidenedToDouble} admits reaches the same factories through the same
+     * {@code getDouble}, so the predicate is the argument type's only through the
+     * widening - which is exactly why the type stays part of the identity.
      */
     public static final int CONTRIBUTION_FINITE_DOUBLE = 1;
     /**
@@ -117,6 +122,12 @@ public final class LiveViewAccumulatorDescriptor {
     /**
      * State {@code [sum: DOUBLE, nonNullCount: LONG]}, contributed by a DOUBLE
      * {@code sum} or {@code avg} over an unbounded partitioned frame.
+     * <p>
+     * "DOUBLE" names the <b>state</b> rather than the argument. There is one
+     * {@code sum(D)} window factory and no integral one, so a BYTE, SHORT, INT, LONG or
+     * FLOAT column reaches it by widening and accumulates into the same two fields; the
+     * argument type still separates the identities, because the widening is what the
+     * contribution predicate is proved through.
      */
     public static final int FAMILY_DOUBLE_SUM_COUNT = 1;
     /**
@@ -125,7 +136,8 @@ public final class LiveViewAccumulatorDescriptor {
      * {@code var_samp} and {@code var_pop} over an unbounded partitioned frame. The four
      * differ only in the arithmetic they read off {@code (m2, nonNullCount)}, so a view
      * naming several of them over one column persists one 24-byte component rather than
-     * one per call.
+     * one per call. Like {@link #FAMILY_DOUBLE_SUM_COUNT} it names its state's type and
+     * not its argument's.
      */
     public static final int FAMILY_DOUBLE_WELFORD = 4;
     /**
@@ -223,16 +235,19 @@ public final class LiveViewAccumulatorDescriptor {
                         : CONTRIBUTION_NONE;
             case FAMILY_DOUBLE_SUM_COUNT:
             case FAMILY_DOUBLE_WELFORD:
-                // sum(D)/avg(D) and the Welford families exist only over DOUBLE. Anything
-                // else reaches the same factory through an implicit cast, which is not a
-                // direct column reference and has already been turned away by the caller.
-                return ColumnType.tagOf(argumentColumnType) == ColumnType.DOUBLE
+                // Those families have one factory each and it takes a DOUBLE, so every
+                // other argument they accept arrives by widening into that DOUBLE.
+                return isWidenedToDouble(argumentColumnType)
                         ? CONTRIBUTION_FINITE_DOUBLE
                         : CONTRIBUTION_NONE;
             case FAMILY_NON_NULL_COUNT:
+                // count() has a factory per argument shape, so this arm is the one that
+                // can name a predicate other than the DOUBLE one - and the type is what
+                // selects between them.
+                if (isWidenedToDouble(argumentColumnType)) {
+                    return CONTRIBUTION_FINITE_DOUBLE;
+                }
                 switch (ColumnType.tagOf(argumentColumnType)) {
-                    case ColumnType.DOUBLE:
-                        return CONTRIBUTION_FINITE_DOUBLE;
                     case ColumnType.SYMBOL:
                     case ColumnType.VARCHAR:
                         return CONTRIBUTION_TYPED_NOT_NULL;
@@ -657,6 +672,56 @@ public final class LiveViewAccumulatorDescriptor {
             value = (value << 8) | (payload[offset + i] & 0xffL);
         }
         return value;
+    }
+
+    /**
+     * Whether a column of {@code columnType} reaches the DOUBLE-stated window factories
+     * as a direct column reference, contributing under
+     * {@link #CONTRIBUTION_FINITE_DOUBLE} once it gets there.
+     * <p>
+     * There is no {@code sum(L)} window factory and no {@code count(L)} either. An
+     * integral or FLOAT column matches {@code sum(D)}, {@code avg(D)}, {@code count(D)}
+     * and the four dispersion signatures by numeric widening, and {@code FunctionParser}
+     * wraps none of those in a cast function - it inserts one only where a physical
+     * representation has to change, which widening into a double does not. The argument
+     * therefore arrives as a {@code ColumnFunction} of the column's own type, which is
+     * what {@code directColumnIndex} requires and what the component identity keys by.
+     * <p>
+     * One predicate then serves all of them because every one of those factories reads
+     * its argument through {@code getDouble} and contributes on
+     * {@code Numbers.isFinite} of the result. The widening carries the null across:
+     * {@code LongFunction.getDouble} answers NaN for {@code Numbers.LONG_NULL} and
+     * {@code IntFunction.getDouble} answers NaN for {@code Numbers.INT_NULL}, while BYTE
+     * and SHORT have no null representation at all and so contribute on every row - to
+     * the sum and to the count alike, which is the only agreement that matters.
+     * <p>
+     * The list is deliberately shorter than the set of types that widen into a DOUBLE,
+     * because widening is necessary and not sufficient. CHAR reaches {@code sum(D)} but
+     * its {@code count} resolves to the VARCHAR factory and a null test, so the two
+     * would count different rows; DATE and TIMESTAMP widen as well, but a timestamp
+     * carries its precision in its column type and neither family has been checked
+     * against them; STRING and VARCHAR reach {@code sum(D)} by parsing the text, which
+     * is a third predicate again beside the null test their {@code count} uses. Each of
+     * those declines here rather than being assumed, one argument type at a time.
+     * <p>
+     * DECIMAL is absent for a different reason: it has factories of its own, so it never
+     * widens, and its sum accumulates into a {@code Decimal256} whose whole image is
+     * past {@link LiveViewCheckpointContracts#MAX_INLINE_COMPONENT_STATE_BYTES}. It
+     * needs the format's combined overflow page before it could join a fused group at
+     * all.
+     */
+    private static boolean isWidenedToDouble(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static void putLongLE(byte[] payload, int offset, long value) {

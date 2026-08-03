@@ -76,6 +76,101 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     private static final int WELFORD_STATE_BYTES = 2 * Double.BYTES + Long.BYTES;
 
     @Test
+    public void testADecimalArgumentKeepsTheLegacyRootItHasToday() throws Exception {
+        assertMemoryLeak(() -> {
+            createNumericBaseTable();
+            // DECIMAL is the one half of the numeric extension that widening does not
+            // reach: it has window factories of its own, and a DECIMAL sum accumulates
+            // into a Decimal256 whose whole image is past the per-component inline
+            // budget whatever the column's declared width. The implementation declares
+            // no fixed width at all today, so the group turns it away before the
+            // budget is even consulted, and it keeps the page-backed root it has.
+            assertPlan(
+                    "select ts, sym, sum(dec) over w as d "
+                            + "from nums window w as (partition by sym order by ts anchor daily '00:00')",
+                    Assert::assertNull
+            );
+            // Beside a fusible call it is an ordinary residual: the group forms around
+            // what it can carry rather than declining whole.
+            assertPlan(
+                    "select ts, sym, sum(l) over w as s, sum(dec) over w as d "
+                            + "from nums window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(1, plan.getProjectionCount());
+                        Assert.assertEquals(1, plan.getResidualFunctions().size());
+                        Assert.assertEquals(ANCHOR_BYTES + SUM_STATE_BYTES, plan.getTotalInlineStateBytes());
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testAnIntegralArgumentJoinsTheAccumulatorItWidensInto() throws Exception {
+        assertMemoryLeak(() -> {
+            createNumericBaseTable();
+            // There is no sum(L) window factory. A LONG column matches sum(D), avg(D)
+            // and count(D) by numeric widening, and the parser wraps none of the three
+            // in a cast to do it, so all three hold the column itself and read it
+            // through one getDouble. That is what makes their counters the same
+            // counter, exactly as they are over a DOUBLE column.
+            assertPlan(
+                    "select ts, sym, sum(l) over w as s, avg(l) over w as a, count(l) over w as c "
+                            + "from nums window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(3, plan.getProjectionCount());
+                        Assert.assertEquals(0, plan.getResidualFunctions().size());
+                        Assert.assertEquals(ANCHOR_BYTES + SUM_STATE_BYTES, plan.getTotalInlineStateBytes());
+                        // The identity keys by the column's own type and not by the
+                        // factory's, because the widening is what the predicate was
+                        // proved through: a component over a LONG column and one over a
+                        // DOUBLE column are two different proofs.
+                        Assert.assertEquals(ColumnType.LONG, plan.getComponent(0).getArgumentColumnType());
+                        Assert.assertEquals(
+                                LiveViewAccumulatorDescriptor.CONTRIBUTION_FINITE_DOUBLE,
+                                plan.getComponent(0).getContributionKind()
+                        );
+                        Assert.assertTrue(plan.getProjection(2).isDerived());
+                    }
+            );
+            // The dispersion family widens the same way, and the count folds onto
+            // Welford's counter over an INT column as it does over a DOUBLE one.
+            assertPlan(
+                    "select ts, sym, stddev_samp(i) over w as sd, count(i) over w as c "
+                            + "from nums window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(
+                                LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(ColumnType.INT, plan.getComponent(0).getArgumentColumnType());
+                        Assert.assertEquals(ANCHOR_BYTES + WELFORD_STATE_BYTES, plan.getTotalInlineStateBytes());
+                    }
+            );
+            // Two columns are two accumulators however alike their types widen, and a
+            // SHORT column is not a LONG one even where neither can hold a null the
+            // other cannot: the identity must not depend on the data.
+            assertPlan(
+                    "select ts, sym, sum(l) over w as s, count(i) over w as ci, count(sh) over w as cs "
+                            + "from nums window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(3, plan.getComponentCount());
+                        Assert.assertEquals(
+                                ANCHOR_BYTES + SUM_STATE_BYTES + 2 * COUNT_STATE_BYTES,
+                                plan.getTotalInlineStateBytes()
+                        );
+                    }
+            );
+        });
+    }
+
+    @Test
     public void testBoundedWindowBesideTheAnchoredOneStaysResidual() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();
@@ -113,20 +208,46 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         ColumnType.SYMBOL
                 )
         );
-        // A DOUBLE sum has no meaning over a non-DOUBLE argument, and no count family
-        // predicate is named for the types the first release does not carry.
+        // An integral column has no sum factory of its own: it widens into sum(D),
+        // avg(D) and count(D) alike, so one predicate covers all of them.
         Assert.assertEquals(
-                LiveViewAccumulatorDescriptor.CONTRIBUTION_NONE,
+                LiveViewAccumulatorDescriptor.CONTRIBUTION_FINITE_DOUBLE,
                 LiveViewAccumulatorDescriptor.contributionKindFor(
                         LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
                         ColumnType.LONG
                 )
         );
+        Assert.assertEquals(
+                LiveViewAccumulatorDescriptor.CONTRIBUTION_FINITE_DOUBLE,
+                LiveViewAccumulatorDescriptor.contributionKindFor(
+                        LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                        ColumnType.LONG
+                )
+        );
+        // Widening is necessary and not sufficient. A CHAR column reaches sum(D) too,
+        // but its count resolves to the VARCHAR factory and a null test, so the two
+        // would count different rows and neither family names a predicate for it. So
+        // does a STRING, which sum(D) reaches by parsing the text.
+        Assert.assertEquals(
+                LiveViewAccumulatorDescriptor.CONTRIBUTION_NONE,
+                LiveViewAccumulatorDescriptor.contributionKindFor(
+                        LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                        ColumnType.CHAR
+                )
+        );
         Assert.assertNull(LiveViewAccumulatorDescriptor.of(
                 LiveViewAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                 0,
-                ColumnType.LONG
+                ColumnType.STRING
         ));
+        // And DECIMAL never widens at all - it has factories of its own.
+        Assert.assertEquals(
+                LiveViewAccumulatorDescriptor.CONTRIBUTION_NONE,
+                LiveViewAccumulatorDescriptor.contributionKindFor(
+                        LiveViewAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                        ColumnType.getDecimalType(18, 3)
+                )
+        );
 
         // The same argument under two families is two components: one counts finite
         // doubles alongside their sum, the other only counts.
@@ -867,6 +988,15 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
 
     private void createBaseTable() throws Exception {
         execute("create table base (ts timestamp, sym symbol, x double, y double) "
+                + "timestamp(ts) partition by day wal");
+    }
+
+    /**
+     * A base carrying one column of every numeric shape the group has to answer for:
+     * three that widen into the DOUBLE factories and one that has factories of its own.
+     */
+    private void createNumericBaseTable() throws Exception {
+        execute("create table nums (ts timestamp, sym symbol, l long, i int, sh short, dec decimal(18,3)) "
                 + "timestamp(ts) partition by day wal");
     }
 

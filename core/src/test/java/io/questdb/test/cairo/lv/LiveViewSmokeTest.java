@@ -12464,12 +12464,17 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // per-sweep allocation). A dropped partition that later revives does so in
         // a new bucket and starts fresh, which is the correct anchored-window reset.
         //
+        // The sum takes an expression argument so it stays a residual and keeps a
+        // map of its own: a fused group is swept through the window's one value,
+        // which LiveViewWindowStateRuntimeTest covers, and its projections have no
+        // second map for this case to watch shrink.
+        //
         // INT partition keys side-step the per-WAL-segment SYMBOL index collision.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "SELECT ts, sym, sum(x + 0) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -12914,12 +12919,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         //   sym 1 ts 08-03T00:00 -> 08-03T01:00 -> 08-03  (frontier day2 -> day3, sweep)
         //   sym 2 ts 08-03T01:00 -> 08-03T02:00 -> 08-03  (revives in a new bucket)
         //
+        // The sum takes an expression argument for the same reason as its sibling:
+        // a residual keeps a partition map of its own for the lockstep assertion
+        // below, where a fused projection would have none.
+        //
         // INT partition keys side-step the per-WAL-segment SYMBOL index collision.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "SELECT ts, sym, sum(x + 0) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', dateadd('h', 1, ts)))");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
