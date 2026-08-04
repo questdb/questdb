@@ -31,11 +31,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class StringAggGroupByFunctionFactory implements FunctionFactory {
+public class StringAggStrSepGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "string_agg(Sa)";
+        return "string_agg(Ss)";
     }
 
     @Override
@@ -51,10 +51,11 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
+        final CharSequence delimiter = args.getQuick(1).getStrA(null);
         return new StringAggGroupByFunction(
                 args.getQuick(0),
                 argPositions.getQuick(0),
-                String.valueOf(args.getQuick(1).getChar(null)),
+                delimiter == null ? null : delimiter.toString(),
                 configuration.getStrFunctionMaxBufferLength()
         );
     }
