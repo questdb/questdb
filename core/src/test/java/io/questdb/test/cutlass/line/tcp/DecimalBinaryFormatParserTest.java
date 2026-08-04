@@ -30,6 +30,7 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
@@ -349,6 +350,24 @@ public class DecimalBinaryFormatParserTest {
                 Unsafe.free(mem, 10, MemoryTag.NATIVE_DEFAULT);
             }
         }
+    }
+
+    @Test
+    public void testEveryParseOutcomeFreesItsBuffer() throws Exception {
+        // parse() mallocs a payload buffer; every outcome must return it, including the throwing one
+        TestUtils.assertMemoryLeak(() -> {
+            Assert.assertNotNull(parse(payload(0, BigInteger.ONE.toByteArray())));
+
+            final byte[] rejected = new byte[33];
+            rejected[0] = 1;
+            Assert.assertNull(parse(payload(0, rejected)));
+
+            try {
+                parse(new byte[]{(byte) -1, 0});
+                Assert.fail("expected the invalid scale to be rejected");
+            } catch (DecimalBinaryFormatParser.ParseException ignored) {
+            }
+        });
     }
 
     @Test
