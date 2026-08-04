@@ -459,6 +459,74 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAKahanSumKeepsItsOwnTotalAndLendsItsCounter() throws Exception {
+        // The other fixed scalar this step admits, and the pair that says a component's
+        // identity is its arithmetic rather than its layout. ksum(x) and sum(x) contribute on
+        // one predicate over one argument and both start at zero, and they are two components
+        // because a compensated total and a plain one are different numbers over the same
+        // rows - so neither may read the other's first slot. Their counters do agree, and
+        // count(x) folds onto whichever host the canonical order puts first.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            // ksum alone with the count: one three-slot component for two outputs, with the
+            // count reading the Kahan counter at the component's third slot. This is the fold
+            // this step adds, and the compensation term is what makes the counter's slot 2
+            // rather than the 1 a plain sum's is.
+            final String withCount = "select ts, ksum(x) over w, count(x) over w from t " + WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, withCount, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(1, plan.getComponentCount());
+                Assert.assertEquals(2, plan.getProjectionCount());
+                Assert.assertEquals(3, plan.getSlotCount());
+                Assert.assertFalse(plan.getProjection(0).isDerived());
+                Assert.assertTrue(plan.getProjection(1).isDerived());
+                Assert.assertEquals(2, plan.getProjection(1).getNonNullCountSlot());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    // One accumulator for two outputs, so x is read and compensated once.
+                    Assert.assertEquals(rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
+                }
+            }
+            // Both sums over one argument: five slots, and each total maintained by the
+            // function that emits it.
+            final String bothSums = "select ts, ksum(x) over w, sum(x) over w from t " + WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, bothSums, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(2, plan.getComponentCount());
+                Assert.assertEquals(2, plan.getProjectionCount());
+                Assert.assertEquals(5, plan.getSlotCount());
+                Assert.assertFalse(plan.getProjection(0).isDerived());
+                Assert.assertFalse(plan.getProjection(1).isDerived());
+                Assert.assertNotEquals(
+                        "the two totals must not share a slot",
+                        plan.getProjection(0).getComponentSlotBase(),
+                        plan.getProjection(1).getComponentSlotBase()
+                );
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
+                }
+            }
+            assertFusedMatchesUnfused("ksum(x) over w", "count(x) over w");
+            assertFusedMatchesUnfused("ksum(x) over w", "sum(x) over w");
+            assertFusedMatchesUnfused("ksum(x) over w", "sum(x) over w", "count(x) over w");
+        });
+    }
+
+    @Test
     public void testAMaxAndAMinOverOneArgumentKeepTwoComponents() throws Exception {
         // The negative control the extremum families need. max(x) and min(x) agree on which
         // rows contribute and on the width and type of what they keep, and share nothing: a

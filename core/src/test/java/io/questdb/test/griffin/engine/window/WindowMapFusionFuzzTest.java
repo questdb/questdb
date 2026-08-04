@@ -113,6 +113,11 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             "min(xl)",
             "max(ts)",
             "min(ts)",
+            // The compensated sum, which is a component of its own beside sum(xd) and lends
+            // its counter to count(xd) - so an iteration carrying all three is where a total
+            // read off the wrong host would show.
+            "ksum(xd)",
+            "ksum(yd)",
     };
     /**
      * A RANGE-framed window carries no ranking call - {@code row_number()} has no frame - and
@@ -137,6 +142,8 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             "min(xl)",
             "max(ts)",
             "min(ts)",
+            "ksum(xd)",
+            "ksum(yd)",
     };
     /**
      * Calls no family describes. One of them lands in a query now and then so that a residual

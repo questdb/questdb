@@ -291,6 +291,16 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                             "max(x) over w",
                             "min(ts) over w"
                     );
+                    // The compensated sum beside the plain one and the counter they share:
+                    // two totals over one argument that must not be read off one slot, and a
+                    // count that may be read off either.
+                    assertFusedMatchesUnfused(
+                            window,
+                            lead,
+                            "ksum(x) over w",
+                            "sum(x) over w",
+                            "count(x) over w"
+                    );
                 }
             }
         });

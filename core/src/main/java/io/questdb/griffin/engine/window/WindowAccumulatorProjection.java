@@ -101,6 +101,16 @@ public final class WindowAccumulatorProjection {
      */
     public static final int PROJECTION_EXTREMUM = 9;
     /**
+     * The compensated sum, or SQL NULL for an empty component - what a {@code ksum} emits.
+     * <p>
+     * It reads the same two fields {@link #PROJECTION_SUM} does and applies the same empty
+     * test, and it is a kind of its own so that the compatibility table can say the one
+     * thing that matters here: a {@code ksum} output reads a Kahan component and a
+     * {@code sum} output reads a plain one, and neither may end up on the other's, because
+     * the two totals are different numbers over the same rows.
+     */
+    public static final int PROJECTION_KAHAN_SUM = 10;
+    /**
      * The default: this output reads no shared accumulator.
      */
     public static final int PROJECTION_NONE = 0;
@@ -197,12 +207,19 @@ public final class WindowAccumulatorProjection {
             case PROJECTION_SUM:
             case PROJECTION_AVG:
                 return family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT;
+            case PROJECTION_KAHAN_SUM:
+                // The compensated total's own family and no other, which is the whole reason
+                // the kind exists: PROJECTION_SUM reads the same two fields, and letting
+                // either kind reach both families would make a sum and a ksum over one
+                // column interchangeable, which they are not.
+                return family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT;
             case PROJECTION_COUNT:
-                // Every family carries a counter, and the Welford one is here because a
-                // count(x) folded onto a stddev(x) reads that stddev's counter. Which
-                // counter a given call may read is still the component identity's answer,
-                // not this one's.
+                // Every accumulating family carries a counter, and the Welford and Kahan ones
+                // are here because a count(x) folded onto a stddev(x) or a ksum(x) reads that
+                // host's counter. Which counter a given call may read is still the component
+                // identity's answer, not this one's.
                 return family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT
+                        || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT
                         || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD
                         || family == WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT
                         || family == WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;

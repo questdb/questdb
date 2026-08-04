@@ -105,6 +105,15 @@ import org.jetbrains.annotations.Nullable;
  * one. Both are values the contribution predicate refuses, so neither can be confused with
  * a real one, and both are what the unbounded frame's own implementation emits for a
  * partition no row has contributed to.
+ *
+ * <h2>Two sums over one column can still be two components</h2>
+ * {@link #FAMILY_DOUBLE_KAHAN_SUM_COUNT} and {@link #FAMILY_DOUBLE_SUM_COUNT} agree on which
+ * rows contribute and both start their first slot at zero, and they are still separate
+ * states in both directions, because a compensated total and a plain one are different
+ * numbers over the same rows. That is the case that says a component's identity is the
+ * arithmetic and not the layout: the two would be indistinguishable to a rule that compared
+ * widths, slot types or contribution predicates. Their counters do agree, and that pair is
+ * declared in {@link #derivedSlotOffset} like every other.
  */
 public final class WindowAccumulatorDescriptor {
     /**
@@ -137,6 +146,20 @@ public final class WindowAccumulatorDescriptor {
      * they name the same predicate family.
      */
     public static final int CONTRIBUTION_TYPED_NOT_NULL = 2;
+    /**
+     * State {@code [sum: DOUBLE, compensation: DOUBLE, nonNullCount: LONG]}, contributed by
+     * a {@code ksum} over an unbounded partitioned frame: a compensated (Kahan) running
+     * total, the compensation term that makes it one, and the counter every DOUBLE family
+     * keeps.
+     * <p>
+     * Separate from {@link #FAMILY_DOUBLE_SUM_COUNT} in both directions, and not because the
+     * widths differ. A compensated total and a plain one are different numbers over the same
+     * rows - that is the whole point of the compensation - so a {@code sum} projection must
+     * never read this component's first slot, nor a {@code ksum} projection a plain sum's.
+     * What the two genuinely share is the counter: it counts the same rows under the same
+     * predicate, so a {@code count(x)} folds onto either.
+     */
+    public static final int FAMILY_DOUBLE_KAHAN_SUM_COUNT = 9;
     /**
      * State {@code [max: DOUBLE]}, contributed by a DOUBLE {@code max} over an unbounded
      * partitioned frame. The identity is NaN, which is a value
@@ -223,6 +246,12 @@ public final class WindowAccumulatorDescriptor {
      */
     public static final int FIELD_EXTREMUM = 4;
     /**
+     * The compensation term a Kahan summation carries beside its running total. Present
+     * only in {@link #FAMILY_DOUBLE_KAHAN_SUM_COUNT}, and read and written by its
+     * contributor alone - no output projects it.
+     */
+    public static final int FIELD_KAHAN_COMPENSATION = 5;
+    /**
      * The running sum of squared deviations from the running mean. Present only in
      * {@link #FAMILY_DOUBLE_WELFORD}.
      */
@@ -232,7 +261,10 @@ public final class WindowAccumulatorDescriptor {
      */
     public static final int FIELD_MEAN = 2;
     /**
-     * The count of contributing rows. Present in every family.
+     * The count of contributing rows. Present in every accumulating family, and in none of
+     * the four extremum ones - a running max keeps its answer and nothing else, which is
+     * why a bound function's "am I fused" test is its component's slot base rather than
+     * this field's.
      */
     public static final int FIELD_NON_NULL_COUNT = 1;
     /**
@@ -283,6 +315,7 @@ public final class WindowAccumulatorDescriptor {
                 return argumentColumnType == ColumnType.UNDEFINED
                         ? CONTRIBUTION_EVERY_ROW
                         : CONTRIBUTION_NONE;
+            case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
             case FAMILY_DOUBLE_MAX:
             case FAMILY_DOUBLE_MIN:
             case FAMILY_DOUBLE_SUM_COUNT:
@@ -385,6 +418,7 @@ public final class WindowAccumulatorDescriptor {
         switch (family) {
             case FAMILY_DOUBLE_SUM_COUNT:
                 return 2;
+            case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
             case FAMILY_DOUBLE_WELFORD:
                 return 3;
             case FAMILY_DOUBLE_MAX:
@@ -528,6 +562,14 @@ public final class WindowAccumulatorDescriptor {
         if (family == FAMILY_DOUBLE_WELFORD && other.family == FAMILY_NON_NULL_COUNT) {
             return getFieldSlot(FIELD_NON_NULL_COUNT);
         }
+        // A Kahan sum keeps (sum, compensation, count) and increments that counter on the
+        // same isFinite test, so a count(x) folds onto it exactly as it does onto a plain
+        // sum's. The pair stops there: the two sums are different numbers over the same
+        // rows, which is what the compensation is for, so neither total is readable out of
+        // the other and no wider host holds this one as a run.
+        if (family == FAMILY_DOUBLE_KAHAN_SUM_COUNT && other.family == FAMILY_NON_NULL_COUNT) {
+            return getFieldSlot(FIELD_NON_NULL_COUNT);
+        }
         // The four max/min families appear in no pair, in either role, and the reason is not
         // that nobody has looked. A running extremum keeps no counter, so nothing narrower
         // sits inside it; and it is a single slot whose value is the arithmetic's whole
@@ -563,6 +605,14 @@ public final class WindowAccumulatorDescriptor {
             case FAMILY_LONG_MAX:
             case FAMILY_LONG_MIN:
                 return field == FIELD_EXTREMUM ? 0 : -1;
+            case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
+                if (field == FIELD_SUM) {
+                    return 0;
+                }
+                if (field == FIELD_KAHAN_COMPENSATION) {
+                    return 1;
+                }
+                return field == FIELD_NON_NULL_COUNT ? 2 : -1;
             case FAMILY_DOUBLE_SUM_COUNT:
                 if (field == FIELD_SUM) {
                     return 0;
@@ -617,6 +667,7 @@ public final class WindowAccumulatorDescriptor {
                     return ColumnType.LONG;
                 }
                 break;
+            case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
             case FAMILY_DOUBLE_WELFORD:
                 if (slot == 0 || slot == 1) {
                     return ColumnType.DOUBLE;

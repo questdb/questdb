@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.functions.columns.IntColumn;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -107,6 +108,86 @@ public class WindowAccumulatorDescriptorTest {
         // An expression is not a direct column reference, and neither is nothing at all.
         Assert.assertEquals(-1, WindowAccumulatorDescriptor.directColumnIndex(IntConstant.newInstance(1), metadata));
         Assert.assertEquals(-1, WindowAccumulatorDescriptor.directColumnIndex(null, metadata));
+    }
+
+    @Test
+    public void testTheKahanSumLendsOnlyItsCounter() {
+        // The compensated sum is the case that says a component's identity is the arithmetic
+        // and not the layout. It agrees with a plain sum on the argument, on the contribution
+        // predicate and on the zero identity, and differs in exactly one thing no width or
+        // slot type records: the totals are different numbers over the same rows.
+        final WindowAccumulatorDescriptor kahan = WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        Assert.assertNotNull(kahan);
+        Assert.assertEquals(3, kahan.getSlotCount());
+        Assert.assertEquals(0, kahan.getFieldSlot(WindowAccumulatorDescriptor.FIELD_SUM));
+        Assert.assertEquals(1, kahan.getFieldSlot(WindowAccumulatorDescriptor.FIELD_KAHAN_COMPENSATION));
+        Assert.assertEquals(2, kahan.getFieldSlot(WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT));
+        Assert.assertEquals(ColumnType.DOUBLE, kahan.getSlotColumnType(0));
+        Assert.assertEquals(ColumnType.DOUBLE, kahan.getSlotColumnType(1));
+        Assert.assertEquals(ColumnType.LONG, kahan.getSlotColumnType(2));
+        // Zero, and meant: a compensated sum starts empty at (0, 0, 0), which is where this
+        // family parts company with the extremum ones admitted beside it.
+        for (int slot = 0; slot < 3; slot++) {
+            Assert.assertEquals("slot " + slot, 0L, kahan.getSlotIdentityBits(slot));
+        }
+        // Runtime-only: no component codec, and so no durable wrapper and no manifest.
+        Assert.assertEquals(
+                -1,
+                LiveViewAccumulatorDescriptor.familyCodecVersion(WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT)
+        );
+        Assert.assertNull(LiveViewAccumulatorDescriptor.of(kahan));
+
+        final WindowAccumulatorDescriptor count = WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        final WindowAccumulatorDescriptor sum = WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        final WindowAccumulatorDescriptor otherCount = WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                3,
+                ColumnType.DOUBLE
+        );
+        Assert.assertNotNull(count);
+        Assert.assertNotNull(sum);
+        Assert.assertNotNull(otherCount);
+        // The counter is a run inside it at the slot the compensation term displaced it to.
+        Assert.assertEquals(2, kahan.derivedSlotOffset(count));
+        // A counter over another column is another counter, whatever it is stored beside.
+        Assert.assertEquals(-1, kahan.derivedSlotOffset(otherCount));
+        // Neither total is readable out of the other, in either direction, and neither is the
+        // Kahan state a run inside the plain one or the other way about.
+        Assert.assertEquals(-1, kahan.derivedSlotOffset(sum));
+        Assert.assertEquals(-1, sum.derivedSlotOffset(kahan));
+        Assert.assertEquals(-1, count.derivedSlotOffset(kahan));
+        // The same separation stated where a projection would reach for it: a ksum output
+        // reads this family and a sum output cannot, which is the whole reason the two
+        // projection kinds are not one.
+        Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT,
+                WindowAccumulatorProjection.PROJECTION_KAHAN_SUM
+        ));
+        Assert.assertFalse(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT,
+                WindowAccumulatorProjection.PROJECTION_SUM
+        ));
+        Assert.assertFalse(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                WindowAccumulatorProjection.PROJECTION_KAHAN_SUM
+        ));
+        // The counter is the one reading that does cross.
+        Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT,
+                WindowAccumulatorProjection.PROJECTION_COUNT
+        ));
     }
 
     @Test

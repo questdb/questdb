@@ -46,6 +46,8 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -1426,6 +1428,11 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         private double sum;
+        // The compensation term's slot in the group's fused map value, or -1 when this
+        // function owns its state. The sum and the counter are the base class's two named
+        // slots; this is the third field the Kahan component carries, and no output reads
+        // it. Installed by bindWindowStateSlots and cleared the same way.
+        private int windowStateCompensationSlot = -1;
         // Single-writer (refresh worker), not volatile.
 
         public KSumOverUnboundedPartitionRowsFrameFunction(
@@ -1462,8 +1469,42 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
+        /**
+         * Absorbs one row into the group's compensated total. The same Kahan step
+         * {@link #computeNext(Record)} runs, against three slots the group has already
+         * loaded rather than a map entry this function has to find - and with no
+         * {@code isNew()} arm, because every slice of a new entry is put to its identity
+         * before any contributor runs and this component's identity is three zeroes.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final double d = arg.getDouble(record);
+            if (Numbers.isFinite(d)) {
+                final double sum = value.getDouble(windowStateSumSlot);
+                final double c = value.getDouble(windowStateCompensationSlot);
+                final double y = d - c;
+                final double t = sum + y;
+                value.putDouble(windowStateCompensationSlot, (t - sum) - y);
+                value.putDouble(windowStateSumSlot, t);
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateCompensationSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_KAHAN_COMPENSATION);
+        }
+
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -1555,6 +1596,18 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
         }
 
+        /**
+         * Reads the compensated total the group keeps, NULL until a row has contributed -
+         * the empty test the extremum families do without and this one cannot, because a
+         * zero sum over zero rows and a zero sum over rows that cancelled are the same word.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            sum = value.getLong(windowStateNonNullCountSlot) != 0
+                    ? value.getDouble(windowStateSumSlot)
+                    : Double.NaN;
+        }
+
         @Override
         public void reopen() {
             super.reopen();
@@ -1633,6 +1686,27 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void toTop() {
             super.toTop();
             tombstoneCount = 0;
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The compensated total, its compensation term and the counter - the whole of this
+         * function's per-partition state, and a family of its own rather than a wider
+         * reading of {@code sum}'s: the two totals differ, which is what the compensation
+         * exists to make them do.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_KAHAN_SUM;
         }
     }
 
