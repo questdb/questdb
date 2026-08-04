@@ -44,6 +44,15 @@ public class CeilDecimalZeroScaleFunctionFactoryTest extends AbstractCairoTest {
     private final CeilDecimalZeroScaleFunctionFactory factory = new CeilDecimalZeroScaleFunctionFactory();
 
     @Test
+    public void testCeilExactValueIsNotRoundedUp() throws Exception {
+        // the ceiling divides the unscaled value by 10^29, and that division takes Knuth's add-back
+        // below the top quotient digit; a remainder left behind there lifts a value that has none
+        assertMemoryLeak(() -> assertQuery("SELECT ceil('1799763213631808680437004663521279'::DECIMAL(63,29)) c")
+                .expectSize()
+                .returns("c\n1799763213631808680437004663521279\n"));
+    }
+
+    @Test
     public void testCeilNegative() {
         args.clear();
         args.add(new Decimal32Constant(-999999, ColumnType.getDecimalType(7, 3)));

@@ -1000,6 +1000,46 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateDecimalColumnFromCharLiteral() throws Exception {
+        // a one-character quoted literal types as CHAR and reaches the decimal column through
+        // FunctionParser's implicit cast, the surface the row copier never sees
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"up_nowal", "up_wal"}) {
+                execute("create table " + table + " as" +
+                        " (select timestamp_sequence(0, 1000000) ts," +
+                        " cast(x as decimal(10, 2)) d" +
+                        " from long_sequence(2))" +
+                        " timestamp(ts) partition by DAY" + (table.endsWith("_wal") ? " WAL" : ""));
+
+                update("UPDATE " + table + " SET d = '5' WHERE ts = '1970-01-01T00:00:01.000000Z'");
+                drainWalQueue();
+
+                assertQuery(table)
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\td
+                                1970-01-01T00:00:00.000000Z\t1.00
+                                1970-01-01T00:00:01.000000Z\t5.00
+                                """);
+
+                String nonNumeric = "UPDATE " + table + " SET d = 'a'";
+                assertQuery(nonNumeric)
+                        .noLeakCheck()
+                        .fails(nonNumeric.indexOf("'a'"), "inconvertible value: `a` [STRING -> DECIMAL(10,2)]");
+
+                String overflow = "UPDATE " + table + " SET d = '5'";
+                execute("ALTER TABLE " + table + " ALTER COLUMN d TYPE DECIMAL(1,1)");
+                drainWalQueue();
+                assertQuery(overflow)
+                        .noLeakCheck()
+                        .fails(overflow.indexOf("'5'"), "inconvertible value: `5` [STRING -> DECIMAL(1,1)]");
+            }
+        });
+    }
+
+    @Test
     public void testUpdateDifferentColumnTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table up as" +

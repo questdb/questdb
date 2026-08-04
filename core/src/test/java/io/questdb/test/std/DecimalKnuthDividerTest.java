@@ -57,14 +57,35 @@ public class DecimalKnuthDividerTest {
 
     @Test
     public void testExactDivisionIsNotRoundedAway() {
-        // Exact division whose add-back must clear the top limb of the partial remainder, otherwise
-        // the leftover is read back as a non-zero remainder and rounds the quotient up.
+        // Six limbs over five. Neither the D3 clamp nor the D6 carry alone rounds this one away,
+        // both have to be missing, which is how the divider stood before this change.
         final BigInteger dividend = new BigInteger("815926766585445776450849652337708598160020065799465637765");
         final BigInteger divisor = new BigInteger("189972754282741465310936588246525541508231686267");
         assertWide(dividend, divisor, RoundingMode.DOWN, "4294967295");
         assertWide(dividend, divisor, RoundingMode.UP, "4294967295");
         assertWide(dividend, divisor, RoundingMode.HALF_UP, "4294967295");
         assertWide(dividend, divisor, RoundingMode.CEILING, "4294967295");
+    }
+
+    @Test
+    public void testExactDivisionWithAddBackBelowTheTopDigit() {
+        // 0x7FFFFFFFFFFFFFFD80000002000000007FFFFFFF / 0x800000007FFFFFFE80000001, an exact division
+        // whose add-back runs below the topmost quotient digit, so its carry lands in a limb the
+        // remainder scan still reads. Without the carry that limb keeps 0xFFFFFFFF and reads back as
+        // a non-zero remainder, rounding the exact quotient away from zero.
+        final BigInteger dividend = new BigInteger("730750818665451458903772010109374153993672982527");
+        final BigInteger divisor = new BigInteger("39614081266355540827184300033");
+        final String quotient = "18446744069414584319";
+        assertWide(dividend, divisor, RoundingMode.DOWN, quotient);
+        assertWide(dividend, divisor, RoundingMode.UP, quotient);
+        assertWide(dividend, divisor, RoundingMode.CEILING, quotient);
+        // a phantom remainder makes UNNECESSARY throw on a division that has none
+        assertWide(dividend, divisor, RoundingMode.UNNECESSARY, quotient);
+        // FLOOR rounds a negative exact result away from zero the same way
+        Assert.assertEquals(
+                new BigInteger(quotient),
+                divide(dividend, divisor, true, RoundingMode.FLOOR, true)
+        );
     }
 
     @Test

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
@@ -88,12 +89,6 @@ import static org.junit.Assert.*;
 public class CoveringIndexTest extends AbstractCairoTest {
 
     private static final ColumnVersionReader EMPTY_CVR = new ColumnVersionReader();
-
-    @Override
-    public void setUp() {
-        node1.setProperty(io.questdb.PropertyKey.DEV_MODE_ENABLED, true);
-        super.setUp();
-    }
 
     @Test
     public void testAddPostingCoveringIndexAcrossManyParquetRowGroupsAllVarSizeWal() throws Exception {
@@ -11407,12 +11402,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
     public void testFilterOnExcludedValuesThrowingFilterDoesNotLeakIndexReader() throws Exception {
         // Regression: FilterOnExcludedValues opens per-symbol index cursors via
         // HeapRowCursor.of(), whose first hasNext() evaluates the post-filter on each
-        // sub-cursor. When that filter throws (here, the dev-mode npe() test function),
-        // the singleton HeapRowCursor was left un-closed because
+        // sub-cursor. When that filter throws (here, the dev-mode npe() test function), the
+        // singleton HeapRowCursor was left un-closed because
         // PageFrameRecordCursorImpl.rowCursor never got assigned. The per-symbol index
         // cursors then stayed outside the PostingIndexFwdReader.freeCursors pool and
         // their block buffers leaked. The fix closes the row cursor factory from
         // PageFrameRecordCursorImpl.close() so the singleton always cleans up.
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_excl_leak (
@@ -11443,7 +11439,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             } catch (Throwable t) {
                 caught = t;
             }
-            assertNotNull("expected injected filter failure", caught);
+            assertTrue("expected the injected NullPointerException, got " + caught,
+                    caught instanceof NullPointerException);
         });
     }
 
@@ -11452,12 +11449,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
         // Regression: FilterOnSubQuery builds a per-symbol index cursor for every key
         // returned by the sub-query through HeapRowCursorFactory.getCursor, whose call into
         // HeapRowCursor.of evaluates the post-filter on each sub-cursor. When that filter
-        // throws (here, the dev-mode npe() test function), the throw fires
-        // inside getCursor before its return assigns PageFrameRecordCursorImpl.rowCursor, so
+        // throws (here, the dev-mode npe() test function), the throw fires inside getCursor
+        // before its return assigns PageFrameRecordCursorImpl.rowCursor, so
         // the singleton HeapRowCursor is left with populated per-symbol SymbolIndexFiltered
         // RowCursor sub-cursors that each hold an open index reader cursor. The fix frees
         // FilterOnSubQueryRecordCursorFactory.rowCursorFactory in _close(), which cascades
         // into HeapRowCursorFactory.close() and returns the per-symbol cursors to the pool.
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_sub_leak (
@@ -11486,7 +11484,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             } catch (Throwable t) {
                 caught = t;
             }
-            assertNotNull("expected injected filter failure", caught);
+            assertTrue("expected the injected NullPointerException, got " + caught,
+                    caught instanceof NullPointerException);
         });
     }
 
@@ -11495,12 +11494,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
         // Regression: FilterOnValues opens a per-symbol index cursor for every IN-list key
         // through HeapRowCursorFactory.getCursor, whose call into HeapRowCursor.of evaluates
         // the post-filter on each sub-cursor. When that filter throws (here, the dev-mode
-        // npe() test function), the throw fires inside getCursor before
-        // its return assigns PageFrameRecordCursorImpl.rowCursor, so the singleton
+        // npe() test function), the throw fires inside getCursor before its return assigns
+        // PageFrameRecordCursorImpl.rowCursor, so the singleton
         // HeapRowCursor is left with populated per-symbol SymbolIndexFilteredRowCursor
         // sub-cursors that each hold an open index reader cursor. The fix frees
         // FilterOnValuesRecordCursorFactory.rowCursorFactory in _close(), which cascades into
         // HeapRowCursorFactory.close() and returns the per-symbol cursors to the pool.
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_val_leak (
@@ -11529,7 +11529,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             } catch (Throwable t) {
                 caught = t;
             }
-            assertNotNull("expected injected filter failure", caught);
+            assertTrue("expected the injected NullPointerException, got " + caught,
+                    caught instanceof NullPointerException);
         });
     }
 

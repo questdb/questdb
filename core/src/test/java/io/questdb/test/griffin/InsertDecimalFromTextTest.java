@@ -37,14 +37,18 @@ import java.util.Collection;
 
 /**
  * Inserts into decimal columns from CHAR, STRING and VARCHAR sources, against every record-to-row copier
- * implementation and against both row writers. The narrow table stays under the bytecode method size limit,
- * the wide one exceeds it and falls back to the chunked or the looping copier depending on configuration.
+ * implementation and against both row writers. Only the wide tables select a copier: they exceed the
+ * bytecode method size limit and fall back to the chunked or the looping copier depending on configuration,
+ * while the narrow ones stay under it and compile to the single-method copier in every mode.
  * The plain tables drive {@code TableWriter.RowImpl}, the WAL ones {@code WalWriter.RowImpl}.
  */
 @RunWith(Parameterized.class)
 public class InsertDecimalFromTextTest extends AbstractCairoTest {
-    // varchar -> decimal is estimated at 38 bytecode bytes per column, so 250 columns exceed the 8000 byte limit
+    // char/varchar -> decimal is estimated at 38 bytecode bytes per column, so 250 columns exceed the 8000 byte limit
     private static final int WIDE_COLUMN_COUNT = 250;
+    // one column per decimal storage width
+    private static final String WIDTH_TABLE_DDL =
+            "CREATE TABLE dst (d0 DECIMAL(2,1), d1 DECIMAL(4,2), d2 DECIMAL(9,2), d3 DECIMAL(18,2), d4 DECIMAL(38,2), d5 DECIMAL(40,2))";
     private final CopierMode copierMode;
 
     public InsertDecimalFromTextTest(CopierMode copierMode) {
@@ -90,31 +94,58 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
     @Test
     public void testCharColumnIntoDecimal() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (c char)");
-            execute("create table dst (d decimal(10,2))");
-            execute("insert into src values ('5'), ('0'), (null)");
+            createTables("char", "decimal(10,2)");
+            insertRow("'5'");
+            insertRow("'0'");
+            insertRow("null");
 
-            execute("insert into dst select c from src");
+            execute("insert into dst select * from src");
 
-            assertQuery("select d from dst")
+            assertQuery("select c0 from dst")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("d\n5.00\n0.00\n\n");
+                    .returns("c0\n5.00\n0.00\n\n");
+
+            String lastColumn = "c" + (columnCount() - 1);
+            assertQuery("select " + lastColumn + " from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(lastColumn + "\n5.00\n0.00\n\n");
         });
     }
 
     @Test
     public void testCharColumnIntoDecimalNonNumeric() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (c char)");
-            execute("create table dst (d decimal(10,2))");
-            execute("insert into src values ('a')");
+            createTables("char", "decimal(10,2)");
+            insertRow("'a'");
 
             assertExceptionNoLeakCheck(
-                    "insert into dst select c from src",
+                    "insert into dst select * from src",
                     -1,
                     "inconvertible value: a [CHAR -> DECIMAL(10,2)]"
             );
+        });
+    }
+
+    @Test
+    public void testCharColumnIntoDecimalWal() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTables("char", "decimal(10,2)");
+            insertRow("'5'", "'2024-01-01T00:00:00.000000Z'");
+            insertRow("null", "'2024-01-01T00:00:01.000000Z'");
+            drainWalQueue();
+
+            execute("insert into dst select * from src");
+            drainWalQueue();
+
+            assertQuery("select c0 from dst").noLeakCheck().expectSize().returns("c0\n5.00\n\n");
+
+            String lastColumn = "c" + (columnCount() - 1);
+            assertQuery("select " + lastColumn + " from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(lastColumn + "\n5.00\n\n");
         });
     }
 
@@ -169,6 +200,40 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStringIntoDecimalNanAndInfinity() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("string", "decimal(10,2)");
+            insertRow("'NaN'");
+            insertRow("'Infinity'");
+            insertRow("'-Infinity'");
+            insertRow("'+Infinity'");
+
+            execute("insert into dst select * from src");
+
+            assertQuery("select c0 from dst").noLeakCheck().expectSize().returns("c0\n\n\n\n\n");
+
+            String lastColumn = "c" + (columnCount() - 1);
+            assertQuery("select " + lastColumn + " from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(lastColumn + "\n\n\n\n\n");
+        });
+    }
+
+    @Test
+    public void testStringIntoDecimalNanAndInfinityAtEveryWidth() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (v STRING)");
+            execute("INSERT INTO src VALUES ('NaN'), ('Infinity'), ('-Infinity'), ('+Infinity')");
+            execute(WIDTH_TABLE_DDL);
+
+            execute("INSERT INTO dst SELECT v, v, v, v, v, v FROM src");
+
+            assertQuery("SELECT * FROM dst").noLeakCheck().expectSize().returns(everyWidthNulls(4));
+        });
+    }
+
+    @Test
     public void testStringIntoDecimalNonNumeric() throws Exception {
         assertMemoryLeak(() -> {
             createTables("string", "decimal(10,2)");
@@ -201,6 +266,66 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns(lastColumn + "\n123.45\n\n");
+        });
+    }
+
+    @Test
+    public void testVarcharIntoDecimalNanAndInfinity() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("varchar", "decimal(10,2)");
+            insertRow("'NaN'");
+            insertRow("'Infinity'");
+            insertRow("'-Infinity'");
+            insertRow("'+Infinity'");
+
+            execute("insert into dst select * from src");
+
+            assertQuery("select c0 from dst").noLeakCheck().expectSize().returns("c0\n\n\n\n\n");
+
+            String lastColumn = "c" + (columnCount() - 1);
+            assertQuery("select " + lastColumn + " from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(lastColumn + "\n\n\n\n\n");
+        });
+    }
+
+    @Test
+    public void testVarcharIntoDecimalNanAndInfinityAtEveryWidth() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (v VARCHAR)");
+            execute("INSERT INTO src VALUES ('NaN'), ('Infinity'), ('-Infinity'), ('+Infinity')");
+            execute(WIDTH_TABLE_DDL);
+
+            // a quoted literal of more than one character types as VARCHAR, so VALUES goes through the same copier
+            execute("INSERT INTO dst VALUES ('NaN', 'NaN', 'NaN', 'NaN', 'NaN', 'NaN')");
+            assertQuery("SELECT * FROM dst").noLeakCheck().expectSize().returns(everyWidthNulls(1));
+            execute("TRUNCATE TABLE dst");
+
+            execute("INSERT INTO dst SELECT v, v, v, v, v, v FROM src");
+
+            assertQuery("SELECT * FROM dst").noLeakCheck().expectSize().returns(everyWidthNulls(4));
+        });
+    }
+
+    @Test
+    public void testVarcharIntoDecimalNanAndInfinityWal() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTables("varchar", "decimal(10,2)");
+            insertRow("'NaN'", "'2024-01-01T00:00:00.000000Z'");
+            insertRow("'-Infinity'", "'2024-01-01T00:00:01.000000Z'");
+            drainWalQueue();
+
+            execute("insert into dst select * from src");
+            drainWalQueue();
+
+            assertQuery("select c0 from dst").noLeakCheck().expectSize().returns("c0\n\n\n");
+
+            String lastColumn = "c" + (columnCount() - 1);
+            assertQuery("select " + lastColumn + " from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(lastColumn + "\n\n\n");
         });
     }
 
@@ -310,6 +435,10 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
                     "inconvertible value: `12345.67` [VARCHAR -> DECIMAL(4,2)]"
             );
         });
+    }
+
+    private static String everyWidthNulls(int rowCount) {
+        return "d0\td1\td2\td3\td4\td5\n" + "\t\t\t\t\t\n".repeat(rowCount);
     }
 
     private int columnCount() {
