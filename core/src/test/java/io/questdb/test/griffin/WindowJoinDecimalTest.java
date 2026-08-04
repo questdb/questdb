@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -38,22 +37,22 @@ public class WindowJoinDecimalTest extends AbstractCairoTest {
             "from trades t " +
             "window join prices p on (1 = 0) " +
             "range between 1 minute preceding and 1 minute following";
-
-    @Before
-    public void createTables() throws Exception {
-        execute("create table trades (ts timestamp, d8 decimal(2, 1), d16 decimal(4, 1), d32 decimal(9, 2)," +
-                " d64 decimal(18, 2), d128 decimal(38, 2), d256 decimal(60, 2)) timestamp(ts) partition by day");
-        execute("create table prices (ts timestamp, d8 decimal(2, 1), d16 decimal(4, 1), d32 decimal(9, 2)," +
-                " d64 decimal(18, 2), d128 decimal(38, 2), d256 decimal(60, 2)) timestamp(ts) partition by day");
-        execute("insert into trades values" +
-                " ('2023-01-01T09:00:00.000000Z', 1.1m, 2.1m, 3.11m, 4.11m, 5.11m, 6.11m)," +
-                " ('2023-01-01T09:01:00.000000Z', 1.2m, 2.2m, 3.22m, 4.22m, 5.22m, 6.22m)," +
-                " ('2023-01-01T09:02:00.000000Z', 1.3m, 2.3m, 3.33m, 4.33m, 5.33m, 6.33m)");
-        execute("insert into prices values" +
-                " ('2023-01-01T09:00:00.000000Z', 7.1m, 8.1m, 9.11m, 1.11m, 2.11m, 3.11m)," +
-                " ('2023-01-01T09:01:00.000000Z', 7.2m, 8.2m, 9.22m, 1.22m, 2.22m, 3.22m)," +
-                " ('2023-01-01T09:02:00.000000Z', 7.3m, 8.3m, 9.33m, 1.33m, 2.33m, 3.33m)");
-    }
+    private static final String PRICES_DDL = """
+            CREATE TABLE prices (ts TIMESTAMP, d8 DECIMAL(2, 1), d16 DECIMAL(4, 1), d32 DECIMAL(9, 2),
+              d64 DECIMAL(18, 2), d128 DECIMAL(38, 2), d256 DECIMAL(60, 2)) TIMESTAMP(ts) PARTITION BY DAY""";
+    private static final String PRICES_INSERT = """
+            INSERT INTO prices VALUES
+              ('2023-01-01T09:00:00.000000Z', 7.1m, 8.1m, 9.11m, 1.11m, 2.11m, 3.11m),
+              ('2023-01-01T09:01:00.000000Z', 7.2m, 8.2m, 9.22m, 1.22m, 2.22m, 3.22m),
+              ('2023-01-01T09:02:00.000000Z', 7.3m, 8.3m, 9.33m, 1.33m, 2.33m, 3.33m)""";
+    private static final String TRADES_DDL = """
+            CREATE TABLE trades (ts TIMESTAMP, d8 DECIMAL(2, 1), d16 DECIMAL(4, 1), d32 DECIMAL(9, 2),
+              d64 DECIMAL(18, 2), d128 DECIMAL(38, 2), d256 DECIMAL(60, 2)) TIMESTAMP(ts) PARTITION BY DAY""";
+    private static final String TRADES_INSERT = """
+            INSERT INTO trades VALUES
+              ('2023-01-01T09:00:00.000000Z', 1.1m, 2.1m, 3.11m, 4.11m, 5.11m, 6.11m),
+              ('2023-01-01T09:01:00.000000Z', 1.2m, 2.2m, 3.22m, 4.22m, 5.22m, 6.22m),
+              ('2023-01-01T09:02:00.000000Z', 1.3m, 2.3m, 3.33m, 4.33m, 5.33m, 6.33m)""";
 
     @Test
     public void testConstantFalseJoinDelegatesMasterDecimals() throws Exception {
@@ -61,6 +60,7 @@ public class WindowJoinDecimalTest extends AbstractCairoTest {
                 "from trades t " +
                 "window join prices p on (1 = 0) " +
                 "range between 1 minute preceding and 1 minute following")
+                .ddl(TRADES_DDL, PRICES_DDL, TRADES_INSERT, PRICES_INSERT)
                 .expectSize()
                 .returns("d8\td16\td32\td64\td128\td256\tcnt\n" +
                         "1.1\t2.1\t3.11\t4.11\t5.11\t6.11\tnull\n" +
@@ -71,6 +71,7 @@ public class WindowJoinDecimalTest extends AbstractCairoTest {
     @Test
     public void testConstantFalseJoinPadsDecimalsWithNull() throws Exception {
         assertQuery(CONSTANT_FALSE_JOIN)
+                .ddl(TRADES_DDL, PRICES_DDL, TRADES_INSERT, PRICES_INSERT)
                 .timestamp("ts")
                 .expectSize()
                 .returns("ts\tf8\tf16\tf32\tf64\tf128\tf256\n" +
