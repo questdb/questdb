@@ -241,8 +241,8 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
 
     @Test
     public void testEveryFusibleShapeMatchesTheUnfusedPath() throws Exception {
-        // The differential, over every family the first slice admits, in both buckets and on
-        // both factories. The reference is this tree's unfused cached path rather than a
+        // The differential, over every cumulative family the build admits, in both buckets and
+        // on both factories. The reference is this tree's unfused cached path rather than a
         // second fused run: a window carrying one fusible function forms no group, so each
         // single-output query runs the per-function map and per-function probe the cached
         // cursors have always run.
@@ -276,6 +276,20 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                             "var_samp(x) over w",
                             "var_pop(x) over w",
                             "count(x) over w"
+                    );
+                    // The extremum families, whose empty state is the one thing in this build
+                    // that is not a zeroed slice: a partition no row has contributed to has to
+                    // read back as NULL, which is what a cached traversal's second drain and
+                    // its random access are most likely to expose. ts is here as an argument
+                    // as well as an ORDER BY term, which is the one column the chain and the
+                    // base disagree about the position of.
+                    assertFusedMatchesUnfused(window, lead, "max(x) over w", "min(x) over w");
+                    assertFusedMatchesUnfused(
+                            window,
+                            lead,
+                            "sum(x) over w",
+                            "max(x) over w",
+                            "min(ts) over w"
                     );
                 }
             }

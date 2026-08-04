@@ -50,6 +50,8 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -95,8 +97,13 @@ public class MaxMinWindowFunctionFactoryHelper {
      * constructor references so the same control flow serves both DATE and TIMESTAMP arguments and
      * both max ({@code GREATER_THAN}) and min ({@code LESS_THAN}).
      *
-     * @param comparator decides which value wins (max vs. min)
-     * @param name       function name used for plans and output
+     * @param comparator        decides which value wins (max vs. min)
+     * @param name              function name used for plans and output
+     * @param accumulatorFamily the fused accumulator family the unbounded-preceding shape
+     *                          contributes to - {@code FAMILY_LONG_MAX} or
+     *                          {@code FAMILY_LONG_MIN}. It says the same thing
+     *                          {@code comparator} does and is passed beside it because a
+     *                          shared state must not be identified by a lambda instance
      * @return a window function computing max/min over the requested frame
      * @throws SqlException if window validation fails, RANGE is requested without ordering by the
      *                      designated timestamp, or the parameter combination is not implemented
@@ -109,6 +116,7 @@ public class MaxMinWindowFunctionFactoryHelper {
             boolean supportNullsDesc,
             TimestampComparator comparator,
             String name,
+            int accumulatorFamily,
             CurrentRowConstructor currentRowConstructor,
             PartitionConstructor overPartitionConstructor,
             PartitionRangeConstructor overPartitionRangeConstructor,
@@ -181,7 +189,8 @@ public class MaxMinWindowFunctionFactoryHelper {
                                 name,
                                 partitionByKeyTypes,
                                 liveView,
-                                configuration
+                                configuration,
+                                accumulatorFamily
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -271,7 +280,8 @@ public class MaxMinWindowFunctionFactoryHelper {
                                 name,
                                 partitionByKeyTypes,
                                 liveView,
-                                configuration
+                                configuration,
+                                accumulatorFamily
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -552,7 +562,8 @@ public class MaxMinWindowFunctionFactoryHelper {
                                    String name,
                                    ColumnTypes partitionByKeyTypes,
                                    boolean liveView,
-                                   CairoConfiguration configuration);
+                                   CairoConfiguration configuration,
+                                   int accumulatorFamily);
     }
 
     @FunctionalInterface
@@ -2100,6 +2111,10 @@ public class MaxMinWindowFunctionFactoryHelper {
     // - max(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
     abstract static class MaxMinOverUnboundedPartitionRowsFrameBase extends BasePartitionedWindowFunction {
+        // FAMILY_LONG_MAX or FAMILY_LONG_MIN. Passed in rather than read off the comparator,
+        // because min reuses these subclasses with a LESS_THAN and the accumulator identity
+        // must not rest on which lambda instance a caller happened to hand over.
+        protected final int accumulatorFamily;
         protected final TimestampComparator comparator;
         protected final CairoConfiguration configuration;
         protected final ArrayColumnTypes keyColumnTypes;
@@ -2109,6 +2124,10 @@ public class MaxMinWindowFunctionFactoryHelper {
         protected final ArrayColumnTypes mapValueTypes;
         protected final String name;
         protected long maxMin;
+        // The running extremum's slot in the group's fused map value, or -1 when this
+        // function owns its state. Installed by bindWindowStateSlots and cleared the same
+        // way.
+        protected int windowStateExtremumSlot = -1;
 
         MaxMinOverUnboundedPartitionRowsFrameBase(Map map,
                                                   VirtualRecord partitionByRecord,
@@ -2118,10 +2137,12 @@ public class MaxMinWindowFunctionFactoryHelper {
                                                   String name,
                                                   ColumnTypes partitionByKeyTypes,
                                                   boolean liveView,
-                                                  CairoConfiguration configuration) {
+                                                  CairoConfiguration configuration,
+                                                  int accumulatorFamily) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.comparator = comparator;
             this.name = name;
+            this.accumulatorFamily = accumulatorFamily;
             this.liveView = liveView;
             this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
@@ -2141,8 +2162,39 @@ public class MaxMinWindowFunctionFactoryHelper {
             }
         }
 
+        /**
+         * Absorbs one row into the group's running extremum. The same arithmetic
+         * {@link #computeNext(Record)} runs, against a slot the group has already loaded
+         * rather than a map entry this function has to find - and reading the slot as a
+         * plain 64-bit word, because a group's value layout states the extremum as a LONG
+         * whatever unit the DATE or TIMESTAMP subclass hands it back in.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final long l = readArgValue(record);
+            if (l != Numbers.LONG_NULL) {
+                final long current = value.getLong(windowStateExtremumSlot);
+                if (current == Numbers.LONG_NULL || comparator.compare(l, current)) {
+                    value.putLong(windowStateExtremumSlot, l);
+                }
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateExtremumSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_EXTREMUM);
+        }
+
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -2205,6 +2257,16 @@ public class MaxMinWindowFunctionFactoryHelper {
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Reads the extremum the group keeps. No empty-state test: the component's identity
+         * is {@code LONG_NULL}, which is exactly what this window emits for a partition no
+         * non-null row has reached.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            maxMin = value.getLong(windowStateExtremumSlot);
+        }
+
         @Override
         public void resetPartition(Record record) {
             // ANCHOR-driven reset. Restore the null sentinel so the next
@@ -2257,6 +2319,27 @@ public class MaxMinWindowFunctionFactoryHelper {
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The running extremum, which is the whole of this function's per-partition state.
+         * Whether it is the maximum or the minimum is fixed at construction: min reuses
+         * these subclasses with the opposite comparator, and the two keep states neither can
+         * read out of the other.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return accumulatorFamily;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_EXTREMUM;
         }
 
         @Override

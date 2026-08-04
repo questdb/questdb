@@ -36,6 +36,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
@@ -116,7 +117,8 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             NAME,
                             partitionByKeyTypes,
                             liveView,
-                            configuration
+                            configuration,
+                            WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
@@ -203,7 +205,8 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             NAME,
                             partitionByKeyTypes,
                             liveView,
-                            configuration
+                            configuration,
+                            WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {

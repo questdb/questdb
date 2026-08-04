@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -87,6 +88,23 @@ import org.jetbrains.annotations.Nullable;
  * nothing about it could make it agree with a counter that skips the rows where some
  * column is null. What it does share is {@code row_number()}, which keeps the very same
  * counter over the very same rows.
+ *
+ * <h2>A running extremum is its own family, one per direction</h2>
+ * {@code max} and {@code min} keep one slot each - the largest, or smallest, contributing
+ * value seen so far - and they are {@link #FAMILY_DOUBLE_MAX four} separate families rather
+ * than one with a direction beside it. A component is a state, and a running maximum is
+ * simply not the same state as a running minimum: neither can be computed from the other,
+ * so two calls over one column merge only when they point the same way. The state's own
+ * type splits them again, for the reason the sum families are split from the dispersion
+ * ones - a DOUBLE extremum and a 64-bit one are read and reset differently.
+ * <p>
+ * They also mark the point at which the identity value of a slice stops being zero.
+ * {@code sum}, {@code count} and Welford's accumulator all start at zero and mean it; an
+ * extremum has to start at "nothing has contributed yet", which is
+ * {@link #getSlotIdentityBits NaN} for a DOUBLE state and {@code LONG_NULL} for a 64-bit
+ * one. Both are values the contribution predicate refuses, so neither can be confused with
+ * a real one, and both are what the unbounded frame's own implementation emits for a
+ * partition no row has contributed to.
  */
 public final class WindowAccumulatorDescriptor {
     /**
@@ -120,6 +138,25 @@ public final class WindowAccumulatorDescriptor {
      */
     public static final int CONTRIBUTION_TYPED_NOT_NULL = 2;
     /**
+     * State {@code [max: DOUBLE]}, contributed by a DOUBLE {@code max} over an unbounded
+     * partitioned frame. The identity is NaN, which is a value
+     * {@link #CONTRIBUTION_FINITE_DOUBLE} refuses, so an empty state and a state holding a
+     * real value are never confused - and NaN is what the same window emits for a partition
+     * no finite row has reached.
+     * <p>
+     * "DOUBLE" names the state and not the argument, as it does for
+     * {@link #FAMILY_DOUBLE_SUM_COUNT}: a column that reaches {@code max(D)} by widening
+     * accumulates into the same slot, and the argument type stays in the identity because
+     * the widening is what the contribution predicate is proved through.
+     */
+    public static final int FAMILY_DOUBLE_MAX = 5;
+    /**
+     * State {@code [min: DOUBLE]}, contributed by a DOUBLE {@code min} over an unbounded
+     * partitioned frame. Separate from {@link #FAMILY_DOUBLE_MAX} because a running minimum
+     * cannot be read out of a running maximum, however identical the rest of the window is.
+     */
+    public static final int FAMILY_DOUBLE_MIN = 6;
+    /**
      * State {@code [sum: DOUBLE, nonNullCount: LONG]}, contributed by a DOUBLE
      * {@code sum} or {@code avg} over an unbounded partitioned frame.
      * <p>
@@ -141,6 +178,25 @@ public final class WindowAccumulatorDescriptor {
      */
     public static final int FAMILY_DOUBLE_WELFORD = 4;
     /**
+     * State {@code [max: LONG]} - one raw 64-bit payload - contributed by a {@code max} over
+     * a LONG, DATE or TIMESTAMP argument on an unbounded partitioned frame. The identity is
+     * {@code Numbers.LONG_NULL}, which {@link #CONTRIBUTION_TYPED_NOT_NULL} refuses over
+     * every one of those types, so it doubles as the "nothing has contributed" marker and as
+     * the value the same window emits for such a partition.
+     * <p>
+     * One family rather than three, because the state is the argument's payload word and
+     * nothing about the argument's type: {@code max(M)} and {@code max(N)} reach one
+     * implementation that stores what {@code max(L)} stores. The three stay separate
+     * <b>components</b> anyway - the argument type is part of the identity - so a DATE and a
+     * TIMESTAMP extremum never share a slice.
+     */
+    public static final int FAMILY_LONG_MAX = 7;
+    /**
+     * State {@code [min: LONG]}, the {@link #FAMILY_LONG_MAX} state pointing the other way,
+     * and separate for the reason {@link #FAMILY_DOUBLE_MIN} is.
+     */
+    public static final int FAMILY_LONG_MIN = 8;
+    /**
      * Not an accumulator component. The default a window function reports when it
      * does not participate in a fused window state.
      */
@@ -161,6 +217,11 @@ public final class WindowAccumulatorDescriptor {
      * the data.
      */
     public static final int FAMILY_ROW_COUNT = 3;
+    /**
+     * The running largest or smallest contributing value. Present only in the four
+     * {@code max}/{@code min} families, which carry it and nothing else.
+     */
+    public static final int FIELD_EXTREMUM = 4;
     /**
      * The running sum of squared deviations from the running mean. Present only in
      * {@link #FAMILY_DOUBLE_WELFORD}.
@@ -222,12 +283,29 @@ public final class WindowAccumulatorDescriptor {
                 return argumentColumnType == ColumnType.UNDEFINED
                         ? CONTRIBUTION_EVERY_ROW
                         : CONTRIBUTION_NONE;
+            case FAMILY_DOUBLE_MAX:
+            case FAMILY_DOUBLE_MIN:
             case FAMILY_DOUBLE_SUM_COUNT:
             case FAMILY_DOUBLE_WELFORD:
                 // Those families have one factory each and it takes a DOUBLE, so every
-                // other argument they accept arrives by widening into that DOUBLE.
+                // other argument they accept arrives by widening into that DOUBLE. The
+                // max/min pair reads its argument through the same getDouble and skips the
+                // row on the same isFinite test, so it contributes under the same predicate
+                // - which is also why an extremum over a DOUBLE argument never sees an
+                // infinity, and its empty state can be NaN.
                 return isWidenedToDouble(argumentColumnType)
                         ? CONTRIBUTION_FINITE_DOUBLE
+                        : CONTRIBUTION_NONE;
+            case FAMILY_LONG_MAX:
+            case FAMILY_LONG_MIN:
+                // The 64-bit extremum's own null test: the implementation reads the
+                // argument's payload word and skips it when it equals LONG_NULL. Every type
+                // below reaches that reading as its own column function - LONG, DATE and
+                // TIMESTAMP have a factory each, and the narrower integrals widen into
+                // max(L) - and the type stays in the identity, so a DATE extremum and a
+                // TIMESTAMP one over the same word are still two components.
+                return isLongPayload(argumentColumnType)
+                        ? CONTRIBUTION_TYPED_NOT_NULL
                         : CONTRIBUTION_NONE;
             case FAMILY_NON_NULL_COUNT:
                 // count() has a factory per argument shape, so this arm is the one that
@@ -309,6 +387,10 @@ public final class WindowAccumulatorDescriptor {
                 return 2;
             case FAMILY_DOUBLE_WELFORD:
                 return 3;
+            case FAMILY_DOUBLE_MAX:
+            case FAMILY_DOUBLE_MIN:
+            case FAMILY_LONG_MAX:
+            case FAMILY_LONG_MIN:
             case FAMILY_NON_NULL_COUNT:
             case FAMILY_ROW_COUNT:
                 return 1;
@@ -446,6 +528,11 @@ public final class WindowAccumulatorDescriptor {
         if (family == FAMILY_DOUBLE_WELFORD && other.family == FAMILY_NON_NULL_COUNT) {
             return getFieldSlot(FIELD_NON_NULL_COUNT);
         }
+        // The four max/min families appear in no pair, in either role, and the reason is not
+        // that nobody has looked. A running extremum keeps no counter, so nothing narrower
+        // sits inside it; and it is a single slot whose value is the arithmetic's whole
+        // answer, so it is not a run inside anything wider either - a sum's first slot is a
+        // running total and not the largest thing ever added to it.
         return -1;
     }
 
@@ -471,6 +558,11 @@ public final class WindowAccumulatorDescriptor {
      */
     public int getFieldSlot(int field) {
         switch (family) {
+            case FAMILY_DOUBLE_MAX:
+            case FAMILY_DOUBLE_MIN:
+            case FAMILY_LONG_MAX:
+            case FAMILY_LONG_MIN:
+                return field == FIELD_EXTREMUM ? 0 : -1;
             case FAMILY_DOUBLE_SUM_COUNT:
                 if (field == FIELD_SUM) {
                     return 0;
@@ -505,6 +597,18 @@ public final class WindowAccumulatorDescriptor {
      */
     public int getSlotColumnType(int slot) {
         switch (family) {
+            case FAMILY_DOUBLE_MAX:
+            case FAMILY_DOUBLE_MIN:
+                if (slot == 0) {
+                    return ColumnType.DOUBLE;
+                }
+                break;
+            case FAMILY_LONG_MAX:
+            case FAMILY_LONG_MIN:
+                if (slot == 0) {
+                    return ColumnType.LONG;
+                }
+                break;
             case FAMILY_DOUBLE_SUM_COUNT:
                 if (slot == 0) {
                     return ColumnType.DOUBLE;
@@ -534,6 +638,42 @@ public final class WindowAccumulatorDescriptor {
     }
 
     /**
+     * Returns the raw 64-bit image of the value {@link #resetState} puts in {@code slot}:
+     * the state this component starts a partition at.
+     * <p>
+     * Zero for every accumulating family, which is what a sum, a counter and Welford's
+     * {@code (mean, m2)} all begin at and mean. It is <b>not</b> zero for a running
+     * extremum, whose starting state has to say "nothing has contributed yet" rather than
+     * "the largest value so far is zero" - so a DOUBLE extremum starts at NaN and a 64-bit
+     * one at {@code Numbers.LONG_NULL}, both of them values the family's contribution
+     * predicate refuses and so never confusable with a real one.
+     * <p>
+     * Stated in bits because that is the currency the durable image already uses - one
+     * little-endian 64-bit field per slot - so a family whose identity is not zero is
+     * describable here without a second accessor per slot type.
+     *
+     * @param slot a slot of this component's own state, which is bounds-checked: an
+     *             out-of-range slot is a layout bug and must not quietly answer zero
+     */
+    public long getSlotIdentityBits(int slot) {
+        // Asked for its throw rather than its answer: an out-of-range slot is a layout bug and
+        // must not quietly come back as an identity.
+        getSlotColumnType(slot);
+        switch (family) {
+            case FAMILY_DOUBLE_MAX:
+            case FAMILY_DOUBLE_MIN:
+                return Double.doubleToRawLongBits(Double.NaN);
+            case FAMILY_LONG_MAX:
+            case FAMILY_LONG_MIN:
+                return Numbers.LONG_NULL;
+            default:
+                // Zero, whichever way the slot is read back: a DOUBLE zero and a LONG zero are
+                // the same word.
+                return 0L;
+        }
+    }
+
+    /**
      * Whether the two descriptors name the same component, and so may share one state
      * slice.
      */
@@ -548,14 +688,52 @@ public final class WindowAccumulatorDescriptor {
      * Puts this component's slots back to the identity a new partition needs, and that a
      * live view's anchor crossing also leaves behind: a map value's slots are not
      * zero-filled by {@code createValue()} on any implementation.
+     * <p>
+     * The identity is the family's rather than the slot type's - see
+     * {@link #getSlotIdentityBits} - because an extremum's empty state is not zero.
      */
     public void resetState(@NotNull MapValue value, int slotBase) {
         for (int i = 0, n = getSlotCount(); i < n; i++) {
+            final long bits = getSlotIdentityBits(i);
             if (getSlotColumnType(i) == ColumnType.DOUBLE) {
-                value.putDouble(slotBase + i, 0.0);
+                value.putDouble(slotBase + i, Double.longBitsToDouble(bits));
             } else {
-                value.putLong(slotBase + i, 0L);
+                value.putLong(slotBase + i, bits);
             }
+        }
+    }
+
+    /**
+     * Whether a column of {@code columnType} reaches a 64-bit extremum as a direct column
+     * reference whose absent value is {@code Numbers.LONG_NULL}, contributing under
+     * {@link #CONTRIBUTION_TYPED_NOT_NULL} once it gets there.
+     * <p>
+     * The three that have a factory of their own are LONG, DATE and TIMESTAMP, and the
+     * implementation behind all three stores the argument's payload word. The narrower
+     * integrals are here because they match {@code max(L)} by widening with no cast
+     * wrapper inserted - {@code IntFunction.getLong} answers {@code LONG_NULL} for
+     * {@code Numbers.INT_NULL}, so the null carries across, while BYTE and SHORT have no
+     * null representation at all and so contribute on every row.
+     * <p>
+     * Everything else declines, one type at a time and for the reason
+     * {@link #isWidenedToDouble} declines its own list: a type that reaches the extremum
+     * through some other reading contributes under some other predicate, and the identity
+     * would then name a predicate the runtime does not apply. That includes DOUBLE and
+     * FLOAT, which have a DOUBLE-stated extremum of their own, and DECIMAL, whose
+     * {@code max} accumulates into a {@code Decimal128} or {@code Decimal256} - a state
+     * shape this class's slot model does not describe.
+     */
+    private static boolean isLongPayload(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+                return true;
+            default:
+                return false;
         }
     }
 

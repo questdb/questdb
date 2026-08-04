@@ -299,6 +299,85 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTheExtremumFamiliesNeitherMergeNorFold() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // Five extremum calls and an accumulating pair over one window. Nothing about an
+            // extremum can be read out of anything else, and nothing out of it, so every one
+            // of them keeps a slot: max and min over one column are two directions of one
+            // reading and merge no more than max over two columns do, and a sum's first slot
+            // is a running total rather than the largest thing ever added to it. What does
+            // still fold is the count onto the sum's counter, which is what says admitting a
+            // family left the proved relations alone.
+            //
+            // ts is here for the other half of the split: the extremum families are separated
+            // by the state's type as well as by direction, and a timestamp argument keeps a
+            // raw 64-bit word where x keeps a DOUBLE.
+            assertPlans(
+                    "select ts, max(x) over w, min(x) over w, max(y) over w, max(ts) over w, "
+                            + "sum(x) over w, count(x) over w from base " + window(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(5, plan.getComponentCount());
+                        Assert.assertEquals(6, plan.getProjectionCount());
+                        Assert.assertEquals(6, plan.getSlotCount());
+                        // Canonical order is by family id first, so the (sum, count) pair leads
+                        // and the four extrema follow it in family order, ties broken by the
+                        // argument column. The two DOUBLE_MAX components are the tie: they sit
+                        // adjacent, in argument order, and the x one is also the argument the
+                        // sum and the DOUBLE_MIN carry.
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX,
+                                plan.getComponent(1).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX,
+                                plan.getComponent(2).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN,
+                                plan.getComponent(3).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_LONG_MAX,
+                                plan.getComponent(4).getFamily()
+                        );
+                        final int xColumn = plan.getComponent(0).getArgumentColumnIndex();
+                        Assert.assertEquals(xColumn, plan.getComponent(1).getArgumentColumnIndex());
+                        Assert.assertEquals(xColumn, plan.getComponent(3).getArgumentColumnIndex());
+                        Assert.assertTrue(
+                                "the two DOUBLE_MAX components must be ordered by argument",
+                                plan.getComponent(2).getArgumentColumnIndex() > xColumn
+                        );
+                        final ArrayColumnTypes types = new ArrayColumnTypes();
+                        plan.buildMapValueTypes(types);
+                        Assert.assertEquals(6, types.getColumnCount());
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(0));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(1));
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(2));
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(3));
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(4));
+                        // The 64-bit extremum's slot is a LONG whatever unit the timestamp
+                        // subclass hands its own answer back in.
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(5));
+                        for (int output = 1; output <= 5; output++) {
+                            Assert.assertFalse(
+                                    "output " + output + " should keep its own component",
+                                    projectionAt(plan, output).isDerived()
+                            );
+                        }
+                        Assert.assertTrue(projectionAt(plan, 6).isDerived());
+                        Assert.assertEquals(1, projectionAt(plan, 6).getNonNullCountSlot());
+                    }
+            );
+        });
+    }
+
+    @Test
     public void testTheGenericAndLiveViewPlansAgreeOnTheAnchoredShapes() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();

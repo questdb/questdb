@@ -102,11 +102,23 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             "stddev_pop(xd)",
             "var_samp(xd)",
             "var_pop(xd)",
+            // The four extremum families, one call per (direction, state type) pair plus the
+            // pairs that share an argument: max and min over one column keep two components
+            // and never merge, which is the shape most likely to read the wrong slot.
+            "max(xd)",
+            "min(xd)",
+            "max(yd)",
+            "min(yd)",
+            "max(xl)",
+            "min(xl)",
+            "max(ts)",
+            "min(ts)",
     };
     /**
      * A RANGE-framed window carries no ranking call - {@code row_number()} has no frame - and
      * this build's dispersion factories dispatch RANGE elsewhere, so the arm keeps the families
-     * both spellings reach.
+     * both spellings reach. The extremum families are among them: RANGE unbounded-preceding-to-
+     * current-row reaches the same class the ROWS spelling does.
      */
     private static final String[] RANGE_FRAME_CALLS = {
             "sum(xd)",
@@ -119,15 +131,21 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             "count(ki)",
             "count(ks)",
             "count(kv)",
+            "max(xd)",
+            "min(xd)",
+            "max(xl)",
+            "min(xl)",
+            "max(ts)",
+            "min(ts)",
     };
     /**
      * Calls no family describes. One of them lands in a query now and then so that a residual
      * function and a bound group share a cursor, which is what an ordinary query looks like.
      */
     private static final String[] RESIDUAL_CALLS = {
-            "max(xd)",
-            "min(yd)",
             "first_value(xd)",
+            "first_value(yd)",
+            "first_value(xl)",
     };
     private Rnd rnd;
 
@@ -256,8 +274,11 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
         // sum contributes on Numbers.isFinite and count on a null test, so an infinity is a row
         // the two disagree about in a way no NULL reproduces.
         final int infiniteEvery = 5 + rnd.nextInt(30);
+        // A LONG argument as well as the two DOUBLE ones, because the extremum families are
+        // split by the state's type and the two halves are separate implementations.
+        final int lNullEvery = 1 + rnd.nextInt(9);
         final String ddl = "create table " + table
-                + " (ts timestamp, ki int, ks symbol, kv varchar, xd double, yd double)"
+                + " (ts timestamp, ki int, ks symbol, kv varchar, xd double, yd double, xl long)"
                 + " timestamp(ts) partition by day";
         final String dml = "insert into " + table + " select"
                 + " (x * 1000000L)::timestamp,"
@@ -269,7 +290,8 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
                 + " else (x % 97)::double / 7.0 end,"
                 + " case when x % " + yNullEvery + " = 0 then null"
                 + " when x % " + infiniteEvery + " = 0 then '-Infinity'::double"
-                + " else (x % 89)::double end"
+                + " else (x % 89)::double end,"
+                + " case when x % " + lNullEvery + " = 0 then null else (x % 83) - 41 end"
                 + " from long_sequence(" + rows + ")";
         execute(ddl);
         execute(dml);

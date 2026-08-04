@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
@@ -106,6 +107,75 @@ public class WindowAccumulatorDescriptorTest {
         // An expression is not a direct column reference, and neither is nothing at all.
         Assert.assertEquals(-1, WindowAccumulatorDescriptor.directColumnIndex(IntConstant.newInstance(1), metadata));
         Assert.assertEquals(-1, WindowAccumulatorDescriptor.directColumnIndex(null, metadata));
+    }
+
+    @Test
+    public void testTheExtremumFamiliesAreRuntimeOnlyAndStartAtNull() {
+        // The four extremum families are the first this build admits at runtime and not on
+        // disk, and the first whose starting state is not a zeroed slice. Both halves matter
+        // beyond their own arithmetic: a durable descriptor for a family whose codec nothing
+        // pinned would ship an unpinned encoding, and a slice reset to zero would read back as
+        // "the largest value so far is zero" for a partition nothing has contributed to.
+        final ObjList<WindowAccumulatorDescriptor> extrema = new ObjList<>();
+        addExtremum(extrema, WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX, 2, ColumnType.DOUBLE);
+        addExtremum(extrema, WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN, 2, ColumnType.DOUBLE);
+        addExtremum(extrema, WindowAccumulatorDescriptor.FAMILY_LONG_MAX, 3, ColumnType.LONG);
+        addExtremum(extrema, WindowAccumulatorDescriptor.FAMILY_LONG_MIN, 3, ColumnType.LONG);
+        addExtremum(extrema, WindowAccumulatorDescriptor.FAMILY_LONG_MAX, 0, ColumnType.TIMESTAMP);
+
+        for (int i = 0, n = extrema.size(); i < n; i++) {
+            final WindowAccumulatorDescriptor component = extrema.getQuick(i);
+            final String what = "family " + component.getFamily()
+                    + " over column " + component.getArgumentColumnIndex();
+            // One slot, and it is the extremum's - no counter, which is why a bound function's
+            // "am I fused" answer is the binding rather than a named field.
+            Assert.assertEquals(what, 1, component.getSlotCount());
+            Assert.assertEquals(what, 0, component.getFieldSlot(WindowAccumulatorDescriptor.FIELD_EXTREMUM));
+            Assert.assertEquals(what, -1, component.getFieldSlot(WindowAccumulatorDescriptor.FIELD_SUM));
+            Assert.assertEquals(
+                    what,
+                    -1,
+                    component.getFieldSlot(WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT)
+            );
+            final boolean isDoubleState = component.getFamily() == WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX
+                    || component.getFamily() == WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN;
+            Assert.assertEquals(
+                    what,
+                    isDoubleState ? ColumnType.DOUBLE : ColumnType.LONG,
+                    component.getSlotColumnType(0)
+            );
+            // The identity is the NULL the family's own contribution predicate refuses, so an
+            // empty state can never be mistaken for a contributed one.
+            Assert.assertEquals(
+                    what + ": identity",
+                    isDoubleState ? Double.doubleToRawLongBits(Double.NaN) : Numbers.LONG_NULL,
+                    component.getSlotIdentityBits(0)
+            );
+            // Runtime-only: no component codec, and so no durable wrapper and no manifest.
+            Assert.assertEquals(what, -1, LiveViewAccumulatorDescriptor.familyCodecVersion(component.getFamily()));
+            Assert.assertNull(what, LiveViewAccumulatorDescriptor.of(component));
+        }
+
+        // No containment in either direction, against each other or against every durable
+        // component this build has - an extremum is neither a run inside anything wider nor
+        // wide enough to hold anything.
+        final ObjList<LiveViewAccumulatorDescriptor> others = components();
+        for (int i = 0, n = extrema.size(); i < n; i++) {
+            final WindowAccumulatorDescriptor extremum = extrema.getQuick(i);
+            for (int j = 0; j < n; j++) {
+                final WindowAccumulatorDescriptor other = extrema.getQuick(j);
+                Assert.assertEquals(
+                        "extremum " + i + " containing extremum " + j,
+                        i == j ? 0 : -1,
+                        extremum.derivedSlotOffset(other)
+                );
+            }
+            for (int j = 0, m = others.size(); j < m; j++) {
+                final WindowAccumulatorDescriptor other = others.getQuick(j).getRuntime();
+                Assert.assertEquals(-1, extremum.derivedSlotOffset(other));
+                Assert.assertEquals(-1, other.derivedSlotOffset(extremum));
+            }
+        }
     }
 
     @Test
@@ -195,6 +265,21 @@ public class WindowAccumulatorDescriptorTest {
                 ColumnType.UNDEFINED
         );
         return components;
+    }
+
+    private static void addExtremum(
+            ObjList<WindowAccumulatorDescriptor> components,
+            int family,
+            int argumentColumnIndex,
+            int argumentColumnType
+    ) {
+        final WindowAccumulatorDescriptor component = WindowAccumulatorDescriptor.of(
+                family,
+                argumentColumnIndex,
+                argumentColumnType
+        );
+        Assert.assertNotNull(component);
+        components.add(component);
     }
 
     private static void add(

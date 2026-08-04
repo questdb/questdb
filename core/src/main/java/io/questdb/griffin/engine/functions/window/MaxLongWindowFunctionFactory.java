@@ -50,6 +50,8 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -169,7 +171,8 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                             NAME,
                             partitionByKeyTypes,
                             liveView,
-                            configuration
+                            configuration,
+                            WindowAccumulatorDescriptor.FAMILY_LONG_MAX
                     );
                 } // range between {unbounded | x} preceding and {x preceding | current row}, except unbounded preceding to current row
                 else {
@@ -253,7 +256,8 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                             NAME,
                             partitionByKeyTypes,
                             liveView,
-                            configuration
+                            configuration,
+                            WindowAccumulatorDescriptor.FAMILY_LONG_MAX
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -2404,6 +2408,10 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
     // Doesn't require value buffering.
     public static class MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
+        // FAMILY_LONG_MAX or FAMILY_LONG_MIN. Passed in rather than read off the comparator,
+        // because min reuses this class with a LESS_THAN and the accumulator identity must
+        // not rest on which lambda instance a caller happened to hand over.
+        private final int accumulatorFamily;
         private final LongComparator comparator;
         private final CairoConfiguration configuration;
         private final ArrayColumnTypes keyColumnTypes;
@@ -2414,6 +2422,10 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         private final String name;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         private long maxMin;
+        // The running extremum's slot in the group's fused map value, or -1 when this
+        // function owns its state. Installed by bindWindowStateSlots and cleared the same
+        // way.
+        private int windowStateExtremumSlot = -1;
         // Single-writer (refresh worker), not volatile.
 
         public MaxMinOverUnboundedPartitionRowsFrameFunction(Map map,
@@ -2424,10 +2436,12 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                                                              String name,
                                                              ColumnTypes partitionByKeyTypes,
                                                              boolean liveView,
-                                                             CairoConfiguration configuration) {
+                                                             CairoConfiguration configuration,
+                                                             int accumulatorFamily) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.comparator = comparator;
             this.name = name;
+            this.accumulatorFamily = accumulatorFamily;
             this.liveView = liveView;
             this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
@@ -2453,6 +2467,31 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         }
 
         /**
+         * Absorbs one row into the group's running extremum. The same arithmetic
+         * {@link #computeNext(Record)} runs, against a slot the group has already loaded
+         * rather than a map entry this function has to find - and with the identity
+         * {@code LONG_NULL} standing in for the {@code isNew()} the private map answers with.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final long l = arg.getLong(record);
+            if (l != Numbers.LONG_NULL) {
+                final long current = value.getLong(windowStateExtremumSlot);
+                if (current == Numbers.LONG_NULL || comparator.compare(l, current)) {
+                    value.putLong(windowStateExtremumSlot, l);
+                }
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateExtremumSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_EXTREMUM);
+        }
+
+        /**
          * Advance aggregation for the current record: update and store the per-partition maximum.
          * <p>
          * If the input value is non-null, this method inserts or updates the partition map entry
@@ -2462,6 +2501,11 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
          */
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -2588,6 +2632,16 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Reads the extremum the group keeps. No empty-state test: the component's identity
+         * is {@code LONG_NULL}, which is exactly what this window emits for a partition no
+         * non-null row has reached.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            maxMin = value.getLong(windowStateExtremumSlot);
+        }
+
         @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putLong(0, source.getLong(offset));
@@ -2609,6 +2663,27 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(value.getLong(0));
             sink.putByte(value.getByte(1));
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The running extremum, which is the whole of this function's per-partition state.
+         * Whether it is the maximum or the minimum is fixed at construction: min reuses this
+         * class with the opposite comparator, and the two keep states neither can read out
+         * of the other.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return accumulatorFamily;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_EXTREMUM;
         }
 
         @Override

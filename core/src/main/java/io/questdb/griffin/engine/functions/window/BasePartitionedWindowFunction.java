@@ -90,11 +90,16 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     // Single-writer (refresh worker), not volatile.
     protected long tombstoneCount;
     protected int tombstoneValueIndex = -1;
-    // The fused window-state slots this function reads out of LiveViewWindow's one map
-    // value, or -1 when it owns its state as it always has. The counter is present in
-    // every accumulator family a plan admits, so it doubles as the "am I fused" answer;
-    // the sum is -1 for a bare-counter component. Installed by the plan through
+    // The fused window-state slots this function reads out of the group owner's one map
+    // value, or -1 when it owns its state as it always has. Installed by the plan through
     // bindWindowStateSlots and cleared the same way, both on the refresh worker.
+    //
+    // The component's base is the "am I fused" answer because every binding has one: the
+    // counter used to serve, and stopped when the extremum families arrived - they carry a
+    // single slot and no counter at all. The two named slots are -1 wherever the bound
+    // component does not carry the field, which is the sum for a bare counter and both of
+    // them for an extremum.
+    protected int windowStateComponentSlotBase = -1;
     protected int windowStateNonNullCountSlot = -1;
     protected int windowStateSumSlot = -1;
 
@@ -114,12 +119,13 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     }
 
     /**
-     * Caches the two slots every family this base class serves has a name for. A
-     * subclass whose family carries more - Welford's mean and m2 - overrides, calls
-     * super and reads its own fields off the same projection.
+     * Records the binding itself and caches the two slots this base class has a name for. A
+     * subclass whose family carries other fields - Welford's mean and m2, an extremum -
+     * overrides, calls super and reads its own off the same projection.
      */
     @Override
     public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+        this.windowStateComponentSlotBase = projection == null ? -1 : projection.getComponentSlotBase();
         this.windowStateSumSlot = projection == null
                 ? -1
                 : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_SUM);
@@ -186,7 +192,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
 
     @Override
     public boolean isWindowStateOwned() {
-        return windowStateNonNullCountSlot >= 0;
+        return windowStateComponentSlotBase >= 0;
     }
 
     /**

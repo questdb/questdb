@@ -91,6 +91,16 @@ public final class WindowAccumulatorProjection {
      */
     public static final int PROJECTION_COUNT_PARTITION_KEY = 8;
     /**
+     * The component's one slot, read straight - what a {@code max} or a {@code min} emits.
+     * <p>
+     * One kind for both directions, unlike the families it reads: which way the extremum
+     * points is decided when the state is <b>maintained</b>, so by the time an output reads
+     * the slot there is nothing left to choose. That is also why it needs no empty-state
+     * test the way {@link #PROJECTION_SUM} does - an extremum's identity is already the NULL
+     * its own type emits.
+     */
+    public static final int PROJECTION_EXTREMUM = 9;
+    /**
      * The default: this output reads no shared accumulator.
      */
     public static final int PROJECTION_NONE = 0;
@@ -196,6 +206,13 @@ public final class WindowAccumulatorProjection {
                         || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD
                         || family == WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT
                         || family == WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;
+            case PROJECTION_EXTREMUM:
+                // The four extremum families and nothing else. Every one of them carries the
+                // single slot this kind reads, and no other family does.
+                return family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX
+                        || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN
+                        || family == WindowAccumulatorDescriptor.FAMILY_LONG_MAX
+                        || family == WindowAccumulatorDescriptor.FAMILY_LONG_MIN;
             case PROJECTION_COUNT_PARTITION_KEY:
                 // The row count alone. A guarded reading of a non-null count would be
                 // either a tautology or a contradiction - that counter already applies the
@@ -263,9 +280,11 @@ public final class WindowAccumulatorProjection {
     }
 
     /**
-     * Returns the contributing-row counter's slot in the group's fused map value.
-     * Present for every family this class binds, which is why a bound function uses it
-     * as its "am I fused" answer.
+     * Returns the contributing-row counter's slot in the group's fused map value, or
+     * {@code -1} when the component carries none - which the extremum families do not.
+     * <p>
+     * It was once every family's, and so served as a bound function's "am I fused" answer.
+     * That is now {@link #getComponentSlotBase()}, which every binding has by construction.
      */
     public int getNonNullCountSlot() {
         return nonNullCountSlot;

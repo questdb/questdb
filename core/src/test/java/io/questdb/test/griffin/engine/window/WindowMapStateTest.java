@@ -249,12 +249,12 @@ public class WindowMapStateTest extends AbstractCairoTest {
             // NULL key is a partition of its own that both outputs must find again on every
             // row rather than treating as absent.
             execute("insert into t values " +
-                    "('2024-01-01T00:00:00.000000Z', 'nk', 'p', null, 1.0), " +
-                    "('2024-01-01T00:00:01.000000Z', null, 'p', 2.0, null), " +
-                    "('2024-01-01T00:00:02.000000Z', 'nk', 'q', null, null), " +
-                    "('2024-01-01T00:00:03.000000Z', null, 'q', 3.0, 4.0), " +
-                    "('2024-01-01T00:00:04.000000Z', 'nk', 'p', null, 5.0), " +
-                    "('2024-01-01T00:00:05.000000Z', null, 'p', null, 6.0)");
+                    "('2024-01-01T00:00:00.000000Z', 'nk', 'p', null, 1.0, null), " +
+                    "('2024-01-01T00:00:01.000000Z', null, 'p', 2.0, null, 1), " +
+                    "('2024-01-01T00:00:02.000000Z', 'nk', 'q', null, null, null), " +
+                    "('2024-01-01T00:00:03.000000Z', null, 'q', 3.0, 4.0, 2), " +
+                    "('2024-01-01T00:00:04.000000Z', 'nk', 'p', null, 5.0, null), " +
+                    "('2024-01-01T00:00:05.000000Z', null, 'p', null, 6.0, 3)");
             assertFusedMatchesUnfused("sum(x) over w", "count(y) over w");
         });
     }
@@ -454,6 +454,134 @@ public class WindowMapStateTest extends AbstractCairoTest {
                     "var_samp(x) over w",
                     "var_pop(x) over w",
                     "count(x) over w"
+            );
+        });
+    }
+
+    @Test
+    public void testAMaxAndAMinOverOneArgumentKeepTwoComponents() throws Exception {
+        // The negative control the extremum families need. max(x) and min(x) agree on which
+        // rows contribute and on the width and type of what they keep, and share nothing: a
+        // running maximum cannot be read out of a running minimum, so the fold table admits
+        // neither into the other and the group keeps two slots for two outputs. What it does
+        // share is the key domain and the row's one lookup, which is the whole of what
+        // physical co-location was for.
+        //
+        // The data is the key-shape one, whose partitions include a NULL key, one whose only
+        // non-null x is an infinity - so it has rows, and no value either extremum
+        // contributes - and one of a single row.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, max(x) over w, min(x) over w from t " + WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(2, plan.getComponentCount());
+                Assert.assertEquals(2, plan.getProjectionCount());
+                Assert.assertEquals(2, plan.getSlotCount());
+                // Neither output reads a component wider than its own, which is what says the
+                // two states stayed apart.
+                Assert.assertFalse(plan.getProjection(0).isDerived());
+                Assert.assertFalse(plan.getProjection(1).isDerived());
+                Assert.assertEquals(0, plan.getProjection(0).getComponentSlotBase());
+                Assert.assertEquals(1, plan.getProjection(1).getComponentSlotBase());
+                // No counter behind either of them - the extremum is the whole state - which is
+                // why the binding is what says a function is fused and the counter no longer is.
+                Assert.assertEquals(-1, plan.getProjection(0).getNonNullCountSlot());
+                Assert.assertEquals(-1, plan.getProjection(1).getNonNullCountSlot());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfused("max(x) over w", "min(x) over w");
+        });
+    }
+
+    @Test
+    public void testAnExtremumSharesTheKeyWithASumOverTheSameArgument() throws Exception {
+        // The extremum families beside the accumulating ones, over one argument. Nothing
+        // merges: a sum's first slot is a running total and not the largest thing ever added
+        // to it, so max(x) keeps a slot of its own next to the (sum, count) pair - and the
+        // count still folds onto that pair, which is what says admitting a family did not
+        // disturb the folds already proved.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, sum(x) over w, max(x) over w, count(x) over w from t " + WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(2, plan.getComponentCount());
+                Assert.assertEquals(3, plan.getProjectionCount());
+                // [sum, count] then [max] - components sort by identity, and the sum family's
+                // id is the lower of the two.
+                Assert.assertEquals(3, plan.getSlotCount());
+                Assert.assertEquals(0, plan.getComponentSlotBase(0));
+                Assert.assertEquals(2, plan.getComponentSlotBase(1));
+                // The count reads the sum's counter at slot 1; the extremum reads slot 2 and
+                // lends nothing.
+                Assert.assertTrue(plan.getProjection(2).isDerived());
+                Assert.assertEquals(1, plan.getProjection(2).getNonNullCountSlot());
+                Assert.assertFalse(plan.getProjection(1).isDerived());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    // Two accumulators for three outputs: x is read once per component.
+                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfused("sum(x) over w", "max(x) over w", "count(x) over w");
+        });
+    }
+
+    @Test
+    public void testExtremaOverEveryAdmittedStateTypeShareOneKey() throws Exception {
+        // The four families in one group, and the two implementations behind them. max(x) and
+        // min(y) keep a DOUBLE slot each and contribute on isFinite; max(l) and min(ts) keep a
+        // raw 64-bit word each and contribute on their own type's null test - l through the
+        // max(L) factory and ts through the timestamp one, which are separate classes over one
+        // shared base. Eight slots would be four maps and four probes unfused; here they are
+        // four slots behind one key.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, max(x) over w, min(y) over w, max(l) over w, min(ts) over w "
+                    + "from t " + WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(4, plan.getComponentCount());
+                Assert.assertEquals(4, plan.getProjectionCount());
+                Assert.assertEquals(4, plan.getSlotCount());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    Assert.assertEquals(4 * rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(4 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfused(
+                    "max(x) over w",
+                    "min(y) over w",
+                    "max(l) over w",
+                    "min(ts) over w"
             );
         });
     }
@@ -777,7 +905,10 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     private void createTable() throws SqlException {
-        execute("create table t (ts timestamp, k symbol, k2 symbol, x double, y double) "
+        // l is a LONG so that the extremum families can be reached at both of the state types
+        // they are split by - the DOUBLE one through x and y, the 64-bit one through l and
+        // through ts, which are two separate implementations.
+        execute("create table t (ts timestamp, k symbol, k2 symbol, x double, y double, l long) "
                 + "timestamp(ts) partition by day");
     }
 
@@ -789,40 +920,40 @@ public class WindowMapStateTest extends AbstractCairoTest {
      */
     private void insertKeyShapes() throws SqlException {
         execute("insert into t values " +
-                "('2024-01-01T00:00:00.000000Z', 'a', 'p', 1.0, 10.0), " +
-                "('2024-01-01T00:00:01.000000Z', null, 'p', 2.0, 20.0), " +
-                "('2024-01-01T00:00:02.000000Z', 'a', 'q', 4.0, null), " +
-                "('2024-01-01T00:00:03.000000Z', null, 'q', null, 40.0), " +
-                "('2024-01-01T00:00:04.000000Z', 'one', 'p', 5.0, 50.0), " +
-                "('2024-01-01T00:00:05.000000Z', 'nx', 'q', null, 60.0), " +
-                "('2024-01-01T00:00:06.000000Z', 'nx', 'p', 'Infinity'::double, 70.0), " +
-                "('2024-01-01T00:00:07.000000Z', 'a', 'q', 8.0, 80.0), " +
-                "('2024-01-01T00:00:08.000000Z', null, 'p', 9.0, null)");
+                "('2024-01-01T00:00:00.000000Z', 'a', 'p', 1.0, 10.0, 5), " +
+                "('2024-01-01T00:00:01.000000Z', null, 'p', 2.0, 20.0, -3), " +
+                "('2024-01-01T00:00:02.000000Z', 'a', 'q', 4.0, null, null), " +
+                "('2024-01-01T00:00:03.000000Z', null, 'q', null, 40.0, 7), " +
+                "('2024-01-01T00:00:04.000000Z', 'one', 'p', 5.0, 50.0, null), " +
+                "('2024-01-01T00:00:05.000000Z', 'nx', 'q', null, 60.0, 0), " +
+                "('2024-01-01T00:00:06.000000Z', 'nx', 'p', 'Infinity'::double, 70.0, -9), " +
+                "('2024-01-01T00:00:07.000000Z', 'a', 'q', 8.0, 80.0, 2), " +
+                "('2024-01-01T00:00:08.000000Z', null, 'p', 9.0, null, null)");
     }
 
     private void insertNullsAndInfinities() throws SqlException {
         // sum contributes on Numbers.isFinite and count(y) on a null test, so an infinity is a
         // row the two disagree about in a way no NULL reproduces.
         execute("insert into t values " +
-                "('2024-01-01T00:00:00.000000Z', 'a', 'p', 1.0, 1.0), " +
-                "('2024-01-01T00:00:01.000000Z', 'a', 'p', null, null), " +
-                "('2024-01-01T00:00:02.000000Z', 'a', 'q', 'Infinity'::double, 2.0), " +
-                "('2024-01-01T00:00:03.000000Z', 'b', 'q', '-Infinity'::double, null), " +
-                "('2024-01-01T00:00:04.000000Z', 'b', 'p', 2.5, 3.0), " +
-                "('2024-01-01T00:00:05.000000Z', 'b', 'p', null, 4.0), " +
-                "('2024-01-01T00:00:06.000000Z', 'a', 'q', -3.5, null)");
+                "('2024-01-01T00:00:00.000000Z', 'a', 'p', 1.0, 1.0, 1), " +
+                "('2024-01-01T00:00:01.000000Z', 'a', 'p', null, null, null), " +
+                "('2024-01-01T00:00:02.000000Z', 'a', 'q', 'Infinity'::double, 2.0, -2), " +
+                "('2024-01-01T00:00:03.000000Z', 'b', 'q', '-Infinity'::double, null, null), " +
+                "('2024-01-01T00:00:04.000000Z', 'b', 'p', 2.5, 3.0, 3), " +
+                "('2024-01-01T00:00:05.000000Z', 'b', 'p', null, 4.0, -4), " +
+                "('2024-01-01T00:00:06.000000Z', 'a', 'q', -3.5, null, 0)");
     }
 
     private void insertOrdinaryRows() throws SqlException {
         execute("insert into t values " +
-                "('2024-01-01T00:00:00.000000Z', 'a', 'p', 1.0, 10.0), " +
-                "('2024-01-01T00:00:01.000000Z', 'b', 'p', 2.0, 20.0), " +
-                "('2024-01-01T00:00:02.000000Z', 'a', 'q', 3.0, 30.0), " +
-                "('2024-01-01T00:00:03.000000Z', 'c', 'q', 4.0, 40.0), " +
-                "('2024-01-01T00:00:04.000000Z', 'a', 'p', 5.0, 50.0), " +
-                "('2024-01-01T00:00:05.000000Z', 'b', 'q', 6.0, 60.0), " +
-                "('2024-01-01T00:00:06.000000Z', 'c', 'p', 7.0, 70.0), " +
-                "('2024-01-01T00:00:07.000000Z', 'a', 'q', 8.0, 80.0), " +
-                "('2024-01-01T00:00:08.000000Z', 'b', 'p', 9.0, 90.0)");
+                "('2024-01-01T00:00:00.000000Z', 'a', 'p', 1.0, 10.0, 100), " +
+                "('2024-01-01T00:00:01.000000Z', 'b', 'p', 2.0, 20.0, -200), " +
+                "('2024-01-01T00:00:02.000000Z', 'a', 'q', 3.0, 30.0, 300), " +
+                "('2024-01-01T00:00:03.000000Z', 'c', 'q', 4.0, 40.0, -400), " +
+                "('2024-01-01T00:00:04.000000Z', 'a', 'p', 5.0, 50.0, 500), " +
+                "('2024-01-01T00:00:05.000000Z', 'b', 'q', 6.0, 60.0, -600), " +
+                "('2024-01-01T00:00:06.000000Z', 'c', 'p', 7.0, 70.0, 700), " +
+                "('2024-01-01T00:00:07.000000Z', 'a', 'q', 8.0, 80.0, -800), " +
+                "('2024-01-01T00:00:08.000000Z', 'b', 'p', 9.0, 90.0, 900)");
     }
 }
