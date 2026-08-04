@@ -50,6 +50,8 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -108,7 +110,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         return newMaxMinInstance(this, position, args, argPositions.getQuick(0), configuration, sqlExecutionContext,
-                GREATER_THAN_64, GREATER_THAN_128, GREATER_THAN_256, NAME);
+                GREATER_THAN_64, GREATER_THAN_128, GREATER_THAN_256, NAME,
+                WindowAccumulatorDescriptor.FAMILY_DECIMAL_MAX);
     }
 
     private static Function newMaxMinInstanceDecimal128(
@@ -117,7 +120,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext,
             Decimal128Comparator comparator,
-            String name
+            String name,
+            int accumulatorFamily
     ) throws SqlException {
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
         int framingMode = windowContext.getFramingMode();
@@ -137,7 +141,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL128_TYPES_LV : MAX_DECIMAL128_TYPES);
-                    return new Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration);
+                    return new Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -174,7 +178,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL128_TYPES_LV : MAX_DECIMAL128_TYPES);
-                    return new Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration);
+                    return new Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal128MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -271,7 +275,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext,
             Decimal64Comparator comparator,
-            String name
+            String name,
+            int accumulatorFamily
     ) throws SqlException {
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
         int framingMode = windowContext.getFramingMode();
@@ -291,7 +296,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL64_TYPES_LV : MAX_DECIMAL64_TYPES);
-                    return new Decimal16MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration);
+                    return new Decimal16MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -328,7 +333,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL64_TYPES_LV : MAX_DECIMAL64_TYPES);
-                    return new Decimal16MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration);
+                    return new Decimal16MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal16MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -425,7 +430,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext,
             Decimal256Comparator comparator,
-            String name
+            String name,
+            int accumulatorFamily
     ) throws SqlException {
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
         int framingMode = windowContext.getFramingMode();
@@ -445,7 +451,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL256_TYPES_LV : MAX_DECIMAL256_TYPES);
-                    return new Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration);
+                    return new Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -482,7 +488,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL256_TYPES_LV : MAX_DECIMAL256_TYPES);
-                    return new Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration);
+                    return new Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal256MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -579,7 +585,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext,
             Decimal64Comparator comparator,
-            String name
+            String name,
+            int accumulatorFamily
     ) throws SqlException {
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
         int framingMode = windowContext.getFramingMode();
@@ -599,7 +606,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL64_TYPES_LV : MAX_DECIMAL64_TYPES);
-                    return new Decimal32MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration);
+                    return new Decimal32MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -636,7 +643,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL64_TYPES_LV : MAX_DECIMAL64_TYPES);
-                    return new Decimal32MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration);
+                    return new Decimal32MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal32MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -733,7 +740,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext,
             Decimal64Comparator comparator,
-            String name
+            String name,
+            int accumulatorFamily
     ) throws SqlException {
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
         int framingMode = windowContext.getFramingMode();
@@ -753,7 +761,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL64_TYPES_LV : MAX_DECIMAL64_TYPES);
-                    return new Decimal64MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration);
+                    return new Decimal64MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -790,7 +798,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL64_TYPES_LV : MAX_DECIMAL64_TYPES);
-                    return new Decimal64MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration);
+                    return new Decimal64MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal64MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -887,7 +895,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext,
             Decimal64Comparator comparator,
-            String name
+            String name,
+            int accumulatorFamily
     ) throws SqlException {
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
         int framingMode = windowContext.getFramingMode();
@@ -907,7 +916,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL64_TYPES_LV : MAX_DECIMAL64_TYPES);
-                    return new Decimal8MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration);
+                    return new Decimal8MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -944,7 +953,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL64_TYPES_LV : MAX_DECIMAL64_TYPES);
-                    return new Decimal8MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration);
+                    return new Decimal8MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal8MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -1045,7 +1054,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             Decimal64Comparator comparator,
             Decimal128Comparator comparator128,
             Decimal256Comparator comparator256,
-            String name
+            String name,
+            int accumulatorFamily
     ) throws SqlException {
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
         windowContext.validate(position, factory.supportNullsDesc());
@@ -1076,17 +1086,17 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         return switch (tag) {
             case ColumnType.DECIMAL8 ->
-                    newMaxMinInstanceDecimal8(position, args, configuration, sqlExecutionContext, comparator, name);
+                    newMaxMinInstanceDecimal8(position, args, configuration, sqlExecutionContext, comparator, name, accumulatorFamily);
             case ColumnType.DECIMAL16 ->
-                    newMaxMinInstanceDecimal16(position, args, configuration, sqlExecutionContext, comparator, name);
+                    newMaxMinInstanceDecimal16(position, args, configuration, sqlExecutionContext, comparator, name, accumulatorFamily);
             case ColumnType.DECIMAL32 ->
-                    newMaxMinInstanceDecimal32(position, args, configuration, sqlExecutionContext, comparator, name);
+                    newMaxMinInstanceDecimal32(position, args, configuration, sqlExecutionContext, comparator, name, accumulatorFamily);
             case ColumnType.DECIMAL64 ->
-                    newMaxMinInstanceDecimal64(position, args, configuration, sqlExecutionContext, comparator, name);
+                    newMaxMinInstanceDecimal64(position, args, configuration, sqlExecutionContext, comparator, name, accumulatorFamily);
             case ColumnType.DECIMAL128 ->
-                    newMaxMinInstanceDecimal128(position, args, configuration, sqlExecutionContext, comparator128, name);
+                    newMaxMinInstanceDecimal128(position, args, configuration, sqlExecutionContext, comparator128, name, accumulatorFamily);
             case ColumnType.DECIMAL256 ->
-                    newMaxMinInstanceDecimal256(position, args, configuration, sqlExecutionContext, comparator256, name);
+                    newMaxMinInstanceDecimal256(position, args, configuration, sqlExecutionContext, comparator256, name, accumulatorFamily);
             default ->
                     throw SqlException.$(argPos, name).put(" is not yet implemented for ").put(ColumnType.nameOf(tag));
         };
@@ -2738,6 +2748,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     }
 
     public static class Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+        // FAMILY_DECIMAL_MAX or FAMILY_DECIMAL_MIN. Passed in rather than read off the
+        // comparator, because min reuses this class with a LESS_THAN and the accumulator
+        // identity must not rest on which lambda instance a caller happened to hand over.
+        private final int accumulatorFamily;
         private final Decimal128Comparator comparator;
         private final CairoConfiguration configuration;
         private final Decimal128 curr = new Decimal128();
@@ -2749,6 +2763,11 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final Decimal128 scratch = new Decimal128();
         private final int type;
         private final Decimal128 value = new Decimal128();
+        // The running extremum's slot in the group's fused map value, or -1 when this
+        // function owns its state. Installed by bindWindowStateSlots and cleared the same
+        // way. The slot is a DECIMAL128 of the group's own value, so it is read and written
+        // whole rather than as a word.
+        private int windowStateExtremumSlot = -1;
 
         public Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction(
                 Map map,
@@ -2760,12 +2779,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 ColumnTypes partitionByKeyTypes,
                 boolean liveView,
-                CairoConfiguration configuration
+                CairoConfiguration configuration,
+                int accumulatorFamily
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.accumulatorFamily = accumulatorFamily;
             this.liveView = liveView;
             this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
@@ -2790,8 +2811,39 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
+        /**
+         * Absorbs one row into the group's running extremum. The same arithmetic
+         * {@link #computeNext(Record)} runs, against a slot the group has already loaded
+         * rather than a map entry this function has to find - and with the identity the
+         * group put there, a raw {@code Decimal128} NULL, standing in for the {@code isNew()}
+         * the private map answers with.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue mv) {
+            arg.getDecimal128(record, scratch);
+            if (!scratch.isNull()) {
+                mv.getDecimal128(windowStateExtremumSlot, curr);
+                if (curr.isNull() || isBetter(scratch, curr)) {
+                    mv.putDecimal128(windowStateExtremumSlot, scratch);
+                }
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateExtremumSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_EXTREMUM);
+        }
+
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -2865,6 +2917,16 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             Unsafe.putLong(addr + Long.BYTES, value.getLow());
         }
 
+        /**
+         * Reads the extremum the group keeps. No empty-state test: the component's identity
+         * is the raw {@code Decimal128} NULL, which is exactly what this window emits for a
+         * partition no non-null row has reached.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue mv) {
+            mv.getDecimal128(windowStateExtremumSlot, value);
+        }
+
         @Override
         public void resetPartition(Record record) {
             // ANCHOR-driven reset. Restore the raw null so the next
@@ -2918,6 +2980,28 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             sink.val(" over (");
             sink.val("partition by ").val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The running extremum, which is the whole of this function's per-partition state.
+         * Whether it is the maximum or the minimum is fixed at construction: min reuses this
+         * class with the opposite comparator, and the two keep states neither can read out
+         * of the other. The argument's width picks the slot type, and it is part of the
+         * component identity already.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return accumulatorFamily;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_EXTREMUM;
         }
 
         private boolean isBetter(Decimal128 candidate, Decimal128 current) {
@@ -4580,6 +4664,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
     public static class Decimal16MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
+        // FAMILY_DECIMAL_MAX or FAMILY_DECIMAL_MIN, for the reason the Decimal128 class
+        // states: min reuses this class with the opposite comparator.
+        private final int accumulatorFamily;
         private final Decimal64Comparator comparator;
         private final CairoConfiguration configuration;
         private final ArrayColumnTypes keyColumnTypes;
@@ -4588,6 +4675,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final String name;
         private final int type;
         private short value;
+        // The running extremum's slot in the group's fused map value, or -1 when this
+        // function owns its state. A LONG slot holding this width's raw payload, which is
+        // what this function's own map keeps too.
+        private int windowStateExtremumSlot = -1;
 
         public Decimal16MaxMinOverUnboundedPartitionRowsFrameFunction(
                 Map map,
@@ -4599,12 +4690,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 ColumnTypes partitionByKeyTypes,
                 boolean liveView,
-                CairoConfiguration configuration
+                CairoConfiguration configuration,
+                int accumulatorFamily
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.accumulatorFamily = accumulatorFamily;
             this.liveView = liveView;
             this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
@@ -4629,8 +4722,37 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
+        /**
+         * Absorbs one row into the group's running extremum - the same arithmetic
+         * {@link #computeNext(Record)} runs, against a LONG slot the group has already loaded
+         * and whose identity is this width's own null sentinel.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue mv) {
+            final short s = arg.getDecimal16(record);
+            if (s != Decimals.DECIMAL16_NULL) {
+                final short curr = (short) mv.getLong(windowStateExtremumSlot);
+                if (curr == Decimals.DECIMAL16_NULL || comparator.isBetter(s, curr)) {
+                    mv.putLong(windowStateExtremumSlot, s);
+                }
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateExtremumSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_EXTREMUM);
+        }
+
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -4701,6 +4823,16 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), value);
         }
 
+        /**
+         * Reads the extremum the group keeps. No empty-state test: the component's identity
+         * is this width's null sentinel, which is exactly what this window emits for a
+         * partition no non-null row has reached.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue mv) {
+            value = (short) mv.getLong(windowStateExtremumSlot);
+        }
+
         @Override
         public void resetPartition(Record record) {
             // ANCHOR-driven reset. Restore the null sentinel so the next
@@ -4750,6 +4882,27 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             sink.val(name).val('(').val(arg).val(')');
             sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The running extremum, which is the whole of this function's per-partition state.
+         * Which way it points is fixed at construction, and the argument's width - already
+         * part of the component identity - is what says the LONG slot holds a DECIMAL16
+         * payload rather than a LONG.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return accumulatorFamily;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_EXTREMUM;
         }
     }
 
@@ -6525,6 +6678,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     }
 
     public static class Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+        // FAMILY_DECIMAL_MAX or FAMILY_DECIMAL_MIN, for the reason the Decimal128 class
+        // states: min reuses this class with the opposite comparator.
+        private final int accumulatorFamily;
         private final Decimal256Comparator comparator;
         private final CairoConfiguration configuration;
         private final Decimal256 curr = new Decimal256();
@@ -6536,6 +6692,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final Decimal256 scratch = new Decimal256();
         private final int type;
         private final Decimal256 value = new Decimal256();
+        // The running extremum's slot in the group's fused map value, or -1 when this
+        // function owns its state. Installed by bindWindowStateSlots and cleared the same way.
+        private int windowStateExtremumSlot = -1;
 
         public Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction(
                 Map map,
@@ -6547,12 +6706,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 ColumnTypes partitionByKeyTypes,
                 boolean liveView,
-                CairoConfiguration configuration
+                CairoConfiguration configuration,
+                int accumulatorFamily
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.accumulatorFamily = accumulatorFamily;
             this.liveView = liveView;
             this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
@@ -6577,8 +6738,37 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
+        /**
+         * Absorbs one row into the group's running extremum - the same arithmetic
+         * {@link #computeNext(Record)} runs, against a {@code DECIMAL256} slot the group has
+         * already loaded and whose identity is the raw NULL it put there.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue mv) {
+            arg.getDecimal256(record, scratch);
+            if (!scratch.isNull()) {
+                mv.getDecimal256(windowStateExtremumSlot, curr);
+                if (curr.isNull() || isBetter(scratch, curr)) {
+                    mv.putDecimal256(windowStateExtremumSlot, scratch);
+                }
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateExtremumSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_EXTREMUM);
+        }
+
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -6654,6 +6844,16 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
         }
 
+        /**
+         * Reads the extremum the group keeps. No empty-state test: the component's identity
+         * is the raw {@code Decimal256} NULL, which is exactly what this window emits for a
+         * partition no non-null row has reached.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue mv) {
+            mv.getDecimal256(windowStateExtremumSlot, value);
+        }
+
         @Override
         public void resetPartition(Record record) {
             // ANCHOR-driven reset. Restore the raw null so the next
@@ -6707,6 +6907,26 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             sink.val(" over (");
             sink.val("partition by ").val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The running extremum, which is the whole of this function's per-partition state.
+         * Which way it points is fixed at construction, and the argument's width - already
+         * part of the component identity - is what makes the slot a {@code DECIMAL256}.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return accumulatorFamily;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_EXTREMUM;
         }
 
         private boolean isBetter(Decimal256 candidate, Decimal256 current) {
@@ -8373,6 +8593,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
     public static class Decimal32MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
+        // FAMILY_DECIMAL_MAX or FAMILY_DECIMAL_MIN, for the reason the Decimal128 class
+        // states: min reuses this class with the opposite comparator.
+        private final int accumulatorFamily;
         private final Decimal64Comparator comparator;
         private final CairoConfiguration configuration;
         private final ArrayColumnTypes keyColumnTypes;
@@ -8381,6 +8604,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final String name;
         private final int type;
         private int value;
+        // The running extremum's slot in the group's fused map value, or -1 when this
+        // function owns its state. A LONG slot holding this width's raw payload, which is
+        // what this function's own map keeps too.
+        private int windowStateExtremumSlot = -1;
 
         public Decimal32MaxMinOverUnboundedPartitionRowsFrameFunction(
                 Map map,
@@ -8392,12 +8619,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 ColumnTypes partitionByKeyTypes,
                 boolean liveView,
-                CairoConfiguration configuration
+                CairoConfiguration configuration,
+                int accumulatorFamily
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.accumulatorFamily = accumulatorFamily;
             this.liveView = liveView;
             this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
@@ -8422,8 +8651,37 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
+        /**
+         * Absorbs one row into the group's running extremum - the same arithmetic
+         * {@link #computeNext(Record)} runs, against a LONG slot the group has already loaded
+         * and whose identity is this width's own null sentinel.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue mv) {
+            final int i = arg.getDecimal32(record);
+            if (i != Decimals.DECIMAL32_NULL) {
+                final int curr = (int) mv.getLong(windowStateExtremumSlot);
+                if (curr == Decimals.DECIMAL32_NULL || comparator.isBetter(i, curr)) {
+                    mv.putLong(windowStateExtremumSlot, i);
+                }
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateExtremumSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_EXTREMUM);
+        }
+
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -8494,6 +8752,16 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), value);
         }
 
+        /**
+         * Reads the extremum the group keeps. No empty-state test: the component's identity
+         * is this width's null sentinel, which is exactly what this window emits for a
+         * partition no non-null row has reached.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue mv) {
+            value = (int) mv.getLong(windowStateExtremumSlot);
+        }
+
         @Override
         public void resetPartition(Record record) {
             // ANCHOR-driven reset. Restore the null sentinel so the next
@@ -8543,6 +8811,27 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             sink.val(name).val('(').val(arg).val(')');
             sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The running extremum, which is the whole of this function's per-partition state.
+         * Which way it points is fixed at construction, and the argument's width - already
+         * part of the component identity - is what says the LONG slot holds a DECIMAL32
+         * payload rather than a LONG.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return accumulatorFamily;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_EXTREMUM;
         }
     }
 
@@ -10188,6 +10477,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
     public static class Decimal64MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
+        // FAMILY_DECIMAL_MAX or FAMILY_DECIMAL_MIN, for the reason the Decimal128 class
+        // states: min reuses this class with the opposite comparator.
+        private final int accumulatorFamily;
         private final Decimal64Comparator comparator;
         private final CairoConfiguration configuration;
         private final ArrayColumnTypes keyColumnTypes;
@@ -10196,6 +10488,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final String name;
         private final int type;
         private long value;
+        // The running extremum's slot in the group's fused map value, or -1 when this
+        // function owns its state. A LONG slot holding this width's raw payload, which is
+        // what this function's own map keeps too.
+        private int windowStateExtremumSlot = -1;
 
         public Decimal64MaxMinOverUnboundedPartitionRowsFrameFunction(
                 Map map,
@@ -10207,12 +10503,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 ColumnTypes partitionByKeyTypes,
                 boolean liveView,
-                CairoConfiguration configuration
+                CairoConfiguration configuration,
+                int accumulatorFamily
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.accumulatorFamily = accumulatorFamily;
             this.liveView = liveView;
             this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
@@ -10237,8 +10535,37 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
+        /**
+         * Absorbs one row into the group's running extremum - the same arithmetic
+         * {@link #computeNext(Record)} runs, against a LONG slot the group has already loaded
+         * and whose identity is this width's own null sentinel.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue mv) {
+            final long d = arg.getDecimal64(record);
+            if (d != Decimals.DECIMAL64_NULL) {
+                final long curr = mv.getLong(windowStateExtremumSlot);
+                if (Decimal64.isNull(curr) || comparator.isBetter(d, curr)) {
+                    mv.putLong(windowStateExtremumSlot, d);
+                }
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateExtremumSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_EXTREMUM);
+        }
+
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -10309,6 +10636,16 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
 
+        /**
+         * Reads the extremum the group keeps. No empty-state test: the component's identity
+         * is this width's null sentinel, which is exactly what this window emits for a
+         * partition no non-null row has reached.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue mv) {
+            value = mv.getLong(windowStateExtremumSlot);
+        }
+
         @Override
         public void resetPartition(Record record) {
             // ANCHOR-driven reset. Restore the null sentinel so the next
@@ -10359,6 +10696,28 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             sink.val(" over (");
             sink.val("partition by ").val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The running extremum, which is the whole of this function's per-partition state.
+         * Which way it points is fixed at construction, and the argument's width - already
+         * part of the component identity - is what says the LONG slot holds a DECIMAL64
+         * payload rather than a LONG. The two are never one component even though the
+         * sentinel happens to be the same word: a DECIMAL64 and a LONG are different types.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return accumulatorFamily;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_EXTREMUM;
         }
     }
 
@@ -12004,6 +12363,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
     public static class Decimal8MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
+        // FAMILY_DECIMAL_MAX or FAMILY_DECIMAL_MIN, for the reason the Decimal128 class
+        // states: min reuses this class with the opposite comparator.
+        private final int accumulatorFamily;
         private final Decimal64Comparator comparator;
         private final CairoConfiguration configuration;
         private final ArrayColumnTypes keyColumnTypes;
@@ -12012,6 +12374,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final String name;
         private final int type;
         private byte value;
+        // The running extremum's slot in the group's fused map value, or -1 when this
+        // function owns its state. A LONG slot holding this width's raw payload, which is
+        // what this function's own map keeps too.
+        private int windowStateExtremumSlot = -1;
 
         public Decimal8MaxMinOverUnboundedPartitionRowsFrameFunction(
                 Map map,
@@ -12023,12 +12389,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 ColumnTypes partitionByKeyTypes,
                 boolean liveView,
-                CairoConfiguration configuration
+                CairoConfiguration configuration,
+                int accumulatorFamily
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.accumulatorFamily = accumulatorFamily;
             this.liveView = liveView;
             this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
@@ -12053,8 +12421,37 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
+        /**
+         * Absorbs one row into the group's running extremum - the same arithmetic
+         * {@link #computeNext(Record)} runs, against a LONG slot the group has already loaded
+         * and whose identity is this width's own null sentinel.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue mv) {
+            final byte b = arg.getDecimal8(record);
+            if (b != Decimals.DECIMAL8_NULL) {
+                final byte curr = (byte) mv.getLong(windowStateExtremumSlot);
+                if (curr == Decimals.DECIMAL8_NULL || comparator.isBetter(b, curr)) {
+                    mv.putLong(windowStateExtremumSlot, b);
+                }
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateExtremumSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_EXTREMUM);
+        }
+
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -12125,6 +12522,16 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             Unsafe.putByte(spi.getAddress(recordOffset, columnIndex), value);
         }
 
+        /**
+         * Reads the extremum the group keeps. No empty-state test: the component's identity
+         * is this width's null sentinel, which is exactly what this window emits for a
+         * partition no non-null row has reached.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue mv) {
+            value = (byte) mv.getLong(windowStateExtremumSlot);
+        }
+
         @Override
         public void resetPartition(Record record) {
             // ANCHOR-driven reset. Restore the null sentinel so the next
@@ -12175,6 +12582,27 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             sink.val(" over (");
             sink.val("partition by ").val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The running extremum, which is the whole of this function's per-partition state.
+         * Which way it points is fixed at construction, and the argument's width - already
+         * part of the component identity - is what says the LONG slot holds a DECIMAL8
+         * payload, whose absent value is a word every wider type calls ordinary.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return accumulatorFamily;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_EXTREMUM;
         }
     }
 

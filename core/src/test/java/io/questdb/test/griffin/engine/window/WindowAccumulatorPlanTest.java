@@ -299,6 +299,68 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTheDecimalExtremumFamiliesKeepAWidthEach() throws Exception {
+        assertMemoryLeak(() -> {
+            createDecimalBaseTable();
+            // A DECIMAL extremum keeps its argument's own payload, so this group is where the
+            // fused value stops being a list of 64-bit words: the two narrow calls take a LONG
+            // slot each and the wide one takes a DECIMAL128, in the middle of the value rather
+            // than at either end of it.
+            //
+            // Nothing merges here either. max and min over one column are two directions of
+            // one reading, two widths of one direction are two states, and a count over the
+            // same column keeps a counter no extremum carries - so four calls are four
+            // components and the count is not derived.
+            assertPlans(
+                    "select ts, max(d64) over w, min(d64) over w, max(d128) over w, count(d64) over w "
+                            + "from dbase " + window(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(4, plan.getComponentCount());
+                        Assert.assertEquals(4, plan.getProjectionCount());
+                        Assert.assertEquals(4, plan.getSlotCount());
+                        // Canonical order is by family id, so the counter leads and the two
+                        // DECIMAL_MAX components follow in argument order, the DECIMAL_MIN last.
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DECIMAL_MAX,
+                                plan.getComponent(1).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DECIMAL_MAX,
+                                plan.getComponent(2).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DECIMAL_MIN,
+                                plan.getComponent(3).getFamily()
+                        );
+                        Assert.assertTrue(
+                                "the two DECIMAL_MAX components must be ordered by argument",
+                                plan.getComponent(2).getArgumentColumnIndex()
+                                        > plan.getComponent(1).getArgumentColumnIndex()
+                        );
+                        final ArrayColumnTypes types = new ArrayColumnTypes();
+                        plan.buildMapValueTypes(types);
+                        Assert.assertEquals(4, types.getColumnCount());
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(0));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(1));
+                        Assert.assertEquals(ColumnType.DECIMAL128, types.getColumnType(2));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(3));
+                        for (int output = 1; output <= 4; output++) {
+                            Assert.assertFalse(
+                                    "output " + output + " should keep its own component",
+                                    projectionAt(plan, output).isDerived()
+                            );
+                        }
+                    }
+            );
+        });
+    }
+
+    @Test
     public void testTheExtremumFamiliesNeitherMergeNorFold() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();
@@ -639,6 +701,15 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
 
     private void createBaseTable() throws Exception {
         execute("create table base (ts timestamp, k symbol, k2 symbol, x double, y double) "
+                + "timestamp(ts) partition by day wal");
+    }
+
+    /**
+     * The same shape with two DECIMAL columns, one of each state width a DECIMAL extremum can
+     * keep: {@code d64} lands in a LONG slot and {@code d128} in a {@code DECIMAL128} one.
+     */
+    private void createDecimalBaseTable() throws Exception {
+        execute("create table dbase (ts timestamp, k symbol, d64 decimal(18, 2), d128 decimal(38, 6)) "
                 + "timestamp(ts) partition by day wal");
     }
 

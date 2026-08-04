@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -91,20 +92,31 @@ import org.jetbrains.annotations.Nullable;
  *
  * <h2>A running extremum is its own family, one per direction</h2>
  * {@code max} and {@code min} keep one slot each - the largest, or smallest, contributing
- * value seen so far - and they are {@link #FAMILY_DOUBLE_MAX four} separate families rather
+ * value seen so far - and they are {@link #FAMILY_DOUBLE_MAX six} separate families rather
  * than one with a direction beside it. A component is a state, and a running maximum is
  * simply not the same state as a running minimum: neither can be computed from the other,
  * so two calls over one column merge only when they point the same way. The state's own
  * type splits them again, for the reason the sum families are split from the dispersion
- * ones - a DOUBLE extremum and a 64-bit one are read and reset differently.
+ * ones - a DOUBLE extremum, a 64-bit one and a DECIMAL one are read and reset differently.
  * <p>
  * They also mark the point at which the identity value of a slice stops being zero.
  * {@code sum}, {@code count} and Welford's accumulator all start at zero and mean it; an
  * extremum has to start at "nothing has contributed yet", which is
- * {@link #getSlotIdentityBits NaN} for a DOUBLE state and {@code LONG_NULL} for a 64-bit
- * one. Both are values the contribution predicate refuses, so neither can be confused with
- * a real one, and both are what the unbounded frame's own implementation emits for a
- * partition no row has contributed to.
+ * {@link #getSlotIdentityBits NaN} for a DOUBLE state, {@code LONG_NULL} for a 64-bit one
+ * and the argument width's own NULL for a DECIMAL one. All of them are values the
+ * contribution predicate refuses, so none can be confused with a real one, and all are what
+ * the unbounded frame's own implementation emits for a partition no row has contributed to.
+ *
+ * <h2>A slot is not always a 64-bit word</h2>
+ * {@link #FAMILY_DECIMAL_MAX} is the first family whose layout is a function of its
+ * <b>argument</b> as well as of its family: a {@code max} over a DECIMAL column accumulates
+ * at that column's own width, so the component keeps one LONG for the four narrow widths -
+ * which is what those implementations store - one {@code DECIMAL128} for a DECIMAL128
+ * argument and one {@code DECIMAL256} for a DECIMAL256 one. The argument type is part of
+ * every identity already, so nothing about the sharing proof changes; what changes is that
+ * {@link #getSlotColumnType} and {@link #getSlotIdentityBits} are the descriptor's answers
+ * rather than the family's, and that a slice's identity no longer always fits one word -
+ * see {@link #resetState}.
  *
  * <h2>Two sums over one column can still be two components</h2>
  * {@link #FAMILY_DOUBLE_KAHAN_SUM_COUNT} and {@link #FAMILY_DOUBLE_SUM_COUNT} agree on which
@@ -146,6 +158,33 @@ public final class WindowAccumulatorDescriptor {
      * they name the same predicate family.
      */
     public static final int CONTRIBUTION_TYPED_NOT_NULL = 2;
+    /**
+     * State {@code [max: <the argument's own DECIMAL payload>]}, contributed by a
+     * {@code max} over a DECIMAL argument on an unbounded partitioned frame. The identity is
+     * that width's NULL - {@code Decimals.DECIMAL8_NULL} through {@code DECIMAL64_NULL} for
+     * the four narrow widths, and the raw NULL of a {@code Decimal128} or {@code Decimal256}
+     * for the two wide ones - which {@link #CONTRIBUTION_TYPED_NOT_NULL} refuses over every
+     * one of them.
+     * <p>
+     * One family for six widths, and the width is carried where it already was: in the
+     * argument type, which is part of every identity. What it decides here beyond the sharing
+     * proof is the slot's own type, because the six implementations store at three different
+     * widths - the narrow four put the raw payload in a LONG, and the wide two keep a
+     * {@code DECIMAL128} or a {@code DECIMAL256}. Two extrema over columns of different
+     * widths therefore never share a slice, exactly as a DATE and a TIMESTAMP one do not.
+     * <p>
+     * Separate from {@link #FAMILY_LONG_MAX} even where both keep a LONG, because the two
+     * store different things in it: a 64-bit extremum keeps the argument's payload word and
+     * starts at {@code LONG_NULL}, while a narrow DECIMAL extremum keeps a scaled payload
+     * whose absent value is its own width's sentinel - {@code Byte.MIN_VALUE} for a DECIMAL8,
+     * which is an ordinary value of every other type.
+     */
+    public static final int FAMILY_DECIMAL_MAX = 10;
+    /**
+     * State {@code [min: <the argument's own DECIMAL payload>]}, the {@link #FAMILY_DECIMAL_MAX}
+     * state pointing the other way, and separate for the reason {@link #FAMILY_DOUBLE_MIN} is.
+     */
+    public static final int FAMILY_DECIMAL_MIN = 11;
     /**
      * State {@code [sum: DOUBLE, compensation: DOUBLE, nonNullCount: LONG]}, contributed by
      * a {@code ksum} over an unbounded partitioned frame: a compensated (Kahan) running
@@ -340,6 +379,16 @@ public final class WindowAccumulatorDescriptor {
                 return isLongPayload(argumentColumnType)
                         ? CONTRIBUTION_TYPED_NOT_NULL
                         : CONTRIBUTION_NONE;
+            case FAMILY_DECIMAL_MAX:
+            case FAMILY_DECIMAL_MIN:
+                // The DECIMAL extremum's own null test, which is the width's null sentinel and
+                // nothing else - the same predicate a count over the same column applies, since
+                // max(D) has an implementation per width and each of them skips exactly the rows
+                // that width calls absent. A non-DECIMAL argument declines: it reaches a
+                // different max() factory storing a different thing.
+                return isDecimalPayload(argumentColumnType)
+                        ? CONTRIBUTION_TYPED_NOT_NULL
+                        : CONTRIBUTION_NONE;
             case FAMILY_NON_NULL_COUNT:
                 // count() has a factory per argument shape, so this arm is the one that
                 // can name a predicate other than the DOUBLE one - and the type is what
@@ -421,6 +470,8 @@ public final class WindowAccumulatorDescriptor {
             case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
             case FAMILY_DOUBLE_WELFORD:
                 return 3;
+            case FAMILY_DECIMAL_MAX:
+            case FAMILY_DECIMAL_MIN:
             case FAMILY_DOUBLE_MAX:
             case FAMILY_DOUBLE_MIN:
             case FAMILY_LONG_MAX:
@@ -507,10 +558,19 @@ public final class WindowAccumulatorDescriptor {
      * Copies this component's slots from one map value to another, so a runtime whose
      * ownership is moving - a window adopting a plan, or handing the state back -
      * carries the accumulator across without going through any durable encoding.
+     * <p>
+     * Only a live view moves a component this way, and only a component it can persist. A
+     * family with no codec is never in one of its plans, so a slot wider than a word cannot
+     * reach this - and the throw says so rather than copying the first word of one and
+     * leaving the rest of the state behind.
      */
     public void copyState(@NotNull MapValue src, int srcSlotBase, @NotNull MapValue dst, int dstSlotBase) {
         for (int i = 0, n = getSlotCount(); i < n; i++) {
-            if (getSlotColumnType(i) == ColumnType.DOUBLE) {
+            final int slotType = getSlotColumnType(i);
+            if (isWideDecimalSlot(slotType)) {
+                throw new UnsupportedOperationException("a wide DECIMAL component's state does not move between maps");
+            }
+            if (slotType == ColumnType.DOUBLE) {
                 dst.putDouble(dstSlotBase + i, src.getDouble(srcSlotBase + i));
             } else {
                 dst.putLong(dstSlotBase + i, src.getLong(srcSlotBase + i));
@@ -570,7 +630,7 @@ public final class WindowAccumulatorDescriptor {
         if (family == FAMILY_DOUBLE_KAHAN_SUM_COUNT && other.family == FAMILY_NON_NULL_COUNT) {
             return getFieldSlot(FIELD_NON_NULL_COUNT);
         }
-        // The four max/min families appear in no pair, in either role, and the reason is not
+        // The six max/min families appear in no pair, in either role, and the reason is not
         // that nobody has looked. A running extremum keeps no counter, so nothing narrower
         // sits inside it; and it is a single slot whose value is the arithmetic's whole
         // answer, so it is not a run inside anything wider either - a sum's first slot is a
@@ -600,6 +660,8 @@ public final class WindowAccumulatorDescriptor {
      */
     public int getFieldSlot(int field) {
         switch (family) {
+            case FAMILY_DECIMAL_MAX:
+            case FAMILY_DECIMAL_MIN:
             case FAMILY_DOUBLE_MAX:
             case FAMILY_DOUBLE_MIN:
             case FAMILY_LONG_MAX:
@@ -644,9 +706,19 @@ public final class WindowAccumulatorDescriptor {
 
     /**
      * Returns the column type of one of this component's slots.
+     * <p>
+     * A function of the descriptor and not only of its family: a DECIMAL extremum keeps its
+     * argument's own payload, so the slot is a LONG for the four narrow widths and a
+     * {@code DECIMAL128} or {@code DECIMAL256} for the two wide ones.
      */
     public int getSlotColumnType(int slot) {
         switch (family) {
+            case FAMILY_DECIMAL_MAX:
+            case FAMILY_DECIMAL_MIN:
+                if (slot == 0) {
+                    return decimalStateColumnType(argumentColumnType);
+                }
+                break;
             case FAMILY_DOUBLE_MAX:
             case FAMILY_DOUBLE_MIN:
                 if (slot == 0) {
@@ -695,13 +767,18 @@ public final class WindowAccumulatorDescriptor {
      * Zero for every accumulating family, which is what a sum, a counter and Welford's
      * {@code (mean, m2)} all begin at and mean. It is <b>not</b> zero for a running
      * extremum, whose starting state has to say "nothing has contributed yet" rather than
-     * "the largest value so far is zero" - so a DOUBLE extremum starts at NaN and a 64-bit
-     * one at {@code Numbers.LONG_NULL}, both of them values the family's contribution
-     * predicate refuses and so never confusable with a real one.
+     * "the largest value so far is zero" - so a DOUBLE extremum starts at NaN, a 64-bit one
+     * at {@code Numbers.LONG_NULL} and a narrow DECIMAL one at its own width's null
+     * sentinel, all of them values the family's contribution predicate refuses and so never
+     * confusable with a real one.
      * <p>
      * Stated in bits because that is the currency the durable image already uses - one
      * little-endian 64-bit field per slot - so a family whose identity is not zero is
-     * describable here without a second accessor per slot type.
+     * describable here without a second accessor per slot type. A slot wider than a word has
+     * no answer here and throws: the two wide DECIMAL slot types start at the SQL NULL of
+     * their own type, which {@link #resetState} writes through the map's own
+     * {@code putDecimal*Null}, and a caller asking for that in one word is describing a
+     * layout this class does not have.
      *
      * @param slot a slot of this component's own state, which is bounds-checked: an
      *             out-of-range slot is a layout bug and must not quietly answer zero
@@ -709,8 +786,16 @@ public final class WindowAccumulatorDescriptor {
     public long getSlotIdentityBits(int slot) {
         // Asked for its throw rather than its answer: an out-of-range slot is a layout bug and
         // must not quietly come back as an identity.
-        getSlotColumnType(slot);
+        final int slotType = getSlotColumnType(slot);
+        if (isWideDecimalSlot(slotType)) {
+            throw new UnsupportedOperationException("a wide DECIMAL slot's identity is not one word");
+        }
         switch (family) {
+            case FAMILY_DECIMAL_MAX:
+            case FAMILY_DECIMAL_MIN:
+                // Sign-extended into the word the narrow implementations store it in, which is
+                // how they compare it back - (byte) mv.getLong(0) against DECIMAL8_NULL.
+                return decimalNullPayload(argumentColumnType);
             case FAMILY_DOUBLE_MAX:
             case FAMILY_DOUBLE_MIN:
                 return Double.doubleToRawLongBits(Double.NaN);
@@ -742,16 +827,113 @@ public final class WindowAccumulatorDescriptor {
      * <p>
      * The identity is the family's rather than the slot type's - see
      * {@link #getSlotIdentityBits} - because an extremum's empty state is not zero.
+     * <p>
+     * The two wide DECIMAL slot types are the exception, and deliberately state their
+     * identity here rather than in bits: every wide-DECIMAL slot this build admits starts at
+     * the SQL NULL of its own type, which is what the map writes through
+     * {@code putDecimal128Null}. A family that wanted a wide slot to start at zero - a
+     * DECIMAL accumulator would - has to say so here rather than reuse this arm.
      */
     public void resetState(@NotNull MapValue value, int slotBase) {
         for (int i = 0, n = getSlotCount(); i < n; i++) {
-            final long bits = getSlotIdentityBits(i);
-            if (getSlotColumnType(i) == ColumnType.DOUBLE) {
-                value.putDouble(slotBase + i, Double.longBitsToDouble(bits));
-            } else {
-                value.putLong(slotBase + i, bits);
+            final int slotType = getSlotColumnType(i);
+            switch (ColumnType.tagOf(slotType)) {
+                case ColumnType.DECIMAL128:
+                    value.putDecimal128Null(slotBase + i);
+                    break;
+                case ColumnType.DECIMAL256:
+                    value.putDecimal256Null(slotBase + i);
+                    break;
+                case ColumnType.DOUBLE:
+                    value.putDouble(slotBase + i, Double.longBitsToDouble(getSlotIdentityBits(i)));
+                    break;
+                default:
+                    value.putLong(slotBase + i, getSlotIdentityBits(i));
+                    break;
             }
         }
+    }
+
+    /**
+     * Returns the raw payload a narrow DECIMAL extremum stores for an absent value, in the
+     * 64-bit slot the four narrow implementations keep it in.
+     * <p>
+     * One sentinel per width rather than one for all four, because that is what the
+     * implementations compare against: a DECIMAL8 column's absent value is
+     * {@code Byte.MIN_VALUE}, which is an ordinary payload for every wider one. The wide
+     * widths have no answer here - their identity is the type's own NULL, written by
+     * {@link #resetState}.
+     */
+    private static long decimalNullPayload(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.DECIMAL8:
+                return Decimals.DECIMAL8_NULL;
+            case ColumnType.DECIMAL16:
+                return Decimals.DECIMAL16_NULL;
+            case ColumnType.DECIMAL32:
+                return Decimals.DECIMAL32_NULL;
+            case ColumnType.DECIMAL64:
+                return Decimals.DECIMAL64_NULL;
+            default:
+                throw new IndexOutOfBoundsException();
+        }
+    }
+
+    /**
+     * Returns the map value type a DECIMAL extremum over {@code columnType} keeps its state
+     * in: the raw payload in a LONG for the four narrow widths, which is what those
+     * implementations store, and the argument's own type for the two wide ones.
+     */
+    private static int decimalStateColumnType(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+                return ColumnType.LONG;
+            case ColumnType.DECIMAL128:
+                return ColumnType.DECIMAL128;
+            case ColumnType.DECIMAL256:
+                return ColumnType.DECIMAL256;
+            default:
+                throw new IndexOutOfBoundsException();
+        }
+    }
+
+    /**
+     * Whether a column of {@code columnType} reaches a DECIMAL extremum as a direct column
+     * reference, contributing under {@link #CONTRIBUTION_TYPED_NOT_NULL} - the width's own
+     * null test - once it gets there.
+     * <p>
+     * All six widths, each through a factory arm of its own, and nothing else: a DECIMAL
+     * {@code max} is selected by the argument's width and stores at that width, so a type
+     * that is not one of these reaches a different implementation keeping a different state.
+     * The list is exactly {@link #contributionKindFor}'s DECIMAL arm for a {@code count},
+     * which is the same predicate over the same rows - what differs between the two families
+     * is what they keep, not which rows they keep it from.
+     */
+    private static boolean isDecimalPayload(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Whether {@code slotType} is one of the two map value types this build keeps wider than
+     * a 64-bit word. Such a slot has no one-word identity and does not move between maps -
+     * see {@link #getSlotIdentityBits} and {@link #copyState}.
+     */
+    private static boolean isWideDecimalSlot(int slotType) {
+        final int tag = ColumnType.tagOf(slotType);
+        return tag == ColumnType.DECIMAL128 || tag == ColumnType.DECIMAL256;
     }
 
     /**
@@ -770,9 +952,10 @@ public final class WindowAccumulatorDescriptor {
      * {@link #isWidenedToDouble} declines its own list: a type that reaches the extremum
      * through some other reading contributes under some other predicate, and the identity
      * would then name a predicate the runtime does not apply. That includes DOUBLE and
-     * FLOAT, which have a DOUBLE-stated extremum of their own, and DECIMAL, whose
-     * {@code max} accumulates into a {@code Decimal128} or {@code Decimal256} - a state
-     * shape this class's slot model does not describe.
+     * FLOAT, which have a DOUBLE-stated extremum of their own, and DECIMAL, which has
+     * {@link #FAMILY_DECIMAL_MAX} - it keeps its argument's own payload under that width's
+     * null test, and a narrow one lands in a LONG slot like this family's without being the
+     * same state, since {@code Byte.MIN_VALUE} is an absent DECIMAL8 and an ordinary LONG.
      */
     private static boolean isLongPayload(int columnType) {
         switch (ColumnType.tagOf(columnType)) {
@@ -822,10 +1005,12 @@ public final class WindowAccumulatorDescriptor {
      * double at all. Its {@code count} is nevertheless a fused component - see the
      * {@link #CONTRIBUTION_TYPED_NOT_NULL} arm of {@link #contributionKindFor} - because
      * a {@code count} over a DECIMAL column is the shared counting implementation under
-     * that width's null test, not a decimal accumulator. What has no family here is
-     * {@code sum} and {@code avg} over a DECIMAL: those accumulate into a
-     * {@code Decimal128} or {@code Decimal256} beside a flag or a counter, which is a
-     * state shape this class's slot model does not describe.
+     * that width's null test, not a decimal accumulator; and its {@code max} and
+     * {@code min} are {@link #FAMILY_DECIMAL_MAX}, which keeps the argument's own payload.
+     * What has no family here is {@code sum} and {@code avg} over a DECIMAL: those
+     * accumulate into a {@code Decimal128} or {@code Decimal256} beside a flag or a counter,
+     * and the two implementations disagree about which of those it is, so one shared
+     * component would have to re-decide arithmetic rather than describe a state.
      */
     private static boolean isWidenedToDouble(int columnType) {
         switch (ColumnType.tagOf(columnType)) {

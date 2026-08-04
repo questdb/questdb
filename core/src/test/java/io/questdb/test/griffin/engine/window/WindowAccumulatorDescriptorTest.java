@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -187,6 +188,131 @@ public class WindowAccumulatorDescriptorTest {
         Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
                 WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT,
                 WindowAccumulatorProjection.PROJECTION_COUNT
+        ));
+    }
+
+    @Test
+    public void testTheDecimalExtremumFamiliesKeepTheirArgumentsOwnWidth() {
+        // The first families whose layout is a function of the argument and not only of the
+        // family: a DECIMAL max accumulates at its argument's own width, so the slot is a LONG
+        // for the four narrow widths - which is what those implementations store - and the
+        // argument's own type for the two wide ones. Three things follow, and none of them is
+        // visible in a rendered row.
+        final int[] types = {
+                ColumnType.getDecimalType(2, 1),
+                ColumnType.getDecimalType(4, 1),
+                ColumnType.getDecimalType(9, 3),
+                ColumnType.getDecimalType(18, 2),
+                ColumnType.getDecimalType(38, 6),
+                ColumnType.getDecimalType(60, 0),
+        };
+        final int[] slotTypes = {
+                ColumnType.LONG,
+                ColumnType.LONG,
+                ColumnType.LONG,
+                ColumnType.LONG,
+                ColumnType.DECIMAL128,
+                ColumnType.DECIMAL256,
+        };
+        final long[] identities = {
+                Decimals.DECIMAL8_NULL,
+                Decimals.DECIMAL16_NULL,
+                Decimals.DECIMAL32_NULL,
+                Decimals.DECIMAL64_NULL,
+                0,
+                0,
+        };
+        final ObjList<WindowAccumulatorDescriptor> extrema = new ObjList<>();
+        for (int i = 0; i < types.length; i++) {
+            for (int direction = 0; direction < 2; direction++) {
+                final int family = direction == 0
+                        ? WindowAccumulatorDescriptor.FAMILY_DECIMAL_MAX
+                        : WindowAccumulatorDescriptor.FAMILY_DECIMAL_MIN;
+                final WindowAccumulatorDescriptor component = WindowAccumulatorDescriptor.of(family, 2, types[i]);
+                Assert.assertNotNull(component);
+                extrema.add(component);
+                final String what = "family " + family + " over " + ColumnType.nameOf(types[i]);
+                // One slot, and it is the extremum's - an extremum keeps no counter whatever
+                // its width.
+                Assert.assertEquals(what, 1, component.getSlotCount());
+                Assert.assertEquals(what, 0, component.getFieldSlot(WindowAccumulatorDescriptor.FIELD_EXTREMUM));
+                Assert.assertEquals(what, -1, component.getFieldSlot(WindowAccumulatorDescriptor.FIELD_SUM));
+                Assert.assertEquals(what, slotTypes[i], component.getSlotColumnType(0));
+                if (slotTypes[i] == ColumnType.LONG) {
+                    // The identity is this width's own null sentinel, which is what the
+                    // implementation compares the slot back against - and Byte.MIN_VALUE is
+                    // that for a DECIMAL8 and an ordinary payload for every wider width, which
+                    // is why one sentinel for all four would be wrong.
+                    Assert.assertEquals(what + ": identity", identities[i], component.getSlotIdentityBits(0));
+                } else {
+                    // A wide slot's identity is the SQL NULL of its own type, which is not one
+                    // word - so it is written by resetState and refused here rather than
+                    // quietly answered.
+                    try {
+                        component.getSlotIdentityBits(0);
+                        Assert.fail(what + ": a wide DECIMAL slot has no one-word identity");
+                    } catch (UnsupportedOperationException expected) {
+                        // as required
+                    }
+                }
+                // Runtime-only: no component codec, and so no durable wrapper and no manifest.
+                Assert.assertEquals(what, -1, LiveViewAccumulatorDescriptor.familyCodecVersion(family));
+                Assert.assertNull(what, LiveViewAccumulatorDescriptor.of(component));
+                Assert.assertTrue(what, WindowAccumulatorProjection.isCompatible(
+                        family,
+                        WindowAccumulatorProjection.PROJECTION_EXTREMUM
+                ));
+                // It keeps no counter, so nothing may read one off it.
+                Assert.assertFalse(what, WindowAccumulatorProjection.isCompatible(
+                        family,
+                        WindowAccumulatorProjection.PROJECTION_COUNT
+                ));
+            }
+        }
+        // Twelve components, no two of them the same and none a run inside another: the width
+        // and the direction each keep them apart, and a max is not a slice of anything.
+        for (int i = 0, n = extrema.size(); i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                Assert.assertEquals(
+                        "component " + i + " containing component " + j,
+                        i == j ? 0 : -1,
+                        extrema.getQuick(i).derivedSlotOffset(extrema.getQuick(j))
+                );
+            }
+        }
+        // A narrow DECIMAL extremum and a 64-bit one land in the same LONG slot and are still
+        // two states: one keeps a scaled payload whose absent value is its width's sentinel and
+        // the other a raw word whose absent value is LONG_NULL.
+        final WindowAccumulatorDescriptor decimal64Max = WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_DECIMAL_MAX,
+                2,
+                ColumnType.getDecimalType(18, 2)
+        );
+        final WindowAccumulatorDescriptor longMax = WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_LONG_MAX,
+                2,
+                ColumnType.LONG
+        );
+        Assert.assertNotNull(decimal64Max);
+        Assert.assertNotNull(longMax);
+        Assert.assertEquals(ColumnType.LONG, decimal64Max.getSlotColumnType(0));
+        Assert.assertEquals(ColumnType.LONG, longMax.getSlotColumnType(0));
+        Assert.assertFalse(decimal64Max.isSameIdentity(longMax));
+        Assert.assertEquals(-1, decimal64Max.derivedSlotOffset(longMax));
+        Assert.assertEquals(-1, longMax.derivedSlotOffset(decimal64Max));
+        // A non-DECIMAL argument reaches a different max() implementation keeping a different
+        // state, so the family declines it outright rather than describing it.
+        Assert.assertEquals(
+                WindowAccumulatorDescriptor.CONTRIBUTION_NONE,
+                WindowAccumulatorDescriptor.contributionKindFor(
+                        WindowAccumulatorDescriptor.FAMILY_DECIMAL_MAX,
+                        ColumnType.DOUBLE
+                )
+        );
+        Assert.assertNull(WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_DECIMAL_MIN,
+                2,
+                ColumnType.LONG
         ));
     }
 

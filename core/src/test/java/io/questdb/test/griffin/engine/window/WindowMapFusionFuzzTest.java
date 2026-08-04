@@ -118,6 +118,17 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             // read off the wrong host would show.
             "ksum(xd)",
             "ksum(yd)",
+            // The DECIMAL extrema, whose slot is the argument's own payload: a LONG for the
+            // narrow width and a DECIMAL128 for the wide one. The counts over the same columns
+            // are here for the same reason the pairs above are - they share an argument and a
+            // contribution predicate with the extrema and must still keep components of their
+            // own - and a wide slot behind a narrow one is what moves a slot base.
+            "max(xdec)",
+            "min(xdec)",
+            "count(xdec)",
+            "max(xdec128)",
+            "min(xdec128)",
+            "count(xdec128)",
     };
     /**
      * A RANGE-framed window carries no ranking call - {@code row_number()} has no frame - and
@@ -144,6 +155,12 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             "min(ts)",
             "ksum(xd)",
             "ksum(yd)",
+            "max(xdec)",
+            "min(xdec)",
+            "count(xdec)",
+            "max(xdec128)",
+            "min(xdec128)",
+            "count(xdec128)",
     };
     /**
      * Calls no family describes. One of them lands in a query now and then so that a residual
@@ -284,8 +301,13 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
         // A LONG argument as well as the two DOUBLE ones, because the extremum families are
         // split by the state's type and the two halves are separate implementations.
         final int lNullEvery = 1 + rnd.nextInt(9);
+        // Two DECIMAL arguments, one of each state width an extremum over one can keep: xdec
+        // lands in a LONG slot and xdec128 in a DECIMAL128 slot of the group's own value.
+        final int decNullEvery = 1 + rnd.nextInt(9);
+        final int dec128NullEvery = 1 + rnd.nextInt(9);
         final String ddl = "create table " + table
-                + " (ts timestamp, ki int, ks symbol, kv varchar, xd double, yd double, xl long)"
+                + " (ts timestamp, ki int, ks symbol, kv varchar, xd double, yd double, xl long,"
+                + " xdec decimal(18, 2), xdec128 decimal(38, 6))"
                 + " timestamp(ts) partition by day";
         final String dml = "insert into " + table + " select"
                 + " (x * 1000000L)::timestamp,"
@@ -298,7 +320,11 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
                 + " case when x % " + yNullEvery + " = 0 then null"
                 + " when x % " + infiniteEvery + " = 0 then '-Infinity'::double"
                 + " else (x % 89)::double end,"
-                + " case when x % " + lNullEvery + " = 0 then null else (x % 83) - 41 end"
+                + " case when x % " + lNullEvery + " = 0 then null else (x % 83) - 41 end,"
+                + " case when x % " + decNullEvery + " = 0 then null"
+                + " else ((x % 79) - 39)::decimal(18, 2) end,"
+                + " case when x % " + dec128NullEvery + " = 0 then null"
+                + " else ((x % 71) - 35)::decimal(38, 6) end"
                 + " from long_sequence(" + rows + ")";
         execute(ddl);
         execute(dml);

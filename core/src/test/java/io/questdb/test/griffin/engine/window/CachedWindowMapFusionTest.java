@@ -301,6 +301,18 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                             "sum(x) over w",
                             "count(x) over w"
                     );
+                    // The DECIMAL extrema, whose slot is the argument's own payload: a LONG for
+                    // d64 and a DECIMAL128 for d128. The counter in front of the wide one is
+                    // what puts it at a slot base other than zero, which is the reading a
+                    // chain-fed traversal is as able to get wrong as a streaming one.
+                    assertFusedMatchesUnfused(window, lead, "max(d64) over w", "min(d64) over w");
+                    assertFusedMatchesUnfused(
+                            window,
+                            lead,
+                            "count(d128) over w",
+                            "max(d128) over w",
+                            "min(d128) over w"
+                    );
                 }
             }
         });
@@ -899,12 +911,24 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         return out.toString();
     }
 
+    /**
+     * One row's worth of DECIMAL literals, each cast to the width of the column it goes in - a
+     * numeric literal is a DOUBLE and does not convert on its own.
+     */
+    private static String decimals(String d64, String d128) {
+        return d64 + "::decimal(18, 2), " + d128 + "::decimal(38, 6)";
+    }
+
     private static String orderedSumAndCount() {
         return "select ts, sum(x) over w, count(y) over w" + ORDERED_WINDOW;
     }
 
     private void createTable() throws SqlException {
-        execute("create table t (ts timestamp, k symbol, k2 symbol, x double, y double) "
+        // d64 and d128 are the two state widths a DECIMAL extremum can keep - a LONG slot and a
+        // DECIMAL128 one - so the cached traversals are exercised over a fused value that is
+        // not a list of 64-bit words.
+        execute("create table t (ts timestamp, k symbol, k2 symbol, x double, y double, "
+                + "d64 decimal(18, 2), d128 decimal(38, 6)) "
                 + "timestamp(ts) partition by day");
     }
 
@@ -914,17 +938,21 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
      * sample dispersion is NULL and a population one is 0; one whose only non-null {@code x}
      * is an infinity, so it has rows, a non-null count and no finite value; and rows where
      * exactly one of {@code x} and {@code y} is absent, which is where two counters part.
+     * <p>
+     * The two DECIMAL columns are absent on every row of the {@code 'nx'} partition, which is
+     * the shape a DECIMAL extremum parts company on: it has rows and no value either direction
+     * contributes, so its state must read back as that width's own NULL.
      */
     private void insertRows() throws SqlException {
         execute("insert into t values " +
-                "('2024-01-01T00:00:00.000000Z', 'a', 'p', 1.0, 10.0), " +
-                "('2024-01-01T00:00:01.000000Z', null, 'p', 2.0, 20.0), " +
-                "('2024-01-01T00:00:02.000000Z', 'a', 'q', 4.0, null), " +
-                "('2024-01-01T00:00:03.000000Z', null, 'q', null, 40.0), " +
-                "('2024-01-01T00:00:04.000000Z', 'one', 'p', 5.0, 50.0), " +
-                "('2024-01-01T00:00:05.000000Z', 'nx', 'q', null, 60.0), " +
-                "('2024-01-01T00:00:06.000000Z', 'nx', 'p', 'Infinity'::double, 70.0), " +
-                "('2024-01-01T00:00:07.000000Z', 'a', 'q', 8.0, 80.0), " +
-                "('2024-01-01T00:00:08.000000Z', null, 'p', 9.0, null)");
+                "('2024-01-01T00:00:00.000000Z', 'a', 'p', 1.0, 10.0, " + decimals("1", "1") + "), " +
+                "('2024-01-01T00:00:01.000000Z', null, 'p', 2.0, 20.0, " + decimals("-2", "-2") + "), " +
+                "('2024-01-01T00:00:02.000000Z', 'a', 'q', 4.0, null, 4.00::decimal(18, 2), null), " +
+                "('2024-01-01T00:00:03.000000Z', null, 'q', null, 40.0, null, 40.000000::decimal(38, 6)), " +
+                "('2024-01-01T00:00:04.000000Z', 'one', 'p', 5.0, 50.0, " + decimals("5", "5") + "), " +
+                "('2024-01-01T00:00:05.000000Z', 'nx', 'q', null, 60.0, null, null), " +
+                "('2024-01-01T00:00:06.000000Z', 'nx', 'p', 'Infinity'::double, 70.0, null, null), " +
+                "('2024-01-01T00:00:07.000000Z', 'a', 'q', 8.0, 80.0, " + decimals("-8", "8") + "), " +
+                "('2024-01-01T00:00:08.000000Z', null, 'p', 9.0, null, " + decimals("9", "-9") + ")");
     }
 }

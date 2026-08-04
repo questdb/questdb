@@ -98,6 +98,11 @@ public final class WindowAccumulatorProjection {
      * the slot there is nothing left to choose. That is also why it needs no empty-state
      * test the way {@link #PROJECTION_SUM} does - an extremum's identity is already the NULL
      * its own type emits.
+     * <p>
+     * One kind across the slot types too. The slot is a DOUBLE, a 64-bit payload or a
+     * DECIMAL of the argument's own width, and which of those it is follows from the
+     * component the projection is bound to, so the reading function knows it without the kind
+     * having to say it.
      */
     public static final int PROJECTION_EXTREMUM = 9;
     /**
@@ -224,9 +229,11 @@ public final class WindowAccumulatorProjection {
                         || family == WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT
                         || family == WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;
             case PROJECTION_EXTREMUM:
-                // The four extremum families and nothing else. Every one of them carries the
+                // The six extremum families and nothing else. Every one of them carries the
                 // single slot this kind reads, and no other family does.
-                return family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX
+                return family == WindowAccumulatorDescriptor.FAMILY_DECIMAL_MAX
+                        || family == WindowAccumulatorDescriptor.FAMILY_DECIMAL_MIN
+                        || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX
                         || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN
                         || family == WindowAccumulatorDescriptor.FAMILY_LONG_MAX
                         || family == WindowAccumulatorDescriptor.FAMILY_LONG_MIN;

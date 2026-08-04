@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -57,6 +58,7 @@ import org.junit.Test;
  */
 public class WindowMapStateTest extends AbstractCairoTest {
 
+    private static final int DECIMAL_KEY_SHAPE_ROW_COUNT = 9;
     private static final int KEY_SHAPE_ROW_COUNT = 9;
     private static final int ORDINARY_ROW_COUNT = 9;
     private static final String SUM_AND_COUNT_PLAN = """
@@ -455,6 +457,125 @@ public class WindowMapStateTest extends AbstractCairoTest {
                     "var_pop(x) over w",
                     "count(x) over w"
             );
+        });
+    }
+
+    @Test
+    public void testDecimalExtremaOverEveryWidthShareOneKey() throws Exception {
+        // A DECIMAL extremum keeps its argument's own payload, so this is the group where the
+        // fused value stops being a list of 64-bit words: the four narrow widths take a LONG
+        // slot each and the two wide ones take a DECIMAL128 and a DECIMAL256 of the group's own
+        // value. Twelve calls that would be twelve maps and twelve probes a row unfused are
+        // twelve slots behind one key.
+        //
+        // The data is the decimal key-shape one, whose partitions include a NULL key, one of a
+        // single row and one whose decimals are absent on every row - the last is what says an
+        // empty state reads back as this width's own NULL rather than as a zero.
+        assertMemoryLeak(() -> {
+            createDecimalTable();
+            insertDecimalKeyShapes();
+            final String sql = "select ts"
+                    + ", max(d8) over w, min(d8) over w"
+                    + ", max(d16) over w, min(d16) over w"
+                    + ", max(d32) over w, min(d32) over w"
+                    + ", max(d64) over w, min(d64) over w"
+                    + ", max(d128) over w, min(d128) over w"
+                    + ", max(d256) over w, min(d256) over w"
+                    + " from td " + WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                // Nothing merges: a max is not a min, and two widths of one direction are two
+                // states over two columns.
+                Assert.assertEquals(12, plan.getComponentCount());
+                Assert.assertEquals(12, plan.getProjectionCount());
+                Assert.assertEquals(12, plan.getSlotCount());
+                int narrow = 0;
+                int wide128 = 0;
+                int wide256 = 0;
+                for (int i = 0; i < 12; i++) {
+                    Assert.assertFalse(plan.getProjection(i).isDerived());
+                    // No counter behind any of them - an extremum is its own whole state at
+                    // every width.
+                    Assert.assertEquals(-1, plan.getProjection(i).getNonNullCountSlot());
+                    switch (plan.getComponent(i).getSlotColumnType(0)) {
+                        case ColumnType.LONG:
+                            narrow++;
+                            break;
+                        case ColumnType.DECIMAL128:
+                            wide128++;
+                            break;
+                        case ColumnType.DECIMAL256:
+                            wide256++;
+                            break;
+                        default:
+                            Assert.fail("unexpected slot type for component " + i);
+                    }
+                }
+                Assert.assertEquals(8, narrow);
+                Assert.assertEquals(2, wide128);
+                Assert.assertEquals(2, wide256);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(DECIMAL_KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    Assert.assertEquals(12 * rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(12 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfusedOn(
+                    "td",
+                    "max(d8) over w", "min(d8) over w",
+                    "max(d16) over w", "min(d16) over w",
+                    "max(d32) over w", "min(d32) over w",
+                    "max(d64) over w", "min(d64) over w",
+                    "max(d128) over w", "min(d128) over w",
+                    "max(d256) over w", "min(d256) over w"
+            );
+        });
+    }
+
+    @Test
+    public void testAWideDecimalExtremumSitsBesideACounterInOneValue() throws Exception {
+        // The wide slot with something in front of it. count(d128) keeps a LONG counter and
+        // sorts first, so the DECIMAL128 the extremum keeps starts at the value's second slot -
+        // which is the reading a slot base has to get right and a single-component group cannot
+        // exercise.
+        //
+        // The two also share an argument and a contribution predicate - both skip exactly the
+        // rows where d128 is absent - and are still two components, because a counter is not a
+        // run inside an extremum and an extremum keeps no counter to lend.
+        assertMemoryLeak(() -> {
+            createDecimalTable();
+            insertDecimalKeyShapes();
+            final String sql = "select ts, count(d128) over w, max(d128) over w from td " + WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(2, plan.getComponentCount());
+                Assert.assertEquals(2, plan.getProjectionCount());
+                Assert.assertEquals(2, plan.getSlotCount());
+                Assert.assertEquals(ColumnType.LONG, plan.getComponent(0).getSlotColumnType(0));
+                Assert.assertEquals(ColumnType.DECIMAL128, plan.getComponent(1).getSlotColumnType(0));
+                Assert.assertEquals(0, plan.getComponentSlotBase(0));
+                Assert.assertEquals(1, plan.getComponentSlotBase(1));
+                Assert.assertFalse(plan.getProjection(0).isDerived());
+                Assert.assertFalse(plan.getProjection(1).isDerived());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(DECIMAL_KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfusedOn("td", "count(d128) over w", "max(d128) over w");
         });
     }
 
@@ -863,15 +984,23 @@ public class WindowMapStateTest extends AbstractCairoTest {
      * and maintains a counter of its own here.
      */
     private static void assertFusedMatchesUnfused(String... outputs) throws SqlException {
+        assertFusedMatchesUnfusedOn("t", outputs);
+    }
+
+    /**
+     * The same comparison over {@code table}, which carries the same {@code ts} and {@code k}
+     * columns {@link #WINDOW} names and whatever value columns the case is about.
+     */
+    private static void assertFusedMatchesUnfusedOn(String table, String... outputs) throws SqlException {
         final StringBuilder fused = new StringBuilder("select ts");
         for (int i = 0; i < outputs.length; i++) {
             fused.append(", ").append(outputs[i]);
         }
-        fused.append(" from t ").append(WINDOW);
+        fused.append(" from ").append(table).append(' ').append(WINDOW);
         assertIsBound(fused.toString(), true);
         final String[] references = new String[outputs.length];
         for (int i = 0; i < outputs.length; i++) {
-            final String reference = "select ts, " + outputs[i] + " from t " + WINDOW;
+            final String reference = "select ts, " + outputs[i] + " from " + table + " " + WINDOW;
             assertIsBound(reference, false);
             references[i] = body(render(reference));
         }
@@ -898,6 +1027,19 @@ public class WindowMapStateTest extends AbstractCairoTest {
     private static String body(String rendered) {
         final int lineEnd = rendered.indexOf('\n');
         return lineEnd < 0 ? "" : rendered.substring(lineEnd + 1);
+    }
+
+    /**
+     * One row's worth of DECIMAL literals, each cast to the width of the column it goes in -
+     * a numeric literal is a DOUBLE and does not convert on its own.
+     */
+    private static String decimals(String d8, String d16, String d32, String d64, String d128, String d256) {
+        return d8 + "::decimal(2, 1), "
+                + d16 + "::decimal(4, 1), "
+                + d32 + "::decimal(9, 3), "
+                + d64 + "::decimal(18, 2), "
+                + d128 + "::decimal(38, 6), "
+                + d256 + "::decimal(60, 0)";
     }
 
     private static long drain(RecordCursor cursor) {
@@ -981,6 +1123,18 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     /**
+     * One column per DECIMAL width, because a DECIMAL extremum's state is its argument's own
+     * payload: {@code d8} through {@code d64} land in a LONG slot and {@code d128} and
+     * {@code d256} in a slot of their own type. Kept apart from {@code t} rather than added to
+     * it - the widths are six columns and every case above would have to carry them.
+     */
+    private void createDecimalTable() throws SqlException {
+        execute("create table td (ts timestamp, k symbol, d8 decimal(2, 1), d16 decimal(4, 1), "
+                + "d32 decimal(9, 3), d64 decimal(18, 2), d128 decimal(38, 6), d256 decimal(60, 0)) "
+                + "timestamp(ts) partition by day");
+    }
+
+    /**
      * The partition shapes the merged families part company on: a NULL key, whose
      * {@code count(k)} is zero while its row count is not; a partition of one row, where a
      * sample dispersion is NULL and a population one is 0; and one whose only non-null
@@ -997,6 +1151,25 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 "('2024-01-01T00:00:06.000000Z', 'nx', 'p', 'Infinity'::double, 70.0, -9), " +
                 "('2024-01-01T00:00:07.000000Z', 'a', 'q', 8.0, 80.0, 2), " +
                 "('2024-01-01T00:00:08.000000Z', null, 'p', 9.0, null, null)");
+    }
+
+    /**
+     * The partition shapes a DECIMAL extremum parts company on: a NULL key; a partition of one
+     * row; and one - {@code 'nn'} - whose decimals are absent on every row, so it has rows and
+     * no value either direction contributes, which is the state that has to read back as this
+     * width's own NULL rather than as a zero.
+     */
+    private void insertDecimalKeyShapes() throws SqlException {
+        execute("insert into td values " +
+                "('2024-01-01T00:00:00.000000Z', 'a', " + decimals("1", "10", "10", "10", "10", "10") + "), " +
+                "('2024-01-01T00:00:01.000000Z', null, " + decimals("2", "20", "20", "20", "20", "20") + "), " +
+                "('2024-01-01T00:00:02.000000Z', 'a', null, null, null, null, null, null), " +
+                "('2024-01-01T00:00:03.000000Z', null, " + decimals("-3", "-30", "-30", "-30", "-30", "-30") + "), " +
+                "('2024-01-01T00:00:04.000000Z', 'one', " + decimals("5", "50", "50", "50", "50", "50") + "), " +
+                "('2024-01-01T00:00:05.000000Z', 'nn', null, null, null, null, null, null), " +
+                "('2024-01-01T00:00:06.000000Z', 'nn', null, null, null, null, null, null), " +
+                "('2024-01-01T00:00:07.000000Z', 'a', " + decimals("-1", "-1", "-1", "-1", "-1", "-1") + "), " +
+                "('2024-01-01T00:00:08.000000Z', null, " + decimals("9", "90", "90", "90", "90", "90") + ")");
     }
 
     private void insertNullsAndInfinities() throws SqlException {
