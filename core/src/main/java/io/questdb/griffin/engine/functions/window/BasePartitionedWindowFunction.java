@@ -38,7 +38,15 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class BasePartitionedWindowFunction extends BaseWindowFunction implements Reopenable {
-    protected final Map map;
+    // Non-final to allow streaming-LEAD variants to lazy-allocate the cached-fallback map on
+    // first pass1 invocation. Subclasses that need eager allocation continue to assign in the
+    // constructor; null at construction means "lazy", and every lifecycle method below is
+    // null-safe.
+    protected Map map;
+    // Retained per-query tracker. Held even while map is null (streaming variants allocate their
+    // map/ring lazily) so a later lazy allocation can bind the same tracker and stay on the
+    // per-query counter. Bound by the owning cursor before reopen().
+    protected MemoryTracker memoryTracker;
     protected final VirtualRecord partitionByRecord;
     protected final RecordSink partitionBySink;
 
@@ -64,6 +72,14 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         Misc.freeObjList(partitionByRecord.getFunctions());
     }
 
+    public VirtualRecord getPartitionByRecord() {
+        return partitionByRecord;
+    }
+
+    public RecordSink getPartitionBySink() {
+        return partitionBySink;
+    }
+
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         super.init(symbolTableSource, executionContext);
@@ -84,6 +100,10 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
 
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        // Retain the tracker even when map is null: streaming variants allocate their map/ring
+        // lazily (in streamingPass1/computeNext), after this call, and read memoryTracker to bind
+        // it to the fresh allocation so it counts against the per-query limit.
+        this.memoryTracker = tracker;
         if (map != null) {
             map.setMemoryTracker(tracker);
         }

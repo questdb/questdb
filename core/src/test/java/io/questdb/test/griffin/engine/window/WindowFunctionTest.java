@@ -6583,9 +6583,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .fails(14, "offset must be a positive integer");
 
-        assertQuery("select lag(d, 1, s) over () from tab")
+        assertQuery("select lag(d, 9223372036854775807) over (partition by i) from tab")
                 .noLeakCheck()
-                .fails(17, "default value must be can cast to double");
+                .fails(14, "offset is too large");
+
+        assertExceptionNoLeakCheck(
+                "select lag(d, 1, s) over () from tab",
+                17,
+                "default value cannot be cast to double"
+        );
 
         assertQuery("select lag(d, 1, d + 1, d) over () from tab")
                 .noLeakCheck()
@@ -7323,13 +7329,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .fails(15, "offset must be a positive integer");
 
-        assertQuery("select lead(d, 1, s) over () from tab")
+        assertQuery("select lead(d, 9223372036854775807) over (partition by i) from tab")
                 .noLeakCheck()
-                .fails(18, "default value must be can cast to double");
+                .fails(15, "offset is too large");
 
-        assertQuery("select lead(j, 1, s) over () from tab")
-                .noLeakCheck()
-                .fails(18, "default value must be can cast to long");
+        assertExceptionNoLeakCheck(
+                "select lead(d, 1, s) over () from tab",
+                18,
+                "default value cannot be cast to double"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(j, 1, s) over () from tab",
+                18,
+                "default value cannot be cast to long"
+        );
 
         assertQuery("select lead(d, 1, d + 1, d) over () from tab")
                 .noLeakCheck()

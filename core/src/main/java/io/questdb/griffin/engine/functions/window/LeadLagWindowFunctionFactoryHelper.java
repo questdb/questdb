@@ -47,14 +47,31 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 public class LeadLagWindowFunctionFactoryHelper {
 
     public static final ArrayColumnTypes LAG_COLUMN_TYPES;
     public static final String LAG_NAME = "lag";
     public static final String LEAD_NAME = "lead";
+    // Upper bound on the LAG offset accepted by streaming dispatch. Streaming LAG allocates an
+    // offset-sized ring buffer per partition (offset * 8 bytes), so without this gate a single
+    // adversarial query such as `lag(x, 1_000_000_000) OVER (PARTITION BY p ...)` could allocate
+    // multi-TB of native memory before any cap on partition count kicks in. Above this bound the
+    // call falls back to the cached path, whose own MemoryARW page/page-count limits provide an
+    // independent backstop.
+    public static final long MAX_STREAMING_LAG_OFFSET = 65_536L;
+    // Upper bound on the LEAD offset accepted by streaming dispatch. The deferred-emit cursor packs
+    // one pending-bit per lookahead slot into a single long, so the ring capacity (offset + 1) must
+    // fit in 64 bits, i.e. offset <= 63. Distinct from MAX_STREAMING_LAG_OFFSET, which is a
+    // memory-reservation guard rather than a bit-mask capacity limit.
+    public static final int MAX_STREAMING_LEAD_OFFSET = 63;
+    // Keep the byte count below half the signed address range. MemoryCARW adds the native base
+    // address to the byte count, so merely preventing offset * 8 from wrapping is not sufficient.
+    private static final long MAX_SAFE_PARTITIONED_OFFSET = Long.MAX_VALUE / (2L * Long.BYTES);
 
     static Function newInstance(int position,
                                 ObjList<Function> args,
@@ -62,7 +79,7 @@ public class LeadLagWindowFunctionFactoryHelper {
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext,
                                 DefaultValueExtraChecker defaultValueExtraChecker,
-                                LagConstructor LagConstructor,
+                                LagConstructor lagConstructor,
                                 LagCurrentRowConstructor lagCurrentRowConstructor,
                                 LagOverPartitionConstructor lagOverPartitionConstructor) throws SqlException {
         final WindowContext windowContext = sqlExecutionContext.getWindowContext();
@@ -103,6 +120,13 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         if (windowContext.getPartitionByRecord() != null) {
+            // A partition reserves the full offset-sized ring on first touch. Reject absurd sizes
+            // before offset * 8 or MemoryCARW's native-base-plus-size arithmetic can overflow and
+            // turn the append pointer backwards. Practical limits still fail through maxPages.
+            if (offset > MAX_SAFE_PARTITIONED_OFFSET) {
+                throw SqlException.$(argPositions.getQuick(1), "offset is too large");
+            }
+
             Map map = null;
             MemoryARW mem = null;
             try {
@@ -137,7 +161,7 @@ public class LeadLagWindowFunctionFactoryHelper {
                     configuration.getSqlWindowStoreMaxPages(),
                     MemoryTag.NATIVE_CIRCULAR_BUFFER
             );
-            return LagConstructor.newFunction(args.get(0), defaultValue, offset, mem, windowContext.isIgnoreNulls());
+            return lagConstructor.newFunction(args.get(0), defaultValue, offset, mem, windowContext.isIgnoreNulls());
         } catch (Throwable th) {
             Misc.free(mem);
             throw th;
@@ -179,6 +203,8 @@ public class LeadLagWindowFunctionFactoryHelper {
         protected long count = 0;
         protected int loIdx = 0;
 
+        // Eagerly-allocated buffer; LAG does not have a streaming variant in Phase 6 so lazy init
+        // is not required here. Kept final to preserve the cached-path invariants.
         public BaseLagFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
             super(arg);
             this.offset = offset;
@@ -197,7 +223,10 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void computeNext(Record record) {
             if (computeNext0(record)) {
-                loIdx = (int) ((loIdx + 1) % offset);
+                // loIdx is always in [0, offset-1] here, so a single compare-and-reset wraps it
+                // exactly like (loIdx + 1) % offset without the per-row long division.
+                int next = loIdx + 1;
+                loIdx = next == offset ? 0 : next;
                 count++;
             }
         }
@@ -237,6 +266,11 @@ public class LeadLagWindowFunctionFactoryHelper {
             buffer.close();
             loIdx = 0;
             count = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -268,7 +302,10 @@ public class LeadLagWindowFunctionFactoryHelper {
     abstract static class BaseLagOverPartitionFunction extends BasePartitionedWindowFunction {
         protected final Function defaultValue;
         protected final boolean ignoreNulls;
-        protected final MemoryARW memory;
+        // Non-final so streaming-LAG variants can lazy-allocate the per-partition ring buffer on
+        // first cached-path invocation. Streaming dispatch writes its state via the cursor's co-
+        // located MapValue slots and does not touch this memory until cached fallback fires.
+        protected MemoryARW memory;
         protected final long offset;
 
         public BaseLagOverPartitionFunction(Map map,
@@ -291,6 +328,7 @@ public class LeadLagWindowFunctionFactoryHelper {
             super.close();
             Misc.free(memory);
             Misc.free(defaultValue);
+            nullStreamingFields();
         }
 
         @Override
@@ -317,7 +355,9 @@ public class LeadLagWindowFunctionFactoryHelper {
                 count++;
             }
             mapValue.putLong(0, startOffset);
-            mapValue.putLong(1, firstIdx % offset);
+            // firstIdx is in [0, offset] after the increment above, so a single compare-and-reset
+            // wraps it exactly like firstIdx % offset without the per-row long division.
+            mapValue.putLong(1, firstIdx == offset ? 0L : firstIdx);
             mapValue.putLong(2, count);
         }
 
@@ -348,6 +388,15 @@ public class LeadLagWindowFunctionFactoryHelper {
         public void reset() {
             super.reset();
             Misc.free(memory);
+            nullStreamingFields();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            if (memory != null) {
+                memory.setMemoryTracker(tracker);
+            }
         }
 
         @Override
@@ -372,20 +421,34 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void toTop() {
             super.toTop();
-            memory.truncate();
+            if (memory != null) {
+                memory.truncate();
+            }
         }
 
-        abstract protected boolean computeNext0(long count,
+        protected abstract boolean computeNext0(long count,
                                                 long offset,
                                                 long startOffset,
                                                 long firstIdx,
                                                 Record record);
+
+        // Default no-op; streaming subclasses override to set their closed-but-non-null fields
+        // (map, memory) to null so their lazy-alloc gate fires on the next computeNext. Without
+        // this hook every streaming subclass would need its own close()/reset() override pair just
+        // to perform the nulling.
+        protected void nullStreamingFields() {
+        }
     }
 
-    static abstract class BaseLeadFunction extends BaseWindowFunction implements Reopenable {
-        protected final MemoryARW buffer;
+    abstract static class BaseLeadFunction extends BaseWindowFunction implements Reopenable {
+        // Non-final to allow streaming-LEAD subclasses to lazy-allocate the cached-fallback ring
+        // buffer on first pass1 invocation. close() and reset() use Misc.free so a null buffer
+        // (streaming path never reaches pass1) does not NPE.
+        protected MemoryARW buffer;
         protected final Function defaultValue;
         protected final boolean ignoreNulls;
+        @Nullable
+        protected MemoryTracker memoryTracker;
         protected final long offset;
         protected long count = 0;
         protected int loIdx = 0;
@@ -401,8 +464,9 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void close() {
             super.close();
-            buffer.close();
+            Misc.free(buffer);
             Misc.free(defaultValue);
+            nullStreamingFields();
         }
 
         @Override
@@ -426,7 +490,10 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             if (doPass1(record, recordOffset, spi)) {
-                loIdx = (int) ((loIdx + 1) % offset);
+                // loIdx is always in [0, offset-1] here, so a single compare-and-reset wraps it
+                // exactly like (loIdx + 1) % offset without the per-row long division.
+                int next = loIdx + 1;
+                loIdx = next == offset ? 0 : next;
                 count++;
             }
         }
@@ -440,9 +507,18 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void reset() {
             super.reset();
-            buffer.close();
+            Misc.free(buffer);
             loIdx = 0;
             count = 0;
+            nullStreamingFields();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memoryTracker = tracker;
+            if (buffer != null) {
+                buffer.setMemoryTracker(tracker);
+            }
         }
 
         @Override
@@ -469,6 +545,11 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         protected abstract boolean doPass1(Record record, long recordOffset, WindowSPI spi);
+
+        // Default no-op; the streaming non-partitioned LEAD subclass overrides to null `buffer`
+        // so its lazy-alloc gate fires on reuse.
+        protected void nullStreamingFields() {
+        }
     }
 
     abstract static class BaseLeadLagCurrentRow extends BaseWindowFunction {
@@ -516,7 +597,9 @@ public class LeadLagWindowFunctionFactoryHelper {
     abstract static class BaseLeadOverPartitionFunction extends BasePartitionedWindowFunction {
         protected final Function defaultValue;
         protected final boolean ignoreNulls;
-        protected final MemoryARW memory;
+        // Non-final to allow StreamingLeadOverPartitionFunction subclasses to lazy-allocate the
+        // cached-fallback ring buffer on first pass1 invocation.
+        protected MemoryARW memory;
         protected final long offset;
 
         public BaseLeadOverPartitionFunction(Map map,
@@ -539,6 +622,7 @@ public class LeadLagWindowFunctionFactoryHelper {
             super.close();
             Misc.free(memory);
             Misc.free(defaultValue);
+            nullStreamingFields();
         }
 
         @Override
@@ -584,7 +668,9 @@ public class LeadLagWindowFunctionFactoryHelper {
             }
 
             mapValue.putLong(0, startOffset);
-            mapValue.putLong(1, firstIdx % offset);
+            // firstIdx is in [0, offset] after the increment above, so a single compare-and-reset
+            // wraps it exactly like firstIdx % offset without the per-row long division.
+            mapValue.putLong(1, firstIdx == offset ? 0L : firstIdx);
             mapValue.putLong(2, count);
         }
 
@@ -592,6 +678,15 @@ public class LeadLagWindowFunctionFactoryHelper {
         public void reset() {
             super.reset();
             Misc.free(memory);
+            nullStreamingFields();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            if (memory != null) {
+                memory.setMemoryTracker(tracker);
+            }
         }
 
         @Override
@@ -616,7 +711,9 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void toTop() {
             super.toTop();
-            memory.truncate();
+            if (memory != null) {
+                memory.truncate();
+            }
         }
 
         protected abstract boolean doPass1(long count,
@@ -626,6 +723,11 @@ public class LeadLagWindowFunctionFactoryHelper {
                                            Record record,
                                            long recordOffset,
                                            WindowSPI spi);
+
+        // Default no-op; partitioned streaming LEAD subclasses override to null `map` and
+        // `memory` after super freed them.
+        protected void nullStreamingFields() {
+        }
     }
 
     static {

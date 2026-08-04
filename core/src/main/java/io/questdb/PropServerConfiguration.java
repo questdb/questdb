@@ -572,6 +572,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWindowRowIdPageSize;
     private final int sqlWindowStoreMaxPages;
     private final int sqlWindowStorePageSize;
+    private final boolean sqlWindowStreamingLeadEnabled;
+    private final int sqlWindowStreamingMaxPartitions;
     private final long sqlWindowTreeKeyMaxBytes;
     private final int sqlWindowTreeKeyPageSize;
     private final int sqlWithClauseModelPoolCapacity;
@@ -1853,6 +1855,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             warnIfMaxBytesBelowPageSize(properties, env,
                     PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, this.sqlWindowTreeKeyMaxBytes,
                     PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, this.sqlWindowTreeKeyPageSize);
+            this.sqlWindowStreamingLeadEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, false);
+            this.sqlWindowStreamingMaxPartitions = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STREAMING_MAX_PARTITIONS, 65_536));
             this.sqlIntervalMaxBracketDepth = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_MAX_BRACKET_DEPTH, 8);
             this.sqlIntervalMaxIntervalsAfterMerge = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE, 1024);
             this.sqlIntervalIncrementalMergeThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_INCREMENTAL_MERGE_THRESHOLD, 256);
@@ -4946,6 +4950,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlWindowStorePageSize() {
             return sqlWindowStorePageSize;
+        }
+
+        @Override
+        public boolean getSqlWindowStreamingLeadEnabled() {
+            return sqlWindowStreamingLeadEnabled;
+        }
+
+        @Override
+        public int getSqlWindowStreamingMaxPartitions() {
+            return sqlWindowStreamingMaxPartitions;
         }
 
         @Override
