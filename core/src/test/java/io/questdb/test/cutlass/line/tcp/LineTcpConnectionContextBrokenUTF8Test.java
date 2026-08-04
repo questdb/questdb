@@ -97,6 +97,16 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
             closeContext();
             drainWalQueue();
 
+            // The writer rejects the value while appending, so nothing malformed reaches a WAL
+            // segment and ApplyWal2TableJob never sees it. Rejecting later, at apply time, would
+            // suspend the table instead of failing the write.
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = '" + table + "'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            suspended
+                            false
+                            """);
             assertQuery("SELECT value FROM " + table + " ORDER BY timestamp")
                     .noLeakCheck()
                     .expectSize()
