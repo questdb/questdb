@@ -190,12 +190,21 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
                             + "w2 as (partition by k order by ts rows between 3 preceding and current row)",
                     plans -> {
                         Assert.assertNotNull(plans);
-                        // Only the cumulative window forms a group: a bounded ROWS
-                        // accumulator keeps live rows behind its tail, which is a state
-                        // shape no family here describes, so both of its functions are
-                        // residual.
-                        Assert.assertEquals(1, plans.size());
+                        // Both windows form a group and neither pair reaches the other's: a
+                        // cumulative (sum, count) and a bounded frame's are two state shapes, and
+                        // the group they belong to is what says so - the components never meet to
+                        // be compared.
+                        Assert.assertEquals(2, plans.size());
                         Assert.assertEquals(2, plans.getQuick(0).getProjectionCount());
+                        Assert.assertEquals(2, plans.getQuick(1).getProjectionCount());
+                        Assert.assertNotEquals(
+                                "one group is the bounded one",
+                                plans.getQuick(0).getComponent(0).isRingBacked(),
+                                plans.getQuick(1).getComponent(0).isRingBacked()
+                        );
+                        Assert.assertFalse(
+                                plans.getQuick(0).getSpec().isSameSpec(plans.getQuick(1).getSpec())
+                        );
                     }
             );
         });
@@ -434,6 +443,101 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
                         }
                         Assert.assertTrue(projectionAt(plan, 6).isDerived());
                         Assert.assertEquals(1, projectionAt(plan, 6).getNonNullCountSlot());
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testTheRingBackedFamiliesMergeWithinAFrameAndNeverAcrossOne() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // A bounded ROWS window carrying both ring-backed families twice over. The merge is
+            // by identity as everywhere else - sum(x) and avg(x) are one component, and so are
+            // the two count(x) calls if a query writes them - and what does not happen is a fold:
+            // count(x)'s answer is the counter sum(x) keeps, and it still gets a component of its
+            // own, because its state continues into a ring of its own shape.
+            assertPlans(
+                    "select ts, sum(x) over w, avg(x) over w, count(x) over w, count(y) over w "
+                            + "from base " + rowsFrameWindow(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(3, plan.getComponentCount());
+                        Assert.assertEquals(4, plan.getProjectionCount());
+                        // [sum, count, ringIndex, ringOffset] then a three-slot counter per
+                        // argument: the layout is canonical by family id, and the sum family's is
+                        // the lower.
+                        Assert.assertEquals(10, plan.getSlotCount());
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_ROWS_SUM_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT,
+                                plan.getComponent(1).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT,
+                                plan.getComponent(2).getFamily()
+                        );
+                        final int xColumn = plan.getComponent(0).getArgumentColumnIndex();
+                        Assert.assertEquals(xColumn, plan.getComponent(1).getArgumentColumnIndex());
+                        Assert.assertTrue(
+                                "the two counters must be ordered by argument",
+                                plan.getComponent(2).getArgumentColumnIndex() > xColumn
+                        );
+                        Assert.assertEquals(0, plan.getComponentSlotBase(0));
+                        Assert.assertEquals(4, plan.getComponentSlotBase(1));
+                        Assert.assertEquals(7, plan.getComponentSlotBase(2));
+                        final ArrayColumnTypes types = new ArrayColumnTypes();
+                        plan.buildMapValueTypes(types);
+                        Assert.assertEquals(10, types.getColumnCount());
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(0));
+                        for (int slot = 1; slot < 10; slot++) {
+                            // Every other slot is a 64-bit word, the two ring addresses included.
+                            Assert.assertEquals("slot " + slot, ColumnType.LONG, types.getColumnType(slot));
+                        }
+                        // No output reads a component wider than its own function's.
+                        for (int output = 1; output <= 4; output++) {
+                            Assert.assertFalse(
+                                    "output " + output + " should keep its own component",
+                                    projectionAt(plan, output).isDerived()
+                            );
+                        }
+                        Assert.assertTrue(plan.getComponent(0).isRingBacked());
+                        Assert.assertTrue(plan.getComponent(1).isRingBacked());
+                    }
+            );
+            // The same calls over a cumulative frame and a bounded one. Two groups: a component
+            // only ever merges inside a group and the frame is part of the group's identity, so
+            // the ring-backed state and the cumulative one cannot meet however alike the calls
+            // look - and the cumulative pair still folds its count where the bounded pair does
+            // not.
+            assertPlans(
+                    "select ts, sum(x) over w, avg(x) over w, count(x) over w, "
+                            + "sum(x) over c, avg(x) over c, count(x) over c from base "
+                            + "window w as (partition by k order by ts rows between 3 preceding and current row), "
+                            + "c as (partition by k order by ts rows between unbounded preceding and current row)",
+                    plans -> {
+                        Assert.assertNotNull(plans);
+                        Assert.assertEquals(2, plans.size());
+                        int bounded = 0;
+                        int cumulative = 0;
+                        for (int i = 0; i < 2; i++) {
+                            final WindowAccumulatorPlan plan = plans.getQuick(i);
+                            Assert.assertEquals(3, plan.getProjectionCount());
+                            if (plan.getComponent(0).isRingBacked()) {
+                                bounded++;
+                                Assert.assertEquals(2, plan.getComponentCount());
+                                Assert.assertEquals(7, plan.getSlotCount());
+                            } else {
+                                cumulative++;
+                                Assert.assertEquals(1, plan.getComponentCount());
+                                Assert.assertEquals(2, plan.getSlotCount());
+                            }
+                        }
+                        Assert.assertEquals(1, bounded);
+                        Assert.assertEquals(1, cumulative);
                     }
             );
         });
@@ -697,6 +801,15 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
      */
     private static String window() {
         return "window w as (partition by k order by ts rows between unbounded preceding and current row)";
+    }
+
+    /**
+     * The same window with a bounded low bound, which is what the ring-backed families need: their
+     * state is the frame's own values, so a frame that never gives one back reaches a different
+     * set of implementations entirely.
+     */
+    private static String rowsFrameWindow() {
+        return "window w as (partition by k order by ts rows between 3 preceding and current row)";
     }
 
     private void createBaseTable() throws Exception {

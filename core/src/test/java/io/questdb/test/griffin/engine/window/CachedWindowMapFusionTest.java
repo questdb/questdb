@@ -84,6 +84,19 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     // one of those in the SELECT list is what the streaming fast path declines on.
     private static final String NATURAL_WINDOW =
             " from t window w as (partition by k order by ts rows between unbounded preceding and current row)";
+    // The bounded-ROWS spellings of the two windows above. Their families are ring-backed: the
+    // group's map value addresses a ring in the contributing function's own arena, and a cached
+    // traversal reaches that contributor through the sorted chain rather than off the base scan -
+    // so the ring is filled in chain order, which is the thing here that a streaming case cannot
+    // check.
+    private static final String ORDERED_ROWS_FRAME_WINDOW =
+            " from t window w as (partition by k order by ts desc rows between 3 preceding and current row)";
+    private static final String NATURAL_ROWS_FRAME_WINDOW =
+            " from t window w as (partition by k order by ts rows between 3 preceding and current row)";
+    // The lagging spelling, where the value entering the frame comes out of the ring as well as
+    // the one leaving it.
+    private static final String ORDERED_LAGGING_ROWS_FRAME_WINDOW =
+            " from t window w as (partition by k order by ts desc rows between 5 preceding and 2 preceding)";
     // A whole-partition window that needs a sort of its own, so its two-pass group runs inside
     // a sort group's traversal rather than in the natural-order loops. The same ORDER BY as
     // ORDERED_WINDOW, which is what puts the two in one sort bucket.
@@ -312,6 +325,26 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                             "count(d128) over w",
                             "max(d128) over w",
                             "min(d128) over w"
+                    );
+                }
+                // The ring-backed families, in all three bucket spellings a bounded frame reaches
+                // here. What they add to the differential is an accumulator whose state is partly
+                // in an arena the group does not own: the chain feeds the contributor in sort
+                // order, and a ring filled out of order or carried across a bucket would show as
+                // a wrong frame rather than as a wrong slot.
+                for (int rows = 0; rows < 3; rows++) {
+                    final String window = rows == 0
+                            ? ORDERED_ROWS_FRAME_WINDOW
+                            : (rows == 1 ? NATURAL_ROWS_FRAME_WINDOW : ORDERED_LAGGING_ROWS_FRAME_WINDOW);
+                    final String lead = rows == 1 ? ", " + FORCING_CALL : "";
+                    assertFusedMatchesUnfused(window, lead, "sum(x) over w", "avg(x) over w");
+                    assertFusedMatchesUnfused(
+                            window,
+                            lead,
+                            "sum(x) over w",
+                            "avg(x) over w",
+                            "count(x) over w",
+                            "count(y) over w"
                     );
                 }
             }

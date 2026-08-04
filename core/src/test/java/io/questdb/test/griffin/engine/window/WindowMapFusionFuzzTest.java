@@ -80,6 +80,13 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
      * so a wide group runs on an unordered map too, which the other two put on an OrderedMap.
      */
     private static final int[] ENTRY_SIZES = {16, 32, 64};
+    /**
+     * A ROWS frame with a bounded low bound, a bounded high bound, or both - the shapes whose
+     * accumulator has to give rows back, and so the ones the ring-backed families serve.
+     */
+    private static final int FRAME_BOUNDED_ROWS = 2;
+    private static final int FRAME_RANGE = 0;
+    private static final int FRAME_ROWS = 1;
     private static final int ITERATIONS = 40;
     private static final String[] KEY_COLUMNS = {"ki", "ks", "kv"};
     /**
@@ -129,6 +136,33 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             "max(xdec128)",
             "min(xdec128)",
             "count(xdec128)",
+    };
+    /**
+     * The calls a <b>bounded</b> ROWS window can fuse: the two ring-backed families and nothing
+     * else. A {@code count(*)} over such a frame keeps the partition's row count and saturates the
+     * output against the frame size, which is a reading no family here describes, and the
+     * dispersion, extremum and compensated-sum implementations behind a bounded frame are separate
+     * classes that declare none - so all of those stay residual and share the query rather than the
+     * group.
+     */
+    private static final String[] BOUNDED_ROWS_FRAME_CALLS = {
+            "sum(xd)",
+            "sum(yd)",
+            "avg(xd)",
+            "avg(yd)",
+            "count(xd)",
+            "count(yd)",
+            "count(ki)",
+            "count(ks)",
+            "count(kv)",
+            "count(xdec)",
+            "count(xdec128)",
+            // Residual over this frame, and here on purpose: a bound group and a function still on
+            // its own map and its own ring in one cursor is what an ordinary query looks like.
+            "count(*)",
+            "max(xd)",
+            "min(xd)",
+            "ksum(xd)",
     };
     /**
      * A RANGE-framed window carries no ranking call - {@code row_number()} has no frame - and
@@ -332,29 +366,53 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * One random streaming query: one or two cumulative partitioned windows, two to five outputs
-     * spread over them in random order, each window referenced by name or spelled inline.
+     * One random bounded ROWS frame, in one of the three geometries a ring comes in: ending at the
+     * current row, ending short of it, or with no low bound at all. The spans are small so that a
+     * frame is crossed many times over the rows a table carries, and so that partitions shorter
+     * than the frame are ordinary rather than exotic.
+     */
+    private String randomBoundedRowsFrame() {
+        final int preceding = 1 + rnd.nextInt(8);
+        if (rnd.nextInt(3) == 0) {
+            // No low bound: nothing ever leaves the frame, so the ring keeps its unfused length.
+            return "unbounded preceding and " + (1 + rnd.nextInt(preceding)) + " preceding";
+        }
+        if (rnd.nextBoolean()) {
+            return preceding + " preceding and current row";
+        }
+        // A lagging high bound, where the entering value is read out of the ring as well.
+        return preceding + " preceding and " + (1 + rnd.nextInt(preceding)) + " preceding";
+    }
+
+    /**
+     * One random streaming query: one or two partitioned windows, two to five outputs spread over
+     * them in random order, each window referenced by name or spelled inline.
      * <p>
-     * Every window is partitioned, ordered by the designated timestamp the base is already
-     * scanned in, and cumulative, which is what keeps the query on the streaming path the group
-     * compiler runs under. What varies is everything the group identity is a function of.
+     * Every window is partitioned and ordered by the designated timestamp the base is already
+     * scanned in, which is what keeps the query on the streaming path the group compiler runs
+     * under. What varies is everything the group identity is a function of, the frame included: a
+     * cumulative ROWS or RANGE frame, or a bounded ROWS one in each of the three geometries its
+     * ring comes in.
      */
     private String randomQuery(String table) {
         final int windowCount = 1 + rnd.nextInt(2);
         final String[] specs = new String[windowCount];
-        final boolean[] rangeFrames = new boolean[windowCount];
+        final int[] frameKinds = new int[windowCount];
         for (int w = 0; w < windowCount; w++) {
-            rangeFrames[w] = rnd.nextInt(4) == 0;
+            frameKinds[w] = rnd.nextInt(4) == 0 ? FRAME_RANGE : (rnd.nextBoolean() ? FRAME_ROWS : FRAME_BOUNDED_ROWS);
             specs[w] = "partition by " + KEY_COLUMNS[rnd.nextInt(KEY_COLUMNS.length)]
                     + " order by ts "
-                    + (rangeFrames[w] ? "range" : "rows")
-                    + " between unbounded preceding and current row";
+                    + (frameKinds[w] == FRAME_RANGE ? "range" : "rows")
+                    + " between "
+                    + (frameKinds[w] == FRAME_BOUNDED_ROWS ? randomBoundedRowsFrame() : "unbounded preceding and current row");
         }
         final int outputs = 2 + rnd.nextInt(4);
         final StringBuilder sql = new StringBuilder("select ts");
         for (int o = 0; o < outputs; o++) {
             final int w = rnd.nextInt(windowCount);
-            final String[] calls = rangeFrames[w] ? RANGE_FRAME_CALLS : ROWS_FRAME_CALLS;
+            final String[] calls = frameKinds[w] == FRAME_RANGE
+                    ? RANGE_FRAME_CALLS
+                    : (frameKinds[w] == FRAME_ROWS ? ROWS_FRAME_CALLS : BOUNDED_ROWS_FRAME_CALLS);
             final String call = rnd.nextInt(8) == 0
                     ? RESIDUAL_CALLS[rnd.nextInt(RESIDUAL_CALLS.length)]
                     : calls[rnd.nextInt(calls.length)];

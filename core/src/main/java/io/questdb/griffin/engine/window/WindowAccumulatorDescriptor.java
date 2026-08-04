@@ -118,6 +118,17 @@ import org.jetbrains.annotations.Nullable;
  * rather than the family's, and that a slice's identity no longer always fits one word -
  * see {@link #resetState}.
  *
+ * <h2>A component's state is not always all in the map value</h2>
+ * {@link #FAMILY_DOUBLE_ROWS_SUM_COUNT} and {@link #FAMILY_ROWS_NON_NULL_COUNT} are the first
+ * families whose state continues outside the slice - see {@link #isRingBacked}. A bounded ROWS
+ * frame gives rows back as well as taking them, so the accumulator has to keep the frame's own
+ * values beside its total: the map value carries the total, the counter and the ring's address,
+ * and the ring lives in the arena the contributing function already owns. The sharing proof does
+ * not change, because the frame is part of the group's {@link WindowMapSpec} and a component only
+ * ever merges inside one group; what changes is that the group is no longer the only owner of a
+ * fused query's state, and that such a state cannot be moved between maps or reset into
+ * existence.
+ *
  * <h2>Two sums over one column can still be two components</h2>
  * {@link #FAMILY_DOUBLE_KAHAN_SUM_COUNT} and {@link #FAMILY_DOUBLE_SUM_COUNT} agree on which
  * rows contribute and both start their first slot at zero, and they are still separate
@@ -219,6 +230,29 @@ public final class WindowAccumulatorDescriptor {
      */
     public static final int FAMILY_DOUBLE_MIN = 6;
     /**
+     * State {@code [sum: DOUBLE, nonNullCount: LONG, ringIndex: LONG, ringOffset: LONG]} plus
+     * the contributor's own ring of {@code ringSize} doubles, contributed by a DOUBLE
+     * {@code sum} or {@code avg} over a <b>bounded</b> ROWS frame.
+     * <p>
+     * The first family whose state is not wholly in the map value - see {@link #isRingBacked} -
+     * and separate from {@link #FAMILY_DOUBLE_SUM_COUNT} for that reason and not only because
+     * the frames differ. A cumulative sum absorbs a row and keeps it; a bounded one has to give
+     * it back when the frame passes it, which is what the ring of the frame's own values is for
+     * and what the two index slots address. The two also never meet: a component only ever
+     * merges inside one group, and the frame is part of a group's {@link WindowMapSpec}.
+     * <p>
+     * The state the map value carries is the <b>current frame's</b> total and count, so a
+     * {@link WindowAccumulatorProjection#PROJECTION_SUM} or
+     * {@link WindowAccumulatorProjection#PROJECTION_AVG} output reads the same two fields here
+     * that it reads off a cumulative component. That is a change of schedule rather than of
+     * arithmetic: the unfused implementation subtracts the value leaving the frame at the end of
+     * the row that last needed it, leaving a total that is nobody's answer, and a fused
+     * contributor defers that subtraction to the row the value actually leaves on. The
+     * operations and their order are identical, so the two paths agree bit for bit; what it
+     * costs is one ring cell, since the value has to survive one row longer.
+     */
+    public static final int FAMILY_DOUBLE_ROWS_SUM_COUNT = 12;
+    /**
      * State {@code [sum: DOUBLE, nonNullCount: LONG]}, contributed by a DOUBLE
      * {@code sum} or {@code avg} over an unbounded partitioned frame.
      * <p>
@@ -269,6 +303,19 @@ public final class WindowAccumulatorDescriptor {
      */
     public static final int FAMILY_NON_NULL_COUNT = 2;
     /**
+     * State {@code [nonNullCount: LONG, ringIndex: LONG, ringOffset: LONG]} plus the
+     * contributor's own ring of {@code ringSize} flags, contributed by a {@code count(x)} over a
+     * <b>bounded</b> ROWS frame.
+     * <p>
+     * {@link #FAMILY_DOUBLE_ROWS_SUM_COUNT}'s counter without a total, and
+     * {@link #isRingBacked ring-backed} for the same reason: a bounded counter has to know which
+     * of the frame's rows contributed so it can give one back when the frame passes it, and one
+     * flag per row of the frame is what that takes. The ring is a byte per cell where the sum
+     * family's is a double, which is the contributor's own business - the map value carries the
+     * same three slots either way.
+     */
+    public static final int FAMILY_ROWS_NON_NULL_COUNT = 13;
+    /**
      * State {@code [rowCount: LONG]}, contributed by {@code count(*)} or by a
      * partitioned {@code row_number()} over an unbounded partitioned frame. Both keep
      * the same counter of rows, and after {@code n} rows both read {@code n} off it.
@@ -307,6 +354,20 @@ public final class WindowAccumulatorDescriptor {
      */
     public static final int FIELD_NON_NULL_COUNT = 1;
     /**
+     * The ring cell the oldest of the frame's values sits in - the one the next row drops.
+     * Present only in the two {@link #isRingBacked ring-backed} families, and read and written
+     * by their contributor alone: it addresses the contributor's own ring, so no output has any
+     * use for it.
+     */
+    public static final int FIELD_RING_INDEX = 6;
+    /**
+     * Where this partition's ring starts in the contributor's arena, or
+     * {@link #RING_STATE_UNALLOCATED} while it has none. Present only in the two
+     * {@link #isRingBacked ring-backed} families, and the contributor's alone for the reason
+     * {@link #FIELD_RING_INDEX} is.
+     */
+    public static final int FIELD_RING_OFFSET = 7;
+    /**
      * The running sum. Present only in {@link #FAMILY_DOUBLE_SUM_COUNT}.
      */
     public static final int FIELD_SUM = 0;
@@ -316,6 +377,14 @@ public final class WindowAccumulatorDescriptor {
      * pair rather than a range of them.
      */
     public static final int NO_ARGUMENT_COLUMN_INDEX = -1;
+    /**
+     * The {@link #FIELD_RING_OFFSET} a partition no row has reached yet carries: "this entry has
+     * no ring". It is what {@link #resetState} writes, because only a contributor can allocate
+     * one - the descriptor has no arena and the group that resets the slice has no ring of its
+     * own - and it is negative rather than zero because zero is the first partition's perfectly
+     * ordinary address.
+     */
+    public static final long RING_STATE_UNALLOCATED = -1L;
     private final int argumentColumnIndex;
     private final int argumentColumnType;
     private final int contributionKind;
@@ -357,6 +426,7 @@ public final class WindowAccumulatorDescriptor {
             case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
             case FAMILY_DOUBLE_MAX:
             case FAMILY_DOUBLE_MIN:
+            case FAMILY_DOUBLE_ROWS_SUM_COUNT:
             case FAMILY_DOUBLE_SUM_COUNT:
             case FAMILY_DOUBLE_WELFORD:
                 // Those families have one factory each and it takes a DOUBLE, so every
@@ -364,7 +434,9 @@ public final class WindowAccumulatorDescriptor {
                 // max/min pair reads its argument through the same getDouble and skips the
                 // row on the same isFinite test, so it contributes under the same predicate
                 // - which is also why an extremum over a DOUBLE argument never sees an
-                // infinity, and its empty state can be NaN.
+                // infinity, and its empty state can be NaN. The bounded-ROWS sum applies that
+                // same test twice, once as a value enters the frame and once as it leaves, so
+                // the rows it holds are exactly the rows this predicate names.
                 return isWidenedToDouble(argumentColumnType)
                         ? CONTRIBUTION_FINITE_DOUBLE
                         : CONTRIBUTION_NONE;
@@ -390,9 +462,13 @@ public final class WindowAccumulatorDescriptor {
                         ? CONTRIBUTION_TYPED_NOT_NULL
                         : CONTRIBUTION_NONE;
             case FAMILY_NON_NULL_COUNT:
+            case FAMILY_ROWS_NON_NULL_COUNT:
                 // count() has a factory per argument shape, so this arm is the one that
                 // can name a predicate other than the DOUBLE one - and the type is what
-                // selects between them.
+                // selects between them. Both counting families share the arm because they
+                // share those predicates exactly: one class serves every bounded-ROWS count
+                // and it applies the very lambda the cumulative one does, to the row entering
+                // the frame and to the row leaving it alike.
                 if (isWidenedToDouble(argumentColumnType)) {
                     return CONTRIBUTION_FINITE_DOUBLE;
                 }
@@ -465,10 +541,13 @@ public final class WindowAccumulatorDescriptor {
      */
     public static int familySlotCount(int family) {
         switch (family) {
+            case FAMILY_DOUBLE_ROWS_SUM_COUNT:
+                return 4;
             case FAMILY_DOUBLE_SUM_COUNT:
                 return 2;
             case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
             case FAMILY_DOUBLE_WELFORD:
+            case FAMILY_ROWS_NON_NULL_COUNT:
                 return 3;
             case FAMILY_DECIMAL_MAX:
             case FAMILY_DECIMAL_MIN:
@@ -560,11 +639,19 @@ public final class WindowAccumulatorDescriptor {
      * carries the accumulator across without going through any durable encoding.
      * <p>
      * Only a live view moves a component this way, and only a component it can persist. A
-     * family with no codec is never in one of its plans, so a slot wider than a word cannot
-     * reach this - and the throw says so rather than copying the first word of one and
-     * leaving the rest of the state behind.
+     * family with no codec is never in one of its plans, so neither a slot wider than a word nor
+     * a state that continues outside the map value can reach this - and the throw says so rather
+     * than copying the first word of one and leaving the rest of the state behind.
      */
     public void copyState(@NotNull MapValue src, int srcSlotBase, @NotNull MapValue dst, int dstSlotBase) {
+        if (isRingBacked()) {
+            // The slots would copy cleanly and the copy would be wrong: the ring offset they
+            // carry addresses the arena of the contributor the state came from, so the
+            // destination would read another map's frame. Unreachable - no ring-backed family
+            // has a codec - and stated because "this cannot happen" and "this silently shared
+            // one ring between two states" are not the same bug.
+            throw new UnsupportedOperationException("a ring-backed component's state does not move between maps");
+        }
         for (int i = 0, n = getSlotCount(); i < n; i++) {
             final int slotType = getSlotColumnType(i);
             if (isWideDecimalSlot(slotType)) {
@@ -635,6 +722,15 @@ public final class WindowAccumulatorDescriptor {
         // sits inside it; and it is a single slot whose value is the arithmetic's whole
         // answer, so it is not a run inside anything wider either - a sum's first slot is a
         // running total and not the largest thing ever added to it.
+        //
+        // Neither ring-backed family appears either, and there the arithmetic would allow what
+        // the relation does not. A bounded count(x)'s answer really is the counter a bounded
+        // sum(x) over the same frame keeps beside its total, so a projection reading that slot
+        // would emit the right number. What this method licenses is wider than that: a
+        // non-negative answer says the guest's whole state is a run inside the host's, and the
+        // guest's state here continues outside the map value in a ring of its own shape - a flag
+        // per row where the host keeps a double. Admitting it would make containment a claim
+        // about two arenas, which is a different proof from the one every pair above rests on.
         return -1;
     }
 
@@ -675,11 +771,30 @@ public final class WindowAccumulatorDescriptor {
                     return 1;
                 }
                 return field == FIELD_NON_NULL_COUNT ? 2 : -1;
+            case FAMILY_DOUBLE_ROWS_SUM_COUNT:
+                if (field == FIELD_SUM) {
+                    return 0;
+                }
+                if (field == FIELD_NON_NULL_COUNT) {
+                    return 1;
+                }
+                if (field == FIELD_RING_INDEX) {
+                    return 2;
+                }
+                return field == FIELD_RING_OFFSET ? 3 : -1;
             case FAMILY_DOUBLE_SUM_COUNT:
                 if (field == FIELD_SUM) {
                     return 0;
                 }
                 return field == FIELD_NON_NULL_COUNT ? 1 : -1;
+            case FAMILY_ROWS_NON_NULL_COUNT:
+                if (field == FIELD_NON_NULL_COUNT) {
+                    return 0;
+                }
+                if (field == FIELD_RING_INDEX) {
+                    return 1;
+                }
+                return field == FIELD_RING_OFFSET ? 2 : -1;
             case FAMILY_DOUBLE_WELFORD:
                 if (field == FIELD_MEAN) {
                     return 0;
@@ -731,11 +846,24 @@ public final class WindowAccumulatorDescriptor {
                     return ColumnType.LONG;
                 }
                 break;
+            case FAMILY_DOUBLE_ROWS_SUM_COUNT:
+                if (slot == 0) {
+                    return ColumnType.DOUBLE;
+                }
+                if (slot == 1 || slot == 2 || slot == 3) {
+                    return ColumnType.LONG;
+                }
+                break;
             case FAMILY_DOUBLE_SUM_COUNT:
                 if (slot == 0) {
                     return ColumnType.DOUBLE;
                 }
                 if (slot == 1) {
+                    return ColumnType.LONG;
+                }
+                break;
+            case FAMILY_ROWS_NON_NULL_COUNT:
+                if (slot == 0 || slot == 1 || slot == 2) {
                     return ColumnType.LONG;
                 }
                 break;
@@ -802,11 +930,40 @@ public final class WindowAccumulatorDescriptor {
             case FAMILY_LONG_MAX:
             case FAMILY_LONG_MIN:
                 return Numbers.LONG_NULL;
+            case FAMILY_DOUBLE_ROWS_SUM_COUNT:
+            case FAMILY_ROWS_NON_NULL_COUNT:
+                // Zero for the accumulating slots, which a bounded total and a bounded counter
+                // both start at and mean, and RING_STATE_UNALLOCATED for the ring's address,
+                // which is the one slot in this build whose identity is not a value the
+                // arithmetic could produce - it says "no ring yet" and is what makes the
+                // contributor's first row on a partition allocate one.
+                return slot == getFieldSlot(FIELD_RING_OFFSET) ? RING_STATE_UNALLOCATED : 0L;
             default:
                 // Zero, whichever way the slot is read back: a DOUBLE zero and a LONG zero are
                 // the same word.
                 return 0L;
         }
+    }
+
+    /**
+     * Whether this component's state continues outside the group's map value, in a ring of the
+     * frame's own values that its <b>contributor</b> owns and the two index slots address.
+     * <p>
+     * True for the bounded-ROWS families and false for every other, and it is the model change
+     * they bring: until them a component's whole state was the slice, so the group's map was the
+     * only thing a fused query allocated. A ring-backed component keeps the slice - the total,
+     * the counter and the ring's address - in the shared value like anything else, and the ring
+     * itself in the arena the contributing function already owned and already frees. That
+     * division is deliberate: the group owns the key domain and nothing per-function, so the
+     * arena's lifecycle stays exactly where {@code close}, {@code reset} and {@code toTop} left
+     * it, and a projection that reads the slice needs no arena at all.
+     * <p>
+     * Two things follow for anything that moves such a state. Its slots are meaningless in
+     * another map - {@link #copyState} refuses them - and its identity cannot be produced by a
+     * reset alone, which is why {@link #RING_STATE_UNALLOCATED} exists.
+     */
+    public boolean isRingBacked() {
+        return family == FAMILY_DOUBLE_ROWS_SUM_COUNT || family == FAMILY_ROWS_NON_NULL_COUNT;
     }
 
     /**

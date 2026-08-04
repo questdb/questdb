@@ -1057,6 +1057,17 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        // Where the value entering the frame sits, counted from the ring's oldest cell, when the
+        // frame's high bound lags the current row. One more than the unfused reading of the same
+        // thing for a bounded low bound, because the fused ring holds one cell more - see
+        // fusedRingSize.
+        private final int fusedEnteringOffset;
+        // The fused ring's length. It is the unfused bufferSize plus the one cell a deferred
+        // subtraction needs: a bound contributor leaves the current frame's total in the map
+        // value and drops the value leaving the frame on the row that actually drops it, so that
+        // value has to survive one row longer than the unfused ring keeps it. Only where the low
+        // bound is bounded - with nothing ever leaving the frame there is nothing to defer.
+        private final int fusedRingSize;
         // holds fixed-size ring buffers of double values
         private final MemoryARW memory;
         // Deep copy of the partition-by key column types. The factory's
@@ -1070,6 +1081,10 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         protected double sum;
         private double avg;
+        // The two ring slots of the group's fused map value, or -1 when this function owns its
+        // state. Installed by bindWindowStateSlots and cleared the same way.
+        private int windowStateRingIndexSlot = -1;
+        private int windowStateRingOffsetSlot = -1;
         // Single-writer (refresh worker), not volatile.
 
         public AvgOverPartitionRowsFrameFunction(
@@ -1095,6 +1110,8 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 frameLoBounded = false;
             }
             frameIncludesCurrentValue = rowsHi == 0;
+            fusedRingSize = bufferSize + (frameLoBounded ? 1 : 0);
+            fusedEnteringOffset = frameSize - 1 + (frameLoBounded ? 1 : 0);
 
             this.memory = memory;
             this.liveView = liveView;
@@ -1117,6 +1134,91 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             }
         }
 
+        /**
+         * Absorbs one row into the group's bounded frame, leaving the frame's own total and
+         * count in the slice for every projection on it to read.
+         * <p>
+         * The arithmetic is {@link #computeNext(Record)}'s with the subtraction moved: where the
+         * unfused row ends by dropping the value that leaves the frame <b>next</b> - which is
+         * what leaves its slot holding a total no output ever emits - this one starts by
+         * dropping the value that has just left. The two operations and their order are
+         * identical, so the fused and unfused answers agree bit for bit, and the price is the one
+         * extra ring cell that lets the departing value survive the row it is needed on.
+         * <p>
+         * The ring is this function's own arena and this method is the only thing that writes to
+         * it: a component has exactly one contributor, so the group's other projections read the
+         * slice and never the frame.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final double d = arg.getDouble(record);
+            long ringOffset = value.getLong(windowStateRingOffsetSlot);
+            final long loIdx;
+            double sum;
+            long count;
+            if (ringOffset == WindowAccumulatorDescriptor.RING_STATE_UNALLOCATED) {
+                // The group put the slice to identity and the ring's address is the one field it
+                // could not fill, so this is the partition's first row and the ring is ours to
+                // allocate. NaN in every cell is "no value here yet", which the contribution
+                // predicate refuses exactly as it refuses a null argument.
+                ringOffset = memory.appendAddressFor((long) fusedRingSize * Double.BYTES) - memory.getPageAddress(0);
+                for (int i = 0; i < fusedRingSize; i++) {
+                    memory.putDouble(ringOffset + (long) i * Double.BYTES, Double.NaN);
+                }
+                value.putLong(windowStateRingOffsetSlot, ringOffset);
+                loIdx = 0;
+                if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
+                    // Assigned rather than added to the identity zero, which is what the unfused
+                    // first row does - and the difference is observable: 0.0 + -0.0 is 0.0.
+                    sum = d;
+                    count = 1;
+                } else {
+                    sum = 0.0;
+                    count = 0;
+                }
+            } else {
+                loIdx = value.getLong(windowStateRingIndexSlot);
+                sum = value.getDouble(windowStateSumSlot);
+                count = value.getLong(windowStateNonNullCountSlot);
+                if (frameLoBounded) {
+                    // The oldest cell holds the value the frame dropped between the previous row
+                    // and this one. Nothing leaves an unbounded low bound, which is why such a
+                    // frame needs no extra cell either.
+                    final double leaving = memory.getDouble(ringOffset + loIdx * Double.BYTES);
+                    if (Numbers.isFinite(leaving)) {
+                        sum -= leaving;
+                        count--;
+                    }
+                }
+                final double entering = frameIncludesCurrentValue
+                        ? d
+                        : memory.getDouble(
+                        ringOffset + ((loIdx + fusedEnteringOffset) % fusedRingSize) * Double.BYTES
+                );
+                if (Numbers.isFinite(entering)) {
+                    sum += entering;
+                    count++;
+                }
+            }
+            value.putDouble(windowStateSumSlot, sum);
+            value.putLong(windowStateNonNullCountSlot, count);
+            // The current row's value takes the cell the departing one has now been accounted
+            // for, and the oldest cell moves on to what the next row will drop.
+            memory.putDouble(ringOffset + loIdx * Double.BYTES, d);
+            value.putLong(windowStateRingIndexSlot, (loIdx + 1) % fusedRingSize);
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateRingIndexSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_INDEX);
+            this.windowStateRingOffsetSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_OFFSET);
+        }
+
         @Override
         public void close() {
             super.close();
@@ -1125,6 +1227,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             // map stores:
             // 0 - sum, never store NaN in it
             // 1 - current number of non-null rows in frame
@@ -1217,6 +1324,26 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        /**
+         * Reads the frame the group's contributor left in the slice. The same two fields and the
+         * same empty test a cumulative {@code avg} reads, because the contributor leaves the
+         * current frame's total and count there rather than the carry the unfused row ends on.
+         * <p>
+         * Both scalars are materialized because {@code sum} over the same frame is this class
+         * with a different reading of them, exactly as it is on the unfused path.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            final long count = value.getLong(windowStateNonNullCountSlot);
+            if (count != 0) {
+                sum = value.getDouble(windowStateSumSlot);
+                avg = sum / count;
+            } else {
+                sum = Double.NaN;
+                avg = Double.NaN;
+            }
         }
 
         @Override
@@ -1392,8 +1519,32 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void toTop() {
             super.toTop();
+            // Bound or not, the ring goes back to the start of the arena: the group's map is
+            // cleared by the same toTop, so every partition allocates a ring again on its first
+            // row and nothing addresses what this drops.
             memory.truncate();
             tombstoneCount = 0;
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The bounded-ROWS running {@code (sum, count)} over the frame's own values. Separate
+         * from the cumulative family for the reason its javadoc gives - the state continues into
+         * a ring this function owns - and reported by {@code sum} over the same frame too, which
+         * is this class with a different output.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_DOUBLE_ROWS_SUM_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_AVG;
         }
     }
 

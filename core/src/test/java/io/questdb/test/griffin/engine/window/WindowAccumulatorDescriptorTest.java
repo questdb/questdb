@@ -317,6 +317,163 @@ public class WindowAccumulatorDescriptorTest {
     }
 
     @Test
+    public void testTheRingBackedFamiliesKeepPartOfTheirStateOutsideTheValue() {
+        // The bounded-ROWS families are the first whose state is not wholly in the map value: the
+        // slice carries the frame's accumulator and the ring's address, and the ring itself lives
+        // in the contributing function's own arena. Four things follow that no rendered row shows.
+        final WindowAccumulatorDescriptor rowsSum = WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_ROWS_SUM_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        final WindowAccumulatorDescriptor rowsCount = WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        Assert.assertNotNull(rowsSum);
+        Assert.assertNotNull(rowsCount);
+
+        // The layout, which is the accumulator a cumulative component would keep plus the two
+        // slots that address the ring.
+        Assert.assertEquals(4, rowsSum.getSlotCount());
+        Assert.assertEquals(0, rowsSum.getFieldSlot(WindowAccumulatorDescriptor.FIELD_SUM));
+        Assert.assertEquals(1, rowsSum.getFieldSlot(WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT));
+        Assert.assertEquals(2, rowsSum.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_INDEX));
+        Assert.assertEquals(3, rowsSum.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_OFFSET));
+        Assert.assertEquals(ColumnType.DOUBLE, rowsSum.getSlotColumnType(0));
+        Assert.assertEquals(3, rowsCount.getSlotCount());
+        Assert.assertEquals(0, rowsCount.getFieldSlot(WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT));
+        Assert.assertEquals(1, rowsCount.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_INDEX));
+        Assert.assertEquals(2, rowsCount.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_OFFSET));
+        Assert.assertEquals(-1, rowsCount.getFieldSlot(WindowAccumulatorDescriptor.FIELD_SUM));
+
+        final ObjList<WindowAccumulatorDescriptor> ringBacked = new ObjList<>();
+        ringBacked.add(rowsSum);
+        ringBacked.add(rowsCount);
+        for (int i = 0, n = ringBacked.size(); i < n; i++) {
+            final WindowAccumulatorDescriptor component = ringBacked.getQuick(i);
+            final String what = "family " + component.getFamily();
+            Assert.assertTrue(what, component.isRingBacked());
+            final int ringOffsetSlot = component.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_OFFSET);
+            for (int slot = 0, slots = component.getSlotCount(); slot < slots; slot++) {
+                if (slot != ringOffsetSlot) {
+                    // A bounded total and a bounded counter both start at zero and mean it, and
+                    // so does the ring's index.
+                    Assert.assertEquals(what + ": slot " + slot, 0L, component.getSlotIdentityBits(slot));
+                } else {
+                    // The one slot in this build whose identity is not a value the arithmetic
+                    // could produce: zero is the first partition's perfectly ordinary ring
+                    // address, so an absent ring has to say so out of band.
+                    Assert.assertEquals(
+                            what + ": ring offset",
+                            WindowAccumulatorDescriptor.RING_STATE_UNALLOCATED,
+                            component.getSlotIdentityBits(slot)
+                    );
+                    Assert.assertEquals(ColumnType.LONG, component.getSlotColumnType(slot));
+                }
+            }
+            // Runtime-only: no component codec, so no durable wrapper, no manifest, and a live
+            // view keeps such a function residual with its own map and its own ring.
+            Assert.assertEquals(what, -1, LiveViewAccumulatorDescriptor.familyCodecVersion(component.getFamily()));
+            Assert.assertNull(what, LiveViewAccumulatorDescriptor.of(component));
+            // The slots would copy cleanly and the copy would address another function's arena,
+            // so the move is refused rather than half-performed. The refusal is decided before
+            // either value is read, which is what lets this ask for it without one.
+            try {
+                component.copyState(null, 0, null, 0);
+                Assert.fail(what + ": a ring-backed state must not move between maps");
+            } catch (UnsupportedOperationException expected) {
+                // as required
+            }
+        }
+
+        // Nothing folds, in either direction. The bounded count's answer really is the counter
+        // the bounded sum keeps beside its total - so this is the one decline in the table that
+        // costs a group a slot it could have shared - and what the relation licenses is wider
+        // than the arithmetic: the guest's whole state would have to be a run inside the host's,
+        // and this guest's continues into a ring of flags where the host's holds doubles.
+        Assert.assertEquals(-1, rowsSum.derivedSlotOffset(rowsCount));
+        Assert.assertEquals(-1, rowsCount.derivedSlotOffset(rowsSum));
+        Assert.assertEquals(0, rowsSum.derivedSlotOffset(rowsSum));
+        // Nor against the cumulative families, which agree with these on the argument and the
+        // contribution predicate and differ in the one thing that matters: a cumulative frame
+        // never gives a row back.
+        final ObjList<LiveViewAccumulatorDescriptor> durable = components();
+        for (int i = 0, n = ringBacked.size(); i < n; i++) {
+            final WindowAccumulatorDescriptor component = ringBacked.getQuick(i);
+            for (int j = 0, m = durable.size(); j < m; j++) {
+                final WindowAccumulatorDescriptor other = durable.getQuick(j).getRuntime();
+                Assert.assertFalse(component.isSameIdentity(other));
+                Assert.assertEquals(-1, component.derivedSlotOffset(other));
+                Assert.assertEquals(-1, other.derivedSlotOffset(component));
+            }
+        }
+
+        // The readings each family admits. A bounded (sum, count) serves a sum and an avg, which
+        // is the merge this step is for; a bounded counter serves a count. What a bounded sum does
+        // not serve is a count, and that absence is the second lock on the decline above: the
+        // fold could not produce the binding and the compatibility table would not accept it.
+        Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_ROWS_SUM_COUNT,
+                WindowAccumulatorProjection.PROJECTION_SUM
+        ));
+        Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_ROWS_SUM_COUNT,
+                WindowAccumulatorProjection.PROJECTION_AVG
+        ));
+        Assert.assertFalse(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_ROWS_SUM_COUNT,
+                WindowAccumulatorProjection.PROJECTION_COUNT
+        ));
+        Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT,
+                WindowAccumulatorProjection.PROJECTION_COUNT
+        ));
+        Assert.assertFalse(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT,
+                WindowAccumulatorProjection.PROJECTION_SUM
+        ));
+
+        // The predicates are the cumulative families' own, one argument type at a time, because
+        // one class serves every bounded-ROWS count and applies the very lambda the cumulative
+        // one does. A type neither admits is declined by both.
+        final int[] argumentTypes = {
+                ColumnType.DOUBLE,
+                ColumnType.LONG,
+                ColumnType.SYMBOL,
+                ColumnType.VARCHAR,
+                ColumnType.getDecimalType(18, 3),
+                ColumnType.CHAR,
+        };
+        for (int i = 0; i < argumentTypes.length; i++) {
+            final String what = ColumnType.nameOf(argumentTypes[i]);
+            Assert.assertEquals(
+                    what,
+                    WindowAccumulatorDescriptor.contributionKindFor(
+                            WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                            argumentTypes[i]
+                    ),
+                    WindowAccumulatorDescriptor.contributionKindFor(
+                            WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT,
+                            argumentTypes[i]
+                    )
+            );
+            Assert.assertEquals(
+                    what,
+                    WindowAccumulatorDescriptor.contributionKindFor(
+                            WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                            argumentTypes[i]
+                    ),
+                    WindowAccumulatorDescriptor.contributionKindFor(
+                            WindowAccumulatorDescriptor.FAMILY_DOUBLE_ROWS_SUM_COUNT,
+                            argumentTypes[i]
+                    )
+            );
+        }
+    }
+
+    @Test
     public void testTheExtremumFamiliesAreRuntimeOnlyAndStartAtNull() {
         // The four extremum families are the first this build admits at runtime and not on
         // disk, and the first whose starting state is not a zeroed slice. Both halves matter

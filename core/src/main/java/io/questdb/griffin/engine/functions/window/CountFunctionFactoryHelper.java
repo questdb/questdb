@@ -951,6 +951,16 @@ public class CountFunctionFactoryHelper {
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        // Where the flag of the row entering the frame sits, counted from the ring's oldest cell,
+        // when the frame's high bound lags the current row. One more than the unfused reading for
+        // a bounded low bound, because the fused ring holds one cell more - see fusedRingSize.
+        private final int fusedEnteringOffset;
+        // The fused ring's length: the unfused bufferSize plus the one cell a deferred
+        // subtraction needs. A bound contributor leaves the current frame's count in the map
+        // value and gives back the row leaving the frame on the row that actually drops it, so
+        // that row's flag has to survive one row longer than the unfused ring keeps it. Only
+        // where the low bound is bounded - nothing ever leaves an unbounded one.
+        private final int fusedRingSize;
         private final IsRecordNotNull isRecordNotNull;
         // holds fixed-size ring buffers of boolean values
         private final MemoryARW memory;
@@ -958,6 +968,10 @@ public class CountFunctionFactoryHelper {
         private final boolean liveView;
         private final ArrayColumnTypes mapValueTypes;
         protected long count;
+        // The two ring slots of the group's fused map value, or -1 when this function owns its
+        // state. Installed by bindWindowStateSlots and cleared the same way.
+        private int windowStateRingIndexSlot = -1;
+        private int windowStateRingOffsetSlot = -1;
 
         public CountOverPartitionRowsFrameFunction(
                 Map map,
@@ -983,6 +997,8 @@ public class CountFunctionFactoryHelper {
                 frameLoBounded = false;
             }
             frameIncludesCurrentValue = rowsHi == 0;
+            fusedRingSize = bufferSize + (frameLoBounded ? 1 : 0);
+            fusedEnteringOffset = frameSize - 1 + (frameLoBounded ? 1 : 0);
 
             this.memory = memory;
             this.isRecordNotNull = isRecordNotNull;
@@ -1006,6 +1022,70 @@ public class CountFunctionFactoryHelper {
             }
         }
 
+        /**
+         * Absorbs one row into the group's bounded frame, leaving the frame's own count in the
+         * slice.
+         * <p>
+         * The arithmetic is {@link #computeNext(Record)}'s with the subtraction moved: where the
+         * unfused row ends by giving back the row that leaves the frame <b>next</b>, this one
+         * starts by giving back the row that has just left. The price is one extra ring cell, so
+         * that a departing row's flag survives the row it is needed on.
+         * <p>
+         * The ring is this function's own arena and this method is the only thing that writes to
+         * it: a component has exactly one contributor, so the group's other projections read the
+         * slice and never the frame.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final boolean isNotNull = isRecordNotNull.isNotNull(arg, record);
+            long ringOffset = value.getLong(windowStateRingOffsetSlot);
+            final long loIdx;
+            long count;
+            if (ringOffset == WindowAccumulatorDescriptor.RING_STATE_UNALLOCATED) {
+                // The group put the slice to identity and the ring's address is the one field it
+                // could not fill, so this is the partition's first row and the ring is ours to
+                // allocate. A false flag in every cell is "no row here yet", which is what the
+                // rows before a partition's first one contribute.
+                ringOffset = memory.appendAddressFor(fusedRingSize) - memory.getPageAddress(0);
+                for (int i = 0; i < fusedRingSize; i++) {
+                    memory.putBool(ringOffset + i, false);
+                }
+                value.putLong(windowStateRingOffsetSlot, ringOffset);
+                loIdx = 0;
+                count = frameIncludesCurrentValue && isNotNull ? 1 : 0;
+            } else {
+                loIdx = value.getLong(windowStateRingIndexSlot);
+                count = value.getLong(windowStateNonNullCountSlot);
+                if (frameLoBounded && memory.getBool(ringOffset + loIdx)) {
+                    // The oldest cell holds the row the frame dropped between the previous row and
+                    // this one. Nothing leaves an unbounded low bound, which is why such a frame
+                    // needs no extra cell either.
+                    count--;
+                }
+                if (frameIncludesCurrentValue
+                        ? isNotNull
+                        : memory.getBool(ringOffset + (loIdx + fusedEnteringOffset) % fusedRingSize)) {
+                    count++;
+                }
+            }
+            value.putLong(windowStateNonNullCountSlot, count);
+            // The current row's flag takes the cell the departing one has now been accounted for,
+            // and the oldest cell moves on to what the next row will drop.
+            memory.putBool(ringOffset + loIdx, isNotNull);
+            value.putLong(windowStateRingIndexSlot, (loIdx + 1) % fusedRingSize);
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateRingIndexSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_INDEX);
+            this.windowStateRingOffsetSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_OFFSET);
+        }
+
         @Override
         public void close() {
             super.close();
@@ -1014,6 +1094,11 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             // map stores:
             // 0 - count, current number of non-null rows in frame
             // 1 - (0-based) index of oldest value [0, bufferSize]
@@ -1078,6 +1163,16 @@ public class CountFunctionFactoryHelper {
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        /**
+         * Reads the frame the group's contributor left in the slice - the count of its
+         * contributing rows, which is exact and never NULL, exactly as a cumulative
+         * {@code count}'s is.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            count = value.getLong(windowStateNonNullCountSlot);
         }
 
         @Override
@@ -1233,8 +1328,32 @@ public class CountFunctionFactoryHelper {
         @Override
         public void toTop() {
             super.toTop();
+            // Bound or not, the ring goes back to the start of the arena: the group's map is
+            // cleared by the same toTop, so every partition allocates a ring again on its first
+            // row and nothing addresses what this drops.
             memory.truncate();
             tombstoneCount = 0;
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The bounded-ROWS counter over the frame's own rows. Separate from the cumulative
+         * counting family for the reason its javadoc gives - the state continues into a ring of
+         * flags this function owns - and from the row count for the reason the cumulative one is:
+         * this counter skips the rows where its argument is absent.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_COUNT;
         }
     }
 

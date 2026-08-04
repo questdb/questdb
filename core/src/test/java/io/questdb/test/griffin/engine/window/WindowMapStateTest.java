@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowAccumulatorPlan;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowMapState;
@@ -61,6 +62,21 @@ public class WindowMapStateTest extends AbstractCairoTest {
     private static final int DECIMAL_KEY_SHAPE_ROW_COUNT = 9;
     private static final int KEY_SHAPE_ROW_COUNT = 9;
     private static final int ORDINARY_ROW_COUNT = 9;
+    /**
+     * The three shapes a bounded ROWS frame comes in, which are three different rings: one ending
+     * at the current row, one whose high bound lags it, and one with no low bound at all - the
+     * last being the only one nothing ever leaves.
+     */
+    private static final String[] ROWS_FRAME_GEOMETRIES = {
+            "window w as (partition by k order by ts rows between 3 preceding and current row)",
+            "window w as (partition by k order by ts rows between 5 preceding and 2 preceding)",
+            "window w as (partition by k order by ts rows between unbounded preceding and 2 preceding)",
+    };
+    /**
+     * The bounded-ROWS reference window: the geometry an ordinary moving aggregate is written in,
+     * and the one whose ring the deferred subtraction is easiest to read against.
+     */
+    private static final String ROWS_FRAME_WINDOW = ROWS_FRAME_GEOMETRIES[0];
     private static final String SUM_AND_COUNT_PLAN = """
             Window
               functions: [sum(x) over (partition by [k] rows between unbounded preceding and current row),count(y) over (partition by [k] rows between unbounded preceding and current row)]
@@ -776,6 +792,190 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testABoundedRowsSumAndAvgShareOneFrame() throws Exception {
+        // The acceptance shape for the ring-backed families, and the first group in this build
+        // whose state is not all in the map value: the slice carries the frame's total, its
+        // counter and the ring's address, and the ring itself stays in the arena the contributing
+        // function already owned. sum(x) and avg(x) over one bounded frame are two readings of
+        // one such state, so the group keeps one component, one ring and one argument evaluation
+        // where the unfused pair keeps two of each.
+        //
+        // The data is the key-shape one, whose partitions include a NULL key, one of a single row
+        // and one whose only non-null x is an infinity - a frame with rows in it and no value the
+        // total contributes.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, sum(x) over w, avg(x) over w from t " + ROWS_FRAME_WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(1, plan.getComponentCount());
+                Assert.assertEquals(2, plan.getProjectionCount());
+                // [sum, count, ringIndex, ringOffset] - the two index slots are the state's as
+                // much as the total is, and they are what the group's value carries instead of
+                // the ring.
+                Assert.assertEquals(4, plan.getSlotCount());
+                Assert.assertTrue(plan.getComponent(0).isRingBacked());
+                Assert.assertEquals(
+                        WindowAccumulatorDescriptor.FAMILY_DOUBLE_ROWS_SUM_COUNT,
+                        plan.getComponent(0).getFamily()
+                );
+                // Neither output is derived: both read the whole component, which is what a
+                // merge on identity looks like against a fold onto a wider host.
+                Assert.assertFalse(plan.getProjection(0).isDerived());
+                Assert.assertFalse(plan.getProjection(1).isDerived());
+                Assert.assertEquals(0, plan.getProjection(0).getSumSlot());
+                Assert.assertEquals(1, plan.getProjection(0).getNonNullCountSlot());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    // One accumulator for two outputs, so the frame is maintained once.
+                    Assert.assertEquals(rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfusedOnWindow("t", ROWS_FRAME_WINDOW, "sum(x) over w", "avg(x) over w");
+        });
+    }
+
+    @Test
+    public void testABoundedRowsCountKeepsItsOwnRing() throws Exception {
+        // The pair that says the ring families are co-located and not merged. A bounded count(x)
+        // emits the very number the bounded sum(x) beside it keeps in its counter, and it still
+        // gets a component of its own: what the fold licenses is that the guest's whole state is
+        // a run inside the host's, and this guest's state continues outside the slice in a ring
+        // of flags where the host's holds doubles. So the group buys them one key, one hash table
+        // and one lookup a row, and each keeps the frame it maintains.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, sum(x) over w, count(x) over w from t " + ROWS_FRAME_WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(2, plan.getComponentCount());
+                Assert.assertEquals(2, plan.getProjectionCount());
+                // [sum, count, ringIndex, ringOffset] then [count, ringIndex, ringOffset].
+                Assert.assertEquals(7, plan.getSlotCount());
+                Assert.assertEquals(0, plan.getComponentSlotBase(0));
+                Assert.assertEquals(4, plan.getComponentSlotBase(1));
+                Assert.assertTrue(plan.getComponent(0).isRingBacked());
+                Assert.assertTrue(plan.getComponent(1).isRingBacked());
+                Assert.assertFalse(plan.getProjection(0).isDerived());
+                Assert.assertFalse(plan.getProjection(1).isDerived());
+                // Two counters, and they are two slots: the count's own is the component the
+                // fold declined to move.
+                Assert.assertEquals(1, plan.getProjection(0).getNonNullCountSlot());
+                Assert.assertEquals(4, plan.getProjection(1).getNonNullCountSlot());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfusedOnWindow("t", ROWS_FRAME_WINDOW, "sum(x) over w", "count(x) over w");
+        });
+    }
+
+    @Test
+    public void testEveryBoundedRowsGeometryMatchesTheUnfusedPath() throws Exception {
+        // The three shapes a bounded ROWS frame comes in, which are three different rings and
+        // the whole of what the deferred subtraction has to get right:
+        //
+        //   - a frame ending at the current row, whose entering value is the row's own and whose
+        //     ring is one cell longer than the number of preceding rows it spans;
+        //   - a frame whose high bound lags, so the entering value comes out of the ring too and
+        //     the two reads are a computed distance apart;
+        //   - one with no low bound at all, where nothing ever leaves, the ring keeps its unfused
+        //     length and the unfused arithmetic already left the answer in the slots.
+        //
+        // Run over both data sets: the key shapes, whose partitions include one of a single row -
+        // fewer rows than the frame spans - and the nulls-and-infinities one, where the absent
+        // and non-finite values land inside the ring rather than only at a partition's start.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            for (int i = 0; i < ROWS_FRAME_GEOMETRIES.length; i++) {
+                final String window = ROWS_FRAME_GEOMETRIES[i];
+                assertFusedMatchesUnfusedOnWindow("t", window, "sum(x) over w", "avg(x) over w");
+                assertFusedMatchesUnfusedOnWindow(
+                        "t",
+                        window,
+                        "sum(x) over w",
+                        "avg(x) over w",
+                        "count(x) over w",
+                        "count(y) over w"
+                );
+                assertFusedMatchesUnfusedOnWindow("t", window, "count(k) over w", "count(y) over w");
+            }
+            execute("truncate table t");
+            insertNullsAndInfinities();
+            for (int i = 0; i < ROWS_FRAME_GEOMETRIES.length; i++) {
+                assertFusedMatchesUnfusedOnWindow(
+                        "t",
+                        ROWS_FRAME_GEOMETRIES[i],
+                        "sum(x) over w",
+                        "avg(x) over w",
+                        "count(x) over w",
+                        "count(y) over w"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testABoundedAndACumulativeFrameAreTwoGroups() throws Exception {
+        // Two windows over one key that differ in nothing but the frame. Their sums keep
+        // different states - one gives values back and the other never does - so the two must not
+        // meet, and what keeps them apart is the frame in the group's spec rather than anything
+        // about the families. Two groups, two maps, two lookups a row: this is the shape that
+        // would silently produce a cumulative total for a bounded output if the spec stopped
+        // discriminating.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, sum(x) over w, avg(x) over w, sum(x) over c, avg(x) over c from t "
+                    + "window w as (partition by k order by ts rows between 3 preceding and current row), "
+                    + "c as (partition by k order by ts rows between unbounded preceding and current row)";
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 2);
+                final ObjList<WindowMapState> states = windowFactory.getWindowMapStates();
+                int ringBacked = 0;
+                for (int i = 0; i < 2; i++) {
+                    final WindowAccumulatorPlan plan = states.getQuick(i).getPlan();
+                    Assert.assertEquals(1, plan.getComponentCount());
+                    Assert.assertEquals(2, plan.getProjectionCount());
+                    if (plan.getComponent(0).isRingBacked()) {
+                        ringBacked++;
+                        Assert.assertEquals(4, plan.getSlotCount());
+                    } else {
+                        Assert.assertEquals(2, plan.getSlotCount());
+                    }
+                }
+                Assert.assertEquals("exactly one group is the bounded one", 1, ringBacked);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, states.getQuick(0).getLookupCount());
+                    Assert.assertEquals(rows, states.getQuick(1).getLookupCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSumAndCountShareOneMapAndOneLookup() throws Exception {
         // The headline shape. sum(x) counts finite x values and count(y) counts non-null y
         // values, so the two disagree on every row where exactly one is absent and keep
@@ -992,15 +1192,28 @@ public class WindowMapStateTest extends AbstractCairoTest {
      * columns {@link #WINDOW} names and whatever value columns the case is about.
      */
     private static void assertFusedMatchesUnfusedOn(String table, String... outputs) throws SqlException {
+        assertFusedMatchesUnfusedOnWindow(table, WINDOW, outputs);
+    }
+
+    /**
+     * The same comparison over {@code table} and an arbitrary {@code window} clause naming
+     * {@code w}, which is what the bounded-ROWS cases need: the frame is part of the group's
+     * identity, so a geometry is a different group and deserves its own comparison.
+     */
+    private static void assertFusedMatchesUnfusedOnWindow(
+            String table,
+            String window,
+            String... outputs
+    ) throws SqlException {
         final StringBuilder fused = new StringBuilder("select ts");
         for (int i = 0; i < outputs.length; i++) {
             fused.append(", ").append(outputs[i]);
         }
-        fused.append(" from ").append(table).append(' ').append(WINDOW);
+        fused.append(" from ").append(table).append(' ').append(window);
         assertIsBound(fused.toString(), true);
         final String[] references = new String[outputs.length];
         for (int i = 0; i < outputs.length; i++) {
-            final String reference = "select ts, " + outputs[i] + " from " + table + " " + WINDOW;
+            final String reference = "select ts, " + outputs[i] + " from " + table + " " + window;
             assertIsBound(reference, false);
             references[i] = body(render(reference));
         }

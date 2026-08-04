@@ -437,6 +437,17 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
         }
+
+        /**
+         * The total rather than the average, off the component the superclass declares and
+         * maintains. The one thing this output does not share with the {@code avg} beside it: a
+         * bounded frame's {@code (sum, count)} pair is one state and two readings of it, exactly
+         * as the cumulative pair is.
+         */
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_SUM;
+        }
     }
 
     // Handles sum() over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
