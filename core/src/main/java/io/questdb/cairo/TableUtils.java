@@ -29,6 +29,8 @@ import io.questdb.Telemetry;
 import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.Function;
@@ -165,6 +167,7 @@ public final class TableUtils {
     public static final int TABLE_KIND_TEMP_PARQUET_EXPORT = 2;
     public static final String TABLE_NAME_FILE = "_name";
     public static final int TABLE_RESERVED = 2;
+    public static final int TABLE_TYPE_LIVE_VIEW = 4;
     public static final int TABLE_TYPE_MAT = 2;
     public static final int TABLE_TYPE_NON_WAL = 0;
     public static final int TABLE_TYPE_VIEW = 3;
@@ -692,6 +695,9 @@ public final class TableUtils {
 
             // create symbol maps
             int symbolMapCount = 0;
+            // Plain VIEWs read from their base table, so they don't own their own
+            // symbol maps or _cv. Live views are physical WAL-backed tables that
+            // own their data and DO need both, even though isLiveView() is true.
             if (!structure.isView()) {
                 for (int i = 0, n = structure.getColumnCount(); i < n; i++) {
                     int columnType = structure.getColumnType(i);
@@ -743,6 +749,19 @@ public final class TableUtils {
                 try (BlockFileWriter writer = blockFileWriter) {
                     writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                     MatViewDefinition.append(structure.getMatViewDefinition(), writer);
+                }
+            }
+            // _lv must land BEFORE _txn, like _view and _mv above. _txn is what exists() keys on,
+            // so writing _lv after it leaves a crash window whose directory looks like a plain WAL
+            // table: the loader types it TABLE (no _lv), and it squats the view's name. It also
+            // makes the "missing _lv means CREATE crashed" reap unreachable for its stated cause,
+            // while leaving it live for the opposite one - dropping a committed view whose _lv was
+            // lost, data included.
+            if (structure.isLiveView()) {
+                assert blockFileWriter != null;
+                try (BlockFileWriter writer = blockFileWriter) {
+                    writer.of(path.trimTo(rootLen).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
+                    LiveViewDefinition.append(structure.getLiveViewDefinition(), writer);
                 }
             }
 
@@ -1191,6 +1210,24 @@ public final class TableUtils {
      */
     public static boolean isFinalTableName(String tableName, CharSequence tempTablePrefix) {
         return !Chars.startsWith(tableName, tempTablePrefix);
+    }
+
+    public static boolean isLiveViewDefinitionFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        path.of(configuration.getDbRoot()).concat(dirName).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+        return ff.exists(path.$());
+    }
+
+    public static boolean isLiveViewDropSentinelFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        path.of(configuration.getDbRoot()).concat(dirName).concat(LiveViewDefinition.LIVE_VIEW_DROP_SENTINEL_FILE_NAME);
+        return ff.exists(path.$());
+    }
+
+    public static boolean isLiveViewStateFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        path.of(configuration.getDbRoot()).concat(dirName).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+        return ff.exists(path.$());
     }
 
     public static boolean isMatViewDefinitionFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
@@ -2678,6 +2715,28 @@ public final class TableUtils {
         reader.ofRO(path.concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
     }
 
+    /**
+     * Maps a table type code stored in {@code tables.d} onto its token type.
+     * <p>
+     * Unknown codes throw rather than falling back to {@link TableToken.Type#TABLE}. A newer binary
+     * can write a type this one does not know, and every view kind is implicitly WAL: silently
+     * degrading such an entry to a plain non-WAL table hands out a {@code TableWriter} where a
+     * {@code WalWriter} is required, which corrupts the directory. Refusing to load the entry is
+     * recoverable by upgrading the binary again; the corruption is not.
+     */
+    public static TableToken.Type tableTypeOf(int tableType) {
+        return switch (tableType) {
+            case TABLE_TYPE_NON_WAL, TABLE_TYPE_WAL -> TableToken.Type.TABLE;
+            case TABLE_TYPE_LIVE_VIEW -> TableToken.Type.LIVE_VIEW;
+            case TABLE_TYPE_MAT -> TableToken.Type.MAT_VIEW;
+            case TABLE_TYPE_VIEW -> TableToken.Type.VIEW;
+            default -> throw CairoException.critical(0)
+                    .put("unknown table type in name registry, table was created by a newer version [type=")
+                    .put(tableType)
+                    .put(']');
+        };
+    }
+
     public static int toIndexKey(int symbolKey) {
         assert symbolKey != Integer.MAX_VALUE;
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
@@ -2823,6 +2882,41 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Writes the durable {@code _lv.drop} sentinel into the live view's directory and fsyncs it
+     * before returning. Idempotent: a repeated DROP that finds an existing sentinel re-opens, fsyncs
+     * and closes - the file's existence is the signal, not its contents. Failure throws
+     * {@link CairoException} with the path, so a caller that stamps the sentinel first aborts before
+     * any teardown and leaves the view queryable.
+     * <p>
+     * Unlike the checkpoint segment writers, this deliberately does NOT tmp+rename. Recovery keys off
+     * existence alone, so a zero-byte or partially written {@code _lv.drop} still correctly triggers
+     * the reap branch in {@code CairoEngine.buildViewGraphs}; a tmp+rename scheme would instead lose a
+     * crash-before-rename drop intent. Existence-only is the stronger durability contract here, not an
+     * oversight.
+     * <p>
+     * What the fsync does NOT cover: the sentinel's parent directory entry. POSIX does not make a
+     * newly linked name durable until the containing directory is itself fsynced, and
+     * {@link FilesFacade} has no directory-fsync primitive (nothing in the engine does this today).
+     * So the guarantee this call actually provides is ordering across a PROCESS crash, not across a
+     * power loss: after a power loss the sentinel can be absent even though the drop had already
+     * begun, and the startup loader then sees a directory holding an {@code _lv} with no
+     * {@code _lv.drop} and re-registers it as a healthy live view. Callers should read the "durable"
+     * in the surrounding comments as that weaker property.
+     */
+    public static void writeLiveViewDropSentinel(CairoConfiguration configuration, TableToken token) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token).concat(LiveViewDefinition.LIVE_VIEW_DROP_SENTINEL_FILE_NAME).$();
+            long fd = openFileRWOrFail(ff, path.$(), configuration.getWriterFileOpenOpts());
+            try {
+                ff.fsync(fd);
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
     public static void writeLongOrFail(FilesFacade ff, long fd, long offset, long value, long tempMem8b, Path path) {
         Unsafe.putLong(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
@@ -2933,9 +3027,22 @@ public final class TableUtils {
 
     private static boolean isOlderThanTtl(TimestampDriver timestampDriver, long partitionBoundary, long maxTimestamp, int ttl) {
         // TTL < 0 means it's in months
-        return ttl > 0
-                ? maxTimestamp - partitionBoundary >= timestampDriver.fromHours(ttl)
-                : timestampDriver.monthsBetween(partitionBoundary, maxTimestamp) >= -ttl;
+        if (ttl <= 0) {
+            return timestampDriver.monthsBetween(partitionBoundary, maxTimestamp) >= -ttl;
+        }
+        // The parser admits hour counts far past what a nanosecond timestamp can express:
+        // CommonUtils.toHoursOrMonths range-checks DAYS and WEEKS but passes the HOUR unit
+        // through untouched, and PartitionBy.validateTtlGranularity waives granularity for
+        // PARTITION BY HOUR, so anything up to TTL 2_147_483_647 HOURS reaches here - against this
+        // driver's getMaxUnitValue('h') of 2_562_047. fromHours() multiplies unchecked, so the
+        // product wraps: TTL 106_752 DAYS, the smallest DAYS value that trips it, gives
+        // 2_562_048 * 3_600_000_000_000 = Long.MAX_VALUE + 763_145_224_193 -> a negative span
+        // that every partition compares older than, dropping the whole table on the next
+        // commit. A TTL the timestamp type cannot express must expire nothing instead.
+        if (ttl > timestampDriver.getMaxUnitValue('h')) {
+            return false;
+        }
+        return maxTimestamp - partitionBoundary >= timestampDriver.fromHours(ttl);
     }
 
     // Utility method for debugging. This method is not used in production.

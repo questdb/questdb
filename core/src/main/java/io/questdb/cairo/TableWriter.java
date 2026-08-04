@@ -347,6 +347,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // commit00() only takes the global metadata-cache write lock when the flag flips.
     private boolean hasNotifiedParquetPartitions;
     private boolean hasPostingIndexers;
+    // True once housekeeping's TTL pass has evicted a partition since the last WAL
+    // apply counter reset. The eviction runs INSIDE a DATA commit, so its row loss
+    // is invisible to the skip/dedup outcome that commit otherwise reports; the
+    // apply worker ORs this into the live-view dedup-base divergence signal. Set on
+    // the applying thread only, which is also the only thread that reads it.
+    private boolean hasTtlEvictedPartitionsSinceLastCommit;
     private int indexCount;
     private boolean isInCtorRecovery;
     private int lastErrno;
@@ -1597,6 +1603,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         physicallyWrittenRowsSinceLastCommit.reset();
         dedupRowsRemovedSinceLastCommit.reset();
+        hasTtlEvictedPartitionsSinceLastCommit = false;
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
@@ -2671,6 +2678,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return o3MasterRef > -1;
     }
 
+    /**
+     * Reports whether housekeeping's TTL pass evicted a partition since the last
+     * {@link #resetWalApplyCounters()}. {@code enforceTtl} runs inside the commit,
+     * after the WAL rows have been applied, so a DATA commit that both appends rows
+     * and expires the oldest partition reports no skip and no dedup while the applied
+     * base no longer matches the raw WAL stream. The apply worker ORs this into the
+     * live-view dedup-base divergence signal, which is what stops a coupled view from
+     * routing over rows the base has dropped.
+     */
+    public boolean hasTtlEvictedPartitionsSinceLastCommit() {
+        return hasTtlEvictedPartitionsSinceLastCommit;
+    }
+
     @Override
     public void ic(long o3MaxLag) {
         commit(o3MaxLag);
@@ -3403,6 +3423,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void resetWalApplyCounters() {
         physicallyWrittenRowsSinceLastCommit.reset();
         dedupRowsRemovedSinceLastCommit.reset();
+        hasTtlEvictedPartitionsSinceLastCommit = false;
     }
 
     @Override
@@ -3489,7 +3510,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         assert tableToken.isMatView();
 
-        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        final MatViewDefinition oldDefinition = engine.getDependentViewGraph().getViewDefinition(tableToken);
         if (oldDefinition == null) {
             throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
         }
@@ -3512,7 +3533,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void setMatViewRefreshLimit(int limitHoursOrMonths) {
         assert tableToken.isMatView();
 
-        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        final MatViewDefinition oldDefinition = engine.getDependentViewGraph().getViewDefinition(tableToken);
         if (oldDefinition == null) {
             throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
         }
@@ -3525,7 +3546,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void setMatViewRefreshTimer(long startUs, int interval, char unit) {
         assert tableToken.isMatView();
 
-        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        final MatViewDefinition oldDefinition = engine.getDependentViewGraph().getViewDefinition(tableToken);
         if (oldDefinition == null) {
             throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
         }
@@ -6986,6 +7007,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } while (txWriter.getPartitionCount() > 1);
 
         if (evicted) {
+            // Raise the divergence flag BEFORE the commit: a throw inside it leaves
+            // partitions partially dropped, and over-reporting divergence only costs
+            // the live view its raw-WAL fast path, while under-reporting routes it
+            // over rows the applied base no longer holds.
+            hasTtlEvictedPartitionsSinceLastCommit = true;
             commitRemovePartitionOperation();
         }
     }
@@ -10484,10 +10510,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     replaceRangeTsHi
             );
 
+            // The getRowCount() == 0 guards let an emptied table through: it holds nothing in the
+            // replaced range, so both bounds are vacuously satisfied, but they cannot say so
+            // themselves. An empty table reports minTimestamp = Long.MAX_VALUE and
+            // maxTimestamp = Long.MIN_VALUE, and the "outside the range" clauses degenerate once the
+            // range spans the whole timeline - which is what [Long.MIN_VALUE, +inf) is, the range a
+            // live view declared START FROM BEGINNING emits for a pure-delete full rebuild.
             // Min timestamp is either outside of replace range or equals to the min timestamp of the transaction
-            assert txWriter.getMinTimestamp() < replaceRangeTsLo || txWriter.getMinTimestamp() >= replaceRangeTsHi || txWriter.getMinTimestamp() == txnMinTs;
+            assert txWriter.getRowCount() == 0 || txWriter.getMinTimestamp() < replaceRangeTsLo || txWriter.getMinTimestamp() >= replaceRangeTsHi || txWriter.getMinTimestamp() == txnMinTs;
             // Max timestamp is either outside of replace range or equals to the max timestamp of the transaction
-            assert txWriter.getMaxTimestamp() < replaceRangeTsLo || txWriter.getMaxTimestamp() >= replaceRangeTsHi || txWriter.getMaxTimestamp() == txnMaxTs;
+            assert txWriter.getRowCount() == 0 || txWriter.getMaxTimestamp() < replaceRangeTsLo || txWriter.getMaxTimestamp() >= replaceRangeTsHi || txWriter.getMaxTimestamp() == txnMaxTs;
 
             return true;
         } else {
@@ -12781,6 +12813,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 !CairoKeywords.isWal(pUtf8NameZ) &&
                 !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
                 !CairoKeywords.isSeq(pUtf8NameZ) &&
+                !CairoKeywords.isLiveViewCheckpoints(pUtf8NameZ) &&
                 !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
         ) {
             try {
@@ -14668,7 +14701,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Unlike mat view state write-through behavior, we update the in-memory definition
         // object here, after updating the definition file.
-        engine.getMatViewGraph().updateViewDefinition(tableToken, newDefinition);
+        engine.getDependentViewGraph().updateViewDefinition(tableToken, newDefinition);
         engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
     }
 

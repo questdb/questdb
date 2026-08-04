@@ -310,6 +310,11 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
+            public WorkerPoolConfiguration getLiveViewRefreshPoolConfiguration() {
+                return null;
+            }
+
+            @Override
             public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
                 return null;
             }
