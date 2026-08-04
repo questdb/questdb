@@ -44,8 +44,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class WorkerPool implements Closeable {
-    // Generous backstop used by the unbounded halt() so a wedged worker cannot block shutdown forever.
-    // Callers that want a tighter, shared budget across several pools pass an explicit timeout to haltWithin(long).
+    // Default budget for explicitly bounded shutdown paths such as the JVM shutdown hook.
     public static final long DEFAULT_HALT_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(30);
     private static final Log LOG = LogFactory.getLog(WorkerPool.class);
     // Every Job instance the pool mints through assign() (the blueprint and its
@@ -240,14 +239,12 @@ public class WorkerPool implements Closeable {
     }
 
     public void halt() {
-        if (!haltWithin(DEFAULT_HALT_TIMEOUT_NANOS)) {
-            throw new IllegalStateException("worker pool did not halt [pool=" + poolName + ']');
-        }
+        isHaltComplete(false, 0, false);
     }
 
     @TestOnly
     public void haltAndAssertCleanForTest(long timeoutNanos) {
-        haltBy(System.nanoTime() + Math.max(0, timeoutNanos), true);
+        isHaltComplete(true, System.nanoTime() + Math.max(0, timeoutNanos), true);
     }
 
     /**
@@ -258,7 +255,7 @@ public class WorkerPool implements Closeable {
      * object graph after the deadline
      */
     public boolean haltBy(long deadlineNanos) {
-        return haltBy(deadlineNanos, false);
+        return isHaltComplete(true, deadlineNanos, false);
     }
 
     /**
@@ -278,7 +275,7 @@ public class WorkerPool implements Closeable {
      * live object graph after the deadline
      */
     public boolean haltWithin(long timeoutNanos) {
-        return haltBy(System.nanoTime() + Math.max(0, timeoutNanos), false);
+        return isHaltComplete(true, System.nanoTime() + Math.max(0, timeoutNanos), false);
     }
 
     public boolean isFiberHost() {
@@ -287,7 +284,7 @@ public class WorkerPool implements Closeable {
 
     @TestOnly
     public boolean isHaltTerminalSuccessfulForTesting(long timeoutNanos) {
-        return haltBy(System.nanoTime() + Math.max(0, timeoutNanos), false);
+        return isHaltComplete(true, System.nanoTime() + Math.max(0, timeoutNanos), false);
     }
 
     @TestOnly
@@ -493,26 +490,30 @@ public class WorkerPool implements Closeable {
         );
     }
 
-    private boolean haltBy(long deadlineNanos, boolean isStrict) {
-        final long timeoutNanos = Math.max(0, deadlineNanos - System.nanoTime());
+    private boolean isHaltComplete(boolean isBounded, long deadlineNanos, boolean isStrict) {
+        final long timeoutNanos = isBounded ? Math.max(0, deadlineNanos - System.nanoTime()) : 0;
         boolean isInterrupted = false;
-        boolean isLockAcquired = haltLock.tryLock();
-        while (!isLockAcquired) {
-            final long remainingNanos = deadlineNanos - System.nanoTime();
-            if (remainingNanos <= 0) {
-                if (isInterrupted) {
-                    Thread.currentThread().interrupt();
+        if (isBounded) {
+            boolean isLockAcquired = haltLock.tryLock();
+            while (!isLockAcquired) {
+                final long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    if (isInterrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                    if (isStrict) {
+                        throw workerPoolHaltLockTimeout(timeoutNanos);
+                    }
+                    return false;
                 }
-                if (isStrict) {
-                    throw workerPoolHaltLockTimeout(timeoutNanos);
+                try {
+                    isLockAcquired = haltLock.tryLock(remainingNanos, TimeUnit.NANOSECONDS);
+                } catch (InterruptedException e) {
+                    isInterrupted = true;
                 }
-                return false;
             }
-            try {
-                isLockAcquired = haltLock.tryLock(remainingNanos, TimeUnit.NANOSECONDS);
-            } catch (InterruptedException e) {
-                isInterrupted = true;
-            }
+        } else {
+            haltLock.lock();
         }
         try {
             if (isHaltComplete) {
@@ -533,7 +534,7 @@ public class WorkerPool implements Closeable {
             AssertionError runtimeHaltFailure = null;
             if (runtime != null) {
                 runtime.beginQuiesce();
-                if (!runtime.awaitClosed(deadlineNanos)) {
+                if (isBounded && !runtime.awaitClosed(deadlineNanos)) {
                     isRuntimeDrained = false;
                     if (isStrict) {
                         runtimeHaltFailure = fiberRuntimeHaltTimeout(timeoutNanos, runtime);
@@ -553,6 +554,8 @@ public class WorkerPool implements Closeable {
                         } catch (Throwable ignore) {
                         }
                     }
+                } else if (!isBounded) {
+                    runtime.awaitClosed();
                 }
             }
             boolean isWorkerHaltComplete = true;
@@ -572,12 +575,26 @@ public class WorkerPool implements Closeable {
                 // an empty-or-complete-and-consistent snapshot; the signal still runs UNCONDITIONALLY
                 // and BEFORE started.await() below, preserving the start-stall halt ordering.
                 signalHalt(runtime != null);
-                if (started.await(remaining(deadlineNanos))) {
+                final boolean isStartComplete;
+                if (isBounded) {
+                    isStartComplete = started.await(remaining(deadlineNanos));
+                } else {
+                    started.await();
+                    isStartComplete = true;
+                }
+                if (isStartComplete) {
                     // start() completed: every worker is now in the list. Re-signal to catch any
                     // worker spawned after the first pass but before started counted down (the flag
                     // is idempotent), then wait for them to exit.
                     signalHalt(runtime != null);
-                    if (!halted.await(remaining(deadlineNanos))) {
+                    final boolean isWorkerHalted;
+                    if (isBounded) {
+                        isWorkerHalted = halted.await(remaining(deadlineNanos));
+                    } else {
+                        halted.await();
+                        isWorkerHalted = true;
+                    }
+                    if (!isWorkerHalted) {
                         isWorkerHaltComplete = false;
                         if (isStrict) {
                             workerHaltFailure = workerPoolHaltTimeout(timeoutNanos, true);

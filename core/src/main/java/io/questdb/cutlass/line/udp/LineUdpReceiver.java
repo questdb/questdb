@@ -67,15 +67,20 @@ public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
     }
 
     @Override
+    public synchronized void close() {
+        try {
+            super.close();
+        } finally {
+            freeBuffer();
+        }
+    }
+
+    @Override
     public synchronized boolean closeBy(long deadlineNanos) {
         if (!super.closeBy(deadlineNanos)) {
             return false;
         }
-        final long buffer = buf;
-        buf = 0;
-        if (buffer != 0) {
-            Unsafe.free(buffer, bufLen, MemoryTag.NATIVE_ILP_RSS);
-        }
+        freeBuffer();
         return true;
     }
 
@@ -121,5 +126,13 @@ public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
         }
         parser.commitAll();
         return ran;
+    }
+
+    private void freeBuffer() {
+        final long buffer = buf;
+        buf = 0;
+        if (buffer != 0) {
+            Unsafe.free(buffer, bufLen, MemoryTag.NATIVE_ILP_RSS);
+        }
     }
 }

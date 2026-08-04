@@ -191,8 +191,8 @@ public class ServerMainHydrationEnvelopeTest extends AbstractBootstrapTest {
                 ) {
                     return new LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
                         @Override
-                        public void close() {
-                            closeBy(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(10));
+                        public void closeBy(long deadlineNanos) {
+                            super.closeBy(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(10));
                         }
                     };
                 }

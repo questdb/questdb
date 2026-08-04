@@ -296,6 +296,21 @@ public class QwpTudCache implements QuietCloseable {
         } while (droppedTableFound);
     }
 
+    void commitAllBestEffortWithRoleSwitchLock() {
+        if (tableUpdateDetails.size() == 0 || engine.isReadOnlyMode()) {
+            return;
+        }
+        final Lock lock = engine.getRoleSwitchReadLock();
+        lock.lock();
+        try {
+            if (!engine.isReadOnlyMode()) {
+                commitAllBestEffort();
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
     public long commitWalTables(long wallClockMillis) {
         long minTableNextCommitTime = Long.MAX_VALUE;
         boolean droppedTableFound;
@@ -399,10 +414,12 @@ public class QwpTudCache implements QuietCloseable {
             return false;
         }
         try {
-            if (System.nanoTime() >= deadlineNanos) {
+            if (deadlineNanos - System.nanoTime() <= 0) {
                 return false;
             }
-            commitAllBestEffort();
+            if (!engine.isReadOnlyMode()) {
+                commitAllBestEffort();
+            }
             return true;
         } finally {
             lock.unlock();

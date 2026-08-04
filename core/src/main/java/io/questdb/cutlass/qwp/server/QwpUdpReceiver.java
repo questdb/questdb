@@ -199,109 +199,13 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
     @Override
     public synchronized void close() {
-        if (!closeBy(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
+        if (!isCloseComplete(0, false)) {
             throw new IllegalStateException("QWP UDP receiver did not halt");
         }
     }
 
     public synchronized boolean closeBy(long deadlineNanos) {
-        if (fd > -1) {
-            running.set(false);
-            closed = true;
-            if (isStartAttempted
-                    && (!started.await(Math.max(0, deadlineNanos - System.nanoTime()))
-                    || !halted.await(Math.max(0, deadlineNanos - System.nanoTime())))) {
-                return false;
-            }
-
-            while (!closedAcknowledged) {
-                this.run();
-                if (closedAcknowledged) {
-                    break;
-                }
-                if (System.nanoTime() >= deadlineNanos) {
-                    return false;
-                }
-                Os.pause();
-            }
-
-            if (!isSocketClosed) {
-                if (nf.close(fd) != 0) {
-                    try {
-                        LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-                    } catch (Throwable ignore) {
-                    }
-                } else {
-                    isSocketClosed = true;
-                }
-            }
-
-            if (System.nanoTime() >= deadlineNanos) {
-                return false;
-            }
-
-            Throwable cleanupFailure = null;
-            if (!isCommitAttempted) {
-                try {
-                    if (!tudCache.isCommitAllBestEffortComplete(deadlineNanos)) {
-                        return false;
-                    }
-                    isCommitAttempted = true;
-                } catch (Throwable th) {
-                    isCommitAttempted = true;
-                    cleanupFailure = th;
-                }
-            }
-            if (!isTudCacheFreed) {
-                try {
-                    Misc.free(tudCache);
-                    isTudCacheFreed = true;
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-            if (!isWalAppenderFreed) {
-                try {
-                    Misc.free(walAppender);
-                    isWalAppenderFreed = true;
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-            if (!isBufferFreed) {
-                try {
-                    Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);
-                    isBufferFreed = true;
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-            if (isSocketClosed && isBufferFreed && isTudCacheFreed && isWalAppenderFreed) {
-                final long closedFd = fd;
-                fd = -1;
-                try {
-                    LOG.info().$("closed [fd=").$(closedFd).$(']').$();
-                } catch (Throwable ignore) {
-                }
-            }
-            CairoException.rethrowCleanupFailure(cleanupFailure);
-            if (!isSocketClosed) {
-                return false;
-            }
-        }
-        return true;
+        return isCloseComplete(deadlineNanos, true);
     }
 
     public long getDroppedBadMagicCount() {
@@ -521,6 +425,115 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             return DATAGRAM_DROPPED;
         }
         return datagramState;
+    }
+
+    private boolean isCloseComplete(long deadlineNanos, boolean isBounded) {
+        if (fd > -1) {
+            running.set(false);
+            closed = true;
+            if (isStartAttempted) {
+                if (isBounded) {
+                    if (!started.await(Math.max(0, deadlineNanos - System.nanoTime()))
+                            || !halted.await(Math.max(0, deadlineNanos - System.nanoTime()))) {
+                        return false;
+                    }
+                } else {
+                    started.await();
+                    halted.await();
+                }
+            }
+
+            while (!closedAcknowledged) {
+                this.run();
+                if (closedAcknowledged) {
+                    break;
+                }
+                if (isBounded && deadlineNanos - System.nanoTime() <= 0) {
+                    return false;
+                }
+                Os.pause();
+            }
+
+            if (!isSocketClosed) {
+                if (nf.close(fd) != 0) {
+                    try {
+                        LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+                    } catch (Throwable ignore) {
+                    }
+                } else {
+                    isSocketClosed = true;
+                }
+            }
+
+            if (isBounded && deadlineNanos - System.nanoTime() <= 0) {
+                return false;
+            }
+
+            Throwable cleanupFailure = null;
+            if (!isCommitAttempted) {
+                try {
+                    if (isBounded && !tudCache.isCommitAllBestEffortComplete(deadlineNanos)) {
+                        return false;
+                    }
+                    if (!isBounded) {
+                        tudCache.commitAllBestEffortWithRoleSwitchLock();
+                    }
+                    isCommitAttempted = true;
+                } catch (Throwable th) {
+                    isCommitAttempted = true;
+                    cleanupFailure = th;
+                }
+            }
+            if (!isTudCacheFreed) {
+                try {
+                    Misc.free(tudCache);
+                    isTudCacheFreed = true;
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
+            }
+            if (!isWalAppenderFreed) {
+                try {
+                    Misc.free(walAppender);
+                    isWalAppenderFreed = true;
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
+            }
+            if (!isBufferFreed) {
+                try {
+                    Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);
+                    isBufferFreed = true;
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
+            }
+            if (isSocketClosed && isBufferFreed && isTudCacheFreed && isWalAppenderFreed) {
+                final long closedFd = fd;
+                fd = -1;
+                try {
+                    LOG.info().$("closed [fd=").$(closedFd).$(']').$();
+                } catch (Throwable ignore) {
+                }
+            }
+            CairoException.rethrowCleanupFailure(cleanupFailure);
+            if (!isSocketClosed) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void logStarted() {

@@ -26,7 +26,6 @@ package io.questdb.mp.continuation;
 
 import io.questdb.log.Log;
 import io.questdb.mp.CarrierIdentity;
-import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -137,21 +136,38 @@ public final class TimerShards {
      * Halts the timer threads. Idempotent. Must run while worker pools are still
      * RUNNING so that parked continuations have a carrier to remount on.
      */
-    public synchronized void shutdown() {
-        if (!shutdown(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
+    public void shutdown() {
+        synchronized (this) {
+            if (isShutdownComplete) {
+                return;
+            }
+            requestShutdown();
+        }
+        if (!isJoinComplete()) {
             throw new IllegalStateException("timer shards did not halt");
+        }
+        synchronized (this) {
+            if (!isShutdownComplete) {
+                finishShutdown();
+            }
         }
     }
 
-    public synchronized boolean shutdown(long deadlineNanos) {
-        if (isShutdownComplete) {
-            return true;
+    public boolean shutdown(long deadlineNanos) {
+        synchronized (this) {
+            if (isShutdownComplete) {
+                return true;
+            }
+            requestShutdown();
         }
-        requestShutdown();
-        if (!joinThreads(deadlineNanos)) {
+        if (!isJoinComplete(deadlineNanos)) {
             return false;
         }
-        finishShutdown();
+        synchronized (this) {
+            if (!isShutdownComplete) {
+                finishShutdown();
+            }
+        }
         return true;
     }
 
@@ -210,16 +226,60 @@ public final class TimerShards {
         }
     }
 
-    private boolean joinThreads(long deadlineNanos) {
-        boolean isInterrupted = false;
-        boolean isJoined = true;
+    private Thread getThread(int index) {
+        synchronized (this) {
+            return threads.getQuick(index);
+        }
+    }
+
+    private boolean isCurrentThreadAShard() {
+        final Thread current = Thread.currentThread();
         for (int i = 0, n = threads.size(); i < n; i++) {
-            final Thread t = threads.getQuick(i);
+            if (getThread(i) == current) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isJoinComplete() {
+        if (isCurrentThreadAShard()) {
+            return false;
+        }
+        boolean isInterrupted = false;
+        for (int i = 0, n = threads.size(); i < n; i++) {
+            final Thread t = getThread(i);
             if (t == null) {
                 continue;
             }
-            if (t == Thread.currentThread()) {
-                isJoined = false;
+            while (t.isAlive()) {
+                try {
+                    t.join();
+                } catch (InterruptedException e) {
+                    isInterrupted = true;
+                }
+            }
+            synchronized (this) {
+                if (threads.getQuick(i) == t) {
+                    threads.setQuick(i, null);
+                }
+            }
+        }
+        if (isInterrupted) {
+            Thread.currentThread().interrupt();
+        }
+        return true;
+    }
+
+    private boolean isJoinComplete(long deadlineNanos) {
+        if (isCurrentThreadAShard()) {
+            return false;
+        }
+        boolean isInterrupted = false;
+        boolean isJoined = true;
+        for (int i = 0, n = threads.size(); i < n; i++) {
+            final Thread t = getThread(i);
+            if (t == null) {
                 continue;
             }
             while (t.isAlive()) {
@@ -238,7 +298,11 @@ public final class TimerShards {
                 }
             }
             if (!t.isAlive()) {
-                threads.setQuick(i, null);
+                synchronized (this) {
+                    if (threads.getQuick(i) == t) {
+                        threads.setQuick(i, null);
+                    }
+                }
             }
         }
         if (isInterrupted) {

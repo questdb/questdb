@@ -55,19 +55,20 @@ import java.util.concurrent.atomic.AtomicReference;
 public class FiberWorkerPoolTest {
 
     @Test
-    public void testCloseReportsHaltFailure() throws Exception {
+    public void testCloseUsesTerminalHalt() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final AtomicBoolean isFirstHalt = new AtomicBoolean(true);
+            final AtomicBoolean isBoundedHaltCalled = new AtomicBoolean();
             try (
                     TestWorkerPool pool = new TestWorkerPool(1, WorkerPoolMode.LEGACY) {
                         @Override
                         public boolean haltWithin(long timeoutNanos) {
-                            return isFirstHalt.getAndSet(false) ? false : super.haltWithin(timeoutNanos);
+                            isBoundedHaltCalled.set(true);
+                            return false;
                         }
                     }
             ) {
-                final IllegalStateException exception = Assert.assertThrows(IllegalStateException.class, pool::close);
-                TestUtils.assertContains(exception.getMessage(), "worker pool did not halt");
+                pool.close();
+                Assert.assertFalse(isBoundedHaltCalled.get());
             }
         });
     }

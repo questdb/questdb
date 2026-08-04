@@ -221,7 +221,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             return false;
         }
         try {
-            if (System.nanoTime() >= deadlineNanos) {
+            if (deadlineNanos - System.nanoTime() <= 0) {
                 return false;
             }
             commitAllLocked();

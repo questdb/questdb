@@ -65,6 +65,19 @@ public class LineUdpReceiverCloseTimeoutTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCloseDoesNotDispatchToBoundedOverride() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    CloseDispatchLineUdpReceiver receiver = new CloseDispatchLineUdpReceiver(RCVR_CONF, engine)
+            ) {
+                receiver.close();
+                Assert.assertEquals(0, receiver.getCloseByCalls());
+            }
+        });
+    }
+
+    @Test
     public void testCloseTimeoutRetainsResourcesForRetry() throws Exception {
         assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -139,6 +152,24 @@ public class LineUdpReceiverCloseTimeoutTest extends AbstractCairoTest {
 
         private void releaseStart() {
             releaseStart.countDown();
+        }
+    }
+
+    private static class CloseDispatchLineUdpReceiver extends LineUdpReceiver {
+        private int closeByCalls;
+
+        private CloseDispatchLineUdpReceiver(LineUdpReceiverConfiguration configuration, CairoEngine engine) {
+            super(configuration, engine, null);
+        }
+
+        @Override
+        public synchronized boolean closeBy(long deadlineNanos) {
+            closeByCalls++;
+            return false;
+        }
+
+        private int getCloseByCalls() {
+            return closeByCalls;
         }
     }
 

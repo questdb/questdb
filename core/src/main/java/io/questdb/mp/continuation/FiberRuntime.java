@@ -184,6 +184,15 @@ public final class FiberRuntime {
         }
     }
 
+    public void awaitClosed() {
+        while (state != FiberRuntimeState.CLOSED) {
+            tryClose();
+            if (state != FiberRuntimeState.CLOSED) {
+                closedLatch.await(1_000_000L);
+            }
+        }
+    }
+
     public boolean awaitClosed(long deadlineNanos) {
         while (state != FiberRuntimeState.CLOSED) {
             tryClose();
@@ -570,7 +579,6 @@ public final class FiberRuntime {
         boolean hasFiberOwnership = true;
         try {
             if (!acquireAdmission()) {
-                hasFiberOwnership = false;
                 releaseFiber(fiber);
                 completeAbandoned(task, true);
                 return false;

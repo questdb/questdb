@@ -135,95 +135,13 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
 
     @Override
     public synchronized void close() {
-        if (!closeBy(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
+        if (!isCloseComplete(0, false)) {
             throw new IllegalStateException("line UDP receiver did not halt");
         }
     }
 
     public synchronized boolean closeBy(long deadlineNanos) {
-        if (fd > -1) {
-            running.set(false);
-            closed = true;
-            if (isStartAttempted
-                    && (!started.await(Math.max(0, deadlineNanos - System.nanoTime()))
-                    || !halted.await(Math.max(0, deadlineNanos - System.nanoTime())))) {
-                return false;
-            }
-            if (!isStartAttempted) {
-                while (!closedAcknowledged) {
-                    run();
-                    if (closedAcknowledged) {
-                        break;
-                    }
-                    if (System.nanoTime() >= deadlineNanos) {
-                        return false;
-                    }
-                    Os.pause();
-                }
-            }
-            if (!isSocketClosed) {
-                if (nf.close(fd) != 0) {
-                    try {
-                        LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-                    } catch (Throwable ignore) {
-                    }
-                } else {
-                    isSocketClosed = true;
-                }
-            }
-            if (System.nanoTime() >= deadlineNanos) {
-                return false;
-            }
-            Throwable cleanupFailure = null;
-            if (!isCommitAttempted && parser != null) {
-                try {
-                    if (!parser.isCommitAllComplete(deadlineNanos)) {
-                        return false;
-                    }
-                    isCommitAttempted = true;
-                } catch (Throwable th) {
-                    isCommitAttempted = true;
-                    cleanupFailure = th;
-                }
-            }
-            if (!isParserFreed) {
-                try {
-                    Misc.free(parser);
-                    isParserFreed = true;
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-            if (!isLexerFreed) {
-                try {
-                    Misc.free(lexer);
-                    isLexerFreed = true;
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-            if (isSocketClosed && isParserFreed && isLexerFreed) {
-                final long closedFd = fd;
-                fd = -1;
-                try {
-                    LOG.info().$("closed [fd=").$(closedFd).$(']').$();
-                } catch (Throwable ignore) {
-                }
-            }
-            CairoException.rethrowCleanupFailure(cleanupFailure);
-            if (!isSocketClosed) {
-                return false;
-            }
-        }
-        return true;
+        return isCloseComplete(deadlineNanos, true);
     }
 
     public synchronized void start() {
@@ -281,6 +199,101 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
         } else {
             throw NetworkError.instance(nf.errno()).couldNotBindSocket("udp-line-server", configuration.getBindIPv4Address(), configuration.getPort());
         }
+    }
+
+    private boolean isCloseComplete(long deadlineNanos, boolean isBounded) {
+        if (fd > -1) {
+            running.set(false);
+            closed = true;
+            if (isStartAttempted) {
+                if (isBounded) {
+                    if (!started.await(Math.max(0, deadlineNanos - System.nanoTime()))
+                            || !halted.await(Math.max(0, deadlineNanos - System.nanoTime()))) {
+                        return false;
+                    }
+                } else {
+                    started.await();
+                    halted.await();
+                }
+            }
+            if (!isStartAttempted) {
+                while (!closedAcknowledged) {
+                    run();
+                    if (closedAcknowledged) {
+                        break;
+                    }
+                    if (isBounded && deadlineNanos - System.nanoTime() <= 0) {
+                        return false;
+                    }
+                    Os.pause();
+                }
+            }
+            if (!isSocketClosed) {
+                if (nf.close(fd) != 0) {
+                    try {
+                        LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+                    } catch (Throwable ignore) {
+                    }
+                } else {
+                    isSocketClosed = true;
+                }
+            }
+            if (isBounded && deadlineNanos - System.nanoTime() <= 0) {
+                return false;
+            }
+            Throwable cleanupFailure = null;
+            if (!isCommitAttempted && parser != null) {
+                try {
+                    if (isBounded && !parser.isCommitAllComplete(deadlineNanos)) {
+                        return false;
+                    }
+                    if (!isBounded) {
+                        parser.commitAll();
+                    }
+                    isCommitAttempted = true;
+                } catch (Throwable th) {
+                    isCommitAttempted = true;
+                    cleanupFailure = th;
+                }
+            }
+            if (!isParserFreed) {
+                try {
+                    Misc.free(parser);
+                    isParserFreed = true;
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
+            }
+            if (!isLexerFreed) {
+                try {
+                    Misc.free(lexer);
+                    isLexerFreed = true;
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
+            }
+            if (isSocketClosed && isParserFreed && isLexerFreed) {
+                final long closedFd = fd;
+                fd = -1;
+                try {
+                    LOG.info().$("closed [fd=").$(closedFd).$(']').$();
+                } catch (Throwable ignore) {
+                }
+            }
+            CairoException.rethrowCleanupFailure(cleanupFailure);
+            if (!isSocketClosed) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void logStarted(LineUdpReceiverConfiguration configuration) {

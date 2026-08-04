@@ -67,15 +67,20 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
     }
 
     @Override
+    public synchronized void close() {
+        try {
+            super.close();
+        } finally {
+            freeMessageVector();
+        }
+    }
+
+    @Override
     public synchronized boolean closeBy(long deadlineNanos) {
         if (!super.closeBy(deadlineNanos)) {
             return false;
         }
-        final long messageVector = msgVec;
-        msgVec = 0;
-        if (messageVector != 0) {
-            nf.freeMsgHeaders(messageVector);
-        }
+        freeMessageVector();
         return true;
     }
 
@@ -129,5 +134,13 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
         }
         parser.commitAll();
         return ran;
+    }
+
+    private void freeMessageVector() {
+        final long messageVector = msgVec;
+        msgVec = 0;
+        if (messageVector != 0) {
+            nf.freeMsgHeaders(messageVector);
+        }
     }
 }

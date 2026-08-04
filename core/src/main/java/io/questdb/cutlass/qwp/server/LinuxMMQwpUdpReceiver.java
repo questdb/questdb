@@ -55,15 +55,20 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
     }
 
     @Override
+    public synchronized void close() {
+        try {
+            super.close();
+        } finally {
+            freeMessageVector();
+        }
+    }
+
+    @Override
     public synchronized boolean closeBy(long deadlineNanos) {
         if (!super.closeBy(deadlineNanos)) {
             return false;
         }
-        final long messageVector = msgVec;
-        msgVec = 0;
-        if (messageVector != 0) {
-            nf.freeMsgHeaders(messageVector);
-        }
+        freeMessageVector();
         return true;
     }
 
@@ -127,5 +132,13 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
             }
         }
         return ran;
+    }
+
+    private void freeMessageVector() {
+        final long messageVector = msgVec;
+        msgVec = 0;
+        if (messageVector != 0) {
+            nf.freeMsgHeaders(messageVector);
+        }
     }
 }

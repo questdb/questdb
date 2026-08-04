@@ -147,6 +147,39 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
+    public void testBoundedManagerHaltIncludesLockWait() throws Exception {
+        final AtomicBoolean releaseHalt = new AtomicBoolean(false);
+        final AtomicReference<Throwable> haltFailure = new AtomicReference<>();
+        final SOCountDownLatch haltEntered = new SOCountDownLatch(1);
+        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
+        workerPoolManager.getSharedPoolNetwork().setAfterClosedSignalForTesting(() -> {
+            haltEntered.countDown();
+            while (!releaseHalt.get()) {
+                Os.pause();
+            }
+        });
+        final Thread haltThread = new Thread(() -> {
+            try {
+                workerPoolManager.halt();
+            } catch (Throwable th) {
+                haltFailure.set(th);
+            }
+        });
+        haltThread.start();
+        try {
+            Assert.assertTrue(haltEntered.await(TimeUnit.SECONDS.toNanos(5)));
+            final long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(100);
+            Assert.assertFalse(workerPoolManager.haltBy(deadlineNanos));
+            Assert.assertTrue(System.nanoTime() - deadlineNanos < TimeUnit.SECONDS.toNanos(5));
+        } finally {
+            releaseHalt.set(true);
+            haltThread.join(TimeUnit.SECONDS.toMillis(5));
+        }
+        Assert.assertFalse(haltThread.isAlive());
+        Assert.assertNull(haltFailure.get());
+    }
+
+    @Test
     public void testConstructor() {
         final int workerCount = 2;
         final AtomicInteger counter = new AtomicInteger(0);
@@ -451,7 +484,27 @@ public class WorkerPoolManagerTest {
                 WorkerPoolManager.Requester.OTHER
         ).freeOnExit(new OrderedCloseJob(closeOrder, 0));
         Assert.assertTrue(workerPoolManager.halt());
+        Assert.assertSame(failure, workerPoolManager.getHaltFailure());
         Assert.assertEquals(1, closeOrder.get());
+        Assert.assertTrue(workerPoolManager.halt());
+        Assert.assertSame(failure, workerPoolManager.getHaltFailure());
+        Assert.assertEquals(1, closeOrder.get());
+    }
+
+    @Test
+    public void testManagerHaltRetainsEveryPoolCleanupFailure() {
+        final RuntimeException networkFailure = new RuntimeException("network");
+        final RuntimeException writeFailure = new RuntimeException("write");
+        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
+        workerPoolManager.getSharedPoolNetwork().freeOnExit(new ThrowingCloseJob(networkFailure));
+        workerPoolManager.getSharedPoolWrite(
+                workerPoolConfiguration("shared", 0),
+                WorkerPoolManager.Requester.OTHER
+        ).freeOnExit(new ThrowingCloseJob(writeFailure));
+
+        Assert.assertTrue(workerPoolManager.halt());
+        Assert.assertSame(networkFailure, workerPoolManager.getHaltFailure());
+        Assert.assertArrayEquals(new Throwable[]{writeFailure}, networkFailure.getSuppressed());
     }
 
     @Test
