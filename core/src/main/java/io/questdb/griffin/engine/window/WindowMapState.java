@@ -122,7 +122,11 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         this.componentCount = plan.getComponentCount();
         this.projectionCount = plan.getProjectionCount();
         this.unorderedMapMaxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
+        // A group's map is keyed by its spec, so only a plan that carries one is bindable
+        // here. A live view's plan does not - it is owned by LiveViewWindow, which keys the
+        // fused entry off its own anchor map - and never reaches this constructor.
         final WindowMapSpec spec = plan.getSpec();
+        assert spec != null;
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         appendKeyTypes(spec, keyTypes);
         final ListColumnFilter keyColumnFilter = new ListColumnFilter();

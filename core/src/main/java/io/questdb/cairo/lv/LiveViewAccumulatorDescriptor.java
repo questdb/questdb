@@ -131,6 +131,21 @@ public final class LiveViewAccumulatorDescriptor {
     }
 
     /**
+     * Whether {@code family}'s component codec is at the version every containment relation
+     * in {@link WindowAccumulatorDescriptor#derivedSlotOffset}'s table was proved byte for
+     * byte at.
+     * <p>
+     * The family form of {@link #derivedSlotOffset}'s pinning, and it exists because the
+     * fold itself is decided one layer down, in the runtime plan builder, which holds
+     * families and slots rather than built durable descriptors. {@code LiveViewWindowStatePlan}
+     * hands it in as that builder's fold policy: which pairs contain which is the runtime
+     * table's answer, and whether a persisted layout will carry that answer is this one's.
+     */
+    public static boolean isContainmentProofCodec(int family) {
+        return familyCodecVersion(family) == CONTAINMENT_PROOF_CODEC_VERSION;
+    }
+
+    /**
      * Builds the durable component a function over {@code argumentColumnIndex}
      * contributes to, or null when this build cannot name every part of its identity -
      * an unknown family, an argument type whose contribution predicate the runtime
@@ -210,8 +225,11 @@ public final class LiveViewAccumulatorDescriptor {
         if (slot < 0) {
             return -1;
         }
-        return codecVersion == CONTAINMENT_PROOF_CODEC_VERSION
-                && other.codecVersion == CONTAINMENT_PROOF_CODEC_VERSION
+        // One pinning rule, read here off two built descriptors and in isContainmentProofCodec
+        // off the two families a plan's fold is deciding between. A component's codec version
+        // is its family's, so the two spellings cannot disagree.
+        return isContainmentProofCodec(runtime.getFamily())
+                && isContainmentProofCodec(other.runtime.getFamily())
                 ? slot
                 : -1;
     }

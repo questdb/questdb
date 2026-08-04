@@ -630,8 +630,9 @@ public final class LiveViewCheckpointFunctionCompiler {
      * window rather than the argument settles: {@code x} being the very column the window
      * partitions by makes it constant across a partition, so the call reads
      * {@code partition-key-is-null ? 0 : rowCount}. See
-     * {@link #isCountOverTheWindowsOwnPartitionKey}, which is also where the four
-     * conditions that keep the equality honest are set out.
+     * {@link WindowAccumulatorCandidate}, which sets out the conditions that keep the
+     * equality honest, and {@link #isCountOverTheWindowsOwnPartitionKey} for the one of them
+     * a live view proves differently from an ordinary query.
      * <p>
      * Sharing is proved from the component identity alone and never from SQL text.
      * {@code sum(x)} and {@code avg(x)} over one window merge because both declare the
@@ -640,9 +641,9 @@ public final class LiveViewCheckpointFunctionCompiler {
      * counter is provably the one it would have persisted alone. The target shape's
      * {@code sum(amt)} and {@code count(acct)} do neither, because their arguments
      * differ and so, on any row where exactly one is null, do their counters. Which of
-     * the two relations applies is {@link LiveViewWindowStatePlan.Builder}'s to decide;
-     * this method's job is to hand it a component only where every part of the identity
-     * can be named.
+     * the two relations applies is the runtime accumulator plan
+     * {@link LiveViewWindowStatePlan.Builder} composes to decide; this method's job is to
+     * hand it a component only where every part of the identity can be named.
      *
      * @param functions                 every SELECT-list function, in output order
      * @param anchorableWindowFunctions the subset the anchor dispatches
@@ -664,6 +665,13 @@ public final class LiveViewCheckpointFunctionCompiler {
         // reading of that same row count - and the count may precede it in the SELECT
         // list. Everything else about a projection follows from the function alone.
         final WindowFunction rowCountHost = rowCountHost(functions, anchorableWindowFunctions);
+        // A live view compiles no WindowMapSpec, so the group's key is proved from what each
+        // function carries for the checkpoint instead - its encoded key layout and its own
+        // PARTITION BY functions - plus the two belonging to one window group, which the
+        // builder's identity latch is what says for every other projection.
+        final WindowAccumulatorCandidate.PartitionKeyGuard partitionKeyGuard =
+                (function, argumentColumnIndex, host) ->
+                        isCountOverTheWindowsOwnPartitionKey(function, argumentColumnIndex, host, baseMetadata);
         final LiveViewWindowStatePlan.Builder builder = new LiveViewWindowStatePlan.Builder();
         for (int i = 0, n = functions.size(); i < n; i++) {
             final Function function = functions.getQuick(i);
@@ -676,7 +684,8 @@ public final class LiveViewCheckpointFunctionCompiler {
                     i,
                     anchorableWindowFunctions,
                     baseMetadata,
-                    rowCountHost
+                    rowCountHost,
+                    partitionKeyGuard
             )) {
                 builder.addResidual(windowFunction);
             }
@@ -722,57 +731,22 @@ public final class LiveViewCheckpointFunctionCompiler {
             int outputPosition,
             ObjList<WindowFunction> anchorableWindowFunctions,
             RecordMetadata baseMetadata,
-            @Nullable WindowFunction rowCountHost
+            @Nullable WindowFunction rowCountHost,
+            WindowAccumulatorCandidate.PartitionKeyGuard partitionKeyGuard
     ) {
         if (!isFusibleAccumulator(function, anchorableWindowFunctions)) {
             return false;
         }
-        int projectionKind = function.windowAccumulatorProjection();
-        if (projectionKind == WindowAccumulatorProjection.PROJECTION_NONE) {
+        final WindowAccumulatorCandidate candidate = WindowAccumulatorCandidate.of(
+                function,
+                baseMetadata,
+                rowCountHost,
+                partitionKeyGuard
+        );
+        if (candidate == null) {
             return false;
         }
-        int family = function.windowAccumulatorFamily();
-        int argumentColumnIndex;
-        int argumentColumnType;
-        if (WindowAccumulatorDescriptor.familyTakesArgument(family)) {
-            argumentColumnIndex = WindowAccumulatorDescriptor.directColumnIndex(
-                    function.windowAccumulatorArgument(),
-                    baseMetadata
-            );
-            if (argumentColumnIndex < 0) {
-                return false;
-            }
-            argumentColumnType = baseMetadata.getColumnType(argumentColumnIndex);
-            if (isCountOverTheWindowsOwnPartitionKey(
-                    function,
-                    family,
-                    projectionKind,
-                    argumentColumnIndex,
-                    argumentColumnType,
-                    baseMetadata,
-                    rowCountHost
-            )) {
-                family = WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;
-                projectionKind = WindowAccumulatorProjection.PROJECTION_COUNT_PARTITION_KEY;
-                argumentColumnIndex = WindowAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX;
-                argumentColumnType = ColumnType.UNDEFINED;
-            }
-        } else {
-            // A row-count component counts rows and nothing about a column, so its
-            // identity has no argument to carry. A function that declares the family and
-            // still holds an argument is describing state the identity does not, and is
-            // turned away rather than fused under a key that omits it.
-            if (function.windowAccumulatorArgument() != null) {
-                return false;
-            }
-            argumentColumnIndex = WindowAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX;
-            argumentColumnType = ColumnType.UNDEFINED;
-        }
-        final LiveViewAccumulatorDescriptor component = LiveViewAccumulatorDescriptor.of(
-                family,
-                argumentColumnIndex,
-                argumentColumnType
-        );
+        final LiveViewAccumulatorDescriptor component = LiveViewAccumulatorDescriptor.of(candidate.getComponent());
         if (component == null) {
             return false;
         }
@@ -783,7 +757,7 @@ public final class LiveViewCheckpointFunctionCompiler {
         return builder.addProjection(
                 function,
                 component,
-                projectionKind,
+                candidate.getProjectionKind(),
                 outputPosition,
                 LiveViewWindowStatePlan.encodeWindowIdentity(
                         identity.getCanonicalWindowName(),
@@ -1152,58 +1126,36 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Whether {@code function} is a {@code count(k)} whose argument is the single column
-     * its own window partitions by, and whose group already holds an unguarded reading of
-     * the row count it would join.
+     * The live view's answer to
+     * {@link WindowAccumulatorCandidate.PartitionKeyGuard}: whether {@code function}'s own
+     * window partitions by exactly the one column {@code argumentColumnIndex} names, and
+     * {@code rowCountHost} belongs to that same window.
      * <p>
-     * Every row of a partition carries the same {@code k}, so such a call's counter is
-     * the partition's row count wherever {@code k} is present and zero where it is not.
-     * That makes it a
-     * {@link WindowAccumulatorProjection#PROJECTION_COUNT_PARTITION_KEY guarded reading}
-     * of the {@link WindowAccumulatorDescriptor#FAMILY_ROW_COUNT} component
-     * {@code count(*)} and {@code row_number()} maintain, rather than a counter of its
-     * own - which is what takes {@code count(*) + count(k)} from two components to one.
-     * <p>
-     * Four things narrow it, and each closes a way the equality could fail:
+     * It is asked only of a {@code count(k)} whose argument type can carry the guard, and
+     * only where the group already holds an unguarded row count - the candidate has settled
+     * both by the time it gets here. What is left is the key, which a live view proves from
+     * what each function carries for the checkpoint rather than from a compiled
+     * {@link WindowMapSpec}:
      * <ul>
-     *     <li><b>The argument's contribution predicate is the type's own null test.</b>
-     *     A widened-to-double argument contributes on {@code Numbers.isFinite}, so a
-     *     partition keyed by a DOUBLE {@code +Infinity} would be a present key that the
-     *     count does not count. SYMBOL and VARCHAR are the two types whose predicate is
-     *     exactly "the key is absent";</li>
      *     <li><b>the partition key is one term and that term is the argument's own
      *     column</b>, proved through {@link WindowAccumulatorDescriptor#directColumnIndex}
      *     rather than through the rendered partition signature - two spellings of one
      *     column are still one column, and one spelling of two is not;</li>
      *     <li><b>the encoded key is one column too</b>, so the guard has one value to
      *     read rather than a tuple whose null-ness is a different question;</li>
-     *     <li><b>the group holds a row-count projection that is not itself guarded.</b>
-     *     That projection is what the component's contributor will be, and it is the
-     *     only kind that maintains a true row count. Without it the component would be
-     *     maintained by the guarded count alone - correct for every output the group has
-     *     today, but a leaf carrying a partition's {@code count(k)} where the manifest
-     *     says row count, which a later recompile adding {@code count(*)} would read
-     *     back at face value under the very same manifest.</li>
+     *     <li><b>the host is a function of the same window group.</b> An ordinary query
+     *     buckets by specification before it offers anything, so belonging to the builder is
+     *     what having that identity means there. Here every anchorable function of the
+     *     factory is offered to one builder, and the identity is not latched until the first
+     *     projection joins, so the two are compared directly.</li>
      * </ul>
      */
     private static boolean isCountOverTheWindowsOwnPartitionKey(
             WindowFunction function,
-            int family,
-            int projectionKind,
             int argumentColumnIndex,
-            int argumentColumnType,
-            RecordMetadata baseMetadata,
-            @Nullable WindowFunction rowCountHost
+            WindowFunction rowCountHost,
+            RecordMetadata baseMetadata
     ) {
-        if (family != WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT
-                || projectionKind != WindowAccumulatorProjection.PROJECTION_COUNT
-                || rowCountHost == null) {
-            return false;
-        }
-        final int tag = ColumnType.tagOf(argumentColumnType);
-        if (tag != ColumnType.SYMBOL && tag != ColumnType.VARCHAR) {
-            return false;
-        }
         final ColumnTypes keyColumnTypes = function.getCheckpointKeyColumnTypes();
         if (keyColumnTypes == null || keyColumnTypes.getColumnCount() != 1) {
             return false;
@@ -1426,9 +1378,7 @@ public final class LiveViewCheckpointFunctionCompiler {
             final Function function = functions.getQuick(i);
             if (!(function instanceof WindowFunction windowFunction)
                     || !isFusibleAccumulator(windowFunction, anchorableWindowFunctions)
-                    || windowFunction.windowAccumulatorFamily() != WindowAccumulatorDescriptor.FAMILY_ROW_COUNT
-                    || windowFunction.windowAccumulatorArgument() != null
-                    || windowFunction.windowAccumulatorProjection() == WindowAccumulatorProjection.PROJECTION_NONE
+                    || !WindowAccumulatorCandidate.isRowCountHost(windowFunction)
                     || windowFunction.checkpointFunctionIdentity() == null) {
                 continue;
             }

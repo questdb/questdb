@@ -1008,6 +1008,52 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testTheDurableLayoutFollowsTheRuntimeSlotLayout() throws Exception {
+        // The plan renders a runtime accumulator plan's components into a persisted layout,
+        // so the two are one order read twice: the anchor prefix then a slot base per
+        // component, and the anchor value then a byte offset per component, over the same
+        // list. Nothing but the widths differs, and one 64-bit field per slot is what makes
+        // them the same walk.
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            assertPlan(targetSelect(), plan -> {
+                Assert.assertNotNull(plan);
+                assertLayoutsAgree(plan);
+            });
+            assertPlan(
+                    "select ts, sym, sum(x) over w as s, avg(x) over w as a, count(x) over w as c, "
+                            + "count(y) over w as cy "
+                            + "from base window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        // The fold is in play here - the count reads the sum's counter - so
+                        // the projection whose component is not its own function's is the one
+                        // the two layouts could disagree about.
+                        Assert.assertEquals(2, plan.getComponentCount());
+                        Assert.assertEquals(4, plan.getProjectionCount());
+                        assertLayoutsAgree(plan);
+                    }
+            );
+        });
+        // And across the truncation, which renumbers the projections the layout is read
+        // through while leaving the kept components' bases where they were.
+        final int widest = (LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES - ANCHOR_BYTES) / SUM_STATE_BYTES;
+        final LiveViewWindowStatePlan overflowing = buildSumGroup(widest + 3);
+        Assert.assertNotNull(overflowing);
+        assertLayoutsAgree(overflowing);
+        // The same overflow with the two orders disagreeing, which is what makes the
+        // renumbering observable at all: here the dropped projections are the ones offered
+        // first, so every survivor moves and a contributor index left where it was would name
+        // another projection's function.
+        final LiveViewWindowStatePlan reordered = buildDescendingSumGroup(widest + 3);
+        Assert.assertNotNull(reordered);
+        Assert.assertEquals(widest, reordered.getComponentCount());
+        Assert.assertEquals(widest, reordered.getProjectionCount());
+        Assert.assertEquals(3, reordered.getResidualFunctions().size());
+        assertLayoutsAgree(reordered);
+    }
+
+    @Test
     public void testProjectionMustFitItsComponentFamily() {
         Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
                 WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
@@ -1166,6 +1212,32 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         return builder.build();
     }
 
+    /**
+     * The same group with the argument columns numbered downwards, so the canonical component
+     * order is the reverse of the order the projections were offered in. With the two
+     * agreeing - which {@link #buildSumGroup} produces - a truncation drops the tail of both
+     * lists at once and every survivor keeps the index it had, so nothing about the
+     * renumbering is exercised.
+     */
+    private static LiveViewWindowStatePlan buildDescendingSumGroup(int componentCount) {
+        final LiveViewWindowStatePlan.Builder builder = new LiveViewWindowStatePlan.Builder();
+        for (int i = 0; i < componentCount; i++) {
+            Assert.assertTrue(builder.addProjection(
+                    new WidthStub(SUM_STATE_BYTES),
+                    component(
+                            WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                            componentCount - 1 - i,
+                            ColumnType.DOUBLE
+                    ),
+                    WindowAccumulatorProjection.PROJECTION_SUM,
+                    i,
+                    windowIdentity(),
+                    keyTypes()
+            ));
+        }
+        return builder.build();
+    }
+
     private static LiveViewAccumulatorDescriptor rowCountComponent() {
         final LiveViewAccumulatorDescriptor component = LiveViewAccumulatorDescriptor.of(
                 WindowAccumulatorDescriptor.FAMILY_ROW_COUNT,
@@ -1241,6 +1313,71 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
             out[0] = plan.getManifest().getEncoded();
         });
         return out[0];
+    }
+
+    /**
+     * Requires the plan's two readings of one component order to agree: slot bases over the
+     * window's own prefix, byte offsets over the anchor value, and every projection bound to
+     * the component it names in both. The contributor of each is checked here too, because
+     * the index that names it is the one the truncation renumbers.
+     */
+    private static void assertLayoutsAgree(LiveViewWindowStatePlan plan) {
+        int slot = LiveViewWindowStatePlan.WINDOW_VALUE_SLOT_COUNT;
+        int offset = LiveViewWindowStatePlan.ANCHOR_STATE_OFFSET + LiveViewWindowStatePlan.ANCHOR_STATE_BYTES;
+        for (int i = 0, n = plan.getComponentCount(); i < n; i++) {
+            final LiveViewAccumulatorDescriptor component = plan.getComponent(i);
+            Assert.assertEquals("component " + i + " slot base", slot, plan.getComponentSlotBase(i));
+            Assert.assertEquals(
+                    "component " + i + " is one 64-bit field per slot",
+                    component.getSlotCount() * Long.BYTES,
+                    component.getStateLength()
+            );
+            Assert.assertEquals(
+                    "component " + i + " state offset",
+                    offset,
+                    projectionOn(plan, i).getComponentStateOffset()
+            );
+            // A contributor writes the whole component, so it is neither a derived reader of
+            // a wider host nor the guarded one whose counter differs from its component's.
+            final LiveViewAccumulatorProjection contributor = contributorProjection(plan, i);
+            Assert.assertFalse("component " + i + " has a derived contributor", contributor.isDerived());
+            Assert.assertFalse("component " + i + " has a guarded contributor", contributor.isPartitionKeyGuarded());
+            slot += component.getSlotCount();
+            offset += component.getStateLength();
+        }
+        Assert.assertEquals(offset, plan.getTotalInlineStateBytes());
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            final LiveViewAccumulatorProjection projection = plan.getProjection(i);
+            final int componentIndex = projection.getComponentIndex();
+            Assert.assertSame(plan.getComponent(componentIndex), projection.getComponent());
+            Assert.assertEquals(
+                    "projection " + i + " reads its component's slots",
+                    plan.getComponentSlotBase(componentIndex),
+                    projection.getComponentSlotBase()
+            );
+            // The function's own slice sits inside its component's, at the same relative
+            // place in slots and in bytes - which is the fold, read through both layouts.
+            Assert.assertEquals(
+                    "projection " + i + " function slice",
+                    (projection.getFunctionSlotBase() - projection.getComponentSlotBase()) * Long.BYTES,
+                    projection.getFunctionStateOffset() - projection.getComponentStateOffset()
+            );
+        }
+    }
+
+    /**
+     * The projection that maintains component {@code componentIndex}, found through the plan's
+     * own contributor index rather than by searching for it.
+     */
+    private static LiveViewAccumulatorProjection contributorProjection(LiveViewWindowStatePlan plan, int componentIndex) {
+        final WindowFunction contributor = plan.getContributor(componentIndex);
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            if (plan.getProjectionFunction(i) == contributor
+                    && plan.getProjection(i).getComponentIndex() == componentIndex) {
+                return plan.getProjection(i);
+            }
+        }
+        throw new AssertionError("component " + componentIndex + " has a contributor that reads another component");
     }
 
     private static LiveViewAccumulatorProjection projectionOn(LiveViewWindowStatePlan plan, int componentIndex) {

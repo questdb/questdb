@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * The compiled layout of one window Map group: the accumulator components its map value is
@@ -170,7 +171,14 @@ public final class WindowAccumulatorPlan {
         return slotPrefix;
     }
 
-    public WindowMapSpec getSpec() {
+    /**
+     * The group identity every function of this plan shares, or null when the plan's owner
+     * proves that identity its own way - a live view holds an encoded window identity and a
+     * key schema, and compiles no {@link WindowMapSpec} at all. A {@link WindowMapState} is
+     * only ever built over a plan that carries one, since the spec is where its map key
+     * comes from.
+     */
+    public @Nullable WindowMapSpec getSpec() {
         return spec;
     }
 

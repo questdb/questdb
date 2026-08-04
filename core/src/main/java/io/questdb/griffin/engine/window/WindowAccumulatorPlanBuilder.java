@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.window;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.IntList;
@@ -35,16 +34,17 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Arrays;
 
 /**
- * Collects the window functions of one {@link WindowMapSpec} and, on {@link #build(int)},
- * merges identical components, folds a component into a wider one that provably contains
- * it, orders what is left canonically and assigns the slot bases a
- * {@link WindowAccumulatorPlan} is read through.
+ * Collects the window functions of one group and, on {@link #build(int)}, merges identical
+ * components, folds a component into a wider one that provably contains it, orders what is
+ * left canonically and assigns the slot bases a {@link WindowAccumulatorPlan} is read
+ * through.
  * <p>
- * It is the runtime half of what {@code LiveViewWindowStatePlan.Builder} does, and the two
- * make the same decisions in the same order, from the same {@link WindowAccumulatorDescriptor}
- * tables. What this one leaves out is everything durable: no manifest, no byte offsets, no
- * codec version, and no leaf budget to truncate against. A live view's layout is a promise
- * to a predecessor root; an ordinary query's is a promise to nothing beyond its own cursor.
+ * It decides that layout for <b>both</b> owners. An ordinary query buckets its functions by
+ * {@link WindowMapSpec} and reads the plan straight; {@code LiveViewWindowStatePlan.Builder}
+ * composes one of these and renders the same components into a persisted layout on top of it.
+ * Nothing durable is decided here: no manifest, no byte offsets, no codec version and no leaf
+ * budget to truncate against. A live view's layout is a promise to a predecessor root; an
+ * ordinary query's is a promise to nothing beyond its own cursor.
  * <p>
  * Every rejection is an ordinary answer rather than an error. A function the group does not
  * carry keeps the private map and the per-row update it has today, and a group that carries
@@ -70,6 +70,8 @@ public final class WindowAccumulatorPlanBuilder {
     private final IntList componentContributorOutputPositions = new IntList();
     private final IntList componentContributors = new IntList();
     private final ObjList<WindowAccumulatorDescriptor> components = new ObjList<>();
+    private final FoldPolicy foldPolicy;
+    private final WindowAccumulatorCandidate.PartitionKeyGuard partitionKeyGuard;
     private final IntList projectionComponents = new IntList();
     /**
      * Per projection, the component its own function would keep when it stands alone. Kept
@@ -83,7 +85,27 @@ public final class WindowAccumulatorPlanBuilder {
     private final WindowMapSpec spec;
 
     public WindowAccumulatorPlanBuilder(@NotNull WindowMapSpec spec) {
+        this(spec, null);
+    }
+
+    /**
+     * @param spec       the group identity every function of this builder shares, or null when
+     *                   the owner proves that identity its own way - a live view holds an
+     *                   encoded window identity and a key schema instead, and compiles no
+     *                   {@link WindowMapSpec} at all
+     * @param foldPolicy an owner's veto on the containment fold, or null to fold wherever
+     *                   {@link WindowAccumulatorDescriptor#derivedSlotOffset} proves it
+     */
+    public WindowAccumulatorPlanBuilder(@Nullable WindowMapSpec spec, @Nullable FoldPolicy foldPolicy) {
         this.spec = spec;
+        this.foldPolicy = foldPolicy;
+        // The whole of a group's key is its spec's, so one guard serves every function this
+        // builder is offered. A live view has no spec and offers no guarded projection through
+        // this path: its own compiler resolves the candidate and passes a guard of its own.
+        this.partitionKeyGuard = (function, argumentColumnIndex, rowCountHost) -> spec != null
+                && spec.getPartitionColumnCount() == 1
+                && spec.getKeyColumnCount() == 1
+                && spec.getPartitionColumnIndex(0) == argumentColumnIndex;
     }
 
     /**
@@ -284,104 +306,18 @@ public final class WindowAccumulatorPlanBuilder {
         if (!isFusibleAccumulator(function)) {
             return false;
         }
-        int projectionKind = function.windowAccumulatorProjection();
-        if (projectionKind == WindowAccumulatorProjection.PROJECTION_NONE) {
-            return false;
-        }
-        int family = function.windowAccumulatorFamily();
-        int argumentColumnIndex;
-        int argumentColumnType;
-        if (WindowAccumulatorDescriptor.familyTakesArgument(family)) {
-            argumentColumnIndex = WindowAccumulatorDescriptor.directColumnIndex(
-                    function.windowAccumulatorArgument(),
-                    baseMetadata
-            );
-            if (argumentColumnIndex < 0) {
-                return false;
-            }
-            argumentColumnType = baseMetadata.getColumnType(argumentColumnIndex);
-            if (isCountOverTheWindowsOwnPartitionKey(
-                    builder.spec,
-                    family,
-                    projectionKind,
-                    argumentColumnIndex,
-                    argumentColumnType,
-                    rowCountHost
-            )) {
-                family = WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;
-                projectionKind = WindowAccumulatorProjection.PROJECTION_COUNT_PARTITION_KEY;
-                argumentColumnIndex = WindowAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX;
-                argumentColumnType = ColumnType.UNDEFINED;
-            }
-        } else {
-            // A row-count component counts rows and nothing about a column, so its identity
-            // has no argument to carry. A function that declares the family and still holds
-            // an argument is describing state the identity does not, and is turned away
-            // rather than fused under a key that omits it.
-            if (function.windowAccumulatorArgument() != null) {
-                return false;
-            }
-            argumentColumnIndex = WindowAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX;
-            argumentColumnType = ColumnType.UNDEFINED;
-        }
-        final WindowAccumulatorDescriptor component = WindowAccumulatorDescriptor.of(
-                family,
-                argumentColumnIndex,
-                argumentColumnType
+        final WindowAccumulatorCandidate candidate = WindowAccumulatorCandidate.of(
+                function,
+                baseMetadata,
+                rowCountHost,
+                builder.partitionKeyGuard
         );
-        return component != null
-                && builder.addProjection(function, component, projectionKind, outputPosition);
-    }
-
-    /**
-     * Whether {@code function} is a {@code count(k)} whose argument is the single column its
-     * own window partitions by, and whose group already holds an unguarded reading of the
-     * row count it would join.
-     * <p>
-     * Every row of a partition carries the same {@code k}, so such a call's counter is the
-     * partition's row count wherever {@code k} is present and zero where it is not. That
-     * makes it a
-     * {@link WindowAccumulatorProjection#PROJECTION_COUNT_PARTITION_KEY guarded reading} of
-     * the {@link WindowAccumulatorDescriptor#FAMILY_ROW_COUNT} component {@code count(*)}
-     * and {@code row_number()} maintain, rather than a counter of its own.
-     * <p>
-     * Four things narrow it, and each closes a way the equality could fail:
-     * <ul>
-     *     <li><b>the argument's contribution predicate is the type's own null test.</b> A
-     *     widened-to-double argument contributes on {@code Numbers.isFinite}, so a partition
-     *     keyed by a DOUBLE {@code +Infinity} would be a present key the count does not
-     *     count. SYMBOL and VARCHAR are the two types whose predicate is exactly "the key is
-     *     absent";</li>
-     *     <li><b>the partition key is one term and that term is the argument's own
-     *     column</b>, which the spec answers directly - it holds the resolved base column of
-     *     every term, and holds one only because every term resolved;</li>
-     *     <li><b>the encoded key is one column too</b>, so the guard has one value to read
-     *     rather than a tuple whose null-ness is a different question;</li>
-     *     <li><b>the group holds a row-count projection that is not itself guarded.</b> That
-     *     projection is what the component's contributor will be, and it is the only kind
-     *     that maintains a true row count.</li>
-     * </ul>
-     */
-    private static boolean isCountOverTheWindowsOwnPartitionKey(
-            WindowMapSpec spec,
-            int family,
-            int projectionKind,
-            int argumentColumnIndex,
-            int argumentColumnType,
-            @Nullable WindowFunction rowCountHost
-    ) {
-        if (family != WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT
-                || projectionKind != WindowAccumulatorProjection.PROJECTION_COUNT
-                || rowCountHost == null) {
-            return false;
-        }
-        final int tag = ColumnType.tagOf(argumentColumnType);
-        if (tag != ColumnType.SYMBOL && tag != ColumnType.VARCHAR) {
-            return false;
-        }
-        return spec.getPartitionColumnCount() == 1
-                && spec.getKeyColumnCount() == 1
-                && spec.getPartitionColumnIndex(0) == argumentColumnIndex;
+        return candidate != null && builder.addProjection(
+                function,
+                candidate.getComponent(),
+                candidate.getProjectionKind(),
+                outputPosition
+        );
     }
 
     /**
@@ -409,9 +345,9 @@ public final class WindowAccumulatorPlanBuilder {
      * host in the SELECT list, and whether it fuses must not depend on that.
      * <p>
      * The gates are the same ones {@link #addAccumulatorProjection} applies, so this cannot
-     * name a host that walk would decline. Its own arm is deliberately narrow: the family
-     * must be the argumentless one and the function must actually hold no argument, which is
-     * what keeps a {@code count(x)} from being read as a row count here.
+     * name a host that walk would decline, and the family half of the test is
+     * {@link WindowAccumulatorCandidate#isRowCountHost}'s - the same one the live-view
+     * compiler's own pre-pass reads.
      */
     private static @Nullable WindowFunction rowCountHost(
             ObjList<Function> functions,
@@ -424,9 +360,7 @@ public final class WindowAccumulatorPlanBuilder {
                     && groupSpec.isSameSpec(spec)
                     && functions.getQuick(i) instanceof WindowFunction windowFunction
                     && isFusibleAccumulator(windowFunction)
-                    && windowFunction.windowAccumulatorFamily() == WindowAccumulatorDescriptor.FAMILY_ROW_COUNT
-                    && windowFunction.windowAccumulatorArgument() == null
-                    && windowFunction.windowAccumulatorProjection() != WindowAccumulatorProjection.PROJECTION_NONE) {
+                    && WindowAccumulatorCandidate.isRowCountHost(windowFunction)) {
                 return windowFunction;
             }
         }
@@ -468,7 +402,8 @@ public final class WindowAccumulatorPlanBuilder {
                 if (candidate == guest
                         || hostOf[candidate] != -1
                         || candidateComponent.getSlotCount() <= guestComponent.getSlotCount()
-                        || candidateComponent.derivedSlotOffset(guestComponent) < 0) {
+                        || candidateComponent.derivedSlotOffset(guestComponent) < 0
+                        || (foldPolicy != null && !foldPolicy.canFold(candidateComponent, guestComponent))) {
                     continue;
                 }
                 if (host < 0 || candidateComponent.compareIdentity(components.getQuick(host)) < 0) {
@@ -604,5 +539,26 @@ public final class WindowAccumulatorPlanBuilder {
         for (int i = 0, m = projectionComponents.size(); i < m; i++) {
             projectionComponents.setQuick(i, newIndexOfOld[projectionComponents.getQuick(i)]);
         }
+    }
+
+    /**
+     * An owner's veto on the containment fold.
+     * <p>
+     * Which family pairs contain which is
+     * {@link WindowAccumulatorDescriptor#derivedSlotOffset}'s answer and is a fact about the
+     * two runtime states. Whether a particular owner will <b>carry</b> that fold can be a
+     * further question: a live view persists the host's image and hands the guest's decoder a
+     * run inside it, so its fold is a claim about two byte codecs as well, and it is withheld
+     * unless both are at the version the claim was proved at. An owner with nothing to add
+     * passes null and folds wherever the runtime table proves it.
+     */
+    @FunctionalInterface
+    public interface FoldPolicy {
+        /**
+         * @param host  the wider component the guest would be read out of
+         * @param guest the component whose whole state the host provably contains
+         * @return true when this owner will carry the fold
+         */
+        boolean canFold(@NotNull WindowAccumulatorDescriptor host, @NotNull WindowAccumulatorDescriptor guest);
     }
 }

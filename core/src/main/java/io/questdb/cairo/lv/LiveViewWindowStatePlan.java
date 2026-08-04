@@ -26,6 +26,9 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.map.Map;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorPlan;
+import io.questdb.griffin.engine.window.WindowAccumulatorPlanBuilder;
 import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
@@ -42,18 +45,20 @@ import java.util.Arrays;
  * components its durable state is made of, where each sits in the leaf's scalar
  * payload, and which SELECT-list outputs read them.
  * <p>
- * The plan is the single owner of that answer. Sharing is decided here, once, from
+ * The plan is the single owner of that answer for a live view. Sharing is decided once, from
  * proven component identities - never inferred ad hoc in the checkpoint writer, and
  * never from SELECT-list order, which a recompile may change without changing a byte
  * of state. A function the plan does not bind is a <b>residual</b> and keeps the
  * legacy per-function root it has today; the two lists together are always the whole
  * factory.
  * <p>
- * Sharing comes in two strengths, and the plan applies them in that order. Two
- * projections whose components are <b>identical</b> merge outright - {@code sum(x)}
- * beside {@code avg(x)}. A projection whose component's whole image sits <b>inside</b>
- * another's is folded onto that host and reads its own bytes out of the wider slice -
- * {@code count(x)} beside either of them, which
+ * Sharing itself is not a durable question, so this plan does not decide it: its
+ * {@link Builder} composes a {@link WindowAccumulatorPlan} and renders that plan's
+ * components into a persisted layout. Sharing comes in two strengths
+ * there, applied in that order. Two projections whose components are <b>identical</b> merge
+ * outright - {@code sum(x)} beside {@code avg(x)}. A projection whose component's whole image
+ * sits <b>inside</b> another's is folded onto that host and reads its own bytes out of the
+ * wider slice - {@code count(x)} beside either of them, which
  * {@link LiveViewAccumulatorDescriptor#derivedStateOffset} is what proves. The second
  * is what takes {@code sum(x) + avg(x) + count(x)} to one component and a 24-byte
  * fused entry. Neither ever applies across arguments or contribution predicates, so
@@ -367,51 +372,60 @@ public final class LiveViewWindowStatePlan {
     }
 
     /**
-     * Collects the compiler's candidate projections and, on {@link #build()}, merges
-     * identical components, orders them canonically, assigns the fused offsets and
-     * freezes the manifest.
+     * Collects the compiler's candidate projections and, on {@link #build()}, renders the
+     * layout a {@link WindowAccumulatorPlanBuilder} decides into the durable one: the fused
+     * byte offsets, the manifest, and the leaf budget that may hand the tail of the group
+     * back as residuals.
+     * <p>
+     * Which components a group has, which of them merge, which fold onto a wider host, what
+     * order they sit in and which projection maintains each is <b>not</b> decided here. All
+     * of that is a fact about the accumulators rather than about persisting them, so it is
+     * the runtime builder's, and this class composes one rather than repeating it - the two
+     * used to be the same three hundred lines twice, which is how a layout and the manifest
+     * describing it come to disagree. What is added on top is exactly what only exists
+     * because the state is written down.
      * <p>
      * Every rejection is an ordinary answer rather than an error: the caller adds the
      * function to the residual list and it keeps the legacy root it has today.
      */
     public static final class Builder {
         /**
-         * Per component, whether the projection currently chosen as its contributor is a
-         * {@link LiveViewAccumulatorProjection#isPartitionKeyGuarded() guarded} one. A
-         * guarded projection keeps a different counter from the component it reads, so it
-         * yields the role to any candidate that does not, and {@link #build()} refuses a
-         * component left with no other.
+         * A durable owner carries a fold only where both sides' component codecs are at the
+         * version the containment was proved byte for byte at. Which pairs contain which is
+         * the runtime table's answer; this is the further question a persisted layout has to
+         * ask, since the host writes the image and the guest's own decoder reads a run inside
+         * it.
          */
-        private final IntList componentContributorIsGuarded = new IntList();
-        private final IntList componentContributorOutputPositions = new IntList();
-        private final IntList componentContributors = new IntList();
-        private final ObjList<LiveViewAccumulatorDescriptor> components = new ObjList<>();
-        private final IntList projectionComponents = new IntList();
+        private static final WindowAccumulatorPlanBuilder.FoldPolicy DURABLE_FOLD_POLICY =
+                (host, guest) -> LiveViewAccumulatorDescriptor.isContainmentProofCodec(host.getFamily())
+                        && LiveViewAccumulatorDescriptor.isContainmentProofCodec(guest.getFamily());
         /**
-         * Per projection, the component its own function persists when it stands alone.
-         * Kept beside {@link #projectionComponents}, which the fold moves onto a host:
-         * the difference between the two is the slice the function's decoder reads, and
-         * a restore needs both.
+         * The durable half of every component offered to the group, one entry per distinct
+         * identity. The runtime plan comes back naming runtime components, and these are what
+         * they are persisted through - kept rather than rebuilt so that one durable descriptor
+         * serves the manifest, the layout and every projection that reads it.
          */
-        private final ObjList<LiveViewAccumulatorDescriptor> projectionFunctionComponents = new ObjList<>();
-        private final ObjList<WindowFunction> projectionFunctions = new ObjList<>();
-        private final IntList projectionKinds = new IntList();
-        private final IntList projectionOutputPositions = new IntList();
+        private final ObjList<LiveViewAccumulatorDescriptor> offeredComponents = new ObjList<>();
         private final ObjList<WindowFunction> residualFunctions = new ObjList<>();
+        private final WindowAccumulatorPlanBuilder runtimeBuilder =
+                new WindowAccumulatorPlanBuilder(null, DURABLE_FOLD_POLICY);
         private ColumnTypes keyColumnTypes;
         private byte[] windowIdentity;
 
         /**
-         * Binds {@code function} to {@code component}, creating the component when no
-         * previously added projection already names an identical one.
+         * Offers {@code function}'s {@code component} to the group, and reports whether it
+         * joined.
          * <p>
-         * The first accepted projection fixes the group's window identity and key
-         * layout; a later one disagreeing with either belongs to a different window
-         * group and is declined. A projection is also declined when its family cannot
-         * produce {@code projectionKind}, or when the contributing implementation's
-         * declared fixed width does not equal the family's state length - the manifest
-         * would then name a slice the runtime image does not fill, and the leaf carries
-         * no length of its own to catch it.
+         * Three durable gates run here and the rest of the answer is the runtime builder's.
+         * A projection is declined when its key layout is empty; when the contributing
+         * implementation's declared fixed width does not equal the family's state length -
+         * the manifest would then name a slice the runtime image does not fill, and the leaf
+         * carries no length of its own to catch it; and when it disagrees with the group's
+         * window identity or key layout, which the first projection to join fixes. A later
+         * one disagreeing with either belongs to a different window group.
+         * <p>
+         * The identity is latched only once a projection has actually joined, so a function
+         * the runtime builder turns away cannot fix the group it was not admitted to.
          *
          * @return true when the projection joined the group
          */
@@ -426,48 +440,22 @@ public final class LiveViewWindowStatePlan {
             if (candidateKeyColumnTypes == null || candidateKeyColumnTypes.getColumnCount() == 0) {
                 return false;
             }
-            if (!WindowAccumulatorProjection.isCompatible(component.getFamily(), projectionKind)) {
+            if (component.getStateLength() != function.checkpointStateFixedLength()) {
                 return false;
             }
-            if (component.getStateLength() != function.checkpointStateFixedLength()) {
+            if (windowIdentity != null
+                    && (!Arrays.equals(windowIdentity, candidateWindowIdentity)
+                    || !isSameLayout(keyColumnTypes, candidateKeyColumnTypes))) {
+                return false;
+            }
+            if (!runtimeBuilder.addProjection(function, component.getRuntime(), projectionKind, outputPosition)) {
                 return false;
             }
             if (windowIdentity == null) {
                 windowIdentity = candidateWindowIdentity;
                 keyColumnTypes = candidateKeyColumnTypes;
-            } else if (!Arrays.equals(windowIdentity, candidateWindowIdentity)
-                    || !isSameLayout(keyColumnTypes, candidateKeyColumnTypes)) {
-                return false;
             }
-            final boolean isGuarded =
-                    projectionKind == WindowAccumulatorProjection.PROJECTION_COUNT_PARTITION_KEY;
-            int componentIndex = -1;
-            for (int i = 0, n = components.size(); i < n; i++) {
-                if (components.getQuick(i).isSameIdentity(component)) {
-                    componentIndex = i;
-                    break;
-                }
-            }
-            if (componentIndex < 0) {
-                componentIndex = components.size();
-                components.add(component);
-                componentContributors.add(projectionFunctions.size());
-                componentContributorOutputPositions.add(outputPosition);
-                componentContributorIsGuarded.add(isGuarded ? 1 : 0);
-            } else if (isBetterContributor(componentIndex, outputPosition, isGuarded)) {
-                // Deterministic contributor choice: an unguarded projection outranks a
-                // guarded one whatever their positions, and among equals the lowest output
-                // position wins - so the answer follows the compiled view rather than
-                // traversal order.
-                componentContributors.setQuick(componentIndex, projectionFunctions.size());
-                componentContributorOutputPositions.setQuick(componentIndex, outputPosition);
-                componentContributorIsGuarded.setQuick(componentIndex, isGuarded ? 1 : 0);
-            }
-            projectionFunctions.add(function);
-            projectionComponents.add(componentIndex);
-            projectionFunctionComponents.add(component);
-            projectionKinds.add(projectionKind);
-            projectionOutputPositions.add(outputPosition);
+            rememberDurableComponent(component);
             return true;
         }
 
@@ -480,67 +468,76 @@ public final class LiveViewWindowStatePlan {
         }
 
         /**
-         * Assembles the plan, or returns null when the group is empty or not even its
-         * first component fits the leaf budget.
+         * Assembles the plan, or returns null when the group is empty, when the runtime
+         * builder declined it, or when not even its first component fits the leaf budget.
          */
         public @Nullable LiveViewWindowStatePlan build() {
-            if (components.size() == 0) {
+            final WindowAccumulatorPlan runtimePlan = runtimeBuilder.build(WINDOW_VALUE_SLOT_COUNT);
+            if (runtimePlan == null) {
                 return null;
             }
-            foldDerivedComponents();
-            sortComponentsByIdentity();
-            dropComponentsPastTheLeafBudget();
-            final int componentCount = components.size();
+            final int componentCount = componentsWithinTheLeafBudget(runtimePlan);
             if (componentCount == 0) {
+                // Unreachable through the compiler, which admits a function only while its
+                // own declared image fits MAX_INLINE_COMPONENT_STATE_BYTES and so leaves the
+                // first component inside the leaf budget by a wide margin. Declining whole is
+                // the fail-safe answer: every function goes back to the legacy root it has
+                // outside a group.
                 return null;
             }
-            for (int i = 0; i < componentCount; i++) {
-                if (componentContributorIsGuarded.getQuick(i) != 0) {
-                    // Belt and braces: the compiler only offers a guarded projection where
-                    // the same group already holds an unguarded reading of the same
-                    // component, so this is unreachable. Declining the whole plan rather
-                    // than shipping a component nothing maintains correctly is the
-                    // fail-safe direction - every function goes back to the legacy root it
-                    // has outside a group.
-                    return null;
-                }
-            }
+            final ObjList<LiveViewAccumulatorDescriptor> components = new ObjList<>(componentCount);
             final IntList componentOffsets = new IntList(componentCount);
-            // The runtime slot layout follows the durable one exactly: same components,
-            // same order, so a component's slot base and its state offset are two
-            // readings of one decision and neither can drift from the other.
+            // The runtime slot layout and the durable one are the same components in the same
+            // order, so a component's slot base is read straight off the plan that assigned it
+            // and only the byte offsets are added here. Neither can drift from the other.
             final IntList componentSlotBases = new IntList(componentCount);
             int offset = ANCHOR_STATE_OFFSET + ANCHOR_STATE_BYTES;
-            int slot = WINDOW_VALUE_SLOT_COUNT;
             for (int i = 0; i < componentCount; i++) {
+                final LiveViewAccumulatorDescriptor component = durableComponent(runtimePlan.getComponent(i));
+                components.add(component);
                 componentOffsets.add(offset);
-                componentSlotBases.add(slot);
-                offset += components.getQuick(i).getStateLength();
-                slot += components.getQuick(i).getSlotCount();
+                componentSlotBases.add(runtimePlan.getComponentSlotBase(i));
+                offset += component.getStateLength();
             }
-            // The truncation above and this loop add the same widths from the same start,
-            // so they cannot disagree - and if they ever did, the manifest and the leaf
-            // would both be sized by a total nothing checked.
+            // The budget walk above and this loop add the same widths from the same start, so
+            // they cannot disagree - and if they ever did, the manifest and the leaf would
+            // both be sized by a total nothing checked.
             assert offset <= LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES;
-            final ObjList<LiveViewAccumulatorProjection> projections = new ObjList<>(projectionKinds.size());
-            for (int i = 0, n = projectionKinds.size(); i < n; i++) {
-                final int componentIndex = projectionComponents.getQuick(i);
+            final int projectionCount = runtimePlan.getProjectionCount();
+            final ObjList<LiveViewAccumulatorProjection> projections = new ObjList<>(projectionCount);
+            final ObjList<WindowFunction> projectionFunctions = new ObjList<>(projectionCount);
+            final int[] newProjectionIndexOfOld = new int[projectionCount];
+            for (int i = 0; i < projectionCount; i++) {
+                final WindowAccumulatorProjection projection = runtimePlan.getProjection(i);
+                final int componentIndex = projection.getComponentIndex();
+                if (componentIndex >= componentCount) {
+                    newProjectionIndexOfOld[i] = -1;
+                    residualFunctions.add(runtimePlan.getProjectionFunction(i));
+                    continue;
+                }
+                newProjectionIndexOfOld[i] = projections.size();
                 projections.add(new LiveViewAccumulatorProjection(
-                        projectionKinds.getQuick(i),
-                        projectionOutputPositions.getQuick(i),
-                        componentIndex,
+                        projection,
                         componentOffsets.getQuick(componentIndex),
-                        componentSlotBases.getQuick(componentIndex),
                         components.getQuick(componentIndex),
-                        projectionFunctionComponents.getQuick(i)
+                        durableComponent(projection.getFunctionComponent())
                 ));
+                projectionFunctions.add(runtimePlan.getProjectionFunction(i));
+            }
+            // A contributor is one of the projections that reads its own component, so a kept
+            // component's contributor is a survivor by construction and only its index moved.
+            // Remapping it is therefore exact, where re-deriving it would have to re-answer a
+            // question the runtime plan already settled.
+            final IntList contributorIndexes = new IntList(componentCount);
+            for (int i = 0; i < componentCount; i++) {
+                contributorIndexes.add(newProjectionIndexOfOld[runtimePlan.getContributorIndex(i)]);
             }
             return new LiveViewWindowStatePlan(
                     windowIdentity,
                     keyColumnTypes,
                     components,
                     componentSlotBases,
-                    componentContributors,
+                    contributorIndexes,
                     projections,
                     projectionFunctions,
                     residualFunctions,
@@ -556,255 +553,66 @@ public final class LiveViewWindowStatePlan {
         }
 
         /**
-         * Keeps the longest prefix of the canonical component order whose layout fits
-         * {@link LiveViewCheckpointContracts#MAX_INLINE_LEAF_STATE_BYTES}, and turns every
-         * projection reading a component past it into a residual.
+         * Returns how many of the plan's components the leaf carries: the longest prefix of
+         * its canonical order whose layout fits
+         * {@link LiveViewCheckpointContracts#MAX_INLINE_LEAF_STATE_BYTES}. Every projection
+         * reading a component past it becomes a residual.
          * <p>
-         * A group that overflows therefore degrades rather than falling off a cliff. It
-         * used to decline whole, and what that cost is measurable: over 1M retained keys
-         * a four-component group declining seals in 359 ms and publishes 8 metadata
-         * segments per seal, against 79 ms and 4 for the same group fused. Keeping the
-         * part that fits keeps most of that, and the components left out are exactly the
-         * ones that would have needed a storage kind the leaf does not have.
+         * A group that overflows therefore degrades rather than falling off a cliff. It used
+         * to decline whole, and what that cost is measurable: over 1M retained keys a
+         * four-component group declining seals in 359 ms and publishes 8 metadata segments per
+         * seal, against 79 ms and 4 for the same group fused. Keeping the part that fits keeps
+         * most of that, and the components left out are exactly the ones that would have
+         * needed a storage kind the leaf does not have.
          * <p>
-         * The prefix is taken in encoded-identity order, which is the order the layout is
-         * assigned in, so the answer does not depend on the SELECT list. It is a prefix
-         * rather than a greedy pack because a prefix is what makes the persisted manifest
-         * readable as "the components the leaf carries, in order" - a packed subset would
-         * describe the same layout while leaving nothing in the ordering to say why one
-         * component is in and a narrower later one is out.
+         * The prefix is taken in canonical identity order, which is the order the layout is
+         * assigned in, so the answer does not depend on the SELECT list. It is a prefix rather
+         * than a greedy pack because a prefix is what makes the persisted manifest readable as
+         * "the components the leaf carries, in order" - a packed subset would describe the
+         * same layout while leaving nothing in the ordering to say why one component is in and
+         * a narrower later one is out.
          * <p>
-         * A projection whose component was folded onto a host that then falls past the
-         * budget becomes a residual too, and persists its own narrower component on its
-         * own root. Nothing tries to un-fold it back into the leaf: the fold is what
-         * decided the layout the budget was measured against, and re-deciding it here
-         * would make the manifest depend on the order the two passes ran in.
+         * A projection whose component was folded onto a host that then falls past the budget
+         * becomes a residual too, and persists its own narrower component on its own root.
+         * Nothing tries to un-fold it back into the leaf: the fold is what decided the layout
+         * the budget was measured against, and re-deciding it here would make the manifest
+         * depend on the order the two passes ran in.
          */
-        private void dropComponentsPastTheLeafBudget() {
+        private int componentsWithinTheLeafBudget(WindowAccumulatorPlan runtimePlan) {
             int kept = 0;
             int offset = ANCHOR_STATE_OFFSET + ANCHOR_STATE_BYTES;
-            for (int i = 0, n = components.size(); i < n; i++) {
-                offset += components.getQuick(i).getStateLength();
+            for (int i = 0, n = runtimePlan.getComponentCount(); i < n; i++) {
+                offset += durableComponent(runtimePlan.getComponent(i)).getStateLength();
                 if (offset > LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES) {
                     break;
                 }
                 kept++;
             }
-            if (kept == components.size()) {
-                return;
-            }
-            final int[] newProjectionIndexOfOld = new int[projectionComponents.size()];
-            int surviving = 0;
-            for (int i = 0, n = projectionComponents.size(); i < n; i++) {
-                if (projectionComponents.getQuick(i) < kept) {
-                    newProjectionIndexOfOld[i] = surviving++;
-                } else {
-                    newProjectionIndexOfOld[i] = -1;
-                    residualFunctions.add(projectionFunctions.getQuick(i));
-                }
-            }
-            for (int i = newProjectionIndexOfOld.length - 1; i >= 0; i--) {
-                if (newProjectionIndexOfOld[i] >= 0) {
-                    continue;
-                }
-                projectionComponents.removeIndex(i);
-                projectionFunctionComponents.remove(i);
-                projectionFunctions.remove(i);
-                projectionKinds.removeIndex(i);
-                projectionOutputPositions.removeIndex(i);
-            }
-            while (components.size() > kept) {
-                final int last = components.size() - 1;
-                components.remove(last);
-                componentContributors.removeIndex(last);
-                componentContributorOutputPositions.removeIndex(last);
-                componentContributorIsGuarded.removeIndex(last);
-            }
-            // A contributor is one of the projections that reads its own component, so a
-            // kept component's contributor is a survivor by construction and only its index
-            // moved. Remapping it is therefore exact, where re-deriving it would have to
-            // re-answer a question the earlier passes already settled.
-            for (int c = 0; c < kept; c++) {
-                componentContributors.setQuick(c, newProjectionIndexOfOld[componentContributors.getQuick(c)]);
-            }
+            return kept;
         }
 
         /**
-         * Drops every component whose whole image already sits inside another's, moving
-         * its projections onto that host. This is what takes
-         * {@code sum(x) + avg(x) + count(x)} from two components and 32 inline bytes to
-         * one component and 24: the count reads the counter the sum already keeps rather
-         * than persisting a second copy of it.
-         * <p>
-         * The fold is a function of the component <b>set</b> and not of the order the
-         * projections were added in, which it has to be - the manifest it feeds is
-         * compared byte-for-byte against a predecessor's, so a fold that followed
-         * SELECT-list order would make reordering two outputs force a conversion seal.
-         * Where more than one host could serve, the smallest encoded identity wins, which
-         * is the order the layout is assigned in anyway.
-         * <p>
-         * A host must be strictly wider than its guest, so the relation is a strict
-         * partial order and cannot cycle. Guests are still resolved widest-first and a
-         * host that is itself folded is skipped, so a chain - which no pair in
-         * {@link LiveViewAccumulatorDescriptor#derivedStateOffset}'s table forms today -
-         * would collapse one link at a time rather than leave a projection pointing at a
-         * component that is no longer there.
+         * Returns the durable half of a component the runtime plan named. It is one of the
+         * components a projection was offered with - the plan's components and the standalone
+         * component of every projection both are - so the lookup always hits.
          */
-        private void foldDerivedComponents() {
-            final int n = components.size();
-            if (n < 2) {
-                return;
-            }
-            final int[] byDescendingWidth = orderByDescendingWidth();
-            final int[] hostOf = new int[n];
-            Arrays.fill(hostOf, -1);
-            for (int i = 0; i < n; i++) {
-                final int guest = byDescendingWidth[i];
-                final LiveViewAccumulatorDescriptor guestComponent = components.getQuick(guest);
-                int host = -1;
-                for (int candidate = 0; candidate < n; candidate++) {
-                    final LiveViewAccumulatorDescriptor candidateComponent = components.getQuick(candidate);
-                    if (candidate == guest
-                            || hostOf[candidate] != -1
-                            || candidateComponent.getStateLength() <= guestComponent.getStateLength()
-                            || candidateComponent.derivedStateOffset(guestComponent) < 0) {
-                        continue;
-                    }
-                    if (host < 0 || candidateComponent.compareIdentity(components.getQuick(host)) < 0) {
-                        host = candidate;
-                    }
+        private LiveViewAccumulatorDescriptor durableComponent(WindowAccumulatorDescriptor runtime) {
+            for (int i = 0, n = offeredComponents.size(); i < n; i++) {
+                final LiveViewAccumulatorDescriptor component = offeredComponents.getQuick(i);
+                if (component.getRuntime().isSameIdentity(runtime)) {
+                    return component;
                 }
-                hostOf[guest] = host;
             }
-            final int[] newIndexOfOld = new int[n];
-            final ObjList<LiveViewAccumulatorDescriptor> kept = new ObjList<>(n);
-            final IntList keptContributors = new IntList(n);
-            final IntList keptContributorGuards = new IntList(n);
-            final IntList keptContributorPositions = new IntList(n);
-            for (int i = 0; i < n; i++) {
-                if (hostOf[i] != -1) {
-                    // A folded component's contributor goes with it: the host has its own,
-                    // and it is the only one whose image is the whole component.
-                    newIndexOfOld[i] = -1;
-                    continue;
-                }
-                newIndexOfOld[i] = kept.size();
-                kept.add(components.getQuick(i));
-                keptContributors.add(componentContributors.getQuick(i));
-                keptContributorPositions.add(componentContributorOutputPositions.getQuick(i));
-                keptContributorGuards.add(componentContributorIsGuarded.getQuick(i));
-            }
-            if (kept.size() == n) {
-                return;
-            }
-            for (int i = 0, m = projectionComponents.size(); i < m; i++) {
-                final int old = projectionComponents.getQuick(i);
-                projectionComponents.setQuick(i, newIndexOfOld[hostOf[old] != -1 ? hostOf[old] : old]);
-            }
-            components.clear();
-            components.addAll(kept);
-            componentContributors.clear();
-            componentContributors.addAll(keptContributors);
-            componentContributorOutputPositions.clear();
-            componentContributorOutputPositions.addAll(keptContributorPositions);
-            componentContributorIsGuarded.clear();
-            componentContributorIsGuarded.addAll(keptContributorGuards);
+            throw new IllegalStateException("live view window state plan names a component nothing offered");
         }
 
-        /**
-         * Whether a projection just offered to component {@code componentIndex} should
-         * take the contributor role from the one that holds it.
-         * <p>
-         * An unguarded projection always outranks a guarded one, whatever their output
-         * positions: a guarded {@code count(k)} keeps the partition's {@code count(k)}
-         * where the component keeps its row count, so it cannot be the one that maintains
-         * the state. Among two of the same rank the lowest output position wins, which is
-         * what makes the choice a function of the compiled view rather than of the order
-         * the compiler happened to walk it in.
-         */
-        private boolean isBetterContributor(int componentIndex, int outputPosition, boolean isGuarded) {
-            final boolean isIncumbentGuarded = componentContributorIsGuarded.getQuick(componentIndex) != 0;
-            if (isGuarded != isIncumbentGuarded) {
-                return isIncumbentGuarded;
-            }
-            return outputPosition < componentContributorOutputPositions.getQuick(componentIndex);
-        }
-
-        /**
-         * Orders the component indexes by descending state length, ties broken by encoded
-         * identity so the answer does not depend on insertion order.
-         */
-        private int[] orderByDescendingWidth() {
-            final int n = components.size();
-            final int[] order = new int[n];
-            for (int i = 0; i < n; i++) {
-                order[i] = i;
-            }
-            for (int i = 1; i < n; i++) {
-                final int candidate = order[i];
-                int j = i - 1;
-                while (j >= 0 && isWiderThan(candidate, order[j])) {
-                    order[j + 1] = order[j];
-                    j--;
+        private void rememberDurableComponent(LiveViewAccumulatorDescriptor component) {
+            for (int i = 0, n = offeredComponents.size(); i < n; i++) {
+                if (offeredComponents.getQuick(i).isSameIdentity(component)) {
+                    return;
                 }
-                order[j + 1] = candidate;
             }
-            return order;
-        }
-
-        private boolean isWiderThan(int left, int right) {
-            final LiveViewAccumulatorDescriptor a = components.getQuick(left);
-            final LiveViewAccumulatorDescriptor b = components.getQuick(right);
-            return a.getStateLength() != b.getStateLength()
-                    ? a.getStateLength() > b.getStateLength()
-                    : a.compareIdentity(b) < 0;
-        }
-
-        /**
-         * Insertion-sorts the components by encoded identity, carrying the per-component
-         * bookkeeping and every projection's component index with them. Insertion sort
-         * because a fused group holds a handful of components, and because it keeps the
-         * index rewrite in one place.
-         */
-        private void sortComponentsByIdentity() {
-            final int n = components.size();
-            final int[] order = new int[n];
-            for (int i = 0; i < n; i++) {
-                order[i] = i;
-            }
-            for (int i = 1; i < n; i++) {
-                final int candidate = order[i];
-                int j = i - 1;
-                while (j >= 0 && components.getQuick(order[j]).compareIdentity(components.getQuick(candidate)) > 0) {
-                    order[j + 1] = order[j];
-                    j--;
-                }
-                order[j + 1] = candidate;
-            }
-            final int[] newIndexOfOld = new int[n];
-            final ObjList<LiveViewAccumulatorDescriptor> sorted = new ObjList<>(n);
-            final IntList sortedContributors = new IntList(n);
-            final IntList sortedContributorGuards = new IntList(n);
-            final IntList sortedContributorPositions = new IntList(n);
-            for (int i = 0; i < n; i++) {
-                final int old = order[i];
-                newIndexOfOld[old] = i;
-                sorted.add(components.getQuick(old));
-                sortedContributors.add(componentContributors.getQuick(old));
-                sortedContributorPositions.add(componentContributorOutputPositions.getQuick(old));
-                sortedContributorGuards.add(componentContributorIsGuarded.getQuick(old));
-            }
-            components.clear();
-            components.addAll(sorted);
-            componentContributors.clear();
-            componentContributors.addAll(sortedContributors);
-            componentContributorOutputPositions.clear();
-            componentContributorOutputPositions.addAll(sortedContributorPositions);
-            componentContributorIsGuarded.clear();
-            componentContributorIsGuarded.addAll(sortedContributorGuards);
-            for (int i = 0, m = projectionComponents.size(); i < m; i++) {
-                projectionComponents.setQuick(i, newIndexOfOld[projectionComponents.getQuick(i)]);
-            }
+            offeredComponents.add(component);
         }
     }
 }

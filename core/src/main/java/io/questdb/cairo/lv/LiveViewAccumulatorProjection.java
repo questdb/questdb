@@ -66,45 +66,38 @@ public final class LiveViewAccumulatorProjection {
     private final int sumFieldOffset;
 
     /**
-     * @param kind                 one of the {@link WindowAccumulatorProjection}
-     *                             {@code PROJECTION_*} constants
-     * @param outputPosition       the SELECT-list index of the projecting function.
-     *                             Recorded for diagnostics and for binding the runtime
-     *                             output; deliberately <b>not</b> persisted, since a
-     *                             recompile may move it without changing the state
-     * @param componentIndex       index into the plan's ordered component list
+     * Wraps the runtime binding a compiled plan already made in the byte facts a live view
+     * persists it with. The binding itself - the kind, the output position, the component
+     * index and every slot - is {@code runtime}'s and is not re-decided here.
+     *
+     * @param runtime              the runtime projection this one persists
      * @param componentStateOffset the component's offset in the fused scalar payload
-     * @param componentSlotBase    the component's first slot in the window's fused
-     *                             runtime map value
-     * @param component            the component this projection reads
-     * @param functionComponent    the component the projecting function persists on its
-     *                             own, which is {@code component} unless the plan folded
-     *                             it into a wider host
+     * @param component            the durable half of the component {@code runtime} reads
+     * @param functionComponent    the durable half of the component the projecting function
+     *                             persists on its own, which is {@code component} unless the
+     *                             plan folded it into a wider host
      */
     public LiveViewAccumulatorProjection(
-            int kind,
-            int outputPosition,
-            int componentIndex,
+            @NotNull WindowAccumulatorProjection runtime,
             int componentStateOffset,
-            int componentSlotBase,
             @NotNull LiveViewAccumulatorDescriptor component,
             @NotNull LiveViewAccumulatorDescriptor functionComponent
     ) {
-        this.runtime = new WindowAccumulatorProjection(
-                kind,
-                outputPosition,
-                componentIndex,
-                componentSlotBase,
-                component.getRuntime(),
-                functionComponent.getRuntime()
-        );
+        if (!component.getRuntime().isSameIdentity(runtime.getComponent())
+                || !functionComponent.getRuntime().isSameIdentity(runtime.getFunctionComponent())) {
+            // The two halves have to describe one binding: the byte offsets below are this
+            // component's and the slots are that one's, and a payload sliced by one while the
+            // map value is read through the other is a silent misread rather than a failure.
+            throw new IllegalArgumentException("live view accumulator projection does not describe its runtime binding");
+        }
+        this.runtime = runtime;
         final int derivedOffset = component.derivedStateOffset(functionComponent);
         if (derivedOffset < 0) {
-            // Unreachable from the plan, which folds only where the containment holds -
-            // and the runtime constructor above has already refused the same fold in
-            // slots. Stated here anyway for the one thing it adds: the codec pinning, and
-            // therefore the offsets a restore feeds a decoder. A wrong one reads a
-            // neighbour's bytes at a length that looks right.
+            // Unreachable from the plan, which folds only where the containment holds - and
+            // the runtime binding was refused the same fold in slots when it was built.
+            // Stated here anyway for the one thing it adds: the codec pinning, and therefore
+            // the offsets a restore feeds a decoder. A wrong one reads a neighbour's bytes at
+            // a length that looks right.
             throw new IllegalArgumentException("live view accumulator projection does not fit its component state");
         }
         this.component = component;
