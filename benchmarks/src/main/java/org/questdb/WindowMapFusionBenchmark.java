@@ -35,6 +35,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowMapGroups;
+import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowAccumulatorPlan;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -109,6 +112,31 @@ import java.util.Locale;
  * {@code 16 + valueSize}: {@code --shape=sum-count --key-type=varchar --entry-size=32} is one
  * {@code OrderedMap} fused against two {@code UnorderedVarcharMap}s unfused.
  *
+ * <h2>Case 11: the cached cursors</h2>
+ * {@code --cursor=cached} and {@code --cursor=cached-light} run the same shapes through
+ * {@code CachedWindowRecordCursorFactory} and {@code CachedWindowLightRecordCursorFactory}, where
+ * the rows reach a function through a materialized record chain rather than off the base cursor.
+ * The arm asserts which factory the query landed on rather than assuming it.
+ * <p>
+ * A cumulative shape does not reach a cached cursor on its own - it is exactly what the streaming
+ * fast path is for - so the run has to force it, and {@code --cached-bucket} says how:
+ * <ul>
+ *     <li>{@code natural} (the default) adds {@code avg(x) over (partition by k)} to the SELECT
+ *     list. A whole-partition avg is a two-pass function, which the fast path declines on, and it
+ *     is then a residual sitting beside the group with a map and two probes a row of its own -
+ *     charged to both arms equally. The group's own window is one the base cursor's order already
+ *     satisfies, so it is traversed with the scan that fills the chain;</li>
+ *     <li>{@code ordered} writes the window {@code order by ts desc} instead. The SELECT list is
+ *     then the streaming one exactly and the forcing is the sort, which every arm pays for and
+ *     which is large enough at these row counts to compress the ratio between them.</li>
+ * </ul>
+ * The two {@code partition-*} shapes need neither: they are whole-partition two-pass functions and
+ * so are cached by construction. They are also what the next step of the design would fuse and
+ * cannot fuse yet - no whole-partition family declares an accumulator, so both fusion arms of a
+ * {@code partition-*} shape run the same code, like the single-sum control. What they measure is
+ * the cost that rewrite stands to remove: {@code partition-sum-avg-count} is three maps and six
+ * probes a row, and {@code partition-avg} is the one map and two probes a fused group would leave.
+ *
  * <h2>Build and run</h2>
  * <pre>
  * mvn -pl benchmarks -am package -o -DskipTests -Dmaven.test.skip=true
@@ -123,6 +151,12 @@ import java.util.Locale;
  *     -cp benchmarks/target/benchmarks.jar \
  *     org.questdb.WindowMapFusionBenchmark \
  *     --shape=count-count --key-type=int --entry-size=11,16
+ *
+ * # case 11: both cached factories, including the two-pass shapes
+ * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx8g \
+ *     -cp benchmarks/target/benchmarks.jar \
+ *     org.questdb.WindowMapFusionBenchmark \
+ *     --cursor=cached,cached-light --key-type=int --entry-size=32
  * </pre>
  */
 public class WindowMapFusionBenchmark {
@@ -137,6 +171,8 @@ public class WindowMapFusionBenchmark {
         String entrySizesArg = "16,32";
         String shapesArg = "all";
         String fusionArg = "both";
+        String cursorsArg = "streaming";
+        String cachedBucketArg = "natural";
         int warmups = 1;
         int runs = 3;
         for (String arg : args) {
@@ -152,6 +188,10 @@ public class WindowMapFusionBenchmark {
                 shapesArg = arg.substring(8);
             } else if (arg.startsWith("--fusion=")) {
                 fusionArg = arg.substring(9);
+            } else if (arg.startsWith("--cursor=")) {
+                cursorsArg = arg.substring(9);
+            } else if (arg.startsWith("--cached-bucket=")) {
+                cachedBucketArg = arg.substring(16);
             } else if (arg.startsWith("--warmups=")) {
                 warmups = Integer.parseInt(arg.substring(10));
             } else if (arg.startsWith("--runs=")) {
@@ -184,6 +224,21 @@ public class WindowMapFusionBenchmark {
             case "off" -> new boolean[]{false};
             default -> throw new IllegalArgumentException("--fusion must be one of both, on, off: " + fusionArg);
         };
+        final List<Cursor> cursors = new ArrayList<>();
+        if ("all".equals(cursorsArg)) {
+            Collections.addAll(cursors, Cursor.values());
+        } else {
+            for (String name : cursorsArg.split(",")) {
+                cursors.add(Cursor.of(name.trim()));
+            }
+        }
+        final boolean orderedBucket = switch (cachedBucketArg) {
+            case "natural" -> false;
+            case "ordered" -> true;
+            default -> throw new IllegalArgumentException(
+                    "--cached-bucket must be one of natural, ordered: " + cachedBucketArg
+            );
+        };
 
         Os.init();
         final Path dbRoot = Files.createTempDirectory("window-map-fusion-");
@@ -198,8 +253,10 @@ public class WindowMapFusionBenchmark {
 
             System.out.printf(
                     Locale.ROOT,
-                    "# rows=%d keys=%s keyTypes=%s entrySizes=%s shapes=%s fusion=%s warmups=%d runs=%d%n",
-                    rows, keysArg, keyTypesArg, entrySizesArg, shapesArg, fusionArg, warmups, runs
+                    "# rows=%d keys=%s keyTypes=%s entrySizes=%s shapes=%s fusion=%s cursors=%s"
+                            + " cachedBucket=%s warmups=%d runs=%d%n",
+                    rows, keysArg, keyTypesArg, entrySizesArg, shapesArg, fusionArg, cursorsArg,
+                    cachedBucketArg, warmups, runs
             );
 
             for (KeyType keyType : keyTypes) {
@@ -209,46 +266,60 @@ public class WindowMapFusionBenchmark {
             }
 
             final List<String> table = new ArrayList<>();
-            table.add("shape\tkey\tkeys\tmaxEntry\tfusion\tplans\tgroups\tmaps\tmapImpl\tcomps\tslots"
+            table.add("shape\tcursor\tkey\tkeys\tmaxEntry\tfusion\tplans\tgroups\tmaps\tmapImpl\tcomps\tslots"
                     + "\tlookups/row\tupdates/row\targs/row\tns/row\trows/s\tpeakKiB\tretainedKiB\tchecksum");
             System.out.println(table.get(0));
 
             try (PeakSampler sampler = new PeakSampler()) {
                 for (Shape shape : shapes) {
-                    for (KeyType keyType : keyTypes) {
-                        for (long keys : cardinalities) {
-                            for (int entrySize : entrySizes) {
-                                final Arm[] best = new Arm[fusionSettings.length];
-                                // Forward then backward over the settings, keeping each one's
-                                // fastest drain. One arm always runs into a JIT state the other
-                                // left behind, and a fixed order would charge that to whichever
-                                // arm goes first every time; alternating gives each of them the
-                                // warm position once. Pointless with a single setting, so the
-                                // second pass only runs when there are two to alternate.
-                                final int passes = fusionSettings.length > 1 ? 2 : 1;
-                                for (int pass = 0; pass < passes; pass++) {
-                                    for (int i = 0; i < fusionSettings.length; i++) {
-                                        final int index = pass == 0 ? i : fusionSettings.length - 1 - i;
-                                        configuration.setSqlUnorderedMapMaxEntrySize(entrySize);
-                                        configuration.setSqlWindowMapFusionEnabled(fusionSettings[index]);
-                                        final Arm arm = runArm(
-                                                engine, sqlCtx, sampler, shape, keyType, keys, rows, warmups, runs
-                                        );
-                                        if (best[index] == null || arm.nanos < best[index].nanos) {
-                                            best[index] = arm;
+                    for (Cursor cursor : cursors) {
+                        if (shape.wholePartition && cursor == Cursor.STREAMING) {
+                            // A two-pass function is what the streaming fast path declines on, so
+                            // there is no such arm to measure rather than a slow one.
+                            System.out.println("# skipped " + shape.name + "/" + cursor.name
+                                    + ": a whole-partition shape never reaches the streaming cursor");
+                            continue;
+                        }
+                        for (KeyType keyType : keyTypes) {
+                            for (long keys : cardinalities) {
+                                for (int entrySize : entrySizes) {
+                                    final Arm[] best = new Arm[fusionSettings.length];
+                                    // Forward then backward over the settings, keeping each one's
+                                    // fastest drain. One arm always runs into a JIT state the other
+                                    // left behind, and a fixed order would charge that to whichever
+                                    // arm goes first every time; alternating gives each of them the
+                                    // warm position once. Pointless with a single setting, so the
+                                    // second pass only runs when there are two to alternate.
+                                    final int passes = fusionSettings.length > 1 ? 2 : 1;
+                                    for (int pass = 0; pass < passes; pass++) {
+                                        for (int i = 0; i < fusionSettings.length; i++) {
+                                            final int index = pass == 0 ? i : fusionSettings.length - 1 - i;
+                                            configuration.setSqlUnorderedMapMaxEntrySize(entrySize);
+                                            configuration.setSqlWindowMapFusionEnabled(fusionSettings[index]);
+                                            configuration.setSqlWindowCachedLightEnabled(cursor == Cursor.CACHED_LIGHT);
+                                            final Arm arm = runArm(
+                                                    engine, sqlCtx, sampler, shape, cursor, orderedBucket,
+                                                    keyType, keys, rows, warmups, runs
+                                            );
+                                            if (best[index] == null || arm.nanos < best[index].nanos) {
+                                                best[index] = arm;
+                                            }
                                         }
                                     }
-                                }
-                                for (int i = 0; i < fusionSettings.length; i++) {
-                                    if (best[i].checksum != best[0].checksum) {
-                                        throw new IllegalStateException(
-                                                "fused and unfused answers differ for " + shape.name + "/"
-                                                        + keyType.name + "/keys=" + keys + "/maxEntry=" + entrySize
+                                    for (int i = 0; i < fusionSettings.length; i++) {
+                                        if (best[i].checksum != best[0].checksum) {
+                                            throw new IllegalStateException(
+                                                    "fused and unfused answers differ for " + shape.name + "/"
+                                                            + cursor.name + "/" + keyType.name + "/keys=" + keys
+                                                            + "/maxEntry=" + entrySize
+                                            );
+                                        }
+                                        final String row = row(
+                                                shape, cursor, keyType, keys, entrySize, fusionSettings[i], best[i]
                                         );
+                                        table.add(row);
+                                        System.out.println(row);
                                     }
-                                    final String row = row(shape, keyType, keys, entrySize, fusionSettings[i], best[i]);
-                                    table.add(row);
-                                    System.out.println(row);
                                 }
                             }
                         }
@@ -328,11 +399,20 @@ public class WindowMapFusionBenchmark {
         return values;
     }
 
-    private static String row(Shape shape, KeyType keyType, long keys, int entrySize, boolean fusion, Arm arm) {
+    private static String row(
+            Shape shape,
+            Cursor cursor,
+            KeyType keyType,
+            long keys,
+            int entrySize,
+            boolean fusion,
+            Arm arm
+    ) {
         return String.format(
                 Locale.ROOT,
-                "%s\t%s\t%d\t%d\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%.2f\t%.2f\t%.2f\t%.1f\t%.0f\t%d\t%d\t%d",
+                "%s\t%s\t%s\t%d\t%d\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%.2f\t%.2f\t%.2f\t%.1f\t%.0f\t%d\t%d\t%d",
                 shape.name,
+                cursor.name,
                 keyType.name,
                 keys,
                 entrySize,
@@ -364,13 +444,15 @@ public class WindowMapFusionBenchmark {
             SqlExecutionContextImpl sqlCtx,
             PeakSampler sampler,
             Shape shape,
+            Cursor cursor,
+            boolean orderedBucket,
             KeyType keyType,
             long keys,
             long rows,
             int warmups,
             int runs
     ) throws Exception {
-        final String sql = shape.sql(tableName(keyType, keys));
+        final String sql = shape.sql(tableName(keyType, keys), cursor, orderedBucket);
         RecordCursorFactory factory = null;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             factory = compiler.compile(sql, sqlCtx).getRecordCursorFactory();
@@ -379,7 +461,7 @@ public class WindowMapFusionBenchmark {
             throw th;
         }
         try {
-            final WindowRecordCursorFactory windowFactory = windowFactory(factory, sql);
+            final WindowProbe windowFactory = probe(factory, cursor, sql);
             for (int i = 0; i < warmups; i++) {
                 drainOnce(sqlCtx, factory, windowFactory, sampler);
             }
@@ -404,18 +486,48 @@ public class WindowMapFusionBenchmark {
     }
 
     /**
-     * The window factory this query drives, or a failure. A silently cached or mis-routed plan
-     * would measure a different cursor and report it under this benchmark's name.
+     * The window factory this query drives, read through one interface whichever of the three it
+     * is, or a failure when it is not the one the arm asked for. Which cursor a query lands on is
+     * a compiler decision that a SELECT list or a window clause can move without warning, and an
+     * arm that measured a different one would report it under this arm's name.
      */
-    private static WindowRecordCursorFactory windowFactory(RecordCursorFactory factory, String sql) {
+    private static WindowProbe probe(RecordCursorFactory factory, Cursor cursor, String sql) {
         RecordCursorFactory root = factory;
-        while (root != null && !(root instanceof WindowRecordCursorFactory)) {
+        while (root != null) {
+            if (root instanceof WindowRecordCursorFactory f) {
+                requireCursor(cursor, Cursor.STREAMING, sql);
+                return new WindowProbe(f.getWindowFunctions(), f.getWindowAccumulatorPlans(), f.getWindowMapStates());
+            }
+            if (root instanceof CachedWindowRecordCursorFactory f) {
+                requireCursor(cursor, Cursor.CACHED, sql);
+                return cachedProbe(f.getAllWindowFunctions(), f.getWindowMapGroups());
+            }
+            if (root instanceof CachedWindowLightRecordCursorFactory f) {
+                requireCursor(cursor, Cursor.CACHED_LIGHT, sql);
+                return cachedProbe(f.getAllWindowFunctions(), f.getWindowMapGroups());
+            }
             root = root.getBaseFactory();
         }
-        if (root == null) {
-            throw new IllegalStateException("expected a streaming WindowRecordCursorFactory for: " + sql);
+        throw new IllegalStateException("expected a window factory for: " + sql);
+    }
+
+    private static WindowProbe cachedProbe(
+            ObjList<WindowFunction> functions,
+            CachedWindowMapGroups groups
+    ) {
+        return new WindowProbe(
+                functions,
+                groups == null ? null : groups.getPlans(),
+                groups == null ? null : groups.getStates()
+        );
+    }
+
+    private static void requireCursor(Cursor expected, Cursor actual, String sql) {
+        if (expected != actual) {
+            throw new IllegalStateException(
+                    "expected the " + expected.name + " cursor but the query compiled to " + actual.name + ": " + sql
+            );
         }
-        return (WindowRecordCursorFactory) root;
     }
 
     /**
@@ -459,11 +571,11 @@ public class WindowMapFusionBenchmark {
      * is not one. The bound groups' lookup and update counts are measured; a function on its own
      * map contributes the structural one-per-row, since the private path carries no counter.
      */
-    private static void captureStructure(Arm arm, WindowRecordCursorFactory factory, long rows) {
+    private static void captureStructure(Arm arm, WindowProbe factory, long rows) {
         final LinkedHashMap<String, Integer> implementations = new LinkedHashMap<>();
-        final ObjList<WindowAccumulatorPlan> plans = factory.getWindowAccumulatorPlans();
+        final ObjList<WindowAccumulatorPlan> plans = factory.plans;
         arm.plans = plans == null ? 0 : plans.size();
-        final ObjList<WindowMapState> states = factory.getWindowMapStates();
+        final ObjList<WindowMapState> states = factory.states;
         if (states != null) {
             for (int i = 0, n = states.size(); i < n; i++) {
                 final WindowMapState state = states.getQuick(i);
@@ -484,7 +596,7 @@ public class WindowMapFusionBenchmark {
                 }
             }
         }
-        final ObjList<WindowFunction> functions = factory.getWindowFunctions();
+        final ObjList<WindowFunction> functions = factory.functions;
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction function = functions.getQuick(i);
             final Map map = function.getPartitionMap();
@@ -493,7 +605,10 @@ public class WindowMapFusionBenchmark {
             }
             arm.openMaps++;
             implementations.merge(map.getClass().getSimpleName(), 1, Integer::sum);
-            arm.lookups += rows;
+            // Twice a row for a whole-partition two-pass function: pass 1 probes to accumulate and
+            // pass 2 probes again to read the finished state back. Once for everything else, which
+            // computes and writes its output in the one pass.
+            arm.lookups += function.getPassCount() > WindowFunction.ONE_PASS ? 2 * rows : rows;
             arm.updates += rows;
             // Its own standalone image, which is what makes the components and slots column
             // comparable across the two arms: three private (sum, nonNullCount)-shaped states are
@@ -501,8 +616,10 @@ public class WindowMapFusionBenchmark {
             arm.components++;
             arm.slots += WindowAccumulatorDescriptor.familySlotCount(function.windowAccumulatorFamily());
             // Exact for the families here, each of which reads its argument once per row inside
-            // the same computeNext that probes. A residual family that reads an argument without
-            // declaring one would be undercounted, and none of the shapes below is one.
+            // the same computeNext that probes. It is a declaration rather than a measurement, so
+            // a function that reads an argument without declaring an accumulator family reports
+            // none: the whole-partition shapes are exactly that, and every one of them evaluates
+            // its argument once a row in pass 1.
             if (function.windowAccumulatorArgument() != null) {
                 arm.argumentEvaluations += rows;
             }
@@ -533,7 +650,7 @@ public class WindowMapFusionBenchmark {
     private static Arm drainOnce(
             SqlExecutionContextImpl sqlCtx,
             RecordCursorFactory factory,
-            WindowRecordCursorFactory windowFactory,
+            WindowProbe windowFactory,
             PeakSampler sampler
     ) throws Exception {
         final Arm arm = new Arm();
@@ -569,6 +686,28 @@ public class WindowMapFusionBenchmark {
         return arm;
     }
 
+    /**
+     * The three lists a report row is read off, taken once per arm because they are the factory's
+     * own and outlive its cursors. The counters behind them are not: they live on the
+     * {@link WindowMapState}s, which a close resets, so {@code captureStructure} still has to run
+     * while the cursor is open.
+     */
+    private static final class WindowProbe {
+        final ObjList<WindowFunction> functions;
+        final ObjList<WindowAccumulatorPlan> plans;
+        final ObjList<WindowMapState> states;
+
+        WindowProbe(
+                ObjList<WindowFunction> functions,
+                ObjList<WindowAccumulatorPlan> plans,
+                ObjList<WindowMapState> states
+        ) {
+            this.functions = functions;
+            this.plans = plans;
+            this.states = states;
+        }
+    }
+
     private static final class Arm {
         String mapImplementation = "none";
         long argumentEvaluations;
@@ -593,6 +732,7 @@ public class WindowMapFusionBenchmark {
      */
     private static final class BenchmarkConfiguration extends DefaultCairoConfiguration {
         private int maxEntrySize = 16;
+        private boolean windowCachedLightEnabled = false;
         private boolean windowMapFusionEnabled = true;
 
         BenchmarkConfiguration(String root) {
@@ -615,6 +755,11 @@ public class WindowMapFusionBenchmark {
         }
 
         @Override
+        public boolean isSqlWindowCachedLightEnabled() {
+            return windowCachedLightEnabled;
+        }
+
+        @Override
         public boolean isSqlWindowMapFusionEnabled() {
             return windowMapFusionEnabled;
         }
@@ -623,8 +768,40 @@ public class WindowMapFusionBenchmark {
             this.maxEntrySize = maxEntrySize;
         }
 
+        void setSqlWindowCachedLightEnabled(boolean enabled) {
+            this.windowCachedLightEnabled = enabled;
+        }
+
         void setSqlWindowMapFusionEnabled(boolean enabled) {
             this.windowMapFusionEnabled = enabled;
+        }
+    }
+
+    /**
+     * The cursor an arm measures. It is a property of the run rather than of the shape - the same
+     * SELECT list reaches all three, given the window clause each of them needs - so the report
+     * carries it as a column and the arm asserts the query landed on it.
+     */
+    private enum Cursor {
+        CACHED("cached"),
+        CACHED_LIGHT("cached-light"),
+        STREAMING("streaming");
+
+        private final String name;
+
+        Cursor(String name) {
+            this.name = name;
+        }
+
+        static Cursor of(String name) {
+            for (Cursor cursor : values()) {
+                if (cursor.name.equals(name)) {
+                    return cursor;
+                }
+            }
+            throw new IllegalArgumentException(
+                    "--cursor must be one of streaming, cached, cached-light: " + name
+            );
         }
     }
 
@@ -728,57 +905,78 @@ public class WindowMapFusionBenchmark {
     /**
      * The SELECT list a run measures - one per numbered case of the acceptance plan. Cases 8, 9
      * and 10 vary the data rather than the query and are {@code --keys} and {@code --key-type};
-     * case 11 needs the cached factories and does not exist yet.
+     * case 11 is {@code --cursor}, which runs these same lists on the cached factories.
      */
     private enum Shape {
         /**
          * Case 4: two counters over one narrow key, which fuse across a Map-implementation change
          * at {@code --entry-size=16} and without one at 32.
          */
-        COUNT_COUNT("count-count"),
+        COUNT_COUNT("count-count", false),
         /**
          * Case 5: four dispersion projections plus the {@code count} that folds onto their
          * counter - one three-slot Welford component serving five outputs.
          */
-        DISPERSION("dispersion"),
+        DISPERSION("dispersion", false),
+        /**
+         * The whole-partition {@code avg} on its own: one map and two probes a row, and no group,
+         * because one fusible function is not a group and no whole-partition family is fusible
+         * anyway. It is the map work a fused {@code partition-sum-avg-count} would be left with,
+         * which is what makes it the standing-in fused arm for the shape below.
+         */
+        PARTITION_AVG("partition-avg", true),
+        /**
+         * Three whole-partition two-pass functions over one argument: three maps, six probes a row
+         * - three in pass 1 and three in pass 2 - and three copies of a {@code (sum, count)} pair
+         * that a shared component would make one. It is what the non-destructive
+         * {@code preparePass2} step exists to fuse, and today it runs unfused on both arms.
+         */
+        PARTITION_SUM_AVG_COUNT("partition-sum-avg-count", true),
         /**
          * Case 6: the row-count family, and a {@code count} over the window's own partition key,
          * which is a guarded reading of it wherever the key type admits the guard.
          */
-        ROW_COUNT("row-count"),
+        ROW_COUNT("row-count", false),
         /**
          * Case 1: the single-function control. It forms no group - moving one map is not removing
          * one - so both arms run the same path, and a difference between them is the noise floor
          * every other row of the report is read against.
          */
-        SINGLE_SUM("sum"),
+        SINGLE_SUM("sum", false),
         /**
          * Case 2: three projections onto one {@code (sum, nonNullCount)} component. The
          * structural-acceptance shape: three maps, five slots and three argument evaluations a row
          * become one, two and one.
          */
-        SUM_AVG_COUNT("sum-avg-count"),
+        SUM_AVG_COUNT("sum-avg-count", false),
         /**
          * Case 3: two components behind one key. The counters do not merge; the lookup does.
          */
-        SUM_COUNT("sum-count"),
+        SUM_COUNT("sum-count", false),
         /**
          * Case 12: the same trade as case 4 one limit up. Two {@code (sum, nonNullCount)} pairs
          * are {@code 4 + 16 = 20} each on their own and {@code 4 + 32 = 36} fused, so over an INT
          * key at {@code --entry-size=32} - a server's default - the group is one {@code OrderedMap}
          * against two {@code Unordered4Map}s.
          */
-        SUM_SUM("sum-sum"),
+        SUM_SUM("sum-sum", false),
         /**
          * Case 7: one partition domain, two frames. The two windows are two traversals and so two
          * groups, which is what says co-location is per window rather than per key.
          */
-        TWO_FRAMES("two-frames");
+        TWO_FRAMES("two-frames", false);
 
         private final String name;
+        /**
+         * Whether every call in the list is a whole-partition two-pass function. Such a shape
+         * declines the streaming fast path by itself, so it needs no forcing and has no streaming
+         * arm.
+         */
+        private final boolean wholePartition;
 
-        Shape(String name) {
+        Shape(String name, boolean wholePartition) {
             this.name = name;
+            this.wholePartition = wholePartition;
         }
 
         static Shape of(String name) {
@@ -790,11 +988,26 @@ public class WindowMapFusionBenchmark {
             throw new IllegalArgumentException("unknown --shape: " + name);
         }
 
-        String sql(String table) {
+        /**
+         * @param cursor        the factory the arm intends to measure. A cumulative shape reaches
+         *                      a cached one only because this method makes it - see
+         *                      {@code orderedBucket} - and a whole-partition shape reaches it
+         *                      whatever is asked for
+         * @param orderedBucket on a cached cursor, whether to force the path with a sort the base
+         *                      cursor does not already produce (the group is then traversed in its
+         *                      own sort bucket and the SELECT list is the streaming one exactly) or
+         *                      with a residual whole-partition call (the group is then traversed
+         *                      with the scan that fills the chain). Ignored for the streaming
+         *                      cursor and for a whole-partition shape, neither of which has a
+         *                      choice to make
+         */
+        String sql(String table, Cursor cursor, boolean orderedBucket) {
             final String projections = switch (this) {
                 case COUNT_COUNT -> "count(x) over w, count(y) over w";
                 case DISPERSION -> "stddev_samp(x) over w, stddev_pop(x) over w, var_samp(x) over w, "
                         + "var_pop(x) over w, count(x) over w";
+                case PARTITION_AVG -> "avg(x) over w";
+                case PARTITION_SUM_AVG_COUNT -> "sum(x) over w, avg(x) over w, count(x) over w";
                 case ROW_COUNT -> "count(*) over w, row_number() over w, count(k) over w";
                 case SINGLE_SUM -> "sum(x) over w";
                 case SUM_AVG_COUNT -> "sum(x) over w, avg(x) over w, count(x) over w";
@@ -802,12 +1015,22 @@ public class WindowMapFusionBenchmark {
                 case SUM_SUM -> "sum(x) over w, sum(y) over w";
                 case TWO_FRAMES -> "sum(x) over w, count(y) over w, sum(x) over w2, count(y) over w2";
             };
-            final String windows = "window w as (partition by k order by ts "
+            if (wholePartition) {
+                return "select " + projections + " from " + table
+                        + " window w as (partition by k)";
+            }
+            final boolean cached = cursor != Cursor.STREAMING;
+            // Descending on the designated timestamp rather than on an ordinary column: no two
+            // rows tie, so the cumulative answers stay a function of the data alone and the two
+            // fusion arms remain comparable as answers.
+            final String order = cached && orderedBucket ? "order by ts desc" : "order by ts";
+            final String forcing = cached && !orderedBucket ? ", avg(x) over (partition by k)" : "";
+            final String windows = "window w as (partition by k " + order + " "
                     + "rows between unbounded preceding and current row)"
                     + (this == TWO_FRAMES
-                    ? ", w2 as (partition by k order by ts range between unbounded preceding and current row)"
+                    ? ", w2 as (partition by k " + order + " range between unbounded preceding and current row)"
                     : "");
-            return "select " + projections + " from " + table + " " + windows;
+            return "select " + projections + forcing + " from " + table + " " + windows;
         }
     }
 }
