@@ -35,6 +35,11 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
+import java.lang.foreign.SymbolLookup;
+import java.lang.foreign.ValueLayout;
+import java.lang.invoke.MethodHandle;
 import java.lang.management.ManagementFactory;
 import java.net.URL;
 import java.nio.file.Paths;
@@ -213,10 +218,7 @@ public final class Os {
     }
 
     public static void pause() {
-        try {
-            Thread.sleep(0);
-        } catch (InterruptedException ignore) {
-        }
+        Thread.yield();
     }
 
     public static native long realloc(long mem, long size);
@@ -228,18 +230,23 @@ public final class Os {
         return setCurrentThreadAffinity0(cpu);
     }
 
+    /**
+     * Sleeps for at least {@code millis}, returning immediately when {@code millis}
+     * is not positive. Interrupting the calling thread does not cut the sleep short,
+     * and does not clear the thread's interrupt flag.
+     */
     public static void sleep(long millis) {
-        long t = System.currentTimeMillis();
-        long deadline = millis;
-        while (deadline > 0) {
-            try {
-                Thread.sleep(deadline);
-                break;
-            } catch (InterruptedException e) {
-                long t2 = System.currentTimeMillis();
-                deadline -= t2 - t;
-                t = t2;
-            }
+        if (millis <= 0) {
+            return;
+        }
+        try {
+            SleepHandle.SLEEP_MILLIS.invokeExact(millis);
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable t) {
+            // invokeExact declares throws Throwable; a void(long) downcall has no
+            // checked-throwing path, so this arm exists only to satisfy javac.
+            throw new AssertionError(t);
         }
     }
 
@@ -323,6 +330,23 @@ public final class Os {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Holder so the symbol lookup runs on the first {@link #sleep(long)} call rather
+     * than while {@link Os}'s own static initializer is still loading libquestdbr.
+     * <p>
+     * The binding deliberately omits {@link Linker.Option#critical}: a critical
+     * downcall keeps the caller in {@code _thread_in_Java} for the duration, so every
+     * safepoint -- and therefore every GC -- would wait out the sleep. The plain
+     * binding transitions to {@code _thread_in_native}, which the VM can safepoint
+     * over.
+     */
+    private static final class SleepHandle {
+        static final MethodHandle SLEEP_MILLIS = Linker.nativeLinker().downcallHandle(
+                SymbolLookup.loaderLookup().find("qdb_sleep_millis").orElseThrow(
+                        () -> new ExceptionInInitializerError("symbol qdb_sleep_millis not found in libquestdbr")),
+                FunctionDescriptor.ofVoid(ValueLayout.JAVA_LONG));
     }
 
     static {

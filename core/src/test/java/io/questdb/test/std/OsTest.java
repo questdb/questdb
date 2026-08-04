@@ -24,12 +24,15 @@
 
 package io.questdb.test.std;
 
+import com.sun.management.ThreadMXBean;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
+import java.lang.management.ManagementFactory;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -87,6 +90,40 @@ public class OsTest {
     }
 
     @Test
+    public void testPauseDoesNotAllocate() {
+        ThreadMXBean bean = threadAllocationBean();
+        for (int i = 0; i < 10_000; i++) {
+            Os.pause();
+        }
+        long before = bean.getCurrentThreadAllocatedBytes();
+        for (int i = 0; i < 50_000; i++) {
+            Os.pause();
+        }
+        long allocated = bean.getCurrentThreadAllocatedBytes() - before;
+        // Thread.sleep(0), which pause() used to call, allocates a 40-byte
+        // jdk.internal.event.ThreadSleepEvent per call on JDK 25 -- 2 MB for this loop.
+        Assert.assertTrue(String.valueOf(allocated), allocated < 64 * 1024);
+    }
+
+    @Test
+    public void testSleepDoesNotAllocate() {
+        ThreadMXBean bean = threadAllocationBean();
+        // The first calls resolve the downcall handle and run the method handle on the
+        // interpreted LambdaForm path, both of which allocate; warm past them.
+        for (int i = 0; i < 128; i++) {
+            Os.sleep(1);
+        }
+        long before = bean.getCurrentThreadAllocatedBytes();
+        for (int i = 0; i < 128; i++) {
+            Os.sleep(1);
+        }
+        long allocated = bean.getCurrentThreadAllocatedBytes() - before;
+        // Thread.sleep, which sleep() used to loop on, allocates 40 bytes per call
+        // on JDK 25 -- 5120 for this loop.
+        Assert.assertTrue(String.valueOf(allocated), allocated < 1280);
+    }
+
+    @Test
     public void testSleepEnds() {
         SOCountDownLatch doneLatch = new SOCountDownLatch(1);
         CyclicBarrier barrier = new CyclicBarrier(2);
@@ -111,5 +148,13 @@ public class OsTest {
         long fromMXBean = Os.getMemorySizeFromMXBean();
         assertTrue("Could not obtain memory size from OperatingSystemMXBean",
                 fromMXBean > 0 && fromMXBean < (1L << 48));
+    }
+
+    private static ThreadMXBean threadAllocationBean() {
+        java.lang.management.ThreadMXBean bean = ManagementFactory.getThreadMXBean();
+        Assume.assumeTrue("thread allocation measurement not supported", bean instanceof ThreadMXBean);
+        ThreadMXBean sunBean = (ThreadMXBean) bean;
+        Assume.assumeTrue(sunBean.isThreadAllocatedMemorySupported() && sunBean.isThreadAllocatedMemoryEnabled());
+        return sunBean;
     }
 }
