@@ -4325,6 +4325,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
+        Function limitLoFunction = null;
         try {
             // This path applies only to the read_parquet() table function.
             // For native tables, generateTableQuery0() handles pushdown separately.
@@ -4339,81 +4340,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 IntHashSet filterUsedColumnIndexes = new IntHashSet();
                 collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
-                final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
-                        && (!model.isUpdate() || executionContext.isWalApplication());
-                final boolean canCompile = factory.supportsPageFrameCursor() && JitUtil.isJitSupported();
-                if (useJit && canCompile) {
-                    CompiledFilter compiledFilter = null;
-                    CompiledCountOnlyFilter compiledCountOnlyFilter = null;
-                    try {
-                        int jitOptions;
-                        final ObjList<Function> bindVarFunctions = new ObjList<>();
-                        try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
-                            final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
-                            jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
-                            jitOptions = jitIRSerializer.serialize(filterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
-                        }
-
-                        compiledFilter = new CompiledFilter();
-                        compiledFilter.compile(jitIRMem, jitOptions);
-
-                        compiledCountOnlyFilter = new CompiledCountOnlyFilter();
-                        compiledCountOnlyFilter.compile(jitIRMem, jitOptions);
-
-                        final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
-                        final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
-
-                        LOG.debug()
-                                .$("JIT enabled for (sub)query [tableName=").$safe(model.getName())
-                                .$(", fd=").$(executionContext.getRequestFd())
-                                .I$();
-                        return new AsyncJitFilteredRecordCursorFactory(
-                                executionContext.getCairoEngine(),
-                                configuration,
-                                executionContext.getMessageBus(),
-                                factory,
-                                bindVarFunctions,
-                                compiledFilter,
-                                compiledCountOnlyFilter,
-                                filter,
-                                filterUsedColumnIndexes,
-                                reduceTaskFactory,
-                                compileWorkerFiltersConditionally(
-                                        executionContext,
-                                        filter,
-                                        executionContext.getSharedQueryWorkerCount(),
-                                        filterExpr,
-                                        factory.getMetadata()
-                                ),
-                                deepClone(expressionNodePool, filterExpr),
-                                limitLoFunction,
-                                limitLoPos,
-                                executionContext.getSharedQueryWorkerCount(),
-                                enablePreTouch
-                        );
-                    } catch (SqlException | LimitOverflowException ex) {
-                        // for these errors we are intentionally **not** rethrowing the exception
-                        // if a JIT filter cannot be used, we will simply use a Java filter
-                        Misc.free(compiledFilter);
-                        Misc.free(compiledCountOnlyFilter);
-                        LOG.debug()
-                                .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
-                                .$(", ex=").$safe(ex.getFlyweightMessage())
-                                .$(", fd=").$(executionContext.getRequestFd()).I$();
-                    } catch (Throwable t) {
-                        // other errors are fatal -> rethrow them
-                        Misc.free(compiledFilter);
-                        Misc.free(compiledCountOnlyFilter);
-                        throw t;
-                    } finally {
-                        jitIRSerializer.clear();
-                        jitIRMem.truncate();
-                    }
+                limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+                final RecordCursorFactory jitFactory = generateJitFilter(
+                        factory,
+                        filter,
+                        filterExpr,
+                        filterUsedColumnIndexes,
+                        limitLoFunction,
+                        limitLoPos,
+                        model,
+                        executionContext,
+                        enablePreTouch
+                );
+                if (jitFactory != null) {
+                    return jitFactory;
                 }
 
                 // Use Java filter.
-                final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
-                final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
                 return new AsyncFilteredRecordCursorFactory(
                         executionContext.getCairoEngine(),
                         configuration,
@@ -4438,6 +4382,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             return new FilteredRecordCursorFactory(factory, filter);
         } catch (Throwable e) {
+            Misc.free(limitLoFunction);
             Misc.free(filter);
             Misc.free(factory);
             throw e;
@@ -5057,6 +5002,92 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return generateSetFactory(model.getUnionModel(), unionAllFactory, executionContext);
         }
         return unionAllFactory;
+    }
+
+    @Nullable
+    private RecordCursorFactory generateJitFilter(
+            RecordCursorFactory factory,
+            Function filter,
+            ExpressionNode filterExpr,
+            IntHashSet filterUsedColumnIndexes,
+            @Nullable Function limitLoFunction,
+            int limitLoPos,
+            IQueryModel model,
+            SqlExecutionContext executionContext,
+            boolean isPreTouchEnabled
+    ) throws SqlException {
+        final boolean isJitEnabled = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
+                && (!model.isUpdate() || executionContext.isWalApplication());
+        if (!isJitEnabled || !factory.supportsPageFrameCursor() || !JitUtil.isJitSupported()) {
+            return null;
+        }
+
+        ObjList<Function> bindVarFunctions = new ObjList<>();
+        CompiledCountOnlyFilter compiledCountOnlyFilter = null;
+        CompiledFilter compiledFilter = null;
+        ObjList<Function> perWorkerFilters = null;
+        try {
+            final int jitOptions;
+            try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
+                final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
+                jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
+                jitOptions = jitIRSerializer.serialize(filterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
+            }
+
+            compiledFilter = new CompiledFilter();
+            compiledFilter.compile(jitIRMem, jitOptions);
+            compiledCountOnlyFilter = new CompiledCountOnlyFilter();
+            compiledCountOnlyFilter.compile(jitIRMem, jitOptions);
+            perWorkerFilters = compileWorkerFiltersConditionally(
+                    executionContext,
+                    filter,
+                    executionContext.getSharedQueryWorkerCount(),
+                    filterExpr,
+                    factory.getMetadata()
+            );
+
+            final AsyncJitFilteredRecordCursorFactory jitFactory = new AsyncJitFilteredRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    configuration,
+                    executionContext.getMessageBus(),
+                    factory,
+                    bindVarFunctions,
+                    compiledFilter,
+                    compiledCountOnlyFilter,
+                    filter,
+                    filterUsedColumnIndexes,
+                    reduceTaskFactory,
+                    perWorkerFilters,
+                    deepClone(expressionNodePool, filterExpr),
+                    limitLoFunction,
+                    limitLoPos,
+                    executionContext.getSharedQueryWorkerCount(),
+                    isPreTouchEnabled
+            );
+            bindVarFunctions = null;
+            compiledCountOnlyFilter = null;
+            compiledFilter = null;
+            perWorkerFilters = null;
+            LOG.debug()
+                    .$("JIT enabled for (sub)query [tableName=").$safe(model.getName())
+                    .$(", fd=").$(executionContext.getRequestFd())
+                    .I$();
+            return jitFactory;
+        } catch (SqlException | LimitOverflowException ex) {
+            // These errors deliberately fall back to the Java async filter.
+            LOG.debug()
+                    .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
+                    .$(", ex=").$safe(ex.getFlyweightMessage())
+                    .$(", fd=").$(executionContext.getRequestFd()).I$();
+            return null;
+        } finally {
+            Misc.free(compiledCountOnlyFilter);
+            Misc.free(compiledFilter);
+            Misc.freeObjList(bindVarFunctions);
+            Misc.freeObjList(perWorkerFilters);
+            jitIRSerializer.clear();
+            jitIRMem.truncate();
+        }
     }
 
     private RecordCursorFactory generateJoinAsof(
@@ -11997,6 +12028,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     IntHashSet filterUsedColumnIndexes = new IntHashSet();
                     collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
+                    final boolean isPreTouchEnabled = SqlHints.hasEnablePreTouchHint(model, model.getName());
+                    final RecordCursorFactory jitFactory = generateJitFilter(
+                            coveringFactory,
+                            filter,
+                            filterExpr,
+                            filterUsedColumnIndexes,
+                            asyncLimitLoFunction,
+                            limitLoPos,
+                            model,
+                            executionContext,
+                            isPreTouchEnabled
+                    );
+                    if (jitFactory != null) {
+                        return jitFactory;
+                    }
                     return new AsyncFilteredRecordCursorFactory(
                             executionContext.getCairoEngine(),
                             configuration,
@@ -12016,7 +12062,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             asyncLimitLoFunction,
                             limitLoPos,
                             executionContext.getSharedQueryWorkerCount(),
-                            SqlHints.hasEnablePreTouchHint(model, model.getName())
+                            isPreTouchEnabled
                     );
                 }
                 // Serial fallback owns no limit function; drop the one we created so

@@ -5276,7 +5276,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
         // Regression for the async-filter-over-covering random-access contract.
         //
         // SELECT name, price ... WHERE sym = 'A' AND price > N compiles to
-        // Async Filter -> CoveringIndex. AsyncFilteredRecordCursor services
+        // Async JIT Filter -> CoveringIndex. AsyncJitFilteredRecordCursor services
         // recordAt()/getRecordB() through its own page-frame memory pool, so the
         // factory reports recordCursorSupportsRandomAccess() == true even though
         // the covering base's row cursor does not support random access.
@@ -5318,7 +5318,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 // every matching row via recordAt() across the 6 covering frames.
                 assertQuery("SELECT name, price FROM t_cov_ra WHERE sym = 'A' AND price > 25")
                         .noLeakCheck()
-                        .withPlanContaining("Async Filter", "CoveringIndex on: sym")
+                        .withPlanContaining("Async JIT Filter", "CoveringIndex on: sym")
                         .returns("""
                                 name\tprice
                                 a3\t30.0
@@ -5597,13 +5597,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // Plan: Async Filter wrapping CoveringIndex (parallel filter enabled in tests)
+            // Plan: Async JIT Filter wrapping CoveringIndex (parallel filter enabled in tests)
             // Data correctness: only A rows with price > 15
             assertQuery("SELECT price FROM t_resid WHERE sym = 'A' AND price > 15")
                     .noLeakCheck()
                     .withPlan("""
                             SelectedRecord
-                                Async Filter workers: 1
+                                Async JIT Filter workers: 1
                                   filter: 15<price
                                     CoveringIndex on: sym with: price
                                       filter: sym='A'
@@ -17491,7 +17491,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -3")
                     .noLeakCheck()
                     .expectSize()
-                    .withPlanContaining("Async Filter")
+                    .withPlanContaining("Async JIT Filter")
                     .returns("""
                             price
                             8.0
@@ -17672,10 +17672,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             9.0
                             10.0
                             """);
-            // Positive limit over multi-key still uses the parallel path.
+            // Positive limit over multi-key still uses the parallel JIT path.
             assertQuery("SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT 3")
                     .noLeakCheck()
-                    .assertsPlanContaining("Async Filter");
+                    .assertsPlanContaining("Async JIT Filter");
         });
     }
 }

@@ -232,6 +232,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return frameSequence.getPageFrameAddressCache().getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
     }
 
+    public boolean isSingleKeyCoveredFrame() {
+        return frameSequence.getPageFrameAddressCache().isFrameSingleKeyCovered(frameIndex);
+    }
+
     public void of(PageFrameSequence<?> frameSequence, int frameIndex, boolean countOnly) {
         this.frameSequence = frameSequence;
         final boolean sameQueryExecution = frameSequenceId == frameSequence.getId();
@@ -291,7 +295,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls) {
         assert frameMemory != null;
-        if (frameMemory.getFrameFormat() == PartitionFormat.PARQUET) {
+        if (frameMemory.getFrameFormat() == PartitionFormat.PARQUET || isSingleKeyCoveredFrame()) {
             return frameMemory.populateRemainingColumns(filterColumnIndexes, filteredRows, fillWithNulls);
         }
         return false;
