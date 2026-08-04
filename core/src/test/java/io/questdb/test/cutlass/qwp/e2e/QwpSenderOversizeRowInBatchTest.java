@@ -176,7 +176,7 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                     }
                     Assert.assertNotNull(
                             "expected close() to still surface the discarded batch's error via"
-                                    + " rethrowTerminal, after committing and draining the earlier rows",
+                                    + " rethrowTerminal, after committing the earlier rows",
                             closeThrown);
                     String closeMsg = closeThrown.getMessage();
                     Assert.assertNotNull(closeMsg);
@@ -189,8 +189,19 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                             closeMsg.contains("reset()"));
                 }
 
-                // Rows flushed BEFORE the oversized batch must still be committed and
-                // drained by close(), not abandoned with it.
+                // Rows flushed BEFORE the oversized batch must still be COMMITTED by
+                // close(), not abandoned with it. Letting the pre-flight rejection escape
+                // skips sendCommitMessage/sealAndSwapBuffer and these rows never reach a
+                // transaction at all -- mutation-verified: this assertion then fails with
+                // "txn timed out [expectedTxn=1, writerTxn=0]".
+                //
+                // Scope: this pins the COMMIT, not the close-time DRAIN. Over localhost the
+                // rows are normally acked before close() is even entered, so drainOnClose
+                // returns at its "ackedFsn >= target" early-out and skipping it leaves this
+                // test green (also mutation-verified). The drain is pinned deterministically
+                // by CloseDrainTest.testCloseDrainsEarlierRowsBeforeSurfacingRetainedBatchError
+                // in java-questdb-client, which withholds acks so the drain provably has an
+                // unacknowledged target and asserts its close-drain witness fired.
                 assertRowCountEventually(TABLE_NAME, rowsFlushedBeforeTheOversizedBatch);
             } finally {
                 server.stop();
