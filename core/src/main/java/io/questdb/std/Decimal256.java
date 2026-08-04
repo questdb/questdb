@@ -1961,13 +1961,22 @@ public class Decimal256 implements Sinkable, Decimal {
         final long m1 = powers[2];
         final long m0 = powers[3];
 
+        // 10^n fits one limb up to n=19 and two up to n=38, which covers every realistic scale
+        // difference. n is fixed for the query, so these branches are perfectly predicted.
+        if (m1 == 0) {
+            return compareScaledUp64(aHH, aHL, aLH, aLL, m0, bHH, bHL, bLH, bLL);
+        }
+        if (m2 == 0) {
+            return compareScaledUp128(aHH, aHL, aLH, aLL, m1, m0, bHH, bHL, bLH, bLL);
+        }
+
         // Column-wise multiplication keeping the low 256 bits. c0/c1 accumulate the partial products
         // of one column, then c0 drops out as a result limb and the rest carries into the next column.
         final long rLL = aLL * m0;
-        long c0 = unsignedMultiplyHigh(aLL, m0);
+        long c0 = Math.unsignedMultiplyHigh(aLL, m0);
 
         long p = aLL * m1;
-        long ph = unsignedMultiplyHigh(aLL, m1);
+        long ph = Math.unsignedMultiplyHigh(aLL, m1);
         long s = c0 + p;
         if (hasCarry(c0, s)) {
             ph++;
@@ -1976,7 +1985,7 @@ public class Decimal256 implements Sinkable, Decimal {
         long c1 = ph;
 
         p = aLH * m0;
-        ph = unsignedMultiplyHigh(aLH, m0);
+        ph = Math.unsignedMultiplyHigh(aLH, m0);
         s = c0 + p;
         if (hasCarry(c0, s)) {
             ph++;
@@ -1991,7 +2000,7 @@ public class Decimal256 implements Sinkable, Decimal {
 
         // From here on the carries out of c1 land above limb 3 and drop out of range.
         p = aLL * m2;
-        ph = unsignedMultiplyHigh(aLL, m2);
+        ph = Math.unsignedMultiplyHigh(aLL, m2);
         s = c0 + p;
         if (hasCarry(c0, s)) {
             ph++;
@@ -2000,7 +2009,7 @@ public class Decimal256 implements Sinkable, Decimal {
         c1 += ph;
 
         p = aLH * m1;
-        ph = unsignedMultiplyHigh(aLH, m1);
+        ph = Math.unsignedMultiplyHigh(aLH, m1);
         s = c0 + p;
         if (hasCarry(c0, s)) {
             ph++;
@@ -2009,7 +2018,7 @@ public class Decimal256 implements Sinkable, Decimal {
         c1 += ph;
 
         p = aHL * m0;
-        ph = unsignedMultiplyHigh(aHL, m0);
+        ph = Math.unsignedMultiplyHigh(aHL, m0);
         s = c0 + p;
         if (hasCarry(c0, s)) {
             ph++;
@@ -2020,6 +2029,79 @@ public class Decimal256 implements Sinkable, Decimal {
         final long rHL = c0;
         // The top column contributes its low halves only, everything above it is out of range.
         final long rHH = c1 + aLL * m3 + aLH * m2 + aHL * m1 + aHH * m0;
+
+        return compare(rHH, rHL, rLH, rLL, bHH, bHL, bLH, bLL);
+    }
+
+    /**
+     * {@link #compareScaledUp} specialised for a two-limb {@code 10^n}, i.e. {@code n <= 38}.
+     */
+    private static int compareScaledUp128(
+            long aHH, long aHL, long aLH, long aLL, long m1, long m0,
+            long bHH, long bHL, long bLH, long bLL
+    ) {
+        final long rLL = aLL * m0;
+        long c0 = Math.unsignedMultiplyHigh(aLL, m0);
+
+        long p = aLL * m1;
+        long ph = Math.unsignedMultiplyHigh(aLL, m1);
+        long s = c0 + p;
+        ph += hasCarry(c0, s) ? 1L : 0L;
+        c0 = s;
+        long c1 = ph;
+
+        p = aLH * m0;
+        ph = Math.unsignedMultiplyHigh(aLH, m0);
+        s = c0 + p;
+        ph += hasCarry(c0, s) ? 1L : 0L;
+        c0 = s;
+        s = c1 + ph;
+        final long c2 = hasCarry(c1, s) ? 1L : 0L;
+
+        final long rLH = c0;
+        c0 = s;
+        c1 = c2;
+
+        // From here on the carries out of c1 land above limb 3 and drop out of range.
+        p = aLH * m1;
+        ph = Math.unsignedMultiplyHigh(aLH, m1);
+        s = c0 + p;
+        ph += hasCarry(c0, s) ? 1L : 0L;
+        c0 = s;
+        c1 += ph;
+
+        p = aHL * m0;
+        ph = Math.unsignedMultiplyHigh(aHL, m0);
+        s = c0 + p;
+        ph += hasCarry(c0, s) ? 1L : 0L;
+        c0 = s;
+        c1 += ph;
+
+        final long rHL = c0;
+        final long rHH = c1 + aHL * m1 + aHH * m0;
+
+        return compare(rHH, rHL, rLH, rLL, bHH, bHL, bLH, bLL);
+    }
+
+    /**
+     * {@link #compareScaledUp} specialised for a single-limb {@code 10^n}, i.e. {@code n <= 19}.
+     */
+    private static int compareScaledUp64(
+            long aHH, long aHL, long aLH, long aLL, long m0,
+            long bHH, long bHL, long bLH, long bLL
+    ) {
+        final long rLL = aLL * m0;
+        long c = Math.unsignedMultiplyHigh(aLL, m0);
+
+        long p = aLH * m0;
+        final long rLH = p + c;
+        c = Math.unsignedMultiplyHigh(aLH, m0) + (hasCarry(p, rLH) ? 1L : 0L);
+
+        p = aHL * m0;
+        final long rHL = p + c;
+        c = Math.unsignedMultiplyHigh(aHL, m0) + (hasCarry(p, rHL) ? 1L : 0L);
+
+        final long rHH = aHH * m0 + c;
 
         return compare(rHH, rHL, rLH, rLL, bHH, bHL, bLH, bLL);
     }
@@ -2109,13 +2191,6 @@ public class Decimal256 implements Sinkable, Decimal {
         carry |= hasCarry(t, r) ? 1L : 0L;
         result.hl = r;
         result.hh = result.hh + carry + bHH;
-    }
-
-    /**
-     * Returns the high 64 bits of the 128-bit product of two unsigned 64-bit values.
-     */
-    private static long unsignedMultiplyHigh(long x, long y) {
-        return Math.multiplyHigh(x, y) + ((x >> 63) & y) + ((y >> 63) & x);
     }
 
     /**

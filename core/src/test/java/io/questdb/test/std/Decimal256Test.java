@@ -39,6 +39,7 @@ import org.junit.Test;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
+import java.util.Random;
 
 /**
  * Tests for the consolidated Decimal256 class
@@ -305,6 +306,47 @@ public class Decimal256Test {
         nullValue.ofNull();
         Assert.assertEquals(-1, nullValue.compareTo(a));
         Assert.assertEquals(1, a.compareTo(nullValue));
+    }
+
+    @Test
+    public void testCompareToScaleAlignmentExactTies() {
+        // Same shape as the near-ties walk, but over many random magnitudes per scale difference
+        // rather than one maximal value, so the carry chain of every scale-up width is exercised.
+        // compareTo dispatches on how many limbs 10^scaleDiff occupies: one up to 19, two up to 38,
+        // four beyond, and a carry dropped in any of the three flips one of these comparisons.
+        final BigInteger max = Decimal256.MAX_VALUE.toBigDecimal().toBigInteger();
+        final Random rnd = new Random(20260804L);
+        for (int scaleDiff = 1; scaleDiff <= Decimal256.MAX_SCALE; scaleDiff++) {
+            final BigInteger pow = BigInteger.TEN.pow(scaleDiff);
+            final BigInteger limit = max.divide(pow);
+            if (limit.signum() == 0) {
+                continue;
+            }
+            for (int i = 0; i < 60; i++) {
+                BigInteger unscaled = new BigInteger(limit.bitLength(), rnd);
+                if (unscaled.signum() == 0 || unscaled.compareTo(limit) > 0) {
+                    continue;
+                }
+                final BigInteger aligned = unscaled.multiply(pow);
+                for (int delta = -1; delta <= 1; delta++) {
+                    final BigInteger shifted = aligned.add(BigInteger.valueOf(delta));
+                    if (shifted.signum() < 0 || shifted.compareTo(max) > 0) {
+                        continue;
+                    }
+                    for (int sign = -1; sign <= 1; sign += 2) {
+                        final BigInteger s = BigInteger.valueOf(sign);
+                        final BigDecimal a = new BigDecimal(unscaled.multiply(s), 0);
+                        final BigDecimal b = new BigDecimal(shifted.multiply(s), scaleDiff);
+                        final Decimal256 da = Decimal256.fromBigDecimal(a);
+                        final Decimal256 db = Decimal256.fromBigDecimal(b);
+                        final String msg = "scaleDiff=" + scaleDiff + " delta=" + delta + " sign=" + sign
+                                + " unscaled=" + unscaled;
+                        Assert.assertEquals(msg, a.compareTo(b), da.compareTo(db));
+                        Assert.assertEquals(msg, b.compareTo(a), db.compareTo(da));
+                    }
+                }
+            }
+        }
     }
 
     @Test

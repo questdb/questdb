@@ -1327,9 +1327,12 @@ public class Decimal128 implements Sinkable, Decimal {
      */
     private static int compareScaledUp(long aHigh, long aLow, int n, long bHigh, long bLow) {
         final long mLow = TEN_POWERS_TABLE_LOW[n];
-        final long mHigh = n >= 20 ? TEN_POWERS_TABLE_HIGH[n - 20] : 0L;
         final long low = aLow * mLow;
-        final long high = unsignedMultiplyHigh(aLow, mLow) + aHigh * mLow + aLow * mHigh;
+        // 10^n fits one limb up to n=19, so the high partial product exists only past that
+        long high = Math.unsignedMultiplyHigh(aLow, mLow) + aHigh * mLow;
+        if (n >= 20) {
+            high += aLow * TEN_POWERS_TABLE_HIGH[n - 20];
+        }
         return compare(high, low, bHigh, bLow);
     }
 
@@ -1397,13 +1400,6 @@ public class Decimal128 implements Sinkable, Decimal {
      */
     private static boolean unsignedLongCompare(long one, long two) {
         return (one + Long.MIN_VALUE) > (two + Long.MIN_VALUE);
-    }
-
-    /**
-     * Returns the high 64 bits of the 128-bit product of two unsigned 64-bit values.
-     */
-    private static long unsignedMultiplyHigh(long x, long y) {
-        return Math.multiplyHigh(x, y) + ((x >> 63) & y) + ((y >> 63) & x);
     }
 
     /**
