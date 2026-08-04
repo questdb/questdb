@@ -1263,7 +1263,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .put(", partition=").put(utf8Sink).put(']');
             }
             // A delta-active partition's frozen base cannot be rewritten in place, and its
-            // delta tiles carry the old physical type.
+            // delta runs carry the old physical type.
             if (txWriter.isPartitionDeltaActive(i)) {
                 formatPartitionForTimestamp(txWriter.getPartitionTimestampByIndex(i), -1);
                 throw CairoException.nonCritical().put("cannot change column type, partition is delta-active [table=")
@@ -2284,7 +2284,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getLagRowCount() == 0;
         checkDistressed();
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
-            // The v1 delta tile model is insert-only; dedup over a base + delta pair has no
+            // The v1 commit-run delta model is insert-only; dedup over a base + delta pair has no
             // survivor-selection path yet, so a table with any delta-active partition keeps
             // deduplication off.
             if (txWriter.isPartitionDeltaActive(i)) {
@@ -3313,7 +3313,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // The stable delta namespace is independent of partitionNameTxn. Until
         // partition generations and reader-safe reclamation land, removing and
-        // recreating this logical timestamp could otherwise reuse stale tiles.
+        // recreating this logical timestamp could otherwise reuse stale runs.
         int checkIndex = partitionIndex;
         while (checkIndex < txWriter.getPartitionCount() &&
                 txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(checkIndex)) == logicalPartitionTimestampToDelete) {
@@ -3947,7 +3947,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * delta-active partition, judged by each transaction's timestamp range (the
      * replace range for a replace commit) against the attached partitions whose
      * delta-write bit is set. Conservative: a false positive only reduces
-     * batching; a false negative would mix transactions in one delta tile and
+     * batching; a false negative would mix transactions in one commit run and
      * break the MVCC window, so the test errs wide.
      */
     public boolean walTxnRangeOverlapsDeltaActivePartition(long seqTxnLo, long seqTxnHi) {
@@ -5113,7 +5113,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return 1;
         }
         // A transaction that may touch a delta-active partition must apply alone: one delta
-        // tile carries exactly one transaction's rows with one exact seqTxn (the MVCC window
+        // commit run carries exactly one transaction's rows with one exact seqTxn (the MVCC window
         // filter depends on it). The range test is conservative -- a false positive only
         // costs batching.
         if (walTxnRangeOverlapsDeltaActivePartition(seqTxn, seqTxn)) {
@@ -9078,8 +9078,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Captures one WAL transaction's ts-sorted O3 slice targeting a delta-active
      * partition in the table's stable delta namespace. The delta seal completes before
      * this transaction's {@code _txn} commit, so the applied seqTxn never runs
-     * ahead of the last durable tile; {@code has_delta} arms in that same commit,
-     * atomically with the first tile becoming visible. Without a writer (an OSS
+     * ahead of the last durable run; {@code has_delta} arms in that same commit,
+     * atomically with the first run becoming visible. Without a writer (an OSS
      * build; only an enterprise delta-switch event can mark a partition
      * delta-active) the rows keep the pre-delta cold posture: dropped exactly
      * like writes to a read-only partition.
@@ -9124,7 +9124,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!txWriter.getPartitionHasDeltaByRawIndex(partitionIndexRaw)) {
             txWriter.setPartitionHasDeltaByRawIndex(partitionIndexRaw, true);
             // Readers with the partition already open must re-resolve it: a bare
-            // base read past this commit would miss the tile just sealed.
+            // base read past this commit would miss the run just sealed.
             txWriter.bumpPartitionTableVersion();
         }
     }
@@ -10651,7 +10651,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
             if (timestampRangeOverlapsDeltaActivePartition(replaceRangeTsLo, replaceRangeTsHi - 1)
                     || timestampRangeOverlapsDeltaActivePartition(txnMinTs, txnMaxTs)) {
-                // The insert-only delta tile model cannot express a range replacement over a
+                // The insert-only commit-run delta model cannot express a range replacement over a
                 // frozen base; suspend rather than half-apply or silently drop the range.
                 throw CairoException.nonCritical()
                         .put("cannot apply replace-range commit over a delta-active partition [table=")

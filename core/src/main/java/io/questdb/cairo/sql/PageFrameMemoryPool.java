@@ -1239,7 +1239,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     // A custom (cold-delta) frame materializes into native buffers, so it presents as NATIVE to
-    // records and cursors even though its storage format is PARQUET (or NATIVE with delta tiles).
+    // records and cursors even though its storage format is PARQUET (or NATIVE with delta runs).
     private byte getDecodedFrameFormat(int frameIndex, byte storageFormat) {
         return addressCache.getPartitionFrameState(frameIndex) != 0 ? PartitionFormat.NATIVE : storageFormat;
     }
