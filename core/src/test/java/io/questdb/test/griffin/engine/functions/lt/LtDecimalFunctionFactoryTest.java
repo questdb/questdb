@@ -974,12 +974,14 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLtScaleAlignmentMaxPrecisionOrderBy() throws Exception {
-        execute("create table lt_order (a decimal(76,0), b decimal(76,1))");
-        execute("insert into lt_order values " +
-                "(1m, 1.0m)," +
-                "(" + nines(76) + "m, " + nines(75) + ".9m)," +
-                "(-" + nines(76) + "m, -" + nines(75) + ".9m)");
         assertQuery("select a from lt_order order by a")
+                .ddl(
+                        "create table lt_order (a decimal(76,0), b decimal(76,1))",
+                        "insert into lt_order values " +
+                                "(1m, 1.0m)," +
+                                "(" + nines(76) + "m, " + nines(75) + ".9m)," +
+                                "(-" + nines(76) + "m, -" + nines(75) + ".9m)"
+                )
                 .expectSize()
                 .returns("a\n" +
                         "-" + nines(76) + "\n" +
@@ -992,12 +994,14 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLtScaleAlignmentNulls() throws Exception {
-        execute("create table lt_nulls (id int, a decimal(18,0), b decimal(18,1))");
-        execute("insert into lt_nulls values " +
-                "(1, null, " + nines(17) + ".9m)," +
-                "(2, " + nines(18) + "m, null)," +
-                "(3, null, null)");
         assertQuery("select a < b lt, a <= b le, a > b gt, a >= b ge from lt_nulls order by id")
+                .ddl(
+                        "create table lt_nulls (id int, a decimal(18,0), b decimal(18,1))",
+                        "insert into lt_nulls values " +
+                                "(1, null, " + nines(17) + ".9m)," +
+                                "(2, " + nines(18) + "m, null)," +
+                                "(3, null, null)"
+                )
                 .expectSize()
                 .returns("lt\tle\tgt\tge\n" +
                         "false\tfalse\tfalse\tfalse\n" +
@@ -1070,10 +1074,12 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
             }
         }
 
-        execute("CREATE TABLE " + table + " (id INT, a DECIMAL(" + leftPrecision + "," + scale + ")"
-                + ", b DECIMAL(" + rightPrecision + "," + scale + "))");
-        execute(insert.toString());
         assertQuery("SELECT a < b lt, a <= b le, a > b gt, a >= b ge FROM " + table + " ORDER BY id")
+                .ddl(
+                        "CREATE TABLE " + table + " (id INT, a DECIMAL(" + leftPrecision + "," + scale + ")"
+                                + ", b DECIMAL(" + rightPrecision + "," + scale + "))",
+                        insert.toString()
+                )
                 .expectSize()
                 .returns(expected);
     }
@@ -1094,14 +1100,6 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
         // leftPrecision + 1 digits, which no longer fits the operand width
         final String maxA = nines(leftPrecision);
         final String maxB = nines(rightPrecision - 1) + ".9";
-        execute("create table " + table + " (id int, a decimal(" + leftPrecision + ",0), b decimal(" + rightPrecision + ",1))");
-        execute("insert into " + table + " values " +
-                "(1, " + maxA + "m, " + maxB + "m)," +
-                "(2, -" + maxA + "m, -" + maxB + "m)," +
-                "(3, " + maxA + "m, -" + maxB + "m)," +
-                "(4, -" + maxA + "m, " + maxB + "m)," +
-                "(5, 1m, 1.0m)");
-
         final BigDecimal[][] rows = {
                 {new BigDecimal(maxA), new BigDecimal(maxB)},
                 {new BigDecimal(maxA).negate(), new BigDecimal(maxB).negate()},
@@ -1118,6 +1116,15 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
                     .append(cmp >= 0).append('\n');
         }
         assertQuery("select a < b lt, a <= b le, a > b gt, a >= b ge from " + table + " order by id")
+                .ddl(
+                        "create table " + table + " (id int, a decimal(" + leftPrecision + ",0), b decimal(" + rightPrecision + ",1))",
+                        "insert into " + table + " values " +
+                                "(1, " + maxA + "m, " + maxB + "m)," +
+                                "(2, -" + maxA + "m, -" + maxB + "m)," +
+                                "(3, " + maxA + "m, -" + maxB + "m)," +
+                                "(4, -" + maxA + "m, " + maxB + "m)," +
+                                "(5, 1m, 1.0m)"
+                )
                 .expectSize()
                 .returns(expected);
     }

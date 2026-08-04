@@ -969,11 +969,13 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testEqScaleAlignmentAcrossJoinedTables() throws Exception {
         // decimals can only key a join when both types match exactly, so mixed scales reach `=` as a
         // cross join predicate instead
-        execute("create table eq_join_l (id int, a decimal(38,0))");
-        execute("insert into eq_join_l values (1, " + nines(38) + "m), (2, 1m)");
-        execute("create table eq_join_r (id int, b decimal(38,1))");
-        execute("insert into eq_join_r values (1, " + nines(37) + ".9m), (2, 1.0m)");
         assertQuery("select l.id lid, r.id rid, l.a = r.b eq from eq_join_l l cross join eq_join_r r order by lid, rid")
+                .ddl(
+                        "create table eq_join_l (id int, a decimal(38,0))",
+                        "insert into eq_join_l values (1, " + nines(38) + "m), (2, 1m)",
+                        "create table eq_join_r (id int, b decimal(38,1))",
+                        "insert into eq_join_r values (1, " + nines(37) + ".9m), (2, 1.0m)"
+                )
                 .expectSize()
                 .returns("lid\trid\teq\n" +
                         "1\t1\tfalse\n" +
@@ -995,12 +997,14 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testEqScaleAlignmentMaxPrecisionRescaleOverflow() throws Exception {
         // scaling a 76-digit operand up by one leaves the Decimal256 range, so the ordering
         // comes from compareTo's guard rather than from the aligned values
-        execute("create table eq_max (id int, a decimal(76,0), b decimal(76,1))");
-        execute("insert into eq_max values " +
-                "(1, " + nines(76) + "m, " + nines(75) + ".9m)," +
-                "(2, -" + nines(76) + "m, -" + nines(75) + ".9m)," +
-                "(3, 1m, 1.0m)");
         assertQuery("select a = b eq, a != b ne from eq_max order by id")
+                .ddl(
+                        "create table eq_max (id int, a decimal(76,0), b decimal(76,1))",
+                        "insert into eq_max values " +
+                                "(1, " + nines(76) + "m, " + nines(75) + ".9m)," +
+                                "(2, -" + nines(76) + "m, -" + nines(75) + ".9m)," +
+                                "(3, 1m, 1.0m)"
+                )
                 .expectSize()
                 .returns("eq\tne\n" +
                         "false\ttrue\n" +
@@ -1010,12 +1014,14 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testEqScaleAlignmentNulls() throws Exception {
-        execute("create table eq_nulls (id int, a decimal(18,0), b decimal(18,1))");
-        execute("insert into eq_nulls values " +
-                "(1, null, " + nines(17) + ".9m)," +
-                "(2, " + nines(18) + "m, null)," +
-                "(3, null, null)");
         assertQuery("select a = b eq, a != b ne from eq_nulls order by id")
+                .ddl(
+                        "create table eq_nulls (id int, a decimal(18,0), b decimal(18,1))",
+                        "insert into eq_nulls values " +
+                                "(1, null, " + nines(17) + ".9m)," +
+                                "(2, " + nines(18) + "m, null)," +
+                                "(3, null, null)"
+                )
                 .expectSize()
                 .returns("eq\tne\n" +
                         "false\ttrue\n" +
@@ -1045,14 +1051,6 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
         // leftPrecision + 1 digits, which no longer fits the operand width
         final String maxA = nines(leftPrecision);
         final String maxB = nines(rightPrecision - 1) + ".9";
-        execute("create table " + table + " (id int, a decimal(" + leftPrecision + ",0), b decimal(" + rightPrecision + ",1))");
-        execute("insert into " + table + " values " +
-                "(1, " + maxA + "m, " + maxB + "m)," +
-                "(2, -" + maxA + "m, -" + maxB + "m)," +
-                "(3, " + maxA + "m, -" + maxB + "m)," +
-                "(4, -" + maxA + "m, " + maxB + "m)," +
-                "(5, 1m, 1.0m)");
-
         final BigDecimal[][] rows = {
                 {new BigDecimal(maxA), new BigDecimal(maxB)},
                 {new BigDecimal(maxA).negate(), new BigDecimal(maxB).negate()},
@@ -1067,6 +1065,15 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
                     .append(eq).append('\t').append(!eq).append('\n');
         }
         assertQuery("select a = b eq, a != b ne, b = a qe, b != a qn from " + table + " order by id")
+                .ddl(
+                        "create table " + table + " (id int, a decimal(" + leftPrecision + ",0), b decimal(" + rightPrecision + ",1))",
+                        "insert into " + table + " values " +
+                                "(1, " + maxA + "m, " + maxB + "m)," +
+                                "(2, -" + maxA + "m, -" + maxB + "m)," +
+                                "(3, " + maxA + "m, -" + maxB + "m)," +
+                                "(4, -" + maxA + "m, " + maxB + "m)," +
+                                "(5, 1m, 1.0m)"
+                )
                 .expectSize()
                 .returns(expected);
     }
