@@ -46,9 +46,7 @@ import io.questdb.test.cutlass.http.HttpQueryTestBuilder;
 import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.cutlass.http.SendAndReceiveRequestBuilder;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 public class CsvSchemaDecimalTypeTest extends AbstractTest {
@@ -59,29 +57,13 @@ public class CsvSchemaDecimalTypeTest extends AbstractTest {
     private DirectUtf16Sink utf16Sink;
     private DirectUtf8Sink utf8Sink;
 
-    @Before
-    public void setUpParser() {
-        final TextConfiguration configuration = new DefaultTextConfiguration();
-        utf16Sink = new DirectUtf16Sink(1024);
-        utf8Sink = new DirectUtf8Sink(1024);
-        lexer = new JsonLexer(1024, 4096);
-        typeManager = new TypeManager(configuration, utf16Sink, utf8Sink, new Decimal256());
-        metadataParser = new TextMetadataParser(configuration, typeManager);
-    }
-
-    @After
-    public void tearDownParser() {
-        metadataParser.close();
-        lexer.close();
-        utf8Sink.close();
-        utf16Sink.close();
-    }
-
     @Test
-    public void testBareDecimalIsRejected() {
-        assertInvalidType("DECIMAL");
-        assertInvalidType("decimal");
-        assertInvalidType("Decimal");
+    public void testBareDecimalIsRejected() throws Exception {
+        assertWithParser(() -> {
+            assertInvalidType("DECIMAL");
+            assertInvalidType("decimal");
+            assertInvalidType("Decimal");
+        });
     }
 
     @Test
@@ -168,22 +150,26 @@ public class CsvSchemaDecimalTypeTest extends AbstractTest {
     }
 
     @Test
-    public void testScaleAbovePrecisionIsRejected() {
-        assertInvalidType("DECIMAL(2,76)");
-        assertInvalidType("decimal(2,76)");
-        assertInvalidType("DECIMAL(1,2)");
-        assertInvalidType("DECIMAL(18,19)");
-        assertInvalidType("DECIMAL(75,76)");
+    public void testScaleAbovePrecisionIsRejected() throws Exception {
+        assertWithParser(() -> {
+            assertInvalidType("DECIMAL(2,76)");
+            assertInvalidType("decimal(2,76)");
+            assertInvalidType("DECIMAL(1,2)");
+            assertInvalidType("DECIMAL(18,19)");
+            assertInvalidType("DECIMAL(75,76)");
+        });
     }
 
     @Test
-    public void testValidDecimalIsAccepted() throws JsonException {
-        assertColumnType("DECIMAL(18,3)", ColumnType.DECIMAL64, 18, 3);
-        assertColumnType("DECIMAL(76,76)", ColumnType.DECIMAL256, 76, 76);
-        assertColumnType("DECIMAL(1,1)", ColumnType.DECIMAL8, 1, 1);
-        assertColumnType("DECIMAL(1,0)", ColumnType.DECIMAL8, 1, 0);
-        assertColumnType("DECIMAL(76,0)", ColumnType.DECIMAL256, 76, 0);
-        assertColumnType("decimal(9,2)", ColumnType.DECIMAL32, 9, 2);
+    public void testValidDecimalIsAccepted() throws Exception {
+        assertWithParser(() -> {
+            assertColumnType("DECIMAL(18,3)", ColumnType.DECIMAL64, 18, 3);
+            assertColumnType("DECIMAL(76,76)", ColumnType.DECIMAL256, 76, 76);
+            assertColumnType("DECIMAL(1,1)", ColumnType.DECIMAL8, 1, 1);
+            assertColumnType("DECIMAL(1,0)", ColumnType.DECIMAL8, 1, 0);
+            assertColumnType("DECIMAL(76,0)", ColumnType.DECIMAL256, 76, 0);
+            assertColumnType("decimal(9,2)", ColumnType.DECIMAL32, 9, 2);
+        });
     }
 
     private static String importRequest(String tableName, String decimalType, String... values) {
@@ -242,6 +228,17 @@ public class CsvSchemaDecimalTypeTest extends AbstractTest {
         }
     }
 
+    private void assertWithParser(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            setUpParser();
+            try {
+                code.run();
+            } finally {
+                tearDownParser();
+            }
+        });
+    }
+
     private void parse(String schema) throws JsonException {
         lexer.clear();
         metadataParser.clear();
@@ -252,5 +249,21 @@ public class CsvSchemaDecimalTypeTest extends AbstractTest {
         } finally {
             Unsafe.free(buf, schema.length(), MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private void setUpParser() {
+        final TextConfiguration configuration = new DefaultTextConfiguration();
+        utf16Sink = new DirectUtf16Sink(1024);
+        utf8Sink = new DirectUtf8Sink(1024);
+        lexer = new JsonLexer(1024, 4096);
+        typeManager = new TypeManager(configuration, utf16Sink, utf8Sink, new Decimal256());
+        metadataParser = new TextMetadataParser(configuration, typeManager);
+    }
+
+    private void tearDownParser() {
+        metadataParser.close();
+        lexer.close();
+        utf8Sink.close();
+        utf16Sink.close();
     }
 }
