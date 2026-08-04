@@ -2779,19 +2779,29 @@ public class SqlOptimiser implements Mutable {
             final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
             final CharSequence innerAlias = createColumnAlias(columnAlias, groupByModel);
             final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName);
+            // grouping by a lateral scalar count groups one row into one group, so
+            // the key column is that same scalar count and must keep the marking,
+            // exactly as createSelectColumn carries it onto its output column
+            final QueryColumn translatingColumn = translatingModel.getAliasToColumnMap().get(translatedColumnName);
+            if (translatingColumn != null && translatingColumn.isLateralScalarCount()) {
+                translatedColumn.setLateralScalarCount(true);
+            }
             innerVirtualModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
             groupByModel.addBottomUpColumn(translatedColumn);
             return translatedColumn;
         } else {
             final CharSequence alias = createColumnAlias(columnAlias, translatingModel);
+            final QueryColumn translatingColumn = queryColumnPool.next().of(alias, columnAst);
             addColumnToTranslatingModel(
-                    queryColumnPool.next().of(alias, columnAst),
+                    translatingColumn,
                     translatingModel,
                     innerVirtualModel,
                     baseModel
             );
 
             final QueryColumn translatedColumn = nextColumn(alias);
+            // addColumnToTranslatingModel resolves the marking against the base model
+            translatedColumn.setLateralScalarCount(translatingColumn.isLateralScalarCount());
             groupByModel.addBottomUpColumn(translatedColumn);
             return translatedColumn;
         }

@@ -1729,7 +1729,14 @@ class LateralJoinRewriter implements Mutable {
 
     private boolean hasScalarCountBody(IQueryModel model) throws SqlException {
         IQueryModel current = model;
-        while (current != null && current.getUnionModel() == null) {
+        while (current != null) {
+            // The compensation can only ever produce one row, so a set operation is
+            // admissible only while every other branch is empty for the zero row.
+            // Then SQL's answer for an unmatched outer row is exactly this branch's
+            // aggregate row, which is what the coalesce reproduces.
+            if (current.getUnionModel() != null && !unionBranchesRejectZeroRow(current)) {
+                return false;
+            }
             ExpressionNode limitHi = current.getLimitHi();
             ExpressionNode limitLo = current.getLimitLo();
             // report a provable negative with the specific message, ahead of the
@@ -1780,7 +1787,14 @@ class LateralJoinRewriter implements Mutable {
                 }
                 return false;
             }
-            if (current.getJoinModels().size() > 1) {
+            // A join above the aggregate keeps the count row exactly once only when
+            // every other operand yields exactly one row. An empty operand removes
+            // the row, and an N-row operand repeats it N times, while the coalesce
+            // above can only ever produce a single compensated row - the general
+            // path has no way to reproduce either. The per-join-model path handles
+            // arbitrary cardinality and is reached when the count body is not the
+            // first operand; this arm only has to be sound, not complete.
+            if (current.getJoinModels().size() > 1 && !joinKeepsSingleRow(current)) {
                 return false;
             }
             // A filter above the aggregate must accept every count, not merely the
@@ -1958,6 +1972,105 @@ class LateralJoinRewriter implements Mutable {
     // count row. Grouping by a value that row functionally determines yields
     // exactly one group, so the row survives; grouping by anything this method
     // cannot tie back to the count stays unprovable.
+    // Every branch after this one must yield nothing when the count is zero. Only
+    // UNION ALL qualifies: the deduplicating set operations decide row identity
+    // across branches, which this analysis says nothing about.
+    private boolean unionBranchesRejectZeroRow(IQueryModel model) {
+        IQueryModel branch = model.getUnionModel();
+        int guard = 0;
+        while (branch != null && guard++ < 16) {
+            if (branch.getSetOperationType() != IQueryModel.SET_OPERATION_UNION_ALL) {
+                return false;
+            }
+            if (!branchRejectsZeroCountRow(branch)) {
+                return false;
+            }
+            branch = branch.getUnionModel();
+        }
+        return true;
+    }
+
+    // True when some filter in the branch provably excludes a count of zero, so
+    // the branch contributes no row for an unmatched outer row.
+    private boolean branchRejectsZeroCountRow(IQueryModel branch) {
+        IQueryModel m = branch;
+        int guard = 0;
+        while (m != null && guard++ < 16) {
+            final ExpressionNode where = m.getWhereClause();
+            if (where != null
+                    && truthIntervalOf(where, m, 0, false)
+                    && (truthLo > 0 || truthHi < 0)) {
+                return true;
+            }
+            m = m.getNestedModel();
+        }
+        return false;
+    }
+
+    private boolean joinKeepsSingleRow(IQueryModel layer) {
+        final ObjList<IQueryModel> joinModels = layer.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            final IQueryModel jm = joinModels.getQuick(i);
+            final int joinType = jm.getJoinType();
+            if (joinType != IQueryModel.JOIN_CROSS && joinType != IQueryModel.JOIN_INNER) {
+                return false;
+            }
+            if (jm.getJoinCriteria() != null) {
+                // a predicate can reject the pairing, so the row is no longer certain
+                return false;
+            }
+            if (!isProvablyOneRowRelation(jm)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // True only for a constant projection with no source, which yields exactly one
+    // row by construction. Anything reading a table could be empty or hold many
+    // rows, and neither is knowable here.
+    private boolean isProvablyOneRowRelation(IQueryModel jm) {
+        IQueryModel m = jm;
+        int depth = 0;
+        while (m != null && depth++ < 16) {
+            // a projection cannot change the row count, but any of these can
+            if (m.getWhereClause() != null
+                    || m.getPostJoinWhereClause() != null
+                    || m.getLimitLo() != null
+                    || m.getLimitHi() != null
+                    || m.getJoinModels().size() > 1
+                    || m.getGroupBy().size() > 0
+                    || m.getSampleBy() != null
+                    || m.getLatestBy().size() > 0
+                    || m.getUnionModel() != null
+                    || m.isDistinct()) {
+                return false;
+            }
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null) {
+                return isSingleRowGenerator(tableNameExpr);
+            }
+            final IQueryModel nested = m.getNestedModel();
+            if (nested == null) {
+                return false;
+            }
+            m = nested;
+        }
+        return false;
+    }
+
+    // A constant SELECT with no FROM is parsed as long_sequence(1), the only
+    // source whose cardinality is known here. A table could be empty or hold any
+    // number of rows, and long_sequence(n) for any other n is not one row.
+    private static boolean isSingleRowGenerator(ExpressionNode tableNameExpr) {
+        return tableNameExpr.type == ExpressionNode.FUNCTION
+                && Chars.equalsIgnoreCase(tableNameExpr.token, "long_sequence")
+                && tableNameExpr.paramCount == 1
+                && tableNameExpr.rhs != null
+                && tableNameExpr.rhs.type == ExpressionNode.CONSTANT
+                && constLimitValue(tableNameExpr.rhs) == 1;
+    }
+
     private int classifyGroupByOnZeroCountRow(IQueryModel layer) {
         final ObjList<ExpressionNode> groupBy = layer.getGroupBy();
         for (int i = 0, n = groupBy.size(); i < n; i++) {
@@ -2521,23 +2634,42 @@ class LateralJoinRewriter implements Mutable {
     }
 
     private boolean markScalarCountColumns(IQueryModel model) {
-        IQueryModel current = model;
-        while (current != null) {
-            if (hasAggregateFunctions(current)) {
-                boolean hasMarkedColumn = false;
-                ObjList<QueryColumn> columns = current.getBottomUpColumns();
-                for (int i = 0, n = columns.size(); i < n; i++) {
-                    QueryColumn column = columns.getQuick(i);
-                    if (isCountAggregate(column.getAst())) {
-                        column.setLateralScalarCount(true);
-                        hasMarkedColumn = true;
-                    }
-                }
-                return hasMarkedColumn;
-            }
-            current = current.getNestedModel();
+        if (model == null) {
+            return false;
         }
-        return false;
+        if (hasAggregateFunctions(model)) {
+            boolean hasMarkedColumn = false;
+            ObjList<QueryColumn> columns = model.getBottomUpColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                QueryColumn column = columns.getQuick(i);
+                if (isCountAggregate(column.getAst())) {
+                    column.setLateralScalarCount(true);
+                    hasMarkedColumn = true;
+                }
+            }
+            return hasMarkedColumn;
+        }
+        if (!markScalarCountColumns(model.getNestedModel())) {
+            return false;
+        }
+        // Carry the mark up through this layer. Downstream the mark is copied by
+        // hand wherever a column is derived from another, and the GROUP BY rewrite
+        // builds its output column through a path that does not copy it, so the
+        // mark would otherwise die between the aggregate and the body's top
+        // projection. A column that is a plain reference to the scalar count below
+        // IS that same scalar count, which resolvesToScalarCount proves, so this
+        // cannot widen the compensation to an unrelated column.
+        ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn column = columns.getQuick(i);
+            ExpressionNode ast = column.getAst();
+            if (ast != null
+                    && ast.type == ExpressionNode.LITERAL
+                    && resolvesToScalarCount(ast.token, model, 0)) {
+                column.setLateralScalarCount(true);
+            }
+        }
+        return true;
     }
 
     private CharSequence propagateColumnUp(
