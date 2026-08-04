@@ -27,19 +27,29 @@ package io.questdb.test.cutlass.pgwire;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.pgwire.PGMessageProcessingException;
+import io.questdb.cutlass.pgwire.PGResponseSink;
 import io.questdb.cutlass.pgwire.PGUtils;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.test.AbstractCairoTest;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.math.BigInteger;
 
 /**
- * Cross-checks the decimal branches of {@link PGUtils#calculateColumnBinSize} against an independent model of the
- * PostgreSQL NUMERIC binary layout.
+ * Cross-checks the decimal branches of {@link PGUtils#calculateColumnBinSize} against two independent oracles: the
+ * bytes {@link PGUtils#outColBinDecimal} actually writes, and a model of the PostgreSQL NUMERIC binary layout.
  * <p>
  * The end-to-end pgwire tests cannot do this job: pgjdbc drives its read loop entirely from the per-field length
  * prefixes and ignores the DataRow envelope length, so a wrong size computed here is invisible to it. Clients that
@@ -62,19 +72,21 @@ public class PGUtilsTest extends AbstractCairoTest {
     public void testDecimalBinSizeMatchesPgNumericLayout() throws Exception {
         assertMemoryLeak(() -> {
             final DecimalRecord record = new DecimalRecord();
-            for (int precision = 1; precision <= Decimals.MAX_PRECISION; precision++) {
-                for (int scale = 0; scale <= precision; scale++) {
-                    final int columnType = ColumnType.getDecimalType(precision, scale);
-                    assertBinSize(record, columnType, BigInteger.ZERO);
-                    for (int power = 0; power < precision; power++) {
-                        // 10^power and 10^(power+1)-1 are the two ends of the run of values sharing this leading
-                        // digit position, so together they straddle every base-10000 group boundary.
-                        final BigInteger powerOfTen = POWERS_OF_TEN[power];
-                        final BigInteger allNines = POWERS_OF_TEN[power + 1].subtract(BigInteger.ONE);
-                        assertBinSize(record, columnType, powerOfTen);
-                        assertBinSize(record, columnType, powerOfTen.negate());
-                        assertBinSize(record, columnType, allNines);
-                        assertBinSize(record, columnType, allNines.negate());
+            try (ScratchSink sink = new ScratchSink()) {
+                for (int precision = 1; precision <= Decimals.MAX_PRECISION; precision++) {
+                    for (int scale = 0; scale <= precision; scale++) {
+                        final int columnType = ColumnType.getDecimalType(precision, scale);
+                        assertBinSize(record, sink, columnType, BigInteger.ZERO);
+                        for (int power = 0; power < precision; power++) {
+                            // 10^power and 10^(power+1)-1 are the two ends of the run of values sharing this leading
+                            // digit position, so together they straddle every base-10000 group boundary.
+                            final BigInteger powerOfTen = POWERS_OF_TEN[power];
+                            final BigInteger allNines = POWERS_OF_TEN[power + 1].subtract(BigInteger.ONE);
+                            assertBinSize(record, sink, columnType, powerOfTen);
+                            assertBinSize(record, sink, columnType, powerOfTen.negate());
+                            assertBinSize(record, sink, columnType, allNines);
+                            assertBinSize(record, sink, columnType, allNines.negate());
+                        }
                     }
                 }
             }
@@ -85,29 +97,32 @@ public class PGUtilsTest extends AbstractCairoTest {
     public void testDecimalNullBinSize() throws Exception {
         assertMemoryLeak(() -> {
             final DecimalRecord record = new DecimalRecord();
-            final int[] precisions = {2, 4, 9, 18, 38, Decimals.MAX_PRECISION};
-            for (int i = 0, n = precisions.length; i < n; i++) {
-                final int columnType = ColumnType.getDecimalType(precisions[i], 1);
-                record.ofNull(ColumnType.tagOf(columnType));
-                Assert.assertEquals(
-                        "NULL size mismatch [precision=" + precisions[i] + ']',
-                        Integer.BYTES,
-                        calculateBinSize(record, columnType)
-                );
+            try (ScratchSink sink = new ScratchSink()) {
+                final int[] precisions = {2, 4, 9, 18, 38, Decimals.MAX_PRECISION};
+                for (int i = 0, n = precisions.length; i < n; i++) {
+                    final int columnType = ColumnType.getDecimalType(precisions[i], 1);
+                    final String message = "NULL size mismatch [precision=" + precisions[i] + ']';
+                    record.ofNull(ColumnType.tagOf(columnType));
+                    Assert.assertEquals(message, Integer.BYTES, calculateBinSize(record, columnType));
+                    Assert.assertEquals(message, Integer.BYTES, sink.encode(record, columnType));
+                }
             }
         });
     }
 
-    private static void assertBinSize(DecimalRecord record, int columnType, BigInteger unscaled) throws PGMessageProcessingException {
+    private static void assertBinSize(
+            DecimalRecord record,
+            ScratchSink sink,
+            int columnType,
+            BigInteger unscaled
+    ) throws PGMessageProcessingException {
         final int precision = ColumnType.getDecimalPrecision(columnType);
         final int scale = ColumnType.getDecimalScale(columnType);
         record.of(unscaled, scale);
         final int actual = calculateBinSize(record, columnType);
-        final int expected = expectedBinSize(unscaled, scale);
-        if (expected != actual) {
-            Assert.fail("size mismatch [precision=" + precision + ", scale=" + scale + ", unscaled=" + unscaled
-                    + ", expected=" + expected + ", actual=" + actual + ']');
-        }
+        final String context = " [precision=" + precision + ", scale=" + scale + ", unscaled=" + unscaled + ']';
+        Assert.assertEquals("layout model disagrees" + context, expectedBinSize(unscaled, scale), actual);
+        Assert.assertEquals("encoder wrote a different number of bytes" + context, actual, sink.encode(record, columnType));
     }
 
     private static int calculateBinSize(DecimalRecord record, int columnType) throws PGMessageProcessingException {
@@ -228,6 +243,261 @@ public class PGUtilsTest extends AbstractCairoTest {
                 }
                 default -> throw new AssertionError("not a decimal type tag: " + typeTag);
             }
+        }
+    }
+
+    /**
+     * The subset of {@link PGResponseSink} the decimal encoder touches, backed by a plain native buffer. Everything
+     * else throws, so a future encoder reaching for another sink method fails loudly here instead of being silently
+     * unmeasured.
+     */
+    private static class ScratchSink implements PGResponseSink, QuietCloseable {
+        private static final long CAPACITY = 256;
+        private final long buffer = Unsafe.malloc(CAPACITY, MemoryTag.NATIVE_DEFAULT);
+        private final Decimal128 decimal128 = new Decimal128();
+        private final Decimal256 decimal256 = new Decimal256();
+        private final Decimal64 decimal64 = new Decimal64();
+        private long ptr = buffer;
+
+        @Override
+        public void bookmark() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void bump(int size) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void checkCapacity(long size) {
+            Assert.assertTrue("scratch buffer too small", ptr + size <= buffer + CAPACITY);
+        }
+
+        @Override
+        public void close() {
+            Unsafe.free(buffer, CAPACITY, MemoryTag.NATIVE_DEFAULT);
+        }
+
+        @Override
+        public int getEncoding() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getMaxBlobSize() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getSendBufferPtr() {
+            return ptr;
+        }
+
+        @Override
+        public long getSendBufferSize() {
+            return CAPACITY;
+        }
+
+        @Override
+        public long getWrittenBytes() {
+            return ptr - buffer;
+        }
+
+        @Override
+        public Utf8Sink put(@Nullable Utf8Sequence us) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Utf8Sink put(byte b) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void put(BinarySequence sequence) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Utf8Sink putAscii(char c) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Utf8Sink putAscii(@Nullable CharSequence cs) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDirectInt(int xValue) {
+            checkCapacity(Integer.BYTES);
+            Unsafe.getUnsafe().putInt(ptr, xValue);
+            ptr += Integer.BYTES;
+        }
+
+        @Override
+        public void putDirectShort(short xValue) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putIntDirect(int value) {
+            putDirectInt(value);
+        }
+
+        @Override
+        public void putIntUnsafe(long offset, int value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLen(long start) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLenEx(long start) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putNetworkDouble(double value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putNetworkFloat(float value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putNetworkInt(int value) {
+            checkCapacity(Integer.BYTES);
+            Unsafe.getUnsafe().putInt(ptr, Numbers.bswap(value));
+            ptr += Integer.BYTES;
+        }
+
+        @Override
+        public void putNetworkInt(long address, int value) {
+            Unsafe.getUnsafe().putInt(address, Numbers.bswap(value));
+        }
+
+        @Override
+        public void putNetworkLong(long value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putNetworkShort(short value) {
+            checkCapacity(Short.BYTES);
+            Unsafe.getUnsafe().putShort(ptr, Numbers.bswap(value));
+            ptr += Short.BYTES;
+        }
+
+        @Override
+        public void putNetworkShort(long address, short value) {
+            Unsafe.getUnsafe().putShort(address, Numbers.bswap(value));
+        }
+
+        @Override
+        public Utf8Sink putNonAscii(long lo, long hi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int putPartial(Utf8Sequence us, int offset, int length) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putZ(CharSequence value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void reset() {
+            ptr = buffer;
+        }
+
+        @Override
+        public void resetToBookmark() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void resetToBookmark(long address) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int sendBufferAndReset() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void setNullValue() {
+            putNetworkInt(-1);
+        }
+
+        @Override
+        public long skipInt() {
+            throw new UnsupportedOperationException();
+        }
+
+        /**
+         * Mirrors the decimal arms of {@code PGPipelineEntry.outRecord} and returns the number of bytes written.
+         */
+        int encode(Record record, int columnType) {
+            ptr = buffer;
+            switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.DECIMAL8 -> {
+                    final byte value = record.getDecimal8(0);
+                    if (value == Decimals.DECIMAL8_NULL) {
+                        setNullValue();
+                    } else {
+                        decimal64.ofRaw(value);
+                        PGUtils.outColBinDecimal(this, decimal64, columnType);
+                    }
+                }
+                case ColumnType.DECIMAL16 -> {
+                    final short value = record.getDecimal16(0);
+                    if (value == Decimals.DECIMAL16_NULL) {
+                        setNullValue();
+                    } else {
+                        decimal64.ofRaw(value);
+                        PGUtils.outColBinDecimal(this, decimal64, columnType);
+                    }
+                }
+                case ColumnType.DECIMAL32 -> {
+                    final int value = record.getDecimal32(0);
+                    if (value == Decimals.DECIMAL32_NULL) {
+                        setNullValue();
+                    } else {
+                        decimal64.ofRaw(value);
+                        PGUtils.outColBinDecimal(this, decimal64, columnType);
+                    }
+                }
+                case ColumnType.DECIMAL64 -> {
+                    decimal64.ofRaw(record.getDecimal64(0));
+                    PGUtils.outColBinDecimal(this, decimal64, columnType);
+                }
+                case ColumnType.DECIMAL128 -> {
+                    record.getDecimal128(0, decimal128);
+                    PGUtils.outColBinDecimal(this, decimal128, columnType);
+                }
+                case ColumnType.DECIMAL256 -> {
+                    record.getDecimal256(0, decimal256);
+                    PGUtils.outColBinDecimal(this, decimal256, columnType);
+                }
+                default -> throw new AssertionError("not a decimal type: " + columnType);
+            }
+            return (int) (ptr - buffer);
         }
     }
 }

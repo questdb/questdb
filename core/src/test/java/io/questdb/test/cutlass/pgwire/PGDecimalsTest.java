@@ -573,25 +573,42 @@ public class PGDecimalsTest extends BasePGTest {
 
     @Test
     public void testTextResultReportsRequiredSizeWithDecimal() throws Exception {
+        // The reported size must be a send buffer size the row actually fits into, so the second half of this test
+        // runs the same query again at exactly that size and reads the row back.
+        final String query = "SELECT lpad('', 950, 'x')::VARCHAR, '0.1'::DECIMAL(76, 75)";
+        final int requiredSize = 1044;
         assertWithPgServer(
                 Mode.SIMPLE,
                 false,
                 -1,
                 (connection, _, _, _) -> {
                     try (Statement statement = connection.createStatement()) {
-                        try (ResultSet ignore = statement.executeQuery(
-                                "SELECT lpad('', 950, 'x')::VARCHAR, '0.1'::DECIMAL(76, 75)"
-                        )) {
+                        try (ResultSet ignore = statement.executeQuery(query)) {
                             Assert.fail("exception expected");
                         }
                     } catch (PSQLException e) {
                         TestUtils.assertContains(
                                 e.getMessage(),
-                                "not enough space in send buffer [sendBufferSize=512, requiredSize=1037]"
+                                "not enough space in send buffer [sendBufferSize=512, requiredSize=" + requiredSize + ']'
                         );
                     }
                 },
                 () -> sendBufferSize = 512
+        );
+        assertWithPgServer(
+                Mode.SIMPLE,
+                false,
+                -1,
+                (connection, _, _, _) -> {
+                    try (Statement statement = connection.createStatement();
+                         ResultSet resultSet = statement.executeQuery(query)) {
+                        Assert.assertTrue(resultSet.next());
+                        Assert.assertEquals("x".repeat(950), resultSet.getString(1));
+                        Assert.assertEquals(new BigDecimal("0.1").setScale(75), resultSet.getBigDecimal(2));
+                        Assert.assertFalse(resultSet.next());
+                    }
+                },
+                () -> sendBufferSize = requiredSize
         );
     }
 
