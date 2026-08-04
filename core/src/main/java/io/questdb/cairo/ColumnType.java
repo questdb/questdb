@@ -839,7 +839,7 @@ public final class ColumnType {
                 || (fromType == INT && toType >= BYTE && toType <= SHORT)
                 || (fromType == SHORT && toType == BYTE)
                 || (fromType == CHAR && toType == BYTE)
-                || ((fromType == BYTE || fromType == SHORT || fromType == CHAR || fromType == INT || fromType == LONG) && isTargetDecimal)
+                || (fromType >= BYTE && fromType <= LONG && isTargetDecimal)
                 || isStringyType(fromType) && (
                 toType == BYTE ||
                         toType == SHORT ||
