@@ -1736,6 +1736,313 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // C1 - a lateral count() body under a wrapper layer that provably KEEPS the
+    // aggregate row. count() with no GROUP BY over an empty input is one implicit
+    // group, so the body emits one row holding 0 even for an unmatched outer row.
+    // Every predicate/layer below is satisfied by that zero row, so the body is
+    // non-empty and LEFT JOIN must not NULL-fill: SQL requires 0, not NULL.
+    //
+    // The existing wrapper-predicate coverage in this file is WHERE cnt > 1 at
+    // three sites, the one predicate that is FALSE at 0 - i.e. the only shape
+    // where NULL is right. These assert the complementary, keeps-the-row half.
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterDisjunctionCoversZero() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt = 0 OR cnt > 0
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterKeepsZeroRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt >= 0
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterTautology() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE 1 = 1
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterUpperBound() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt < 100
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperGroupByCountOutput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // GROUP BY above the aggregate groups the single zero row by its own
+            // value: one group in, one group out. The row survives.
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        GROUP BY cnt
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperJoinKeepsZeroRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // count body as the FIRST join model. The companion shape with the
+            // operands swapped is asserted by
+            // testNestedLateralLeftCountAsSecondJoinModel and already returns 0:
+            // the two must agree, a CROSS JOIN d and d CROSS JOIN a are the same
+            // relation.
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT counted.cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        CROSS JOIN (SELECT 1 AS z) d
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperUnionAllEmptyBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // the second branch is provably empty for every outer row, so the union
+            // contributes exactly the first branch: one row per outer row.
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        UNION ALL
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted2
+                        WHERE cnt > 1000
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperWildcardFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT *
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt >= 0
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    // C1 companion - the count body as the SECOND join model already compensates
+    // to 0. Pinned so the keeps-the-row fix cannot be taken by suppressing this
+    // path instead, and so a plain revert of the wrapper handling is caught here.
+    @Test
+    public void testNestedLateralLeftCountAsSecondJoinModel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT counted.cnt
+                        FROM (SELECT 1 AS z) d
+                        CROSS JOIN (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
     @Test
     public void testNestedLateralLeftCountDirectBodyExactSourceExpressions() throws Exception {
         assertMemoryLeak(() -> {
