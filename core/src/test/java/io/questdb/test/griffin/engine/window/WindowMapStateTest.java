@@ -816,6 +816,147 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTheThreeCaptureFamiliesShareOneKey() throws Exception {
+        // The acceptance shape for the capture families, and the negative control they need in
+        // the same breath. first_value(x), first_value(x) ignore nulls and last_value(x) ignore
+        // nulls over one window read one column under one key and keep three components, because
+        // they capture three different rows: the partition's first, its first finite one, and its
+        // most recent finite one. Two of them are two slots and one is one - the IGNORE NULLS
+        // first value needs no flag, since it only ever writes a value its own predicate admits
+        // and so reads its emptiness off the slot.
+        //
+        // The data is the nulls-and-infinities one on purpose. Partition 'b' opens on -Infinity,
+        // which is a value the predicate refuses and the respect-nulls capture keeps, and 'a'
+        // carries a NULL in the middle - between them they separate all three answers.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertNullsAndInfinities();
+            final String sql = "select ts, first_value(x) over w, first_value(x) ignore nulls over w, "
+                    + "last_value(x) ignore nulls over w from t " + WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(3, plan.getComponentCount());
+                Assert.assertEquals(3, plan.getProjectionCount());
+                // [value, captured] then [value] then [value, captured], in family order.
+                Assert.assertEquals(5, plan.getSlotCount());
+                Assert.assertEquals(0, plan.getComponentSlotBase(0));
+                Assert.assertEquals(2, plan.getComponentSlotBase(1));
+                Assert.assertEquals(3, plan.getComponentSlotBase(2));
+                Assert.assertEquals(
+                        WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE,
+                        plan.getComponent(0).getFamily()
+                );
+                Assert.assertEquals(
+                        WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE,
+                        plan.getComponent(1).getFamily()
+                );
+                Assert.assertEquals(
+                        WindowAccumulatorDescriptor.FAMILY_DOUBLE_LAST_NOT_NULL_VALUE,
+                        plan.getComponent(2).getFamily()
+                );
+                // Nothing is derived and nothing folds: a captured value is one row's own, so no
+                // capture is a run inside another however alike the two slices look.
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertFalse(plan.getProjection(i).isDerived());
+                    Assert.assertEquals(-1, plan.getProjection(i).getNonNullCountSlot());
+                }
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(7, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    Assert.assertEquals(3 * rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfused(
+                    "first_value(x) over w",
+                    "first_value(x) ignore nulls over w",
+                    "last_value(x) ignore nulls over w"
+            );
+        });
+    }
+
+    @Test
+    public void testACapturedValueSharesTheKeyWithAnAccumulator() throws Exception {
+        // A capture beside a running total over the same argument. Nothing merges - what a sum
+        // keeps is not one row's value - so the group buys them one key and one lookup and each
+        // keeps what it keeps, which is physical co-location doing exactly what it was for. The
+        // count still folds onto the sum, which is what says admitting a family did not disturb
+        // the folds already proved.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, sum(x) over w, count(x) over w, first_value(x) over w from t " + WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(2, plan.getComponentCount());
+                Assert.assertEquals(3, plan.getProjectionCount());
+                // [sum, count] then [value, captured] - the sum family's id is the lower one.
+                Assert.assertEquals(4, plan.getSlotCount());
+                Assert.assertEquals(0, plan.getComponentSlotBase(0));
+                Assert.assertEquals(2, plan.getComponentSlotBase(1));
+                Assert.assertTrue(plan.getProjection(1).isDerived());
+                Assert.assertEquals(1, plan.getProjection(1).getNonNullCountSlot());
+                Assert.assertFalse(plan.getProjection(2).isDerived());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfused("sum(x) over w", "count(x) over w", "first_value(x) over w");
+        });
+    }
+
+    @Test
+    public void testCapturesOverEveryAdmittedStateTypeShareOneKey() throws Exception {
+        // The capture families at both of the state widths they are split by, and the three
+        // implementations behind them: x through the DOUBLE factory, l through the LONG one and
+        // ts through the timestamp one, which is a separate class over the shared helper base.
+        // Six maps and six probes unfused; six slots behind one key here.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, first_value(x) over w, first_value(l) over w, "
+                    + "first_value(ts) ignore nulls over w, last_value(l) ignore nulls over w from t " + WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(4, plan.getComponentCount());
+                Assert.assertEquals(4, plan.getProjectionCount());
+                // Two flagged captures and one flat one, plus the DOUBLE capture's own pair.
+                Assert.assertEquals(7, plan.getSlotCount());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    Assert.assertEquals(4 * rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(4 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfused(
+                    "first_value(x) over w",
+                    "first_value(l) over w",
+                    "first_value(ts) ignore nulls over w",
+                    "last_value(l) ignore nulls over w"
+            );
+        });
+    }
+
+    @Test
     public void testABoundedRowsSumAndAvgShareOneFrame() throws Exception {
         // The acceptance shape for the ring-backed families, and the first group in this build
         // whose state is not all in the map value: the slice carries the frame's total, its

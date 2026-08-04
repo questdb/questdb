@@ -341,6 +341,26 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                             "max(d128) over w",
                             "min(d128) over w"
                     );
+                    // The capture families, which keep one row's value rather than a summary of
+                    // many - so which row the traversal reached first is the whole of their
+                    // state, and a bucket fed by the sorted chain rather than by the base scan is
+                    // where a wrong answer to that would show. The three spellings are three
+                    // components over one column, and the flag two of them carry is what a second
+                    // drain would expose if it were an isNew() reading instead.
+                    assertFusedMatchesUnfused(
+                            window,
+                            lead,
+                            "first_value(x) over w",
+                            "first_value(x) ignore nulls over w",
+                            "last_value(x) ignore nulls over w"
+                    );
+                    assertFusedMatchesUnfused(
+                            window,
+                            lead,
+                            "sum(x) over w",
+                            "first_value(x) over w",
+                            "first_value(ts) ignore nulls over w"
+                    );
                 }
                 // The ring-backed families, in all three bucket spellings a bounded frame reaches
                 // here. What they add to the differential is an accumulator whose state is partly

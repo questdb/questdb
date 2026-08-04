@@ -107,6 +107,24 @@ import org.jetbrains.annotations.Nullable;
  * contribution predicate refuses, so none can be confused with a real one, and all are what
  * the unbounded frame's own implementation emits for a partition no row has contributed to.
  *
+ * <h2>A captured value is a state too, and the flag beside it is what makes it one</h2>
+ * {@code first_value} and {@code last_value} keep no total and no counter: they keep one of the
+ * argument's own values, chosen by the order the traversal visits the partition's rows in. That
+ * is a state and not a projection of one - which row's value it is depends on every row absorbed
+ * so far - so they are families here like anything else, {@link #FAMILY_DOUBLE_FIRST_VALUE} and
+ * its five siblings.
+ * <p>
+ * What they add to the model is the flag. An accumulating family reads its own emptiness off its
+ * state - a zero total, a NaN extremum - and the two respect-nulls families cannot, because the
+ * value they capture may be the argument's own NULL and every later row has to leave it alone.
+ * The unfused implementations answer that with {@code MapValue.isNew()}, which a group cannot:
+ * the entry is created and put to identity before any contributor runs, and a live view's entry
+ * may have been created by its anchor. So {@link #FIELD_CAPTURED} carries it in the slice, the
+ * way {@link #RING_STATE_UNALLOCATED} carries "this partition has no ring yet" for the bounded
+ * families. The two IGNORE NULLS {@code first_value} families need no such flag and do not have
+ * one: they only ever write a value their own predicate admits, so their empty state is the
+ * argument type's own NULL and is unambiguous.
+ *
  * <h2>A slot is not always a 64-bit word</h2>
  * {@link #FAMILY_DECIMAL_MAX} is the first family whose layout is a function of its
  * <b>argument</b> as well as of its family: a {@code max} over a DECIMAL column accumulates
@@ -204,6 +222,35 @@ public final class WindowAccumulatorDescriptor {
      */
     public static final int FAMILY_DECIMAL_MIN = 11;
     /**
+     * State {@code [value: DOUBLE]}, contributed by a DOUBLE {@code first_value(x) ignore nulls}
+     * over an unbounded partitioned frame: the first value the partition offered that
+     * {@link #CONTRIBUTION_FINITE_DOUBLE} admits.
+     * <p>
+     * One slot where {@link #FAMILY_DOUBLE_FIRST_VALUE} keeps two, and the difference is the whole
+     * of what IGNORE NULLS changes about the state. This family writes only values its own
+     * predicate admits, and NaN is not one of them, so NaN is an empty slice - which is also
+     * exactly what the same window emits for a partition no finite row has reached. Its
+     * respect-nulls sibling captures whatever the first row held, NULL included, and so cannot
+     * read its own emptiness off the value at all.
+     */
+    public static final int FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE = 17;
+    /**
+     * State {@code [value: DOUBLE, captured: LONG]}, contributed by a DOUBLE
+     * {@code first_value(x)} over an unbounded partitioned frame: the value the first row of the
+     * partition held, whatever it was.
+     * <p>
+     * {@link #CONTRIBUTION_EVERY_ROW} is the predicate, and it is the honest one - every row is a
+     * candidate, and which one wins is the traversal's answer rather than the value's. That also
+     * makes the family reusable by a call that is not a {@code first_value} at all: a
+     * {@code last_value(x)} over a whole partition is the same state read under a backward
+     * pass-1 scan, since the first row such a traversal visits is the partition's last. The two
+     * never meet in one group - a group's {@link WindowMapSpec} carries the pass count and the
+     * scan direction - so one family serving both is a shared rule and not a shared slice.
+     * <p>
+     * The flag is what a group needs and a private map does not: see the class javadoc.
+     */
+    public static final int FAMILY_DOUBLE_FIRST_VALUE = 16;
+    /**
      * State {@code [sum: DOUBLE, compensation: DOUBLE, nonNullCount: LONG]}, contributed by
      * a {@code ksum} over an unbounded partitioned frame: a compensated (Kahan) running
      * total, the compensation term that makes it one, and the counter every DOUBLE family
@@ -217,6 +264,21 @@ public final class WindowAccumulatorDescriptor {
      * predicate, so a {@code count(x)} folds onto either.
      */
     public static final int FAMILY_DOUBLE_KAHAN_SUM_COUNT = 9;
+    /**
+     * State {@code [value: DOUBLE, captured: LONG]}, contributed by a DOUBLE
+     * {@code last_value(x) ignore nulls} over an unbounded partitioned frame: the most recent
+     * value {@link #CONTRIBUTION_FINITE_DOUBLE} admits, and the partition's first row's value
+     * while none has arrived.
+     * <p>
+     * The second clause is the implementation's and is why the flag is here. A
+     * {@code last_value ignore nulls} takes the first row of a partition unconditionally and
+     * only then starts skipping the rows its predicate refuses, so a partition beginning with
+     * an infinity emits that infinity until a finite value replaces it. An empty-is-NULL
+     * reading would emit NULL there instead, which is a different answer on real data rather
+     * than a tidier one, so the flag says "this partition has written its slot" and the
+     * contributor writes iff it has not or the row contributes.
+     */
+    public static final int FAMILY_DOUBLE_LAST_NOT_NULL_VALUE = 18;
     /**
      * State {@code [max: DOUBLE]}, contributed by a DOUBLE {@code max} over an unbounded
      * partitioned frame. The identity is NaN, which is a value
@@ -306,6 +368,29 @@ public final class WindowAccumulatorDescriptor {
      */
     public static final int FAMILY_DOUBLE_WELFORD = 4;
     /**
+     * State {@code [value: LONG]} - one raw 64-bit payload - contributed by a
+     * {@code first_value(x) ignore nulls} over a LONG, DATE or TIMESTAMP argument on an
+     * unbounded partitioned frame. {@link #FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE} at the other
+     * state width, empty at {@code Numbers.LONG_NULL}, which is what
+     * {@link #CONTRIBUTION_TYPED_NOT_NULL} refuses over every one of those types.
+     */
+    public static final int FAMILY_LONG_FIRST_NOT_NULL_VALUE = 20;
+    /**
+     * State {@code [value: LONG, captured: LONG]} - one raw 64-bit payload and the flag -
+     * contributed by a {@code first_value(x)} over a LONG, DATE or TIMESTAMP argument on an
+     * unbounded partitioned frame. {@link #FAMILY_DOUBLE_FIRST_VALUE} at the other state width,
+     * and separate from it for the reason {@link #FAMILY_LONG_MAX} is separate from
+     * {@link #FAMILY_DOUBLE_MAX}: the two implementations read and store different words.
+     */
+    public static final int FAMILY_LONG_FIRST_VALUE = 19;
+    /**
+     * State {@code [value: LONG, captured: LONG]}, contributed by a
+     * {@code last_value(x) ignore nulls} over a LONG, DATE or TIMESTAMP argument on an unbounded
+     * partitioned frame. {@link #FAMILY_DOUBLE_LAST_NOT_NULL_VALUE} at the other state width,
+     * including its second clause: the partition's first row is taken whatever it held.
+     */
+    public static final int FAMILY_LONG_LAST_NOT_NULL_VALUE = 21;
+    /**
      * State {@code [max: LONG]} - one raw 64-bit payload - contributed by a {@code max} over
      * a LONG, DATE or TIMESTAMP argument on an unbounded partitioned frame. The identity is
      * {@code Numbers.LONG_NULL}, which {@link #CONTRIBUTION_TYPED_NOT_NULL} refuses over
@@ -368,6 +453,25 @@ public final class WindowAccumulatorDescriptor {
      * the data.
      */
     public static final int FAMILY_ROW_COUNT = 3;
+    /**
+     * Whether this partition has written {@link #FIELD_CAPTURED_VALUE} yet - zero at identity
+     * and one afterwards. Present only in the three respect-the-first-row families
+     * ({@link #FAMILY_DOUBLE_FIRST_VALUE}, {@link #FAMILY_LONG_FIRST_VALUE} and the two
+     * {@code last_value} ones), and read and written by their contributor alone: it says what
+     * a private map answers with {@code MapValue.isNew()} and a group's value cannot.
+     * <p>
+     * The two IGNORE NULLS {@code first_value} families deliberately do not carry it. Their
+     * value slot is only ever written with a value their predicate admits, so its NULL is the
+     * same statement in one slot fewer.
+     */
+    public static final int FIELD_CAPTURED = 11;
+    /**
+     * The value one row of the partition held - the first row's, the first contributing row's or
+     * the most recent contributing row's, depending on the family. Present only in the six
+     * {@code first_value}/{@code last_value} families, which carry it and at most
+     * {@link #FIELD_CAPTURED} beside it.
+     */
+    public static final int FIELD_CAPTURED_VALUE = 10;
     /**
      * The running largest or smallest contributing value. Present only in the four
      * {@code max}/{@code min} families, which carry it and nothing else.
@@ -478,7 +582,30 @@ public final class WindowAccumulatorDescriptor {
                 return argumentColumnType == ColumnType.UNDEFINED
                         ? CONTRIBUTION_EVERY_ROW
                         : CONTRIBUTION_NONE;
+            case FAMILY_DOUBLE_FIRST_VALUE:
+            case FAMILY_LONG_FIRST_VALUE:
+                // Every row is a candidate: which one the state keeps is the traversal's answer
+                // and not the value's, so there is no predicate to name beyond "this argument
+                // reaches the implementation that declares the family". Each of the two is
+                // admitted over the types its own implementation is selected for, exactly as the
+                // extremum pair is - a DOUBLE-stated capture through getDouble, a 64-bit one
+                // through the argument's payload word.
+                return (family == FAMILY_DOUBLE_FIRST_VALUE
+                        ? isWidenedToDouble(argumentColumnType)
+                        : isLongPayload(argumentColumnType))
+                        ? CONTRIBUTION_EVERY_ROW
+                        : CONTRIBUTION_NONE;
+            case FAMILY_LONG_FIRST_NOT_NULL_VALUE:
+            case FAMILY_LONG_LAST_NOT_NULL_VALUE:
+                // The 64-bit capture's own null test, which is the predicate the IGNORE NULLS
+                // implementations apply: they skip a row whose payload word is LONG_NULL. Same
+                // list and same reasoning as the 64-bit extremum's.
+                return isLongPayload(argumentColumnType)
+                        ? CONTRIBUTION_TYPED_NOT_NULL
+                        : CONTRIBUTION_NONE;
+            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE:
             case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
+            case FAMILY_DOUBLE_LAST_NOT_NULL_VALUE:
             case FAMILY_DOUBLE_MAX:
             case FAMILY_DOUBLE_MIN:
             case FAMILY_DOUBLE_RANGE_SUM_COUNT:
@@ -494,7 +621,9 @@ public final class WindowAccumulatorDescriptor {
                 // same test twice, once as a value enters the frame and once as it leaves, so
                 // the rows it holds are exactly the rows this predicate names. The bounded-RANGE
                 // one applies it once and keeps only the values that passed, which names the same
-                // rows a different way.
+                // rows a different way. The two DOUBLE IGNORE NULLS capture families apply it
+                // once per row to decide whether the row may replace what the slot holds, which
+                // is the same reading of the same rows again.
                 return isWidenedToDouble(argumentColumnType)
                         ? CONTRIBUTION_FINITE_DOUBLE
                         : CONTRIBUTION_NONE;
@@ -606,7 +735,11 @@ public final class WindowAccumulatorDescriptor {
                 return 5;
             case FAMILY_DOUBLE_ROWS_SUM_COUNT:
                 return 4;
+            case FAMILY_DOUBLE_FIRST_VALUE:
+            case FAMILY_DOUBLE_LAST_NOT_NULL_VALUE:
             case FAMILY_DOUBLE_SUM_COUNT:
+            case FAMILY_LONG_FIRST_VALUE:
+            case FAMILY_LONG_LAST_NOT_NULL_VALUE:
                 return 2;
             case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
             case FAMILY_DOUBLE_WELFORD:
@@ -614,8 +747,10 @@ public final class WindowAccumulatorDescriptor {
                 return 3;
             case FAMILY_DECIMAL_MAX:
             case FAMILY_DECIMAL_MIN:
+            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE:
             case FAMILY_DOUBLE_MAX:
             case FAMILY_DOUBLE_MIN:
+            case FAMILY_LONG_FIRST_NOT_NULL_VALUE:
             case FAMILY_LONG_MAX:
             case FAMILY_LONG_MIN:
             case FAMILY_NON_NULL_COUNT:
@@ -797,6 +932,16 @@ public final class WindowAccumulatorDescriptor {
         // on. It is also not a run in the slice either way: a RANGE counter's five slots and a
         // RANGE (sum, count)'s six agree on the ring's geometry and disagree about where the
         // counter sits, since the host keeps a total in front of it.
+        //
+        // None of the six capture families appears either, in either role, and the near miss is
+        // worth naming: a first_value(x) ignore nulls keeps one slot that a first_value(x) beside
+        // it appears to contain, both of them at slot 0 of a slice of the same width. They are
+        // not the same word. The respect-nulls slice holds whatever the first row carried and the
+        // IGNORE NULLS one the first row the predicate admitted, and those differ on every
+        // partition whose first row is absent - which is why the identity comparison has already
+        // refused the pair on its contribution kind before this method could be asked. Nothing
+        // wider holds a capture as a run either: what a total or a counter keeps is not one row's
+        // value.
         return -1;
     }
 
@@ -829,6 +974,19 @@ public final class WindowAccumulatorDescriptor {
             case FAMILY_LONG_MAX:
             case FAMILY_LONG_MIN:
                 return field == FIELD_EXTREMUM ? 0 : -1;
+            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE:
+            case FAMILY_LONG_FIRST_NOT_NULL_VALUE:
+                // No flag: an IGNORE NULLS first value writes only what its predicate admits,
+                // so its empty state is the value slot's own NULL.
+                return field == FIELD_CAPTURED_VALUE ? 0 : -1;
+            case FAMILY_DOUBLE_FIRST_VALUE:
+            case FAMILY_DOUBLE_LAST_NOT_NULL_VALUE:
+            case FAMILY_LONG_FIRST_VALUE:
+            case FAMILY_LONG_LAST_NOT_NULL_VALUE:
+                if (field == FIELD_CAPTURED_VALUE) {
+                    return 0;
+                }
+                return field == FIELD_CAPTURED ? 1 : -1;
             case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
                 if (field == FIELD_SUM) {
                     return 0;
@@ -931,15 +1089,32 @@ public final class WindowAccumulatorDescriptor {
                     return decimalStateColumnType(argumentColumnType);
                 }
                 break;
+            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE:
             case FAMILY_DOUBLE_MAX:
             case FAMILY_DOUBLE_MIN:
                 if (slot == 0) {
                     return ColumnType.DOUBLE;
                 }
                 break;
+            case FAMILY_DOUBLE_FIRST_VALUE:
+            case FAMILY_DOUBLE_LAST_NOT_NULL_VALUE:
+                if (slot == 0) {
+                    return ColumnType.DOUBLE;
+                }
+                if (slot == 1) {
+                    return ColumnType.LONG;
+                }
+                break;
+            case FAMILY_LONG_FIRST_NOT_NULL_VALUE:
             case FAMILY_LONG_MAX:
             case FAMILY_LONG_MIN:
                 if (slot == 0) {
+                    return ColumnType.LONG;
+                }
+                break;
+            case FAMILY_LONG_FIRST_VALUE:
+            case FAMILY_LONG_LAST_NOT_NULL_VALUE:
+                if (slot == 0 || slot == 1) {
                     return ColumnType.LONG;
                 }
                 break;
@@ -1040,6 +1215,25 @@ public final class WindowAccumulatorDescriptor {
             case FAMILY_LONG_MAX:
             case FAMILY_LONG_MIN:
                 return Numbers.LONG_NULL;
+            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE:
+            case FAMILY_DOUBLE_FIRST_VALUE:
+            case FAMILY_DOUBLE_LAST_NOT_NULL_VALUE:
+            case FAMILY_LONG_FIRST_NOT_NULL_VALUE:
+            case FAMILY_LONG_FIRST_VALUE:
+            case FAMILY_LONG_LAST_NOT_NULL_VALUE:
+                // The captured value starts at its own state type's NULL, which is what the same
+                // window emits for a partition nothing has been captured from - so a projection
+                // reads the slot straight and needs no empty test. The flag beside it, where the
+                // family has one, starts at zero and means "nothing written yet"; it is the
+                // contributor's alone.
+                if (slot != getFieldSlot(FIELD_CAPTURED_VALUE)) {
+                    return 0L;
+                }
+                return family == FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE
+                        || family == FAMILY_DOUBLE_FIRST_VALUE
+                        || family == FAMILY_DOUBLE_LAST_NOT_NULL_VALUE
+                        ? Double.doubleToRawLongBits(Double.NaN)
+                        : Numbers.LONG_NULL;
             case FAMILY_DOUBLE_RANGE_SUM_COUNT:
             case FAMILY_DOUBLE_ROWS_SUM_COUNT:
             case FAMILY_RANGE_NON_NULL_COUNT:

@@ -217,9 +217,13 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
             // A single-function group moves a map rather than removing one, so binding a
             // runtime through it would cost the query an abstraction and buy it nothing.
             assertPlans("select ts, sum(x) over w from base " + window(), Assert::assertNull);
-            // ... and neither does a second function that cannot join it.
+            // ... and neither does a second function that cannot join it. rank() is the one
+            // used here because its state is the previous row's whole ORDER BY tuple beside its
+            // counters, written into its own map value at slot zero by a generated
+            // RecordValueSink - a shape no component describes and no slot base can be handed
+            // to, which is why the ranking calls declare no family.
             assertPlans(
-                    "select ts, sum(x) over w, first_value(x) over w from base " + window(),
+                    "select ts, sum(x) over w, rank() over w from base " + window(),
                     Assert::assertNull
             );
         });
@@ -443,6 +447,87 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
                         }
                         Assert.assertTrue(projectionAt(plan, 6).isDerived());
                         Assert.assertEquals(1, projectionAt(plan, 6).getNonNullCountSlot());
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testTheCaptureFamiliesMergeOnlyWithTheirOwnSpelling() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // Six capture calls over one window: three spellings over x, one over y, one over a
+            // timestamp for the other state width, and a sum for company. Every one of them
+            // keeps a component. The three spellings over x are the point: they read one column
+            // under one predicate each and capture the partition's first row, its first finite
+            // one and its most recent finite one, which are three states and not three readings
+            // of one. Nothing folds either - a captured value is one row's own, so no capture is
+            // a run inside another however alike two slices look.
+            assertPlans(
+                    "select ts, first_value(x) over w, first_value(x) ignore nulls over w, "
+                            + "last_value(x) ignore nulls over w, first_value(y) over w, "
+                            + "first_value(ts) over w, sum(x) over w from base " + window(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(6, plan.getComponentCount());
+                        Assert.assertEquals(6, plan.getProjectionCount());
+                        // [sum, count] + [value, captured] twice + [value] + [value, captured]
+                        // + [value, captured].
+                        Assert.assertEquals(11, plan.getSlotCount());
+                        // Canonical order is by family id first, so the accumulating pair leads
+                        // and the captures follow in family order - the DOUBLE trio, then the
+                        // 64-bit one - with the two same-family ones tied on the argument.
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE,
+                                plan.getComponent(1).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE,
+                                plan.getComponent(2).getFamily()
+                        );
+                        Assert.assertTrue(
+                                "the two capture components must be ordered by argument",
+                                plan.getComponent(2).getArgumentColumnIndex()
+                                        > plan.getComponent(1).getArgumentColumnIndex()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE,
+                                plan.getComponent(3).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_LAST_NOT_NULL_VALUE,
+                                plan.getComponent(4).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_VALUE,
+                                plan.getComponent(5).getFamily()
+                        );
+                        final ArrayColumnTypes types = new ArrayColumnTypes();
+                        plan.buildMapValueTypes(types);
+                        Assert.assertEquals(11, types.getColumnCount());
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(0));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(1));
+                        // Two flagged DOUBLE captures, the flat one, the last value's pair, and
+                        // the timestamp capture's - which is two LONGs, the payload and the flag.
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(2));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(3));
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(4));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(5));
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(6));
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(7));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(8));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(9));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(10));
+                        for (int output = 1; output <= 6; output++) {
+                            Assert.assertFalse(
+                                    "output " + output + " should read its own component",
+                                    projectionAt(plan, output).isDerived()
+                            );
+                        }
                     }
             );
         });

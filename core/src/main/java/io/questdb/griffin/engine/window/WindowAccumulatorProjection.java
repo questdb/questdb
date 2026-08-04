@@ -68,6 +68,20 @@ public final class WindowAccumulatorProjection {
      */
     public static final int PROJECTION_AVG = 1;
     /**
+     * The component's captured value, read straight - what a {@code first_value} or a
+     * {@code last_value} emits.
+     * <p>
+     * One kind for all six capture families, and for the same reason
+     * {@link #PROJECTION_EXTREMUM} is one kind for six extremum families: which row's value the
+     * slot holds is decided when the state is <b>maintained</b>, so by the time an output reads
+     * it there is nothing left to choose. It needs no empty test either - a capture family's
+     * identity is its own state type's NULL, which is what the same window emits for a partition
+     * nothing was captured from - and no reading of {@link WindowAccumulatorDescriptor#FIELD_CAPTURED}:
+     * that flag exists so the contributor knows whether to overwrite, and a projection never
+     * does.
+     */
+    public static final int PROJECTION_CAPTURED_VALUE = 11;
+    /**
      * The contributing-row counter, which is exact and never NULL. It is what a
      * {@code count} emits, and equally what a partitioned {@code row_number()} emits off
      * a row-count component: after {@code n} rows the running number and the running
@@ -243,6 +257,16 @@ public final class WindowAccumulatorProjection {
                         || family == WindowAccumulatorDescriptor.FAMILY_RANGE_NON_NULL_COUNT
                         || family == WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT
                         || family == WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;
+            case PROJECTION_CAPTURED_VALUE:
+                // The six capture families and nothing else. Every one of them carries the value
+                // slot this kind reads, and no other family does - a total, a counter and an
+                // extremum are all summaries of many rows where this is one row's own value.
+                return family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE
+                        || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE
+                        || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_LAST_NOT_NULL_VALUE
+                        || family == WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_NOT_NULL_VALUE
+                        || family == WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_VALUE
+                        || family == WindowAccumulatorDescriptor.FAMILY_LONG_LAST_NOT_NULL_VALUE;
             case PROJECTION_EXTREMUM:
                 // The six extremum families and nothing else. Every one of them carries the
                 // single slot this kind reads, and no other family does.

@@ -142,6 +142,17 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             "max(xdec128)",
             "min(xdec128)",
             "count(xdec128)",
+            // The capture families: three spellings over one column, which are three components
+            // and the shape most likely to read a neighbour's value slot, plus the 64-bit state
+            // width through xl and ts. A partition whose first row is absent or infinite is where
+            // the three answers part company, and the generator makes both.
+            "first_value(xd)",
+            "first_value(xd) ignore nulls",
+            "last_value(xd) ignore nulls",
+            "first_value(yd)",
+            "first_value(xl)",
+            "first_value(xl) ignore nulls",
+            "last_value(ts) ignore nulls",
     };
     /**
      * The calls a <b>bounded</b> ROWS window can fuse: the two ring-backed families and nothing
@@ -227,15 +238,25 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             "max(xdec128)",
             "min(xdec128)",
             "count(xdec128)",
+            // The capture families reach a RANGE unbounded-preceding-to-current-row window
+            // through the very classes the ROWS spelling does, so the arm carries them too.
+            "first_value(xd)",
+            "first_value(xd) ignore nulls",
+            "last_value(xd) ignore nulls",
+            "first_value(ts)",
     };
     /**
      * Calls no family describes. One of them lands in a query now and then so that a residual
      * function and a bound group share a cursor, which is what an ordinary query looks like.
+     * <p>
+     * A DECIMAL capture is what fills the list now that the DOUBLE and 64-bit ones fuse: the six
+     * capture families are split by the width their state is kept at, and a DECIMAL first value
+     * accumulates into its argument's own width, which none of them describes.
      */
     private static final String[] RESIDUAL_CALLS = {
-            "first_value(xd)",
-            "first_value(yd)",
-            "first_value(xl)",
+            "first_value(xdec)",
+            "first_value(xdec128)",
+            "last_value(xdec) ignore nulls",
     };
     private Rnd rnd;
 

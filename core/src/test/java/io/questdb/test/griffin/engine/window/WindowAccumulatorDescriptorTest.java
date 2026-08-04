@@ -712,6 +712,201 @@ public class WindowAccumulatorDescriptorTest {
     }
 
     @Test
+    public void testTheCaptureFamiliesKeepOneRowsValueAndSayWhichRow() {
+        // The six capture families, and the four claims about them no rendered row shows: the
+        // layouts, the identities, that the flag belongs to three of the six and not to the
+        // others, and that nothing folds in any direction. The last is the one worth stating
+        // rather than assuming - a first_value(x) ignore nulls keeps one slot that a
+        // first_value(x) appears to contain, and the two hold different rows' values.
+        final ObjList<WindowAccumulatorDescriptor> captures = new ObjList<>();
+        addExtremum(captures, WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE, 2, ColumnType.DOUBLE);
+        addExtremum(captures, WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE, 2, ColumnType.DOUBLE);
+        addExtremum(captures, WindowAccumulatorDescriptor.FAMILY_DOUBLE_LAST_NOT_NULL_VALUE, 2, ColumnType.DOUBLE);
+        addExtremum(captures, WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_VALUE, 3, ColumnType.LONG);
+        addExtremum(captures, WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_NOT_NULL_VALUE, 3, ColumnType.LONG);
+        addExtremum(captures, WindowAccumulatorDescriptor.FAMILY_LONG_LAST_NOT_NULL_VALUE, 0, ColumnType.TIMESTAMP);
+
+        for (int i = 0, n = captures.size(); i < n; i++) {
+            final WindowAccumulatorDescriptor component = captures.getQuick(i);
+            final int family = component.getFamily();
+            final String what = "family " + family + " over column " + component.getArgumentColumnIndex();
+            final boolean flagged = family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE
+                    || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_LAST_NOT_NULL_VALUE
+                    || family == WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_VALUE
+                    || family == WindowAccumulatorDescriptor.FAMILY_LONG_LAST_NOT_NULL_VALUE;
+            final boolean isDoubleState = family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE
+                    || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE
+                    || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_LAST_NOT_NULL_VALUE;
+            Assert.assertEquals(what, flagged ? 2 : 1, component.getSlotCount());
+            Assert.assertEquals(
+                    what,
+                    0,
+                    component.getFieldSlot(WindowAccumulatorDescriptor.FIELD_CAPTURED_VALUE)
+            );
+            // The flag is the two respect-the-first-row layouts' and nobody else's: an IGNORE
+            // NULLS first value reads its emptiness off the value slot instead.
+            Assert.assertEquals(
+                    what + ": flag",
+                    flagged ? 1 : -1,
+                    component.getFieldSlot(WindowAccumulatorDescriptor.FIELD_CAPTURED)
+            );
+            Assert.assertEquals(what, -1, component.getFieldSlot(WindowAccumulatorDescriptor.FIELD_SUM));
+            Assert.assertEquals(
+                    what,
+                    -1,
+                    component.getFieldSlot(WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT)
+            );
+            Assert.assertEquals(what, -1, component.getFieldSlot(WindowAccumulatorDescriptor.FIELD_EXTREMUM));
+            Assert.assertEquals(
+                    what,
+                    isDoubleState ? ColumnType.DOUBLE : ColumnType.LONG,
+                    component.getSlotColumnType(0)
+            );
+            // The captured value starts at its own state type's NULL - which is what a
+            // projection reads straight for a partition nothing was captured from - and the flag
+            // starts at zero, meaning "this slice has not been written".
+            Assert.assertEquals(
+                    what + ": identity",
+                    isDoubleState ? Double.doubleToRawLongBits(Double.NaN) : Numbers.LONG_NULL,
+                    component.getSlotIdentityBits(0)
+            );
+            if (flagged) {
+                Assert.assertEquals(what + ": flag type", ColumnType.LONG, component.getSlotColumnType(1));
+                Assert.assertEquals(what + ": flag identity", 0L, component.getSlotIdentityBits(1));
+            }
+            // The whole state is in the map value: no ring, unlike the bounded families, so a
+            // group owning the map owns the whole of a fused capture.
+            Assert.assertFalse(what, component.isRingBacked());
+            // Runtime-only: no component codec, and so no durable wrapper and no manifest.
+            Assert.assertEquals(what, -1, LiveViewAccumulatorDescriptor.familyCodecVersion(family));
+            Assert.assertNull(what, LiveViewAccumulatorDescriptor.of(component));
+            // The one projection kind that reads them, and the ones that must not.
+            Assert.assertTrue(
+                    what,
+                    WindowAccumulatorProjection.isCompatible(
+                            family,
+                            WindowAccumulatorProjection.PROJECTION_CAPTURED_VALUE
+                    )
+            );
+            Assert.assertFalse(
+                    what,
+                    WindowAccumulatorProjection.isCompatible(family, WindowAccumulatorProjection.PROJECTION_SUM)
+            );
+            Assert.assertFalse(
+                    what,
+                    WindowAccumulatorProjection.isCompatible(family, WindowAccumulatorProjection.PROJECTION_COUNT)
+            );
+            Assert.assertFalse(
+                    what,
+                    WindowAccumulatorProjection.isCompatible(
+                            family,
+                            WindowAccumulatorProjection.PROJECTION_EXTREMUM
+                    )
+            );
+        }
+
+        // A capture kind reads no other family, which is the other half of the compatibility
+        // table: the six above and nothing else.
+        final ObjList<LiveViewAccumulatorDescriptor> others = components();
+        for (int j = 0, m = others.size(); j < m; j++) {
+            Assert.assertFalse(
+                    WindowAccumulatorProjection.isCompatible(
+                            others.getQuick(j).getFamily(),
+                            WindowAccumulatorProjection.PROJECTION_CAPTURED_VALUE
+                    )
+            );
+        }
+
+        // No containment in either direction, against each other or against every durable
+        // component this build has. The three DOUBLE captures share an argument and a slot type
+        // and are still three states, because they capture three different rows.
+        for (int i = 0, n = captures.size(); i < n; i++) {
+            final WindowAccumulatorDescriptor capture = captures.getQuick(i);
+            for (int j = 0; j < n; j++) {
+                Assert.assertEquals(
+                        "capture " + i + " containing capture " + j,
+                        i == j ? 0 : -1,
+                        capture.derivedSlotOffset(captures.getQuick(j))
+                );
+            }
+            for (int j = 0, m = others.size(); j < m; j++) {
+                final WindowAccumulatorDescriptor other = others.getQuick(j).getRuntime();
+                Assert.assertEquals(-1, capture.derivedSlotOffset(other));
+                Assert.assertEquals(-1, other.derivedSlotOffset(capture));
+            }
+        }
+
+        // The predicates: the respect-nulls families take every row and the IGNORE NULLS ones
+        // apply the same test their own implementation does - isFinite through the DOUBLE
+        // reading, the payload's own null test through the 64-bit one. Compared arm for arm
+        // rather than restated, so a table that stopped agreeing with the extremum families'
+        // fails here.
+        Assert.assertEquals(
+                WindowAccumulatorDescriptor.CONTRIBUTION_EVERY_ROW,
+                WindowAccumulatorDescriptor.contributionKindFor(
+                        WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE,
+                        ColumnType.DOUBLE
+                )
+        );
+        Assert.assertEquals(
+                WindowAccumulatorDescriptor.CONTRIBUTION_EVERY_ROW,
+                WindowAccumulatorDescriptor.contributionKindFor(
+                        WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_VALUE,
+                        ColumnType.TIMESTAMP
+                )
+        );
+        final int[] doubleFamilies = {
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE,
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_LAST_NOT_NULL_VALUE,
+        };
+        final int[] longFamilies = {
+                WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_NOT_NULL_VALUE,
+                WindowAccumulatorDescriptor.FAMILY_LONG_LAST_NOT_NULL_VALUE,
+        };
+        final int[] types = {
+                ColumnType.DOUBLE,
+                ColumnType.LONG,
+                ColumnType.TIMESTAMP,
+                ColumnType.SYMBOL,
+                ColumnType.getDecimalType(18, 3),
+        };
+        for (int t = 0; t < types.length; t++) {
+            for (int f = 0; f < doubleFamilies.length; f++) {
+                Assert.assertEquals(
+                        "type " + types[t] + " family " + doubleFamilies[f],
+                        WindowAccumulatorDescriptor.contributionKindFor(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX,
+                                types[t]
+                        ),
+                        WindowAccumulatorDescriptor.contributionKindFor(doubleFamilies[f], types[t])
+                );
+            }
+            for (int f = 0; f < longFamilies.length; f++) {
+                Assert.assertEquals(
+                        "type " + types[t] + " family " + longFamilies[f],
+                        WindowAccumulatorDescriptor.contributionKindFor(
+                                WindowAccumulatorDescriptor.FAMILY_LONG_MAX,
+                                types[t]
+                        ),
+                        WindowAccumulatorDescriptor.contributionKindFor(longFamilies[f], types[t])
+                );
+            }
+        }
+        // A type no capture implementation is selected for declines outright rather than fusing
+        // under a predicate the runtime does not apply.
+        Assert.assertNull(WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE,
+                1,
+                ColumnType.SYMBOL
+        ));
+        Assert.assertNull(WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_LONG_LAST_NOT_NULL_VALUE,
+                4,
+                ColumnType.getDecimalType(18, 3)
+        ));
+    }
+
+    @Test
     public void testTheDurableImageIsOneLongPerRuntimeSlot() {
         final IntList fields = new IntList();
         fields.add(WindowAccumulatorDescriptor.FIELD_SUM);

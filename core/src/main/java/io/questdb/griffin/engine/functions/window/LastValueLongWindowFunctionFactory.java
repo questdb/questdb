@@ -50,6 +50,8 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -1754,6 +1756,10 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
     public static class LastNotNullValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         private long value = Numbers.LONG_NULL;
+        // The captured value's and the flag's slots in the group's fused map value, or -1 when
+        // this function owns its state.
+        private int windowStateCapturedSlot = -1;
+        private int windowStateValueSlot = -1;
 
         /**
          * Construct a function that computes LAST_VALUE for long inputs while ignoring NULLs,
@@ -1766,6 +1772,34 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          */
         public LastNotNullValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
+        }
+
+        /**
+         * Replaces the group's slice with this row's payload when the row contributes, and takes
+         * the partition's first row whether it contributes or not - which is what the private-map
+         * implementation below does on its {@code isNew()} branch. The flag carries "this
+         * partition has written its slot" where {@code isNew()} cannot.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final long d = arg.getLong(record);
+            if (value.getLong(windowStateCapturedSlot) == 0) {
+                value.putLong(windowStateValueSlot, d);
+                value.putLong(windowStateCapturedSlot, 1);
+            } else if (d != Numbers.LONG_NULL) {
+                value.putLong(windowStateValueSlot, d);
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateValueSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_CAPTURED_VALUE);
+            this.windowStateCapturedSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_CAPTURED);
         }
 
         /**
@@ -1785,6 +1819,11 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          */
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one slice and materialized the projection
+                // before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -1848,6 +1887,16 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         }
 
         /**
+         * The private per-partition map, which is also this function's whole eligibility for a
+         * fused group. Exposing it does not sign the function up for the live-view checkpoint
+         * pipeline, which is gated on {@code supportsCheckpointState()} - false here.
+         */
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        /**
          * First-pass handler that computes and writes the last_value for the current input record.
          * <p>
          * Computes the next aggregated value from the supplied record (updating this function's internal
@@ -1861,6 +1910,16 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        /**
+         * Reads the payload the group's slice holds. No empty test: the identity is
+         * {@code LONG_NULL}, and a partition the traversal has reached has written the slot on
+         * its very first row.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            this.value = value.getLong(windowStateValueSlot);
         }
 
         /**
@@ -1880,6 +1939,21 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_LONG_LAST_NOT_NULL_VALUE;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_CAPTURED_VALUE;
         }
     }
 

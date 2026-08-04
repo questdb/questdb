@@ -50,6 +50,8 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -1428,6 +1430,30 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
+         * Captures the first row the predicate admits and leaves the slot alone afterwards. The
+         * empty test is the slot's own {@code LONG_NULL} rather than a flag: this family writes
+         * only payloads its predicate admits, so no captured state can be mistaken for an empty
+         * one - which is what lets it keep one slot where its respect-nulls superclass keeps two.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            if (value.getLong(windowStateValueSlot) == Numbers.LONG_NULL) {
+                final long d = arg.getLong(record);
+                if (d != Numbers.LONG_NULL) {
+                    value.putLong(windowStateValueSlot, d);
+                }
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            // The family carries no flag, so the superclass's binding of it answers -1 here and
+            // nothing reads it.
+            assert projection == null || windowStateCapturedSlot < 0;
+        }
+
+        /**
          * Advances computation for the given record: looks up the partition key and sets this.value
          * to the first seen non-null long for that partition.
          * <p>
@@ -1441,6 +1467,9 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
          */
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -1494,6 +1523,16 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         @Override
         public boolean isIgnoreNulls() {
             return true;
+        }
+
+        /**
+         * The first payload the partition offered that is not {@code LONG_NULL} - a state of its
+         * own and not a reading of the respect-nulls one, which holds whatever the first row
+         * carried.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_NOT_NULL_VALUE;
         }
     }
 
@@ -3153,6 +3192,10 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         protected final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         protected long value;
+        // The captured value's and the flag's slots in the group's fused map value, or -1 when
+        // this function owns its state.
+        protected int windowStateCapturedSlot = -1;
+        protected int windowStateValueSlot = -1;
         // Single-writer (refresh worker), not volatile.
 
         public FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, ColumnTypes partitionByKeyTypes, boolean liveView, CairoConfiguration configuration) {
@@ -3181,8 +3224,38 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
+        /**
+         * Captures the first row of the partition into the group's slice and leaves every later
+         * row alone. The flag is what says which of the two this row is: a private map answers
+         * that with {@code isNew()}, and a group's value cannot, because it was created and put
+         * to identity before any contributor ran.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            if (value.getLong(windowStateCapturedSlot) == 0) {
+                value.putLong(windowStateValueSlot, arg.getLong(record));
+                value.putLong(windowStateCapturedSlot, 1);
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateValueSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_CAPTURED_VALUE);
+            this.windowStateCapturedSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_CAPTURED);
+        }
+
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group captured this row where it had to and materialized the projection
+                // before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -3242,6 +3315,16 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        /**
+         * Reads the value the group captured. No empty-state test: the component's identity is
+         * {@code LONG_NULL}, which is what this window emits for a partition it has seen no row
+         * of - and a partition it has seen a row of has captured that row, whatever it held.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            this.value = value.getLong(windowStateValueSlot);
         }
 
         @Override
@@ -3326,6 +3409,26 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         public void toTop() {
             super.toTop();
             tombstoneCount = 0;
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The value the partition's first row held, kept as its raw 64-bit payload. The IGNORE
+         * NULLS subclass overrides this with a family of its own: the two capture different rows
+         * and so keep different states.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_VALUE;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_CAPTURED_VALUE;
         }
     }
 
