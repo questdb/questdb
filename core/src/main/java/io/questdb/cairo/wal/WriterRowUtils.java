@@ -196,7 +196,13 @@ public class WriterRowUtils {
     }
 
     public static void putNullDecimal(TableWriter.Row row, int col, int toType) {
-        putNullDecimal(row, col, ColumnType.tagOf(toType));
+        final short toTag = ColumnType.tagOf(toType);
+        if (!ColumnType.isDecimalType(toTag)) {
+            // the tag overload can only name a tag, and a geohash needs its bit count to render
+            throw CairoException.nonCritical()
+                    .put("cannot store decimal into column type: ").put(ColumnType.nameOf(toType));
+        }
+        putNullDecimal(row, col, toTag);
     }
 
     public static void putNullDecimal(TableWriter.Row row, int col, short toTag) {
@@ -219,6 +225,9 @@ public class WriterRowUtils {
             case ColumnType.DECIMAL256:
                 row.putDecimal256(col, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
                 break;
+            default:
+                throw CairoException.critical(0)
+                        .put("cannot store decimal into column type: ").put(ColumnType.nameOf(toTag));
         }
     }
 
@@ -239,9 +248,12 @@ public class WriterRowUtils {
             case ColumnType.DECIMAL128:
                 row.putDecimal128(index, value.getLh(), value.getLl());
                 break;
-            default:
+            case ColumnType.DECIMAL256:
                 row.putDecimal256(index, value.getHh(), value.getHl(), value.getLh(), value.getLl());
                 break;
+            default:
+                throw CairoException.critical(0)
+                        .put("cannot store decimal into column type: ").put(ColumnType.nameOf(tag));
         }
     }
 }
