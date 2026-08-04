@@ -22,14 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.orderby;
+package io.questdb.test.griffin.engine.orderby;
 
-public interface DynamicLimitCursor {
-    /**
-     * Re-binds the selection for the next execution of a cached factory. Every argument is
-     * re-derived per execution, so an implementation must not cache any of them across
-     * executions - in particular {@code isFirstN} flips when a bind variable changes the
-     * limit's sign, and any first-N-only optimisation has to be re-gated on it here.
-     */
-    void updateLimits(boolean isFirstN, long limit, long skipFirst, long skipLast);
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.RecordComparator;
+
+/**
+ * Orders {@link SingleLongRecord}s by their single long column. Uses Long.compare rather than a
+ * subtraction, which would overflow for values far apart.
+ */
+class TestRecordComparator implements RecordComparator {
+    Record left;
+
+    @Override
+    public int compare(Record record) {
+        return Long.compare(left.getLong(0), record.getLong(0));
+    }
+
+    @Override
+    public void setLeft(Record record) {
+        left = record;
+    }
 }
