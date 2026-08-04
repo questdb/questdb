@@ -449,8 +449,10 @@ public class ExpressionParser {
             char c = lexer.getContent().charAt(lastPos - 1);
             if (c == 'e' || c == 'E') { // Incomplete scientific floating-point literal
                 ExpressionNode en = opStack.peek();
-                ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
-                processDefaultBranch = false;
+                if (en != null && en.token instanceof GenericLexer.FloatingSequence) {
+                    ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
+                    processDefaultBranch = false;
+                }
             }
         }
         return processDefaultBranch;
@@ -1666,7 +1668,7 @@ public class ExpressionParser {
                                     char prevChar = lexer.getContent().charAt(lastPos - 1);
                                     if (prevChar == '-' || prevChar == '+') {
                                         final ExpressionNode en = opStack.peek();
-                                        if (en.token instanceof GenericLexer.FloatingSequence) {
+                                        if (en != null && en.token instanceof GenericLexer.FloatingSequence) {
                                             ((GenericLexer.FloatingSequence) en.token).setHi(lexer.getTokenHi());
                                             break;
                                         } else {
