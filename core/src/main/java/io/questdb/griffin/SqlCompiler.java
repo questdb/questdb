@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -57,6 +58,40 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      */
     boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
+    /**
+     * Returns the epoch-micros upper bound T when {@code predicate} is {@code <ts> < T} / {@code <ts> <= T}
+     * on the (micros) designated timestamp with a column-free T, else {@link io.questdb.std.Numbers#LONG_NULL}.
+     * Lets the row-expiry cleanup classify whole partitions by their bounds without a survivor scan; any
+     * non-matching shape or evaluation issue returns LONG_NULL so the caller falls back to the scan.
+     */
+    long expiryTimestampThresholdMicros(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            CharSequence timestampColumn
+    );
+
+    /**
+     * Returns true when the EXPIRE ROWS policy {@code predicate} is <b>monotonic</b>, i.e. safe for the
+     * background cleanup job to physically reclaim: a row it classifies as expired now can never re-enter the
+     * keep-set. Eligible scalar {@code WHEN} predicates are monotonic when they are clock-free or reduce to a
+     * designated-timestamp threshold ({@code ts < now()} / {@code ts <= T}). Structural KEEP and raw window
+     * policies are not safe: a later materialized-view refresh can remove a winner and reveal an older fallback
+     * that cleanup had physically deleted. A scalar predicate that references a non-deterministic clock in a
+     * non-threshold position (e.g. {@code ts > now()}) is also not monotonic because it can un-expire rows as
+     * time advances.
+     * <p>
+     * The check is conservative — any doubt (parse/bind issue, a non-deterministic function it cannot prove
+     * monotonic) returns false, so cleanup is SKIPPED and the authoritative read filter alone enforces
+     * retention. Disk is not reclaimed for such a policy, but query results stay correct. {@code metadata} is
+     * used to bind scalar predicates.
+     */
+    boolean isExpiryCleanupMonotonic(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate
+    );
+
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
     RecordCursorFactory generateSelectWithRetries(
@@ -71,6 +106,19 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     CairoEngine getEngine();
 
     QueryBuilder query();
+
+    /**
+     * Validates an EXPIRE ROWS predicate structurally by parsing and binding it against {@code metadata}
+     * (the columns the object will have) and checking the result is a boolean expression, without touching
+     * any table. Used by CREATE TABLE / CREATE MATERIALIZED VIEW to reject a bad predicate before the
+     * object is created. Any parse/bind error is rewritten as a clear SqlException at {@code position}.
+     */
+    ExpiryValidationResult validateExpiryPredicateOnMetadata(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            int position
+    ) throws SqlException;
 
     @TestOnly
     void setEnableJitNullChecks(boolean value);

@@ -27,8 +27,10 @@ package io.questdb.cairo.pool;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.BatchCallback;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.ExpressionParserListener;
 import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
@@ -156,6 +158,16 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public long expiryTimestampThresholdMicros(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate, CharSequence timestampColumn) {
+            return delegate.expiryTimestampThresholdMicros(executionContext, metadata, predicate, timestampColumn);
+        }
+
+        @Override
+        public boolean isExpiryCleanupMonotonic(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate) {
+            return delegate.isExpiryCleanupMonotonic(executionContext, metadata, predicate);
+        }
+
+        @Override
         public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
             return delegate.generateExecutionModel(sqlText, executionContext);
         }
@@ -213,6 +225,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public QueryBuilder query() {
             return delegate.query();
+        }
+
+        @Override
+        public ExpiryValidationResult validateExpiryPredicateOnMetadata(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate, int position) throws SqlException {
+            return delegate.validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, position);
         }
 
         @Override

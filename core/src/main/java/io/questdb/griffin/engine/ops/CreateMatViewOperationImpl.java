@@ -59,6 +59,7 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
@@ -93,6 +94,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final boolean deferred;
     private final int periodDelay;
     private final char periodDelayUnit;
+    private final ObjList<String> referencedTableNames = new ObjList<>();
     private final int refreshType;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final String sqlText;
@@ -105,6 +107,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final MatViewDefinition viewDefinition = new MatViewDefinition();
     private int baseTableTimestampType;
     private CreateTableOperationImpl createTableOperation;
+    private boolean passthrough;
     private int periodLength;
     private char periodLengthUnit;
     private long samplingInterval;
@@ -184,8 +187,27 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public IntList getCoveringColumnIndices(int columnIndex) {
+        return createTableOperation.getCoveringColumnIndices(columnIndex);
+    }
+
+    @Override
     public CreateTableOperation getCreateTableOperation() {
         return createTableOperation;
+    }
+
+    // The row-expiry policy is parsed onto the underlying CreateTableOperation (mirroring TTL).
+    // It must be exposed on the TableStructure that CairoEngine.createMatView() hands to the _meta
+    // serializer, so delegate here exactly like getTtlHoursOrMonths(); otherwise CREATE MAT VIEW
+    // ... EXPIRE ROWS would silently drop the policy at create time.
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return createTableOperation.getExpiryCleanupIntervalMicros();
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return createTableOperation.getExpiryPredicate();
     }
 
     @Override
@@ -221,6 +243,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public int getPartitionBy() {
         return createTableOperation.getPartitionBy();
+    }
+
+    @Override
+    public ObjList<String> getReferencedTableNames() {
+        return referencedTableNames;
     }
 
     @Override
@@ -299,7 +326,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 periodLength,
                 periodLengthUnit,
                 periodDelay,
-                periodDelayUnit
+                periodDelayUnit,
+                passthrough
         );
     }
 
@@ -314,6 +342,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public boolean isCovering(int index) {
+        return createTableOperation.isCovering(index);
+    }
+
+    @Override
     public byte getIndexType(int index) {
         return createTableOperation.getIndexType(index);
     }
@@ -321,6 +354,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public boolean isMatView() {
         return true;
+    }
+
+    @Override
+    public boolean isPassthrough() {
+        return passthrough;
     }
 
     @Override
@@ -345,6 +383,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @NotNull FunctionFactoryCache functionFactoryCache,
             @NotNull IQueryModel queryModel
     ) throws SqlException {
+        // Every table the defining query reads, so executeCreateMatView can reject a policied
+        // reference anywhere in the query (not only the base) before the view is created.
+        referencedTableNames.clear();
+        collectReferencedTableNames(queryModel, referencedTableNames);
+
         // Create view columns based on query.
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
         assert columns.size() > 0;
@@ -435,30 +478,58 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
 
-        // We haven't found timestamp_floor() in SELECT.
+        // No SAMPLE BY and no timestamp_floor(): treat as a non-aggregating "passthrough" view
+        // (e.g. SELECT * FROM base) when the query has no aggregates/joins. Such a view copies base
+        // rows 1:1; samplingInterval becomes a refresh commit-chunk size (set later from the base
+        // partitioning in validateAndUpdateMetadataFromSelect), not an aggregation bucket.
         if (intervalExpr == null) {
-            if (timestamp != null) {
+            if (isPassthrough(functionFactoryCache, queryModel)) {
+                passthrough = true;
+            } else if (timestamp != null) {
                 // The designated timestamp column was already confirmed present in the select
-                // list above, but the query has neither a SAMPLE BY nor a GROUP BY
-                // timestamp_floor(...), so no sampling interval could be inferred. Point the
-                // user at the two supported forms instead of claiming the column is missing.
+                // list above, but the query is not a passthrough view and has neither a SAMPLE BY
+                // nor a GROUP BY timestamp_floor(...), so no sampling interval could be inferred.
+                // Point the user at the two supported forms instead of claiming the column is missing.
                 throw SqlException.position(selectTextPosition)
                         .put("materialized view query requires a sampling interval, use SAMPLE BY or GROUP BY timestamp_floor() [name=")
                         .put(timestamp).put(']');
+            } else {
+                throw SqlException.$(selectTextPosition, "TIMESTAMP column is not present in select list");
             }
-            throw SqlException.$(selectTextPosition, "TIMESTAMP column is not present in select list");
         }
 
-        // Parse sampling interval expression.
-        final CharSequence interval = GenericLexer.unquote(intervalExpr);
-        final int samplingIntervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, intervalPos, "sample");
-        assert samplingIntervalEnd < interval.length();
-        samplingInterval = TimestampSamplerFactory.parsePositiveInterval(interval, samplingIntervalEnd, intervalPos, "sample", Numbers.INT_NULL, ' ');
-        assert samplingInterval > 0;
-        samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
+        if (passthrough) {
+            if (periodLength != 0) {
+                throw SqlException.$(selectTextPosition, "PERIOD is not supported for non-aggregating (passthrough) materialized views");
+            }
+        } else {
+            // Parse sampling interval expression.
+            final CharSequence interval = GenericLexer.unquote(intervalExpr);
+            final int samplingIntervalEnd = CommonUtils.findPositiveIntervalEndIndex(interval, intervalPos, "sample");
+            assert samplingIntervalEnd < interval.length();
+            samplingInterval = CommonUtils.parsePositiveInterval(interval, samplingIntervalEnd, intervalPos, "sample", Numbers.INT_NULL, ' ');
+            assert samplingInterval > 0;
+            samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
+        }
 
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
         try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
+            final ObjList<String> passthroughColumnNames = new ObjList<>(baseTableMetadata.getColumnCount());
+            if (passthrough) {
+                passthroughColumnNames.setPos(baseTableMetadata.getColumnCount());
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    final QueryColumn column = columns.getQuick(i);
+                    final int baseColumnIndex = resolveBaseColumnIndex(
+                            column.getAst(),
+                            queryModel,
+                            baseTableName,
+                            baseTableMetadata
+                    );
+                    if (baseColumnIndex > -1 && passthroughColumnNames.getQuick(baseColumnIndex) == null) {
+                        passthroughColumnNames.setQuick(baseColumnIndex, SqlUtil.toColumnName(column.getName()));
+                    }
+                }
+            }
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 if (hasNoAggregates(functionFactoryCache, queryModel, i)) {
@@ -468,6 +539,21 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         throw SqlException.$(0, "missing column [name=").put(columnName).put(']');
                     }
                     copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
+                    if (passthrough) {
+                        // A passthrough view (e.g. SELECT * FROM base, as used by EXPIRE ROWS retention
+                        // views) copies base rows 1:1, so a pass-through symbol column inherits the base
+                        // table's index - otherwise the view silently drops it, forcing full scans for
+                        // indexed/LATEST ON reads that could use an index seek. Passthrough-only: an
+                        // aggregating view's rows are not base rows, so it never inherits.
+                        inheritBaseSymbolColumnIndex(
+                                column.getAst(),
+                                queryModel,
+                                columnModel,
+                                baseTableName,
+                                baseTableMetadata,
+                                passthroughColumnNames
+                        );
+                    }
                 }
             }
         }
@@ -526,8 +612,40 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
-        updateMatViewTablePartitionBy(createTableOperation.getTimestampType());
+        if (passthrough) {
+            setPassthroughChunkInterval(baseTableMetadata.getPartitionBy());
+        }
+        updateMatViewTablePartitionBy(createTableOperation.getTimestampType(), baseTableMetadata.getPartitionBy());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
+    }
+
+    /**
+     * Collects the distinct names of every plain table the model tree reads (nested models, join
+     * models, unions). Sub-queries and CTE references carry no table name of their own and recurse;
+     * table functions are skipped.
+     */
+    private static void collectReferencedTableNames(@Nullable IQueryModel model, ObjList<String> namesOut) {
+        if (model == null) {
+            return;
+        }
+        final CharSequence tableName = model.getTableName();
+        if (tableName != null && model.getTableNameFunction() == null) {
+            boolean isPresent = false;
+            for (int i = 0, n = namesOut.size(); i < n; i++) {
+                if (Chars.equals(namesOut.getQuick(i), tableName)) {
+                    isPresent = true;
+                    break;
+                }
+            }
+            if (!isPresent) {
+                namesOut.add(Chars.toString(tableName));
+            }
+        }
+        collectReferencedTableNames(model.getNestedModel(), namesOut);
+        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+            collectReferencedTableNames(model.getJoinModels().getQuick(i), namesOut);
+        }
+        collectReferencedTableNames(model.getUnionModel(), namesOut);
     }
 
     private static void copyBaseTableSymbolColumnCapacity(
@@ -608,6 +726,164 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return null;
     }
 
+    /**
+     * Inherits the base table's SYMBOL index (type, value block capacity, and available covering columns)
+     * into {@code columnModel}
+     * when {@code columnNode} is a bare column reference that resolves - through the nested-model chain,
+     * exactly like {@link #copyBaseTableSymbolColumnCapacity} - to an indexed SYMBOL column of the base
+     * table. A reference that lands on an expression at any level (e.g. {@code upper(k) sym} in an inner
+     * projection shadowing an indexed base column of the same name) resolves to no base column and
+     * inherits nothing. An index the CREATE statement declared explicitly is kept as-is. The caller
+     * invokes this for passthrough views only, which have no join/union models, so only the nested chain
+     * is walked.
+     */
+    private static void inheritBaseSymbolColumnIndex(
+            @Nullable ExpressionNode columnNode,
+            @Nullable IQueryModel queryModel,
+            @NotNull CreateTableColumnModel columnModel,
+            @NotNull CharSequence baseTableName,
+            @NotNull TableMetadata baseTableMetadata,
+            @NotNull ObjList<String> passthroughColumnNames
+    ) {
+        if (columnNode == null || queryModel == null || columnNode.type != ExpressionNode.LITERAL || columnModel.isIndexed()) {
+            return;
+        }
+        final int columnIndex = resolveBaseColumnIndex(columnNode, queryModel, baseTableName, baseTableMetadata);
+        if (columnIndex < 0
+                || !ColumnType.isSymbol(baseTableMetadata.getColumnType(columnIndex))
+                || !baseTableMetadata.isColumnIndexed(columnIndex)) {
+            return;
+        }
+
+        final TableColumnMetadata baseColumnMetadata = baseTableMetadata.getColumnMetadata(columnIndex);
+        columnModel.setIndexType(
+                baseColumnMetadata.getIndexType(),
+                columnNode.position,
+                baseTableMetadata.getIndexValueBlockCapacity(columnIndex)
+        );
+        final IntList coveringColumnWriterIndices = baseColumnMetadata.getCoveringColumnIndices();
+        if (coveringColumnWriterIndices != null) {
+            for (int i = 0, n = coveringColumnWriterIndices.size(); i < n; i++) {
+                final int coveringColumnIndex = resolveDenseColumnIndex(
+                        baseTableMetadata,
+                        coveringColumnWriterIndices.getQuick(i)
+                );
+                if (coveringColumnIndex > -1) {
+                    final String outputColumnName = passthroughColumnNames.getQuick(coveringColumnIndex);
+                    if (outputColumnName != null) {
+                        columnModel.addCoveringColumnName(outputColumnName, columnNode.position);
+                    }
+                }
+            }
+        }
+    }
+
+    private static int resolveBaseColumnIndex(
+            @Nullable ExpressionNode columnNode,
+            @Nullable IQueryModel queryModel,
+            @NotNull CharSequence baseTableName,
+            @NotNull TableMetadata baseTableMetadata
+    ) {
+        if (columnNode == null || queryModel == null || columnNode.type != ExpressionNode.LITERAL) {
+            return -1;
+        }
+        if (queryModel.getTableName() != null) {
+            if (Chars.equalsIgnoreCase(queryModel.getTableName(), baseTableName)) {
+                final CharSequence columnName = resolveColumnName(columnNode, queryModel);
+                return columnName != null ? baseTableMetadata.getColumnIndexQuiet(columnName) : -1;
+            }
+            return -1;
+        }
+
+        final QueryColumn column = queryModel.getAliasToColumnMap().get(columnNode.token);
+        return resolveBaseColumnIndex(
+                column != null ? column.getAst() : columnNode,
+                queryModel.getNestedModel(),
+                baseTableName,
+                baseTableMetadata
+        );
+    }
+
+    private static int resolveDenseColumnIndex(TableMetadata metadata, int writerIndex) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getWriterIndex(i) == writerIndex) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private boolean isPassthrough(FunctionFactoryCache functionFactoryCache, IQueryModel queryModel) {
+        // A non-aggregating projection over a single table (e.g. SELECT * FROM base [WHERE ...]).
+        // The caller has already established there is no SAMPLE BY / timestamp_floor(). Reject anything
+        // whose rows are not 1:1 with the base: a top-level table name / GROUP BY / top-level JOIN / LATEST
+        // ON / UNION here (isNotPlainSelectModel), then the same features on nested models in the walk
+        // below, and any aggregate in a column. (isNotPlainSelectModel does NOT catch DISTINCT or window
+        // functions - the nested-chain walk is what rejects DISTINCT.)
+        if (SqlUtil.isNotPlainSelectModel(queryModel)) {
+            return false;
+        }
+        if (queryModel.getJoinModels().size() > 1) {
+            return false;
+        }
+        // LATEST ON / UNION / GROUP BY / DISTINCT lower onto a NESTED model, which the top-level
+        // isNotPlainSelectModel() check above does not see. Walk the whole nested chain so a DERIVED view
+        // (e.g. SELECT * FROM base LATEST ON ts PARTITION BY k) is NOT misclassified as passthrough: its
+        // rows are not 1:1 with the base, so EXPIRE ROWS physical cleanup must never run on it. DISTINCT
+        // has three shapes to catch: a SELECT_MODEL_DISTINCT model, the isDistinct() flag, and - once
+        // isSqlDistinctGroupByRewriteEnabled() has rewritten DISTINCT to an implicit group-by - a
+        // SELECT_MODEL_GROUP_BY model whose explicit getGroupBy() list is empty. Rejecting every
+        // SELECT_MODEL_GROUP_BY covers that last shape and every other aggregating model; a genuine
+        // aggregating view never reaches here (intervalExpr would be set).
+        for (IQueryModel m = queryModel; m != null; m = m.getNestedModel()) {
+            if (m.getLatestByType() != IQueryModel.LATEST_BY_NONE
+                    || m.getUnionModel() != null
+                    || m.getGroupBy().size() > 0
+                    || m.getJoinModels().size() > 1
+                    || m.isDistinct()
+                    || m.getSelectModelType() == IQueryModel.SELECT_MODEL_DISTINCT
+                    || m.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
+                return false;
+            }
+        }
+        final ObjList<QueryColumn> cols = queryModel.getBottomUpColumns();
+        for (int i = 0, n = cols.size(); i < n; i++) {
+            if (!hasNoAggregates(functionFactoryCache, queryModel, i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void setPassthroughChunkInterval(int basePartitionBy) {
+        // Refresh commit-chunk size for a passthrough view. Correctness-neutral: it only bounds the
+        // size of each REPLACE_RANGE refresh batch (it is not an aggregation bucket). We mirror the
+        // base table's partition unit. NOTE: a single very dense base partition still commits as one
+        // batch, since the refresh step cannot subdivide below one sampler bucket.
+        switch (basePartitionBy) {
+            case PartitionBy.HOUR -> {
+                samplingInterval = 1;
+                samplingIntervalUnit = 'h';
+            }
+            case PartitionBy.WEEK -> {
+                samplingInterval = 7;
+                samplingIntervalUnit = 'd';
+            }
+            case PartitionBy.MONTH -> {
+                samplingInterval = 1;
+                samplingIntervalUnit = 'M';
+            }
+            case PartitionBy.YEAR -> {
+                samplingInterval = 1;
+                samplingIntervalUnit = 'y';
+            }
+            default -> { // DAY (and any non-time-unit partitioning)
+                samplingInterval = 1;
+                samplingIntervalUnit = 'd';
+            }
+        }
+    }
+
     private static @Nullable CharSequence resolveColumnName(ExpressionNode columnNode, IQueryModel queryModel) {
         final int dotIndex = Chars.indexOfLastUnquoted(columnNode.token, '.');
         if (dotIndex > -1) {
@@ -684,10 +960,21 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
     }
 
-    private void updateMatViewTablePartitionBy(int timestampType) throws SqlException {
+    private void updateMatViewTablePartitionBy(int timestampType, int basePartitionBy) throws SqlException {
         // Check if PARTITION BY wasn't specified in SQL, so that we need
         // to assign it based on the sampling interval.
         if (createTableOperation.getPartitionBy() == PartitionBy.NONE) {
+            if (passthrough) {
+                // Mirror the base table's partitioning so refresh REPLACE_RANGE and expiry DROP/REPLACE
+                // align to base partitions and per-partition row counts match the base.
+                final int viewPartitionBy = basePartitionBy != PartitionBy.NONE ? basePartitionBy : PartitionBy.DAY;
+                createTableOperation.setPartitionBy(viewPartitionBy);
+                final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
+                if (ttlHoursOrMonths != 0) {
+                    PartitionBy.validateTtlGranularity(viewPartitionBy, ttlHoursOrMonths, createTableOperation.getTtlPosition());
+                }
+                return;
+            }
             TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
             final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(
                     timestampDriver,

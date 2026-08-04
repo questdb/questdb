@@ -24,10 +24,65 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.MetadataCacheWriter;
 import org.junit.Test;
 
 public class ViewsFunctionTest extends AbstractViewTest {
+
+    @Test
+    public void testMaterializedViewsExpireRowsBeforeStartupHydration() throws Exception {
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " +
+                    "EXPIRE ROWS WHEN v < 2.0 CLEANUP EVERY 30m");
+            drainWalAndMatViewQueues();
+
+            // Simulate the startup window: the registry and materialized-view graph are populated, but the
+            // asynchronous metadata-cache hydrator has not run yet.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            assertQuery("SELECT expire_clause, expire_cleanup_every FROM materialized_views() WHERE view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            expire_clause\texpire_cleanup_every
+                            v < 2.0\t30m
+                            """);
+        });
+    }
+
+    @Test
+    public void testMaterializedViewsExpireRowsColumns() throws Exception {
+        // Mat views are gated behind dev mode, exactly as MatViewTest enables them.
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+
+            // Mat view with a row-expiry policy: the predicate and cleanup cadence must be surfaced.
+            execute("create materialized view mv as (select * from base) EXPIRE ROWS WHEN v < 2.0 CLEANUP EVERY 30m");
+            // Mat view with no policy: both columns must be null.
+            execute("create materialized view mv_no_policy as (select * from base)");
+            drainWalAndMatViewQueues();
+
+            assertQuery("select expire_clause, expire_cleanup_every from materialized_views() where view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("expire_clause\texpire_cleanup_every\n" +
+                            "v < 2.0\t30m\n");
+
+            assertQuery("select expire_clause, expire_cleanup_every from materialized_views() where view_name = 'mv_no_policy'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("expire_clause\texpire_cleanup_every\n" +
+                            "\t\n");
+        });
+    }
 
     @Test
     public void testShowColumnsView() throws Exception {

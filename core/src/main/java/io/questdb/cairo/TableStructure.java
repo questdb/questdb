@@ -80,6 +80,21 @@ public interface TableStructure {
         return 0; // TTL disabled by default
     }
 
+    /**
+     * Returns the row-expiry predicate (raw SQL text) for this table, or {@code null} when no
+     * row-expiry policy is configured.
+     */
+    default String getExpiryPredicate() {
+        return null;
+    }
+
+    /**
+     * Returns the row-expiry cleanup interval in microseconds, or {@code 0} when unset.
+     */
+    default long getExpiryCleanupIntervalMicros() {
+        return 0;
+    }
+
     default ViewDefinition getViewDefinition() {
         return null;
     }

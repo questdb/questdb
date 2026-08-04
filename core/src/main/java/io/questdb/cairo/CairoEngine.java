@@ -746,6 +746,31 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (!matViewDefinition.isDeferred()) {
                     matViewStateStore.enqueueIncrementalRefresh(matViewToken);
                 }
+                // Close the CREATE-vs-ALTER race window. Before this call the compiler read the base's
+                // EXPIRE ROWS policy and found none, but a concurrent ALTER ... SET EXPIRE on the base may
+                // have applied one in between (that ALTER's own dependents check passed because this view was
+                // not registered yet). A base with both a policy and a dependent leaks expired rows into the
+                // dependent on refresh, because refresh reads the base raw. Now that addView has registered
+                // this view, re-read the base's current policy from a fresh reader; if a policy has appeared,
+                // the catch below drops this half-created view (dropTableOrViewOrMatView) and the CREATE fails.
+                //
+                // This branch handles the ordering where the ALTER applies its policy BEFORE this CREATE
+                // registers the dependent. The reverse ordering -- this CREATE registers the dependent first,
+                // then the ALTER runs -- is handled on the ALTER side: its apply-time dependents check now
+                // sees this view and skips applying the policy (SqlCompilerImpl.alterTableSetExpire and the
+                // backstop in TableWriter.setMetaExpiry). Between the two sides, no interleaving can leave the
+                // base holding a policy while a dependent view exists.
+                final CharSequence baseTableName = matViewDefinition.getBaseTableName();
+                if (baseTableName != null) {
+                    try (TableReader baseReader = getReader(baseTableName)) {
+                        final CharSequence basePredicate = baseReader.getMetadata().getExpiryPredicate();
+                        if (basePredicate != null && basePredicate.length() > 0) {
+                            throw CairoException.nonCritical().put("cannot create materialized view over '")
+                                    .put(baseTableName)
+                                    .put("': the base concurrently acquired an EXPIRE ROWS policy");
+                        }
+                    }
+                }
             }
         } catch (CairoException e) {
             dropTableOrViewOrMatView(path, matViewToken);

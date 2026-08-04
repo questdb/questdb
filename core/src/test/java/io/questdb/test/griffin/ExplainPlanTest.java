@@ -4835,6 +4835,163 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
+    // R1: LATEST ON over a trivial identity-passthrough sub-query of a single table, on the base's
+    // designated timestamp with an indexed SYMBOL partition key, must use the indexed direct-table
+    // fast path (same plan as the equivalent same-level query), not LatestBy light + full scan.
+    @Test
+    public void testLatestOnTrivialSubqueryFilteredUsesIndexedFastPath() throws Exception {
+        assertQuery("select s, i, ts from (select * from a where ts >= 0::timestamp) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestByDeferredListValuesFiltered
+                            Interval backward scan on: a
+                              intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
+                        """);
+    }
+
+    @Test
+    public void testLatestOnTrivialSubqueryUnfilteredUsesIndexedFastPath() throws Exception {
+        assertQuery("select * from (select * from a) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestByAllIndexed
+                            Async index backward scan on: s workers: 2
+                            Frame backward scan on: a
+                        """);
+    }
+
+    // Negative: non-indexed partition key keeps the existing LatestBy light plan (no index to seek).
+    @Test
+    public void testLatestOnTrivialSubqueryNonIndexedStaysLight() throws Exception {
+        assertQuery("select s, i, ts from (select * from a where ts >= 0::timestamp) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        SelectedRecord
+                            LatestBy light order_by_timestamp: true
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: a
+                                      intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
+                        """);
+    }
+
+    // Negative: a renamed partition key is not an identity passthrough; keep LatestBy light.
+    @Test
+    public void testLatestOnRenamedKeySubqueryStaysLight() throws Exception {
+        assertQuery("select k, i, ts from (select i, s as k, ts from a) latest on ts partition by k")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        SelectedRecord
+                            LatestBy light order_by_timestamp: true
+                                SelectedRecord
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                        """);
+    }
+
+    // Negative: LATEST ON a non-designated timestamp must not be relocated to the base (whose fast
+    // path keys off the designated timestamp); keep LatestBy light.
+    @Test
+    public void testLatestOnNonDesignatedTimestampSubqueryStaysLight() throws Exception {
+        assertQuery("select s, i, ts, ts2 from (select * from a) latest on ts2 partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp, ts2 timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        SelectedRecord
+                            LatestBy light order_by_timestamp: false
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                        """);
+    }
+
+    // Negative: a sub-query that REDESIGNATES the timestamp (timestamp(ts2)) must not be hoisted onto
+    // the base's designated timestamp - doing so turns a valid query into a compile error. Stays light.
+    @Test
+    public void testLatestOnRedesignatedTimestampSubqueryStaysLight() throws Exception {
+        assertQuery("select a, s, ts, ts2 from (select * from a2 timestamp(ts2)) latest on ts2 partition by s")
+                .ddl("create table a2 ( a int, s symbol index, ts timestamp, ts2 timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        SelectedRecord
+                            LatestBy light order_by_timestamp: true
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a2
+                        """);
+    }
+
+    // Negative: when the LATEST ON model itself carries a JOIN, latest-by applies to the join output;
+    // the hoist must not fire (it would apply latest-by to the table before the join, changing results
+    // whenever the join multiplies rows per key).
+    @Test
+    public void testLatestOnSubqueryWithJoinStaysUnhoisted() throws Exception {
+        assertQuery("select * from (select * from a) join b on s2 = s latest on ts partition by s")
+                .ddl(
+                        "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
+                        "create table b ( s2 symbol, v double );"
+                )
+                .assertsPlan("""
+                        SelectedRecord
+                            LatestBy
+                                Hash Join Light
+                                  condition: s2=s
+                                  symbolKeyJoin: true
+                                    LatestBy light order_by_timestamp: true
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                        """);
+    }
+
+    // An alias-qualified column in the sub-query WHERE (x.i) must not trigger the direct-table rewrite:
+    // it would drop the sub-query that defines `x`, leaving the prefix unresolvable and failing to
+    // compile. The query stays on the LatestBy light plan instead.
+    @Test
+    public void testLatestOnAliasQualifiedFilterSubqueryStaysLight() throws Exception {
+        assertQuery("select * from (select * from a x where x.i > 0) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("LatestBy light");
+    }
+
+    // The same case without an explicit alias - the column is qualified by the table's own name (a.i).
+    // It must also stay on the LatestBy light plan rather than fail to compile.
+    @Test
+    public void testLatestOnTableQualifiedFilterSubqueryStaysLight() throws Exception {
+        assertQuery("select * from (select * from a where a.i > 0) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("LatestBy light");
+    }
+
+    // Negative: a LIMIT in the sub-query bounds the rows LATEST ON sees. Hoisting the table read up would
+    // drop the LIMIT and compute latest-by over the whole table (wrong results), so the rewrite must not fire.
+    @Test
+    public void testLatestOnLimitSubqueryStaysLight() throws Exception {
+        assertQuery("select * from (select * from a limit 1) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("LatestBy light");
+    }
+
+    // Negative: an ORDER BY layer between LATEST ON and the table read must not be hoisted away.
+    @Test
+    public void testLatestOnOrderBySubqueryStaysLight() throws Exception {
+        assertQuery("select * from (select * from a order by ts desc) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("LatestBy light");
+    }
+
+    // Negative: a UNION sub-query is not a plain table read; the rewrite must not fire. A wrongful hoist to
+    // the indexed fast path would drop the UNION, so its survival in the plan proves the rewrite stayed off.
+    @Test
+    public void testLatestOnUnionSubqueryStaysUnhoisted() throws Exception {
+        assertQuery("select * from (select * from a union all select * from a) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("Union All");
+    }
+
     @Test
     public void testLatestOn3() throws Exception {
         assertQuery("select * from a latest on ts partition by s")

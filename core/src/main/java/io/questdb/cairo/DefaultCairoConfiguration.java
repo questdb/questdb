@@ -1668,6 +1668,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isRowExpiryEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlDistinctGroupByRewriteEnabled() {
         return true;
     }

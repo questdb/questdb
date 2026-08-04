@@ -1332,14 +1332,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
         if (tolerance != null) {
-            int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(tolerance.token, tolerance.position, "tolerance");
+            int k = CommonUtils.findPositiveIntervalEndIndex(tolerance.token, tolerance.position, "tolerance");
             assert tolerance.token.length() > k;
             char unit = tolerance.token.charAt(k);
             TimestampDriver timestampDriver = getTimestampDriver(getHigherPrecisionTimestampType(leftTimestamp, rightTimestampType));
             long multiplier;
             switch (unit) {
                 case 'n':
-                    toleranceInterval = TimestampSamplerFactory.parsePositiveInterval(tolerance.token, k, tolerance.position, "tolerance", Integer.MAX_VALUE, unit);
+                    toleranceInterval = CommonUtils.parsePositiveInterval(tolerance.token, k, tolerance.position, "tolerance", Integer.MAX_VALUE, unit);
                     return timestampDriver.fromNanos(toleranceInterval);
                 case 'U':
                     multiplier = timestampDriver.fromMicros(1);
@@ -1366,7 +1366,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw SqlException.$(tolerance.position, "unsupported TOLERANCE unit [unit=").put(unit).put(']');
             }
             int maxValue = (int) Math.min(Long.MAX_VALUE / multiplier, Integer.MAX_VALUE);
-            toleranceInterval = TimestampSamplerFactory.parsePositiveInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
+            toleranceInterval = CommonUtils.parsePositiveInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
             toleranceInterval *= multiplier;
         }
         return toleranceInterval;
@@ -2678,13 +2678,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      */
     private long evalHorizonTimeValue(ExpressionNode expr, TimestampDriver timestampDriver) throws SqlException {
         CharSequence token = expr.token;
-        int unitIndex = TimestampSamplerFactory.findIntervalEndIndex(token, expr.position);
+        int unitIndex = CommonUtils.findIntervalEndIndex(token, expr.position);
         if (unitIndex == -1) {
             // Unitless zero (e.g. "0")
             return 0;
         }
         char unit = token.charAt(unitIndex);
-        long value = TimestampSamplerFactory.parseInterval(token, unitIndex, expr.position);
+        long value = CommonUtils.parseInterval(token, unitIndex, expr.position);
         try {
             return switch (unit) {
                 case 'n' -> timestampDriver.fromNanos(value);
@@ -3685,8 +3685,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 coerceRuntimeConstantType(fillToFunc, timestampType, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", fillTo.position);
             }
 
-            int samplingIntervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(fillStride.token, fillStride.position, "sample");
-            long samplingInterval = TimestampSamplerFactory.parsePositiveInterval(fillStride.token, samplingIntervalEnd, fillStride.position, "sample", Numbers.INT_NULL, ' ');
+            int samplingIntervalEnd = CommonUtils.findPositiveIntervalEndIndex(fillStride.token, fillStride.position, "sample");
+            long samplingInterval = CommonUtils.parsePositiveInterval(fillStride.token, samplingIntervalEnd, fillStride.position, "sample", Numbers.INT_NULL, ' ');
             assert samplingInterval > 0;
             assert samplingIntervalEnd < fillStride.token.length();
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);

@@ -235,9 +235,30 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return true;
     }
 
+    // Whether the read-time row-expiry filter should be applied to policied tables referenced by queries
+    // compiled with this context. True for ordinary query contexts. The row-expiry cleanup job's context
+    // and the CREATE MATERIALIZED VIEW compile disable it: the cleanup computes survivors from its
+    // authoritative keep-filter alone, decoupled from the read filter (so a read-filter change cannot
+    // affect physical deletion), and a mat-view definition derives from the raw base.
+    default boolean isExpiryReadFilterEnabled() {
+        return true;
+    }
+
+    // Per-table refinement of {@link #isExpiryReadFilterEnabled()}: whether the read-time row-expiry
+    // filter applies to reads of THIS table in the current compilation. Follows the global flag by
+    // default; the mat-view refresh context overrides it to keep the filter on every table except the
+    // base, so a policied view referenced as a JOIN table is read filtered during refresh, exactly as
+    // any query reads it.
+    default boolean isExpiryReadFilterEnabled(TableToken tableToken) {
+        return isExpiryReadFilterEnabled();
+    }
+
     // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
     default boolean isOverriddenIntrinsics(TableToken tableToken) {
         return false;
+    }
+
+    default void setExpiryReadFilterEnabled(boolean enabled) {
     }
 
     boolean isParallelFilterEnabled();

@@ -319,6 +319,19 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    public AlterOperationBuilder ofSetExpire(int tableNamePosition, TableToken tableToken, int tableId, CharSequence predicate, long cleanupIntervalMicros) {
+        this.command = SET_EXPIRE;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        // Predicate rides extraStrInfo so it serializes/deserializes (and replicates via the
+        // metadata-change log) the same way as other string-carrying ALTER ops (RENAME/ADD COLUMN).
+        // An empty string encodes "no policy" (DROP EXPIRE), since extraStrInfo cannot carry null.
+        this.extraStrInfo.add(predicate == null ? "" : predicate);
+        this.extraInfo.add(cleanupIntervalMicros);
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofSetTableFormat(int tableNamePosition, TableToken tableToken, int tableId, int tableFormat) {
         this.command = SET_TABLE_FORMAT;
         this.tableNamePosition = tableNamePosition;
