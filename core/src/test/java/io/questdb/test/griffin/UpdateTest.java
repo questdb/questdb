@@ -1027,14 +1027,14 @@ public class UpdateTest extends AbstractCairoTest {
                 String nonNumeric = "UPDATE " + table + " SET d = 'a'";
                 assertQuery(nonNumeric)
                         .noLeakCheck()
-                        .fails(nonNumeric.indexOf("'a'"), "inconvertible value: `a` [STRING -> DECIMAL(10,2)]");
+                        .fails(nonNumeric.indexOf("'a'"), "inconvertible value: `a` [CHAR -> DECIMAL(10,2)]");
 
                 String overflow = "UPDATE " + table + " SET d = '5'";
                 execute("ALTER TABLE " + table + " ALTER COLUMN d TYPE DECIMAL(1,1)");
                 drainWalQueue();
                 assertQuery(overflow)
                         .noLeakCheck()
-                        .fails(overflow.indexOf("'5'"), "inconvertible value: `5` [STRING -> DECIMAL(1,1)]");
+                        .fails(overflow.indexOf("'5'"), "inconvertible value: `5` [CHAR -> DECIMAL(1,1)]");
             }
         });
     }
