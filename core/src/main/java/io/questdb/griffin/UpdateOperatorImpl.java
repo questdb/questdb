@@ -306,7 +306,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         if (tableWriter.isPartitionDeltaActive(rowPartitionIndex)) {
             // WAL-tolerable like the read-only case: the delta-write bit is set only by the
             // replicated delta-switch event, so the skip is identical on every instance. The
-            // insert-only delta tile model cannot express an in-place update of the frozen base.
+            // insert-only commit-run model cannot express an in-place update of the frozen base.
             throw CairoException.partitionManipulationRecoverable()
                     .put("cannot update delta-active partition [table=").put(tableToken.getTableName())
                     .put(", partitionTimestamp=").ts(
