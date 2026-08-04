@@ -151,7 +151,12 @@ namespace questdb::x86 {
         // If it's zero, we have to load the actual header value, which can be 0 or -1.
         Gp column_address = c.new_gp64("column_address");
         c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
-        c.mov(length, ptr(column_address, offset, 0, 0, header_size));
+        if (header_size == 4) {
+            // A plain mov into the 64-bit length register would read 8 bytes.
+            c.movsxd(length, ptr(column_address, offset, 0, 0, header_size));
+        } else {
+            c.mov(length, ptr(column_address, offset, 0, 0, header_size));
+        }
         c.bind(l_nonzero);
         if (header_size == 4) {
             return {length.r32(), data_type_t::i32, data_kind_t::kMemory};
