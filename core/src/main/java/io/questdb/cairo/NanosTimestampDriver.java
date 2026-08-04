@@ -1627,7 +1627,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public void validateBounds(long timestamp) {
-        if (timestamp < 0) {
+        if (Long.compareUnsigned(timestamp, CommonUtils.MAX_TIMESTAMP) > 0) {
             validateBounds0(timestamp);
         }
     }
@@ -1748,7 +1748,7 @@ public class NanosTimestampDriver implements TimestampDriver {
         if (timestamp == Long.MIN_VALUE) {
             throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
         }
-        if (timestamp < TableWriter.TIMESTAMP_EPOCH || timestamp > CommonUtils.TIMESTAMP_UNIT_NANOS) {
+        if (timestamp < TableWriter.TIMESTAMP_EPOCH || timestamp > CommonUtils.MAX_TIMESTAMP) {
             throw CairoException.nonCritical().put("designated timestamp_ns before 1970-01-01 and beyond ").put(MAX_NANO_TIMESTAMP_STR).put(" is not allowed");
         }
     }
