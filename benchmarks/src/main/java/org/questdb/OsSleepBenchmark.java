@@ -27,6 +27,7 @@ package org.questdb;
 import io.questdb.std.Os;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
 import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Mode;
@@ -44,21 +45,25 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Compares {@link Os#pause()} and {@link Os#sleep(long)} against the
- * {@code Thread.sleep}-based implementations they replaced.
+ * {@code Thread.sleep}-based implementations they replaced, inlined here as
+ * {@code legacyPause}/{@code legacySleep}.
  * <p>
- * Read {@code ·gc.alloc.rate.norm} first: since JDK 25 {@code Thread.beforeSleep}
- * constructs a {@code jdk.internal.event.ThreadSleepEvent} before testing
- * {@code isEnabled()}, so every {@code Thread.sleep} call allocates 40 bytes even
- * with JFR off. The legacy rows should report ~40 B/op and the current rows 0 B/op.
+ * Read {@code ·gc.alloc.rate.norm} first ({@code main} adds the gc profiler; CLI
+ * runs need {@code -prof gc}): since JDK 25 {@code Thread.beforeSleep} constructs
+ * a {@code jdk.internal.event.ThreadSleepEvent} before testing {@code isEnabled()},
+ * so {@code Thread.sleep} allocates 40 bytes per call even with JFR off -- wherever
+ * the JIT does not eliminate the dead event. The legacy rows report ~40 B/op under
+ * the Graal JIT, C1 and the interpreter, and ~0 B/op once HotSpot C2 compiles the
+ * call site; the current rows report ~0 B/op everywhere.
  * <p>
  * Read the timings second -- they are the no-regression check. Sleep duration is
  * dominated by the OS timer, so {@code testLegacySleep*} and {@code testOsSleep*}
  * must land within noise of each other; a native sleep that overshoots would show
- * up here. {@code testOsPause} vs {@code testLegacyPause} compares the two spin
- * yields, where the syscall dominates and the calling convention does not.
+ * up here.
  */
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
+@Fork(1)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @Warmup(iterations = 2, time = 2)
 @Measurement(iterations = 3, time = 3)
@@ -68,7 +73,6 @@ public class OsSleepBenchmark {
         Options opt = new OptionsBuilder()
                 .include(OsSleepBenchmark.class.getSimpleName())
                 .addProfiler("gc")
-                .forks(1)
                 .build();
 
         new Runner(opt).run();

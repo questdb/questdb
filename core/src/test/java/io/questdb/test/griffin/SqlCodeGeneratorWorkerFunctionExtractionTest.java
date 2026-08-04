@@ -49,11 +49,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 
-import java.lang.management.ManagementFactory;
 import java.util.Collections;
 
 /**
@@ -109,13 +108,7 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
     @Test
     public void testAllThreadSafeWideProjectionAllocatesNoIndexList() throws Exception {
         assertMemoryLeak(() -> {
-            final java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
-            Assume.assumeTrue("thread allocation profiling unavailable", mxBean instanceof ThreadMXBean);
-            final ThreadMXBean threadMXBean = (ThreadMXBean) mxBean;
-            Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
-            if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
-                threadMXBean.setThreadAllocatedMemoryEnabled(true);
-            }
+            final ThreadMXBean threadMXBean = TestUtils.threadAllocationBean();
 
             final int columnCount = 1_000_000;
             final CountingFunctionParser parser = new CountingFunctionParser();

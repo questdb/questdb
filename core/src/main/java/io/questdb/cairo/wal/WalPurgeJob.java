@@ -682,11 +682,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         public void run() {
             int i = 0, n = discovered.size();
-            if (n > 0 && waitBeforeDelete > 0) {
-                Os.sleep(waitBeforeDelete);
-            }
-
             try {
+                if (n > 0 && waitBeforeDelete > 0) {
+                    Os.sleep(waitBeforeDelete);
+                }
                 while (i < n) {
                     final int walId = (int) discovered.get(i);
                     final long maxSegmentLocked = discovered.get(i + 1);

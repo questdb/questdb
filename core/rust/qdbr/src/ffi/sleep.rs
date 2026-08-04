@@ -26,14 +26,17 @@
 //!
 //! Java's `Thread.sleep` allocates a `jdk.internal.event.ThreadSleepEvent` on
 //! every call since JDK 25 -- `Thread.beforeSleep` constructs the event before
-//! testing `isEnabled()`, so the 40 bytes are paid even with JFR off. QuestDB's
-//! worker back-off ladder calls it often enough for that to dominate the young
-//! generation, hence this replacement.
+//! testing `isEnabled()`, so the 40 bytes are paid even with JFR off wherever
+//! the JIT does not eliminate the dead event (the Graal JIT, C1 and the
+//! interpreter do not; a hot C2-compiled call site does). QuestDB's worker
+//! back-off ladder calls it often enough for that to dominate the young
+//! generation on GraalVM builds, hence this replacement.
 //!
+//! `Thread.interrupt` never signals a thread parked in a plain downcall, so a
+//! Java-interrupted caller sleeps the full duration; `OsTest.testSleepEnds`
+//! asserts that. Genuine POSIX signals cannot cut the sleep short either:
 //! `std::thread::sleep` re-issues the underlying syscall with the remaining
-//! duration after a signal, so a caller that another thread interrupts still
-//! sleeps for at least `millis`. That matches what the Java deadline loop this
-//! replaces guaranteed, and `OsTest.testSleepEnds` asserts it.
+//! duration after EINTR.
 //!
 //! Java binds this symbol through the Foreign Function & Memory API WITHOUT
 //! `Linker.Option.critical`. The plain binding transitions the calling thread to
@@ -54,21 +57,29 @@ pub extern "C" fn qdb_sleep_millis(millis: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
     use std::time::Instant;
 
     #[test]
     fn sleeps_at_least_the_requested_duration() {
         let start = Instant::now();
         qdb_sleep_millis(50);
-        assert!(start.elapsed() >= Duration::from_millis(50));
+        let elapsed = start.elapsed();
+        assert!(elapsed >= Duration::from_millis(50));
+        assert!(elapsed < Duration::from_secs(5));
     }
 
     #[test]
     fn non_positive_returns_immediately() {
-        let start = Instant::now();
-        qdb_sleep_millis(0);
-        qdb_sleep_millis(-1);
-        qdb_sleep_millis(i64::MIN);
-        assert!(start.elapsed() < Duration::from_millis(50));
+        // Run on a helper thread: dropping the guard turns `-1 as u64` into a
+        // 584-million-year sleep, which must fail this test, not hang the harness.
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            qdb_sleep_millis(0);
+            qdb_sleep_millis(-1);
+            qdb_sleep_millis(i64::MIN);
+            let _ = tx.send(());
+        });
+        assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok());
     }
 }

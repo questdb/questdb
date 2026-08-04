@@ -59,6 +59,17 @@ public final class Os {
     public static final String archName;
     public static final String name;
     public static final int type;
+    /**
+     * Downcall to {@code qdb_sleep_millis} in libquestdbr, resolved eagerly in the
+     * static initializer so a native library that lacks the symbol fails class load
+     * instead of killing worker threads on their first idle back-off. The binding
+     * deliberately omits {@link Linker.Option#critical}: a critical downcall keeps
+     * the caller in {@code _thread_in_Java} for the duration, so every safepoint --
+     * and therefore every GC -- would wait out the sleep. The plain binding
+     * transitions to {@code _thread_in_native}, which the VM can safepoint over.
+     * Remains {@code null} on 32-bit JVMs, which load no native library.
+     */
+    private static final MethodHandle SLEEP_MILLIS;
 
     private Os() {
     }
@@ -148,6 +159,40 @@ public final class Os {
         return bean.getTotalPhysicalMemorySize();
     }
 
+    @Nullable
+    public static String getNativeLibsDir(String libName) {
+        // the property name must be synced with questdb.sh and docker-entrypoint.sh
+        String libsDir = System.getProperty("questdb.libs.dir");
+        if (libsDir != null) {
+            // hooray, we are running from a distribution and the lib dir was set explicitly!
+            return libsDir;
+        }
+
+        // let's try to detect the lib location
+        if (!isJlinkRuntime()) {
+            // we are not in a jlink-ed runtime image -> we have to extract the native libs from the jar
+            return null;
+        }
+
+        // In jlink-ed runtime images, java.home points to the runtime image root,
+        // modules and native libs are in $JAVA_HOME/lib/
+        String javaHome = System.getProperty("java.home");
+        if (javaHome == null) {
+            return null;
+        }
+
+        java.nio.file.Path libDir = Paths.get(javaHome, "lib");
+        if (!libDir.toFile().isDirectory()) {
+            return null;
+        }
+
+        java.nio.file.Path libPath = libDir.resolve(libName);
+        if (!libPath.toFile().exists()) {
+            return null;
+        }
+        return libDir.toString();
+    }
+
     public static native int getPid();
 
     /**
@@ -214,9 +259,18 @@ public final class Os {
     public static native long malloc(long size);
 
     public static void park() {
-        LockSupport.parkNanos(Os.PARK_NANOS_MAX);
+        // parkNanos returns immediately, without clearing, while the interrupt flag is set
+        if (Thread.currentThread().isInterrupted()) {
+            sleep(1);
+        } else {
+            LockSupport.parkNanos(Os.PARK_NANOS_MAX);
+        }
     }
 
+    /**
+     * Yields the CPU to another runnable thread. Does not clear the calling
+     * thread's interrupt flag.
+     */
     public static void pause() {
         Thread.yield();
     }
@@ -240,12 +294,11 @@ public final class Os {
             return;
         }
         try {
-            SleepHandle.SLEEP_MILLIS.invokeExact(millis);
+            SLEEP_MILLIS.invokeExact(millis);
         } catch (RuntimeException | Error e) {
             throw e;
         } catch (Throwable t) {
-            // invokeExact declares throws Throwable; a void(long) downcall has no
-            // checked-throwing path, so this arm exists only to satisfy javac.
+            // unreachable: everything a void(long) downcall can throw is a RuntimeException or Error
             throw new AssertionError(t);
         }
     }
@@ -260,16 +313,6 @@ public final class Os {
 
     private static native void initRust();
 
-    private static void loadLib(String lib) {
-        InputStream is = Os.class.getResourceAsStream(lib);
-        if (is == null) {
-            throw new FatalError("Internal error: cannot find " + lib + ", broken package?");
-        }
-        loadLib(lib, is);
-    }
-
-    private static native int setCurrentThreadAffinity0(int cpu);
-
     private static boolean isJlinkRuntime() {
         // Detect jlink-ed runtime by checking if CodeSource uses jrt: protocol
         CodeSource codeSource = Os.class.getProtectionDomain().getCodeSource();
@@ -280,39 +323,15 @@ public final class Os {
         return location != null && "jrt".equals(location.getProtocol());
     }
 
-    @Nullable
-    public static String getNativeLibsDir(String libName) {
-        // the property name must be synced with questdb.sh and docker-entrypoint.sh
-        String libsDir = System.getProperty("questdb.libs.dir");
-        if (libsDir != null) {
-            // hooray, we are running from a distribution and the lib dir was set explicitly!
-            return libsDir;
+    private static void loadLib(String lib) {
+        InputStream is = Os.class.getResourceAsStream(lib);
+        if (is == null) {
+            throw new FatalError("Internal error: cannot find " + lib + ", broken package?");
         }
-
-        // let's try to detect the lib location
-        if (!isJlinkRuntime()) {
-            // we are not in a jlink-ed runtime image -> we have to extract the native libs from the jar
-            return null;
-        }
-
-        // In jlink-ed runtime images, java.home points to the runtime image root,
-        // modules and native libs are in $JAVA_HOME/lib/
-        String javaHome = System.getProperty("java.home");
-        if (javaHome == null) {
-            return null;
-        }
-
-        java.nio.file.Path libDir = Paths.get(javaHome, "lib");
-        if (!libDir.toFile().isDirectory()) {
-            return null;
-        }
-
-        java.nio.file.Path libPath = libDir.resolve(libName);
-        if (!libPath.toFile().exists()) {
-            return null;
-        }
-        return libDir.toString();
+        loadLib(lib, is);
     }
+
+    private static native int setCurrentThreadAffinity0(int cpu);
 
     private static boolean tryLoadFromDistribution(String cxxLibName, String rustLibName) {
         String libsDir = getNativeLibsDir(cxxLibName);
@@ -330,23 +349,6 @@ public final class Os {
             return false;
         }
         return true;
-    }
-
-    /**
-     * Holder so the symbol lookup runs on the first {@link #sleep(long)} call rather
-     * than while {@link Os}'s own static initializer is still loading libquestdbr.
-     * <p>
-     * The binding deliberately omits {@link Linker.Option#critical}: a critical
-     * downcall keeps the caller in {@code _thread_in_Java} for the duration, so every
-     * safepoint -- and therefore every GC -- would wait out the sleep. The plain
-     * binding transitions to {@code _thread_in_native}, which the VM can safepoint
-     * over.
-     */
-    private static final class SleepHandle {
-        static final MethodHandle SLEEP_MILLIS = Linker.nativeLinker().downcallHandle(
-                SymbolLookup.loaderLookup().find("qdb_sleep_millis").orElseThrow(
-                        () -> new ExceptionInInitializerError("symbol qdb_sleep_millis not found in libquestdbr")),
-                FunctionDescriptor.ofVoid(ValueLayout.JAVA_LONG));
     }
 
     static {
@@ -420,9 +422,14 @@ public final class Os {
                 }
             }
             initRust();
+            SLEEP_MILLIS = Linker.nativeLinker().downcallHandle(
+                    SymbolLookup.loaderLookup().find("qdb_sleep_millis").orElseThrow(
+                            () -> new FatalError("Internal error: symbol qdb_sleep_millis not found in libquestdbr, stale native library?")),
+                    FunctionDescriptor.ofVoid(ValueLayout.JAVA_LONG));
         } else {
             type = _32Bit;
             name = System.getProperty("os.name");
+            SLEEP_MILLIS = null;
         }
     }
 }

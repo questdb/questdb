@@ -64,7 +64,12 @@ public class SOCountDownLatch implements CountDownLatchSPI {
 
         while (true) {
             long start = System.nanoTime();
-            LockSupport.parkNanos(nanos);
+            if (Thread.currentThread().isInterrupted()) {
+                // parkNanos returns immediately, without clearing, while the interrupt flag is set
+                Os.sleep(1);
+            } else {
+                LockSupport.parkNanos(nanos);
+            }
             long elapsed = System.nanoTime() - start;
 
             if (elapsed < nanos) {

@@ -24,6 +24,8 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.Os;
+
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
@@ -65,7 +67,12 @@ public final class SimpleWaitingLock {
                     return true;
                 }
                 // CAS succeeded, but there was an owner before -> we are a waiter
-                LockSupport.parkNanos(remainingNanos);
+                if (Thread.currentThread().isInterrupted()) {
+                    // parkNanos returns immediately, without clearing, while the interrupt flag is set
+                    Os.sleep(1);
+                } else {
+                    LockSupport.parkNanos(remainingNanos);
+                }
             }
             expectedOwner = ownerOrWaiter.get();
         }

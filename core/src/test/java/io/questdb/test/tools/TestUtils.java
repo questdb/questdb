@@ -24,6 +24,7 @@
 
 package io.questdb.test.tools;
 
+import com.sun.management.ThreadMXBean;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.ServerMain;
@@ -129,6 +130,8 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.AssumptionViolatedException;
 
 import java.io.BufferedInputStream;
 import java.io.File;
@@ -136,6 +139,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.management.ManagementFactory;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Paths;
@@ -2265,6 +2269,17 @@ public final class TestUtils {
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
         WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
+    }
+
+    public static ThreadMXBean threadAllocationBean() {
+        if (!(ManagementFactory.getThreadMXBean() instanceof ThreadMXBean bean)) {
+            throw new AssumptionViolatedException("thread allocation measurement not supported");
+        }
+        Assume.assumeTrue("thread allocation measurement not supported", bean.isThreadAllocatedMemorySupported());
+        if (!bean.isThreadAllocatedMemoryEnabled()) {
+            bean.setThreadAllocatedMemoryEnabled(true);
+        }
+        return bean;
     }
 
     public static long toMemory(CharSequence sequence) {
