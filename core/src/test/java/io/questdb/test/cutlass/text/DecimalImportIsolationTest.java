@@ -37,6 +37,7 @@ import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.TestListener;
 import io.questdb.test.cutlass.http.HttpQueryTestBuilder;
 import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.cutlass.http.SendAndReceiveRequestBuilder;
@@ -46,6 +47,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class DecimalImportIsolationTest extends AbstractTest {
@@ -53,6 +55,10 @@ public class DecimalImportIsolationTest extends AbstractTest {
     private static final int ROWS_PER_UPLOAD = 200;
     private static final int UPLOADS_PER_THREAD = 8;
 
+    /**
+     * Probabilistic - it can pass against the shared static adapter.
+     * {@link #testDecimalWriteAdapterIsNotShared()} is the deterministic guard.
+     */
     @Test
     public void testConcurrentImportsKeepDecimalsApart() throws Exception {
         new HttpQueryTestBuilder()
@@ -69,20 +75,23 @@ public class DecimalImportIsolationTest extends AbstractTest {
                         new Thread(() -> {
                             try {
                                 final String request = importRequest("dec" + index, index + 1);
-                                start.await();
+                                start.await(30, TimeUnit.SECONDS);
                                 for (int i = 0; i < UPLOADS_PER_THREAD; i++) {
                                     new SendAndReceiveRequestBuilder()
                                             .withCompareLength(16)
                                             .execute(request, "HTTP/1.1 200 OK\r\n");
                                 }
                             } catch (Throwable e) {
-                                error.set(e);
+                                error.compareAndSet(null, e);
                             } finally {
                                 done.countDown();
                             }
                         }).start();
                     }
-                    done.await();
+                    if (!done.await(TimeUnit.MINUTES.toNanos(1))) {
+                        TestListener.dumpThreadStacks();
+                        error.compareAndSet(null, new AssertionError("timed out waiting for the import threads"));
+                    }
                     if (error.get() != null) {
                         throw new AssertionError(error.get());
                     }
@@ -119,39 +128,41 @@ public class DecimalImportIsolationTest extends AbstractTest {
 
     @Test
     public void testDecimalWriteAdapterIsNotShared() throws Exception {
-        final TextConfiguration configuration = new DefaultTextConfiguration();
-        final Decimal256 decimalA = new Decimal256();
-        final Decimal256 decimalB = new Decimal256();
-        try (
-                DirectUtf16Sink utf16SinkA = new DirectUtf16Sink(64);
-                DirectUtf8Sink utf8SinkA = new DirectUtf8Sink(64);
-                DirectUtf16Sink utf16SinkB = new DirectUtf16Sink(64);
-                DirectUtf8Sink utf8SinkB = new DirectUtf8Sink(64);
-                DirectUtf8Sink value = new DirectUtf8Sink(64)
-        ) {
-            final TypeManager managerA = new TypeManager(configuration, utf16SinkA, utf8SinkA, decimalA);
-            final TypeManager managerB = new TypeManager(configuration, utf16SinkB, utf8SinkB, decimalB);
-            final TypeAdapter adapterA = decimalProbe(managerA);
-            final TypeAdapter adapterB = decimalProbe(managerB);
-            Assert.assertNotSame(adapterA, adapterB);
+        TestUtils.assertMemoryLeak(() -> {
+            final TextConfiguration configuration = new DefaultTextConfiguration();
+            final Decimal256 decimalA = new Decimal256();
+            final Decimal256 decimalB = new Decimal256();
+            try (
+                    DirectUtf16Sink utf16SinkA = new DirectUtf16Sink(64);
+                    DirectUtf8Sink utf8SinkA = new DirectUtf8Sink(64);
+                    DirectUtf16Sink utf16SinkB = new DirectUtf16Sink(64);
+                    DirectUtf8Sink utf8SinkB = new DirectUtf8Sink(64);
+                    DirectUtf8Sink value = new DirectUtf8Sink(64)
+            ) {
+                final TypeManager managerA = new TypeManager(configuration, utf16SinkA, utf8SinkA, decimalA);
+                final TypeManager managerB = new TypeManager(configuration, utf16SinkB, utf8SinkB, decimalB);
+                final TypeAdapter adapterA = decimalProbe(managerA);
+                final TypeAdapter adapterB = decimalProbe(managerB);
+                Assert.assertNotSame(adapterA, adapterB);
 
-            final CapturingRow rowA = new CapturingRow();
-            value.put("1.234m");
-            adapterA.write(rowA, 0, value);
+                final CapturingRow rowA = new CapturingRow();
+                value.put("1.234m");
+                adapterA.write(rowA, 0, value);
 
-            final CapturingRow rowB = new CapturingRow();
-            value.clear();
-            value.put("5.678m");
-            adapterB.write(rowB, 1, value);
+                final CapturingRow rowB = new CapturingRow();
+                value.clear();
+                value.put("5.678m");
+                adapterB.write(rowB, 1, value);
 
-            Assert.assertEquals(0, rowA.column);
-            Assert.assertEquals(1234, rowA.value);
-            Assert.assertEquals(1, rowB.column);
-            Assert.assertEquals(5678, rowB.value);
-            // each type manager must write through the scratch it was given, not through a shared one
-            Assert.assertEquals(1234, decimalA.getLl());
-            Assert.assertEquals(5678, decimalB.getLl());
-        }
+                Assert.assertEquals(0, rowA.column);
+                Assert.assertEquals(1234, rowA.value);
+                Assert.assertEquals(1, rowB.column);
+                Assert.assertEquals(5678, rowB.value);
+                // each type manager must write through the scratch it was given, not through a shared one
+                Assert.assertEquals(1234, decimalA.getLl());
+                Assert.assertEquals(5678, decimalB.getLl());
+            }
+        });
     }
 
     private static TypeAdapter decimalProbe(TypeManager typeManager) {
