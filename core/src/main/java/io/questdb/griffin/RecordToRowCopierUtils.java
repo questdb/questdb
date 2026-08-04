@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -2955,6 +2956,9 @@ public class RecordToRowCopierUtils {
             case ColumnType.DECIMAL256:
                 row.putDecimal256(col, decimal256.getHh(), decimal256.getHl(), decimal256.getLh(), decimal256.getLl());
                 break;
+            default:
+                throw CairoException.nonCritical()
+                        .put("cannot store decimal into column type: ").put(ColumnType.nameOf(toType));
         }
     }
 
