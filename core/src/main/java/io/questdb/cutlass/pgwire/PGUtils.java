@@ -401,7 +401,9 @@ public final class PGUtils {
         utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
     }
 
-    /** @see #outColBinDecimal(PGResponseSink, Decimal128, int) */
+    /**
+     * @see #outColBinDecimal(PGResponseSink, Decimal128, int)
+     */
     public static void outColBinDecimal(PGResponseSink utf8Sink, Decimal256 decimal256, int type) {
         if (decimal256.isNull()) {
             utf8Sink.setNullValue();
@@ -483,7 +485,9 @@ public final class PGUtils {
         utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
     }
 
-    /** @see #outColBinDecimal(PGResponseSink, Decimal128, int) */
+    /**
+     * @see #outColBinDecimal(PGResponseSink, Decimal128, int)
+     */
     public static void outColBinDecimal(PGResponseSink utf8Sink, Decimal64 decimal64, int type) {
         if (decimal64.isNull()) {
             utf8Sink.setNullValue();
