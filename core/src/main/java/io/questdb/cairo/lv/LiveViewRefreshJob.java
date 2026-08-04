@@ -3518,43 +3518,38 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 persistState(instance);
             }
-            // instance.leadRowCount is 0 on entry to o3Replay: finishLeadRefresh (the
-            // lead path) and drainAppliedBase's overlap branch (the coupled dedup path,
-            // where an ALTER ... DEDUP ENABLE flip can leave a pre-dedup RAM lead) zero
-            // it explicitly first, and the remaining coupled-forward and replay-to-applied
-            // callers carry no un-flushed lead so it is already 0. The capable path
+            // instance.leadRowCount is 0 on entry to o3Replay: finishLeadRefresh and
+            // drainAppliedBase's overlap branch (where an ALTER ... DEDUP ENABLE flip can
+            // leave a pre-dedup RAM lead) zero it explicitly, and the coupled-forward and
+            // replay-to-applied callers carry no un-flushed lead. The capable path
             // rebuilds the tier as a pure disk subset (leadRowCount 0).
-            // This branch rewrote nothing on disk and left the published slot
-            // untouched, so a slot that is STILL a current un-flushed lead keeps its
-            // stamped leadRowCount as the true lead. Resync instance.leadRowCount to it:
-            // leaving it at 0 desyncs the two, so the next publish would reclassify those
-            // L never-flushed rows as overlap (size() under-reports, iteration serves
-            // them as phantoms) and flushLead's overlapCount would skip them entirely.
+            // This branch rewrote nothing on disk and left the published slot untouched,
+            // so a slot that is STILL a current un-flushed lead keeps its stamped
+            // leadRowCount as the true lead. Resync instance.leadRowCount to it: leaving
+            // it at 0 would reclassify those never-flushed rows as overlap, so size()
+            // under-reports, iteration serves them as phantoms, and flushLead's
+            // overlapCount skips them entirely.
             //
             // But re-arm ONLY from a slot whose stamped LV-table seqTxn still matches the
             // applied disk seqTxn. A slot whose stamp has fallen behind disk holds rows
-            // that are already durable, so its leadRowCount is NOT an un-flushed lead and
-            // the correct value is the 0 the caller left. Two paths leave such a
-            // stale-stamped slot, and both must be excluded:
-            //   - an emergency flush wrote the lead to disk, set tierStale, and left the
-            //     slot's now-durable leadRowCount stamped (isTierStale() would catch it); and
-            //   - a normal flush wrote the lead to disk but its restampSlot 0 -> -1 CAS
-            //     lost to a reader pin, so the slot kept its now-durable stamp while
-            //     tierStale stayed FALSE (restampSlotAfterFlush ignores the CAS result) --
-            //     an isTierStale() guard MISSES this one.
-            // Re-arming from either would make the finishLeadRefresh flush path trust a
-            // stale non-zero leadRowCount and re-flush the already-durable rows as on-disk
+            // that are already durable, so the 0 the caller left is correct. Two paths
+            // leave such a stale stamp: an emergency flush that set tierStale
+            // (isTierStale() would catch it), and a normal flush whose restampSlot
+            // 0 -> -1 CAS lost to a reader pin, leaving tierStale FALSE because
+            // restampSlotAfterFlush ignores the CAS result -- an isTierStale() guard
+            // MISSES that one. Re-arming from either would make finishLeadRefresh trust a
+            // stale non-zero leadRowCount and re-flush already-durable rows as on-disk
             // duplicates. The seqTxn-match check below subsumes both (both leave
             // slot.lvSeqTxn() != applied) and needs no reader open: the applied seqTxn is
             // the same coordinate flushLead / publishToInMemoryTier stamp the slot from,
             // and nothing has applied to the LV table since (this branch does not commit).
             //
             // Defensive: CREATE rejects every non-snapshot-capable window shape (each
-            // WindowFunction.supportsCheckpointState() folds in the anchor key type check),
-            // and o3Replay recomputes capability above, so a freshly-validated view
-            // never reaches this branch. It fires only for a view that is
-            // non-capable at runtime (e.g. a restored view whose function lost
-            // snapshot support); the resync keeps its bookkeeping correct if so.
+            // WindowFunction.supportsCheckpointState() folds in the anchor key type check)
+            // and o3Replay recomputes capability above, so a freshly-validated view never
+            // reaches this branch. It fires only for a view that is non-capable at runtime
+            // (e.g. a restored view whose function lost snapshot support); the resync
+            // keeps its bookkeeping correct if so.
             final LiveViewInMemoryTier ncTier = instance.getInMemoryTier();
             if (ncTier != null) {
                 final LiveViewInMemoryBuffer ncSlot = ncTier.getSlot(ncTier.getPublishedIdx());
