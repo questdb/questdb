@@ -88,6 +88,49 @@ public class CastDecimalToFloatFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastExactPathBoundaries() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    // the exact path takes |unscaled| <= 2^53 and scale <= 22; each pair here straddles
+                    // one of those two limits, so both sides must agree with the text path
+                    assertQuery("select cast(a as float) unscaledAtLimit, cast(b as float) unscaledOverLimit, " +
+                            "cast(c as float) scaleAtLimit, cast(d as float) scaleOverLimit, " +
+                            "cast(e as float) intAtLimit, cast(f as float) intOverLimit from bounds")
+                            .ddl(
+                                    """
+                                            create table bounds (
+                                              a DECIMAL(22,22), b DECIMAL(22,22),
+                                              c DECIMAL(22,22), d DECIMAL(23,23),
+                                              e DECIMAL(16,0), f DECIMAL(16,0))""",
+                                    """
+                                            insert into bounds values
+                                            (0.0000009007199254740992m, 0.0000009007199254740993m,
+                                             0.0000001234567890123456m, 0.00000001234567890123456m,
+                                             9007199254740992m, 9007199254740993m),
+                                            (null, null, null, null, null, null)"""
+                            )
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    unscaledAtLimit\tunscaledOverLimit\tscaleAtLimit\tscaleOverLimit\tintAtLimit\tintOverLimit
+                                    9.0071995E-7\t9.0071995E-7\t1.2345679E-7\t1.2345679E-8\t9.007199E15\t9.007199E15
+                                    null\tnull\tnull\tnull\tnull\tnull
+                                    """);
+
+                    // the shapes the exact path exists for: money and FX scales that used to miss on every row
+                    assertQuery("select cast(cast(1234567890123.45m as DECIMAL(18,2)) as float) money, " +
+                            "cast(cast(0.001234567890123456m as DECIMAL(38,18)) as float) fx")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    money\tfx
+                                    1.234568E12\t0.0012345678
+                                    """);
+                }
+        );
+    }
+
+    @Test
     public void testCastExplains() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -567,6 +610,47 @@ public class CastDecimalToFloatFunctionFactoryTest extends AbstractCairoTest {
                                     1.0000001\t1.0000001\t1.0000001
                                     -1.0000001\t-1.0000001\t-1.0000001
                                     null\tnull\tnull
+                                    """);
+                }
+        );
+    }
+
+    @Test
+    public void testCastRoundsOnceNearFloatMidpointAtHighScale() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    // each value sits just off a binary32 midpoint, close enough that the double
+                    // quotient lands on the midpoint; the exact path detects that and defers to the
+                    // text path, which rounds once. Without that check they tie to even the wrong way.
+                    assertQuery("select cast(cast(8.00000524520874m as DECIMAL(15,14)) as float) d64, " +
+                            "cast(cast(-8.00000524520874m as DECIMAL(15,14)) as float) d64Neg, " +
+                            "cast(cast(8.00000524520874m as DECIMAL(20,14)) as float) d128, " +
+                            "cast(cast(-8.00000524520874m as DECIMAL(20,14)) as float) d128Neg, " +
+                            "cast(cast(8.00000524520874m as DECIMAL(40,14)) as float) d256, " +
+                            "cast(cast(0.0000006219955537289934m as DECIMAL(40,22)) as float) scale22")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    d64\td64Neg\td128\td128Neg\td256\tscale22
+                                    8.000005\t-8.000005\t8.000005\t-8.000005\t8.000005\t6.219955E-7
+                                    """);
+
+                    assertQuery("select cast(a as float) d64, cast(b as float) d128, cast(c as float) d256, cast(d as float) scale22 from highscale")
+                            .ddl(
+                                    "create table highscale (a DECIMAL(15,14), b DECIMAL(20,14), c DECIMAL(40,14), d DECIMAL(40,22))",
+                                    """
+                                            insert into highscale values
+                                            (8.00000524520874m, 8.00000524520874m, 8.00000524520874m, 0.0000006219955537289934m),
+                                            (-8.00000524520874m, -8.00000524520874m, -8.00000524520874m, -0.0000006219955537289934m),
+                                            (null, null, null, null)"""
+                            )
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    d64\td128\td256\tscale22
+                                    8.000005\t8.000005\t8.000005\t6.219955E-7
+                                    -8.000005\t-8.000005\t-8.000005\t-6.219955E-7
+                                    null\tnull\tnull\tnull
                                     """);
                 }
         );

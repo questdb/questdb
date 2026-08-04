@@ -42,12 +42,13 @@ import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.StringSink;
 
 public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
-    // 10^10 is the largest power of ten a float holds exactly.
-    private static final int MAX_EXACT_SCALE = 10;
-    // a float carries 24 significand bits
-    private static final long MAX_EXACT_UNSCALED = 1L << 24;
-    private static final float[] POW10 = {
-            1E0f, 1E1f, 1E2f, 1E3f, 1E4f, 1E5f, 1E6f, 1E7f, 1E8f, 1E9f, 1E10f
+    // 10^22 is the largest power of ten a double holds exactly.
+    private static final int MAX_EXACT_SCALE = 22;
+    // a double carries 53 significand bits
+    private static final long MAX_EXACT_UNSCALED = 1L << 53;
+    private static final double[] POW10 = {
+            1E0, 1E1, 1E2, 1E3, 1E4, 1E5, 1E6, 1E7, 1E8, 1E9, 1E10, 1E11,
+            1E12, 1E13, 1E14, 1E15, 1E16, 1E17, 1E18, 1E19, 1E20, 1E21, 1E22
     };
 
     @Override
@@ -76,7 +77,10 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
         final long high = value.getHigh();
         final long low = value.getLow();
         if (isExact(low, scale) && high == (low >> 63)) {
-            return (float) low / POW10[scale];
+            final double quotient = (double) low / POW10[scale];
+            if (isRoundedOnce(quotient)) {
+                return (float) quotient;
+            }
         }
         sink.clear();
         Decimal128.toSink(sink, high, low, scale, precision);
@@ -90,7 +94,10 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
         final long ll = value.getLl();
         final long signExtension = ll >> 63;
         if (isExact(ll, scale) && hh == signExtension && hl == signExtension && lh == signExtension) {
-            return (float) ll / POW10[scale];
+            final double quotient = (double) ll / POW10[scale];
+            if (isRoundedOnce(quotient)) {
+                return (float) quotient;
+            }
         }
         sink.clear();
         Decimal256.toSink(sink, hh, hl, lh, ll, scale, precision);
@@ -99,7 +106,10 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
 
     static float toFloat(StringSink sink, long value, int scale, int precision) {
         if (isExact(value, scale)) {
-            return (float) value / POW10[scale];
+            final double quotient = (double) value / POW10[scale];
+            if (isRoundedOnce(quotient)) {
+                return (float) quotient;
+            }
         }
         sink.clear();
         Decimal64.toSink(sink, value, scale, precision);
@@ -107,11 +117,20 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
     }
 
     /**
-     * When the unscaled value and 10^scale are both exact floats the quotient is rounded once,
-     * so dividing them gives the same float as parsing the decimal text.
+     * When the unscaled value and 10^scale are both exact doubles the division is correctly
+     * rounded, so it can stand in for parsing the decimal text.
      */
     private static boolean isExact(long unscaled, int scale) {
         return scale <= MAX_EXACT_SCALE && unscaled >= -MAX_EXACT_UNSCALED && unscaled <= MAX_EXACT_UNSCALED;
+    }
+
+    /**
+     * Narrowing the quotient to a float rounds a second time. That only disagrees with rounding
+     * the exact value once when the quotient lands on a float midpoint, where ties-to-even can
+     * pick the wrong neighbour; a midpoint carries the half-ulp bit and no bit below it.
+     */
+    private static boolean isRoundedOnce(double quotient) {
+        return (Double.doubleToRawLongBits(quotient) & 0x1FFFFFFFL) != 0x10000000L;
     }
 
     /**
