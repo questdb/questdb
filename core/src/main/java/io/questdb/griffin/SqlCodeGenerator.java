@@ -334,6 +334,7 @@ import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowMapGroups;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
 import io.questdb.griffin.engine.window.WindowAccumulatorPlan;
@@ -9830,6 +9831,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // outer catch can free: the factory takes ownership only once its constructor has
         // returned.
         ObjList<WindowMapState> windowMapStates = null;
+        // The same for the cached factories' groups, which are the same runtime arranged by
+        // the traversal that drives it.
+        CachedWindowMapGroups cachedWindowMapGroups = null;
         try {
             // if all window function don't require sorting or more than one pass then use streaming factory
             boolean isFastPath = true;
@@ -9983,6 +9987,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     ac.getOrderByDirection(),
                                     dismissOrder,
                                     af,
+                                    baseMetadata,
+                                    // The streaming functions read the base record itself, so
+                                    // its metadata is both the names and the layout.
                                     baseMetadata
                             ));
                         }
@@ -10227,6 +10234,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // not main metadata to avoid partitionBy functions accidentally looking up
             // window columns recursively
 
+            // One entry per window column, in SELECT order: the compiled function and the
+            // normalized window it was compiled under, or null for a shape the Map group
+            // compiler does not admit. The pair is what CachedWindowMapGroups reads to find
+            // the spec of a function a sort group collected.
+            //
+            // Not for a live-view compile, for the same reason the streaming path skips it: a
+            // compatible live-view function is already owned by LiveViewWindow, and one
+            // accumulator may have one owner.
+            final boolean groupCachedWindows = !executionContext.isLiveViewCompile();
+            final ObjList<WindowFunction> cachedWindowSpecFunctions = groupCachedWindows ? new ObjList<>() : null;
+            final ObjList<WindowMapSpec> cachedWindowMapSpecs = groupCachedWindows ? new ObjList<>() : null;
             deferredWindowMetadata.clear();
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
@@ -10340,9 +10358,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     try {
                         // function needs to resolve args against chain metadata
                         f = functionParser.parseFunction(ast, chainMetadata, executionContext);
-                        if (!(f instanceof WindowFunction)) {
+                        if (!(f instanceof WindowFunction af)) {
                             Misc.free(f);
                             throw SqlException.$(ast.position, "non-window function called in window context");
+                        }
+                        // Snapshot the normalized window while the context still holds it: it
+                        // is a per-function scratch the finally below clears, and the key
+                        // types it exposes are the compiler's own reused list. Taken before
+                        // the ORDER BY directions are flipped for a backward pass-1 function
+                        // a few lines down, so every column reports the order as written.
+                        if (cachedWindowMapSpecs != null) {
+                            cachedWindowSpecFunctions.add(af);
+                            cachedWindowMapSpecs.add(WindowMapSpec.of(
+                                    executionContext.getWindowContext(),
+                                    ac.getOrderBy(),
+                                    ac.getOrderByDirection(),
+                                    dismissOrder,
+                                    af,
+                                    // These functions resolve their names through the chain
+                                    // metadata and read the chain record, and the two are the
+                                    // same columns counted differently: the metadata leaves a
+                                    // hole where every window output sits, so only chainTypes
+                                    // can say how many indexes the record spans.
+                                    chainMetadata,
+                                    chainTypes
+                            ));
                         }
                     } finally {
                         executionContext.clearWindowContext();
@@ -10430,6 +10470,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 isAllGroupsEncodedEligible &= isEncodedEligible;
             }
 
+            // The Map subgroups the sort groups' functions form, compiled one bucket at a
+            // time so a group is by construction driven by one traversal. Built into a local
+            // the outer catch can free: each group owns a map, and whichever factory is built
+            // below takes ownership only once its constructor has returned.
+            if (cachedWindowMapSpecs != null) {
+                // A copy rather than chainTypes itself: that list is the compiler's own
+                // reused scratch, and a group's key projection lives as long as the factory.
+                final ArrayColumnTypes chainRecordTypes = new ArrayColumnTypes();
+                for (int c = 0, n = chainTypes.getColumnCount(); c < n; c++) {
+                    chainRecordTypes.add(chainTypes.getColumnType(c));
+                }
+                cachedWindowMapGroups = CachedWindowMapGroups.of(
+                        configuration,
+                        asm,
+                        functionGroups,
+                        naturalOrderFunctions,
+                        cachedWindowSpecFunctions,
+                        cachedWindowMapSpecs,
+                        chainRecordTypes
+                );
+            }
+
             // LIGHT path is restricted to queries where every ordered group can use the encoded
             // sort buffer. Tree-fallback in LIGHT would do O(N log N) random base reads per
             // compare, which can regress 10-100x on cold/partitioned bases.
@@ -10454,7 +10516,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         sourceMap.add(columnIndexes.getQuick(c));
                     }
                 }
-                return new CachedWindowLightRecordCursorFactory(
+                final CachedWindowLightRecordCursorFactory lightFactory = new CachedWindowLightRecordCursorFactory(
                         configuration,
                         base,
                         factoryMetadata,
@@ -10464,8 +10526,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnIndexes,
                         keys,
                         chainMetadata,
-                        sourceMap
+                        sourceMap,
+                        cachedWindowMapGroups
                 );
+                cachedWindowMapGroups = null;
+                return lightFactory;
             }
 
             final RecordSink recordSink = RecordSinkFactory.getInstance(
@@ -10479,7 +10544,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     null
             );
 
-            return new CachedWindowRecordCursorFactory(
+            final CachedWindowRecordCursorFactory cachedFactory = new CachedWindowRecordCursorFactory(
                     configuration,
                     base,
                     recordSink,
@@ -10490,8 +10555,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     naturalOrderFunctions,
                     columnIndexes,
                     keys,
-                    chainMetadata
+                    chainMetadata,
+                    cachedWindowMapGroups
             );
+            cachedWindowMapGroups = null;
+            return cachedFactory;
         } catch (Throwable th) {
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
                 Misc.freeObjList(e.value);
@@ -10499,6 +10567,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(base);
             Misc.free(checkpointRowsPlan);
             Misc.freeObjList(windowMapStates);
+            Misc.free(cachedWindowMapGroups);
             Misc.freeObjList(functions);
             Misc.freeObjList(naturalOrderFunctions);
             Misc.freeObjList(partitionByFunctions);

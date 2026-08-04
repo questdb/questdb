@@ -157,7 +157,13 @@ public final class WindowMapSpec {
      * @param orderDismissed    whether the compiler proved the base cursor already
      *                          produces this order, so no sort stands between the two
      * @param function          the compiled window function, read for its pass structure
-     * @param baseMetadata      the metadata the window's expressions were compiled against
+     * @param baseMetadata      the metadata the window's expressions were compiled against,
+     *                          which is what an ORDER BY term's name resolves through
+     * @param recordTypes       the types of the record those expressions read, by index. It
+     *                          is {@code baseMetadata} itself for a streaming compile; a
+     *                          cached compile passes the record chain's own type list,
+     *                          because the chain metadata leaves a hole where every window
+     *                          output sits and so cannot be asked how many indexes it spans
      */
     public static @Nullable WindowMapSpec of(
             @NotNull WindowContext context,
@@ -165,7 +171,8 @@ public final class WindowMapSpec {
             @NotNull IntList orderByDirections,
             boolean orderDismissed,
             @NotNull WindowFunction function,
-            @NotNull RecordMetadata baseMetadata
+            @NotNull RecordMetadata baseMetadata,
+            @NotNull ColumnTypes recordTypes
     ) {
         if (context.isEmpty()) {
             return null;
@@ -185,7 +192,7 @@ public final class WindowMapSpec {
         for (int i = 0; i < partitionCount; i++) {
             final int columnIndex = WindowAccumulatorDescriptor.directColumnIndex(
                     partitionByFunctions.getQuick(i),
-                    baseMetadata
+                    recordTypes
             );
             if (columnIndex < 0) {
                 return null;

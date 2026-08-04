@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.window;
 
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -122,17 +122,21 @@ public final class WindowAccumulatorPlanBuilder {
      * {@link WindowAccumulatorPlan#getStructuralReduction()} - so a window carrying one
      * fusible function produces no group, and neither does one carrying none.
      *
-     * @param functions    every SELECT-list function, in output order
+     * @param functions    the functions to bucket, in output order - every SELECT-list
+     *                     function for the streaming cursor, and one sort group's own
+     *                     members for a cached one, which is why the list is only required
+     *                     to hold functions
      * @param specs        one entry per {@code functions} index: the window spec that index
      *                     was compiled under, or null for a non-window column and for a
      *                     window shape this build does not group
-     * @param baseMetadata the metadata the window functions and their arguments were
-     *                     compiled against
+     * @param recordTypes  the types of the record the window functions and their arguments
+     *                     read, by index - see
+     *                     {@link WindowAccumulatorDescriptor#directColumnIndex}
      */
     public static @Nullable ObjList<WindowAccumulatorPlan> compileGroups(
-            @NotNull ObjList<Function> functions,
+            @NotNull ObjList<? extends Function> functions,
             @NotNull ObjList<WindowMapSpec> specs,
-            @NotNull RecordMetadata baseMetadata
+            @NotNull ColumnTypes recordTypes
     ) {
         ObjList<WindowAccumulatorPlanBuilder> builders = null;
         for (int i = 0, n = functions.size(); i < n; i++) {
@@ -173,7 +177,7 @@ public final class WindowAccumulatorPlanBuilder {
                         || !(functions.getQuick(i) instanceof WindowFunction windowFunction)) {
                     continue;
                 }
-                addAccumulatorProjection(builder, windowFunction, i, baseMetadata, rowCountHost);
+                addAccumulatorProjection(builder, windowFunction, i, recordTypes, rowCountHost);
             }
             final WindowAccumulatorPlan plan = builder.build(0);
             if (plan == null || plan.getStructuralReduction() < MIN_STRUCTURAL_REDUCTION) {
@@ -300,7 +304,7 @@ public final class WindowAccumulatorPlanBuilder {
             WindowAccumulatorPlanBuilder builder,
             WindowFunction function,
             int outputPosition,
-            RecordMetadata baseMetadata,
+            ColumnTypes recordTypes,
             @Nullable WindowFunction rowCountHost
     ) {
         if (!isFusibleAccumulator(function)) {
@@ -308,7 +312,7 @@ public final class WindowAccumulatorPlanBuilder {
         }
         final WindowAccumulatorCandidate candidate = WindowAccumulatorCandidate.of(
                 function,
-                baseMetadata,
+                recordTypes,
                 rowCountHost,
                 builder.partitionKeyGuard
         );
@@ -350,7 +354,7 @@ public final class WindowAccumulatorPlanBuilder {
      * compiler's own pre-pass reads.
      */
     private static @Nullable WindowFunction rowCountHost(
-            ObjList<Function> functions,
+            ObjList<? extends Function> functions,
             ObjList<WindowMapSpec> specs,
             WindowMapSpec groupSpec
     ) {

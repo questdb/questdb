@@ -25,9 +25,9 @@
 package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -279,18 +279,24 @@ public final class WindowAccumulatorDescriptor {
      * <p>
      * The same predicate serves a PARTITION BY term, which is why it is here rather than
      * on either caller: a key term and an accumulator argument are the same question -
-     * is this expression a column of the base metadata - and answering it twice would be
-     * two chances to answer it differently.
+     * is this expression a column of the record - and answering it twice would be two
+     * chances to answer it differently.
+     *
+     * @param recordTypes the types of the record {@code argument} reads, by index. It is
+     *                    the metadata the argument was compiled against for a streaming
+     *                    compile; a cached compile passes the record chain's own type list,
+     *                    because the chain metadata leaves a hole where every window output
+     *                    sits and so cannot be asked how many indexes it spans
      */
-    public static int directColumnIndex(@Nullable Function argument, RecordMetadata baseMetadata) {
+    public static int directColumnIndex(@Nullable Function argument, ColumnTypes recordTypes) {
         if (!(argument instanceof ColumnFunction columnFunction)) {
             return -1;
         }
         final int index = columnFunction.getColumnIndex();
-        if (index < 0 || index >= baseMetadata.getColumnCount()) {
+        if (index < 0 || index >= recordTypes.getColumnCount()) {
             return -1;
         }
-        return argument.getType() == baseMetadata.getColumnType(index) ? index : -1;
+        return argument.getType() == recordTypes.getColumnType(index) ? index : -1;
     }
 
     /**

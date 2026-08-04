@@ -62,6 +62,11 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     private final ObjList<WindowFunction> unordered2PassFunctions;
     @Nullable
     private final ObjList<WindowFunction> unorderedFunctions;
+    // The window Map groups this factory's functions form, arranged by the traversal that
+    // drives them, or null when they form none. Owned by this factory; the functions the
+    // groups bind are owned as they always were.
+    @Nullable
+    private final CachedWindowMapGroups windowMapGroups;
     private ObjList<WindowFunction> allFunctions;
     private RecordCursorFactory base;
     private CachedWindowLightRecordCursor cursor;
@@ -77,12 +82,16 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             @NotNull IntList columnIndexes,
             @NotNull final ObjList<IntList> sortKeys,
             @NotNull GenericRecordMetadata chainMetadata,
-            @NotNull IntList sourceMap
+            @NotNull IntList sourceMap,
+            @Nullable CachedWindowMapGroups windowMapGroups
     ) {
         super(metadata);
         RecordArray narrowChain = null;
         ObjList<WindowSortBuffer> sortBuffers = null;
         DirectLongList baseRowIds = null;
+        // Adopted before anything below can throw, so a failed construction frees the groups
+        // through this factory's own close() rather than leaving them to the compiler's catch.
+        this.windowMapGroups = windowMapGroups;
         try {
             this.base = base;
             this.orderedGroupCount = sortKeys.size();
@@ -225,6 +234,15 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         return base.getScanDirection();
     }
 
+    /**
+     * Returns the window Map groups this factory's functions form, or null when they form
+     * none. A group compiled but left unbound - which is what
+     * {@code cairo.sql.window.map.fusion.enabled} off produces - is still reported here.
+     */
+    public @Nullable CachedWindowMapGroups getWindowMapGroups() {
+        return windowMapGroups;
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
@@ -316,6 +334,10 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         this.cursor = null;
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, cursor);
+        // Before the functions rather than after: a group owns only its own map and its key
+        // projection over chain columns, so freeing it touches nothing a function owns - but
+        // ordering it first keeps that independence obvious rather than incidental.
+        failure = Misc.freeBestEffort(failure, windowMapGroups);
         failure = Misc.freeObjListBestEffort(failure, allFunctions);
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -374,6 +396,12 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     Misc.free(sortBuffers.getQuick(i));
                 }
                 resetFunctions();
+                // Symmetric with the reopen in of(): each group hands its map backing back to
+                // the tracker that was bound when it was allocated. Reached on a failed open
+                // too, where a group that never got as far as reopen() frees a closed map.
+                if (windowMapGroups != null) {
+                    windowMapGroups.reset();
+                }
                 isOpen = false;
             }
         }
@@ -448,6 +476,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             long rowIndex = 0;
             final boolean hasOrdered = orderedGroupCount > 0;
             final int forwardFnCount = forwardUnorderedFunctions != null ? forwardUnorderedFunctions.size() : 0;
+            final ObjList<WindowMapState> forwardStates =
+                    windowMapGroups != null ? windowMapGroups.getForwardUnorderedStates() : null;
+            final int forwardStateCount = forwardStates != null ? forwardStates.size() : 0;
             if (hasOrdered || forwardFnCount > 0) {
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
@@ -460,6 +491,12 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     }
                     if (forwardFnCount > 0) {
                         recordA.setRowIndex(rowIndex);
+                        // Groups first, and the whole of a group before any of it is read: a
+                        // bound function's pass1 is a no-op computeNext followed by the write
+                        // of what the group's projection loop has just materialized.
+                        for (int g = 0; g < forwardStateCount; g++) {
+                            forwardStates.getQuick(g).computeNext(recordA);
+                        }
                         for (int j = 0; j < forwardFnCount; j++) {
                             forwardUnorderedFunctions.getQuick(j).pass1(recordA, rowIndex, lightSpi);
                         }
@@ -487,11 +524,19 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     final WindowSortBuffer group = sortBuffers.getQuick(i);
                     final ObjList<WindowFunction> functions = orderedFunctions.getQuick(i);
                     final int functionCount = functions.size();
+                    // This sort group's own Map subgroups: sharing a sort is not sharing a
+                    // map, so a bucket holding several window specs drives one group each.
+                    final ObjList<WindowMapState> states =
+                            windowMapGroups != null ? windowMapGroups.getOrderedStates(i) : null;
+                    final int stateCount = states != null ? states.size() : 0;
                     group.toTop();
                     while (group.hasNext()) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
                         long rIdx = group.next();
                         positionRecordABaseOnly(rIdx);
+                        for (int g = 0; g < stateCount; g++) {
+                            states.getQuick(g).computeNext(recordA);
+                        }
                         for (int j = 0; j < functionCount; j++) {
                             functions.getQuick(j).pass1(recordA, rIdx, lightSpi);
                         }
@@ -504,9 +549,15 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
             if (backwardUnorderedFunctions != null) {
                 final int fnCount = backwardUnorderedFunctions.size();
+                final ObjList<WindowMapState> backwardStates =
+                        windowMapGroups != null ? windowMapGroups.getBackwardUnorderedStates() : null;
+                final int backwardStateCount = backwardStates != null ? backwardStates.size() : 0;
                 for (long rIdx = size - 1; rIdx >= 0; rIdx--) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     positionRecordABaseOnly(rIdx);
+                    for (int g = 0; g < backwardStateCount; g++) {
+                        backwardStates.getQuick(g).computeNext(recordA);
+                    }
                     for (int j = 0; j < fnCount; j++) {
                         backwardUnorderedFunctions.getQuick(j).pass1(recordA, rIdx, lightSpi);
                     }
@@ -591,6 +642,13 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     allFunctions.getQuick(i).setMemoryTracker(memoryTracker);
                 }
                 reopen(allFunctions);
+                if (windowMapGroups != null) {
+                    // After the functions and needing nothing from Function.init below: a
+                    // group's key projection reads the record's own columns, so unlike a
+                    // projection through compiled PARTITION BY functions it has no symbol
+                    // source to be bound to.
+                    windowMapGroups.reopen(memoryTracker);
+                }
             }
             recordA.of(baseCursor.getRecord(), narrowChain.getRecord(), -1);
             recordB.of(baseCursor.getRecordB(), narrowChain.getRecordB(), -1);

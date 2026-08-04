@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.ColumnTypes;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -63,8 +63,9 @@ public final class WindowAccumulatorCandidate {
      *
      * @param function          the offered function, already past its owner's own eligibility
      *                          gates
-     * @param baseMetadata      the metadata the window functions and their arguments were
-     *                          compiled against
+     * @param recordTypes       the types of the record the window functions and their
+     *                          arguments read, by index - see
+     *                          {@link WindowAccumulatorDescriptor#directColumnIndex}
      * @param rowCountHost      the group's unguarded row-count function, or null when it holds
      *                          none - see {@link #isRowCountHost}
      * @param partitionKeyGuard the owner's answer to "is this column the whole of the window's
@@ -72,7 +73,7 @@ public final class WindowAccumulatorCandidate {
      */
     public static @Nullable WindowAccumulatorCandidate of(
             @NotNull WindowFunction function,
-            @NotNull RecordMetadata baseMetadata,
+            @NotNull ColumnTypes recordTypes,
             @Nullable WindowFunction rowCountHost,
             @NotNull PartitionKeyGuard partitionKeyGuard
     ) {
@@ -86,12 +87,12 @@ public final class WindowAccumulatorCandidate {
         if (WindowAccumulatorDescriptor.familyTakesArgument(family)) {
             argumentColumnIndex = WindowAccumulatorDescriptor.directColumnIndex(
                     function.windowAccumulatorArgument(),
-                    baseMetadata
+                    recordTypes
             );
             if (argumentColumnIndex < 0) {
                 return null;
             }
-            argumentColumnType = baseMetadata.getColumnType(argumentColumnIndex);
+            argumentColumnType = recordTypes.getColumnType(argumentColumnIndex);
             if (isCountOverTheWindowsOwnPartitionKey(
                     function,
                     family,

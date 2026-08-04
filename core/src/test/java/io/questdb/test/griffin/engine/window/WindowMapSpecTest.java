@@ -281,6 +281,10 @@ public class WindowMapSpecTest {
                     orderByDirections,
                     orderDismissed,
                     new PassStub(passCount, pass1ScanDirection),
+                    metadata,
+                    // These functions read the record the metadata describes, which is the
+                    // streaming case: the two arguments differ only for a cached compile,
+                    // whose record chain leaves a hole at every window output's index.
                     metadata
             );
         }

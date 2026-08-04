@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -35,7 +36,6 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -55,6 +55,12 @@ import org.jetbrains.annotations.TestOnly;
  * entry's components to identity, run every contributor, then run every projection. What it
  * does not carry is anything durable - no anchor, no bucket, no dirty set, no manifest - so
  * the whole of its state is a map that lives and dies with the cursor.
+ * <p>
+ * Two owners drive it. {@link WindowRecordCursorFactory} runs a group per row of the base
+ * scan, ahead of the {@code computeNext} dispatch a bound member no-ops in; the cached
+ * factories run it inside the traversal of the sort bucket its members belong to, ahead of
+ * their {@code pass1} - see {@link CachedWindowMapGroups}. The group is the same object in
+ * both, and what differs is only which record the row arrives on.
  *
  * <h2>Ownership</h2>
  * The group owns its map and its key projection and nothing else. The functions it binds keep
@@ -63,11 +69,13 @@ import org.jetbrains.annotations.TestOnly;
  * {@code close()} still frees exactly what it always freed and the group's
  * {@link #close()} frees exactly one thing more.
  * <p>
- * The key projection reads the base record's own columns rather than a function's
+ * The key projection reads the record's own columns rather than a function's
  * {@code partitionByRecord}, which is what makes that separation possible - and what keeps the
- * group out of the cursor's initialization order, since a sink over base columns has nothing
- * to bind to a symbol source. The first slice admits only direct-column partition keys (see
- * {@link WindowMapSpec}), so there is nothing else such a sink could need.
+ * group out of the cursor's initialization order, since such a sink has nothing to bind to a
+ * symbol source. The first slice admits only direct-column partition keys (see
+ * {@link WindowMapSpec}), so there is nothing else such a sink could need. Which record that
+ * is belongs to the owner: the base record on the streaming cursor, and the sorted chain
+ * record on a cached one, both of which the group's PARTITION BY terms were resolved against.
  *
  * <h2>What this binds</h2>
  * Every plan the compiler produces, whether its outputs each keep a component of their own -
@@ -116,7 +124,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
             @NotNull CairoConfiguration configuration,
             @NotNull BytecodeAssembler asm,
             @NotNull WindowAccumulatorPlan plan,
-            @NotNull RecordMetadata baseMetadata
+            @NotNull ColumnTypes recordTypes
     ) {
         this.plan = plan;
         this.componentCount = plan.getComponentCount();
@@ -139,7 +147,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
         plan.buildMapValueTypes(valueTypes);
         // Built before the map so a failure here cannot strand a tracked allocation.
-        this.keySink = RecordSinkFactory.getInstance(configuration, asm, baseMetadata, keyColumnFilter, null);
+        this.keySink = RecordSinkFactory.getInstance(configuration, asm, recordTypes, keyColumnFilter, null);
         // Lazily opened, like every other tracker-aware window state: the owning cursor binds
         // the per-query MemoryTracker and only then reopens, so the backing's malloc and its
         // free are charged to the same counter.
@@ -156,15 +164,17 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * closed - {@code reopen()} skips a map whose function reports
      * {@link WindowFunction#isWindowStateOwned()}.
      *
-     * @param plans        the compiled groups, or null when the query formed none
-     * @param baseMetadata the metadata the window functions and their PARTITION BY terms were
-     *                     compiled against, and the record the key projection reads
+     * @param plans       the compiled groups, or null when the query formed none
+     * @param recordTypes the types, by index, of the record the key projection reads - the
+     *                    base record for a streaming compile and the chain record for a
+     *                    cached one, both of which the group's PARTITION BY terms were
+     *                    resolved against
      */
     public static @Nullable ObjList<WindowMapState> createGroups(
             @NotNull CairoConfiguration configuration,
             @NotNull BytecodeAssembler asm,
             @Nullable ObjList<WindowAccumulatorPlan> plans,
-            @NotNull RecordMetadata baseMetadata
+            @NotNull ColumnTypes recordTypes
     ) {
         // The switch gates the binding rather than the compile: what it turns off is a runtime
         // that owns a map, and a plan that no runtime reads costs a query nothing. So the group
@@ -176,7 +186,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         final ObjList<WindowMapState> states = new ObjList<>(plans.size());
         try {
             for (int i = 0, n = plans.size(); i < n; i++) {
-                states.add(new WindowMapState(configuration, asm, plans.getQuick(i), baseMetadata));
+                states.add(new WindowMapState(configuration, asm, plans.getQuick(i), recordTypes));
             }
         } catch (Throwable th) {
             Misc.freeObjList(states);
