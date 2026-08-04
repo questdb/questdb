@@ -112,6 +112,17 @@ import java.util.Locale;
  * {@code 16 + valueSize}: {@code --shape=sum-count --key-type=varchar --entry-size=32} is one
  * {@code OrderedMap} fused against two {@code UnorderedVarcharMap}s unfused.
  *
+ * <h2>The bounded-frame shapes</h2>
+ * {@code --shape=rows-frame-sum-avg} and {@code rows-frame-sum-avg-count} are the two ring-backed
+ * shapes, and they are the only ones here whose state is not all in a map value: a bounded ROWS
+ * accumulator keeps the frame's own values in an arena its contributing function owns. So the
+ * unfused arm allocates one ring per call and the fused arm one per component, and the fused value
+ * is four slots per bounded {@code (sum, count)} and three per bounded counter - wide enough that
+ * every configured entry-size limit puts the group on an {@code OrderedMap} while a narrow key's
+ * unfused members may sit on an {@code Unordered4Map}. That trade is cases 4 and 12's, measured
+ * there; what these two add is the ring, which the retained-bytes column counts because the arena is
+ * tracked like the maps are.
+ *
  * <h2>Case 11: the cached cursors</h2>
  * {@code --cursor=cached} and {@code --cursor=cached-light} run the same shapes through
  * {@code CachedWindowRecordCursorFactory} and {@code CachedWindowLightRecordCursorFactory}, where
@@ -161,6 +172,12 @@ import java.util.Locale;
  */
 public class WindowMapFusionBenchmark {
 
+    /**
+     * How many preceding rows the two {@code rows-frame-*} shapes span. Small deliberately: the
+     * ring the ring-backed families keep is one cell per row of the frame per key, so a wide frame
+     * would price the arena rather than the group.
+     */
+    private static final int BOUNDED_ROWS_PRECEDING = 8;
     private static final long START_TS = 1_704_067_200_000_000L;
     private static final long TS_STEP_MICROS = 1_000L;
 
@@ -938,6 +955,26 @@ public class WindowMapFusionBenchmark {
          */
         ROW_COUNT("row-count", false),
         /**
+         * The bounded-ROWS counterpart of {@link #SUM_AVG_COUNT}'s merge: two readings of one
+         * moving {@code (sum, count)} over the last {@code BOUNDED_ROWS_PRECEDING} rows.
+         * <p>
+         * It is the first shape here whose state is not all in the map value. Unfused it is two
+         * maps, two probes, two evaluations of {@code x} and <b>two rings</b> of the frame's own
+         * values; fused it is one of each, with the ring one cell longer than the unfused one -
+         * which is what a bound contributor pays for leaving the current frame's total in the slice
+         * instead of the carry the unfused row ends on. The retained-bytes column is where that
+         * trade is legible: the arena is tracked like the maps are.
+         */
+        ROWS_FRAME_SUM_AVG("rows-frame-sum-avg", false),
+        /**
+         * The same frame with a counter beside it: two components, seven slots and two rings fused,
+         * against three maps and three rings unfused. Nothing folds between a bounded sum and a
+         * bounded count - the count's own state continues into a ring of flags - so this is the
+         * shape that prices physical co-location for the ring families with the merge held
+         * constant.
+         */
+        ROWS_FRAME_SUM_AVG_COUNT("rows-frame-sum-avg-count", false),
+        /**
          * Case 1: the single-function control. It forms no group - moving one map is not removing
          * one - so both arms run the same path, and a difference between them is the noise floor
          * every other row of the report is read against.
@@ -1009,6 +1046,8 @@ public class WindowMapFusionBenchmark {
                 case PARTITION_AVG -> "avg(x) over w";
                 case PARTITION_SUM_AVG_COUNT -> "sum(x) over w, avg(x) over w, count(x) over w";
                 case ROW_COUNT -> "count(*) over w, row_number() over w, count(k) over w";
+                case ROWS_FRAME_SUM_AVG -> "sum(x) over w, avg(x) over w";
+                case ROWS_FRAME_SUM_AVG_COUNT -> "sum(x) over w, avg(x) over w, count(x) over w";
                 case SINGLE_SUM -> "sum(x) over w";
                 case SUM_AVG_COUNT -> "sum(x) over w, avg(x) over w, count(x) over w";
                 case SUM_COUNT -> "sum(x) over w, count(y) over w";
@@ -1025,8 +1064,14 @@ public class WindowMapFusionBenchmark {
             // fusion arms remain comparable as answers.
             final String order = cached && orderedBucket ? "order by ts desc" : "order by ts";
             final String forcing = cached && !orderedBucket ? ", avg(x) over (partition by k)" : "";
-            final String windows = "window w as (partition by k " + order + " "
-                    + "rows between unbounded preceding and current row)"
+            // A bounded low bound is what makes the state ring-backed, and the span is small on
+            // purpose: the ring is one cell per row of the frame per key, so a wide frame would
+            // measure the arena's size rather than the group's saving.
+            final boolean boundedRows = this == ROWS_FRAME_SUM_AVG || this == ROWS_FRAME_SUM_AVG_COUNT;
+            final String frame = boundedRows
+                    ? "rows between " + BOUNDED_ROWS_PRECEDING + " preceding and current row"
+                    : "rows between unbounded preceding and current row";
+            final String windows = "window w as (partition by k " + order + " " + frame + ")"
                     + (this == TWO_FRAMES
                     ? ", w2 as (partition by k " + order + " range between unbounded preceding and current row)"
                     : "");
