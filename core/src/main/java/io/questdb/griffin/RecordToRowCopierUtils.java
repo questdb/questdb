@@ -566,6 +566,11 @@ public class RecordToRowCopierUtils {
         int implicitCastLongAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastLongAsFloat", "(J)F");
         int implicitCastLongAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastLongAsDouble", "(J)D");
         int implicitCastFloatAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsDouble", "(F)D");
+        int implicitCastLongAsVarchar = asm.poolMethod(
+                SqlUtil.class,
+                "implicitCastLongAsVarchar",
+                "(J)Lio/questdb/std/str/Utf8Sequence;"
+        );
 
         int implicitCastVarcharAsLong = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsLong", "(Lio/questdb/std/str/Utf8Sequence;)J");
         int implicitCastVarcharAsShort = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsShort", "(Lio/questdb/std/str/Utf8Sequence;)S");
@@ -849,6 +854,10 @@ public class RecordToRowCopierUtils {
                             case ColumnType.DOUBLE:
                                 asm.invokeStatic(implicitCastLongAsDouble);
                                 asm.invokeInterface(wPutDouble, 3);
+                                break;
+                            case ColumnType.VARCHAR:
+                                asm.invokeStatic(implicitCastLongAsVarchar);
+                                asm.invokeInterface(wPutVarchar, 2);
                                 break;
                             default:
                                 if (ColumnType.isDecimalType(toColumnTypeTag)) {
@@ -1306,7 +1315,7 @@ public class RecordToRowCopierUtils {
                                 break;
                             case ColumnType.STRING:
                                 asm.invokeInterface(rGetVarchar);
-                                asm.invokeStatic(transferVarcharToStrCol);
+                                asm.invokeInterface(wPutStr, 2);
                                 break;
                             case ColumnType.IPv4:
                                 asm.invokeInterface(rGetVarchar);
@@ -1711,7 +1720,11 @@ public class RecordToRowCopierUtils {
         int implicitCastLongAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastLongAsFloat", "(J)F");
         int implicitCastLongAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastLongAsDouble", "(J)D");
         int implicitCastFloatAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsDouble", "(F)D");
-
+        int implicitCastLongAsVarchar = asm.poolMethod(
+                SqlUtil.class,
+                "implicitCastLongAsVarchar",
+                "(J)Lio/questdb/std/str/Utf8Sequence;"
+        );
 
         int implicitCastVarcharAsLong = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsLong", "(Lio/questdb/std/str/Utf8Sequence;)J");
         int implicitCastVarcharAsShort = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsShort", "(Lio/questdb/std/str/Utf8Sequence;)S");
@@ -2009,6 +2022,10 @@ public class RecordToRowCopierUtils {
                         case ColumnType.DOUBLE:
                             asm.invokeStatic(implicitCastLongAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        case ColumnType.VARCHAR:
+                            asm.invokeStatic(implicitCastLongAsVarchar);
+                            asm.invokeInterface(wPutVarchar, 2);
                             break;
                         default:
                             if (ColumnType.isDecimalType(toColumnTypeTag)) {
