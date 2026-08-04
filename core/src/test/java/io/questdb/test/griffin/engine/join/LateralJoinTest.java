@@ -1842,18 +1842,19 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Soundness guard. coalesce(cnt, 0) cannot tell a group the wrapper rejected
-    // from a group that never existed: both reach the outer projection as NULL.
-    // So the compensation is only sound under a filter that accepts the count's
-    // whole domain. Here the filter rejects cnt = 2, the row really is gone, and
-    // NULL is the answer SQL requires - fabricating 0 would be a wrong value, not
-    // a conservative one. Fails if the classifier is ever loosened back to merely
-    // "the predicate accepts the zero row".
+    // A filter that rejects part of the count domain cannot stay inside the body:
+    // once it removes a group, that group is indistinguishable at the outer
+    // projection from one that never existed. Such a filter is lifted into the
+    // guard, where it judges the compensated value instead, and both cells come
+    // out right - the matched row the filter rejects becomes NULL, the unmatched
+    // row the filter accepts becomes 0. Fails if the lift regresses to either
+    // half: suppressing gives NULL for the unmatched row, compensating without
+    // the lift gives a fabricated 0 for the rejected one.
     @Test
-    public void testNestedLateralLeftCountWrapperNegatedFilterNeverFabricatesZero() throws Exception {
+    public void testNestedLateralLeftCountWrapperNegatedFilterLifted() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
             execute("CREATE TABLE t2 (x INT)");
             execute("INSERT INTO t2 VALUES (1), (1)");
 
@@ -1875,19 +1876,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .returns("""
                             a\tcnt
                             1\tnull
+                            2\t0
                             """);
         });
     }
 
     @Test
-    public void testNestedLateralLeftCountWrapperNonTotalFilterNeverFabricatesZero() throws Exception {
+    public void testNestedLateralLeftCountWrapperNonTotalFilterLifted() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
             execute("CREATE TABLE t2 (x INT)");
             execute("INSERT INTO t2 VALUES (1), (1)");
 
-            // cnt < 2 accepts the zero row but rejects this row's count of 2
+            // cnt < 2 accepts the zero row but rejects a count of 2
             assertQuery("""
                     SELECT t0.a, l1.cnt
                     FROM t0
@@ -1906,31 +1908,30 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .returns("""
                             a\tcnt
                             1\tnull
+                            2\t0
                             """);
         });
     }
 
-    // Open: the conservative half of the same limitation. The filter accepts the
-    // zero row, so SQL requires 0 for an outer row with no match, but the filter
-    // also rejects some counts, so the compensation has to stay off and the outer
-    // row keeps a NULL. Expressing both cells at once needs a compensation that
-    // can distinguish "filter rejected the group" from "group never existed",
-    // which coalesce alone cannot.
+    // Lifting a filter is only safe while the body projects nothing but the
+    // count: every other column would then be exposed to rows the filter removed,
+    // and only the count is compensated. With a second column present the filter
+    // must stay inside the body, so the row it rejects stays gone in full.
     @Test
-    public void testNestedLateralLeftCountWrapperNonTotalFilterUnmatchedOuterRow() throws Exception {
+    public void testNestedLateralLeftCountWrapperNonTotalFilterNotLiftedWhenBodyHasOtherColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (2)");
+            execute("INSERT INTO t0 VALUES (1)");
             execute("CREATE TABLE t2 (x INT)");
             execute("INSERT INTO t2 VALUES (1), (1)");
 
             assertQuery("""
-                    SELECT t0.a, l1.cnt
+                    SELECT t0.a, l1.cnt, l1.tag
                     FROM t0
                     LEFT JOIN LATERAL (
-                        SELECT cnt
+                        SELECT cnt, tag
                         FROM (
-                            SELECT count(*) AS cnt
+                            SELECT count(*) AS cnt, 'T' AS tag
                             FROM t2
                             WHERE t2.x = t0.a
                         ) counted
@@ -1940,8 +1941,8 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """)
                     .noLeakCheck()
                     .returns("""
-                            a\tcnt
-                            2\t0
+                            a\tcnt\ttag
+                            1\tnull\t
                             """);
         });
     }

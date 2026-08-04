@@ -65,6 +65,11 @@ class LateralJoinRewriter implements Mutable {
     private static final int CORRELATED_JOIN_ON = CORRELATED_LIMIT << 1;
 
     private static final String COUNT_DRIVER_PREFIX = "__qdb_count_driver__";
+    // Stands in for the compensated count inside a lifted filter guard.
+    // materializeLateralCountColumn substitutes coalesce(count, 0) for it, which is
+    // the value the filter has to judge - the raw column is NULL for an outer row
+    // with no group, and NULL fails every comparison.
+    static final String LATERAL_COUNT_PLACEHOLDER = "__qdb_lateral_count__";
     // sentinel for a LIMIT term that is not a compile-time constant; a bare
     // CONSTANT token is unsigned so a real limit can never collide with it
     private static final long LIMIT_NOT_CONSTANT = Long.MIN_VALUE;
@@ -113,6 +118,10 @@ class LateralJoinRewriter implements Mutable {
     private final ObjectPool<WindowExpression> windowExpressionPool;
     private final ObjList<IQueryModel> wrapperKeyLayers = new ObjList<>();
     // guard for the lateral body currently being decorrelated; see accumulateScalarCountGuard
+    // set by hasScalarCountBody when the body carries a filter that must be lifted
+    // into the guard rather than left to run inside the body; read immediately by
+    // the caller, which copies it before any nested call can overwrite it
+    private boolean scalarCountFilterLiftable;
     private ExpressionNode scalarCountGuard;
     // set when a run-time LIMIT reads an outer column: such a guard cannot be
     // evaluated in the outer projection, so a scalar-count body must be rejected
@@ -1351,7 +1360,9 @@ class LateralJoinRewriter implements Mutable {
 
                 // Push down outer refs
                 boolean isPerSidePush = canPerSidePush(topInner, depth);
-                boolean isScalarCountBody = isLeft && hasScalarCountBody(topInner);
+                boolean isScalarCountBody = isLeft && hasScalarCountBody(topInner, true);
+                // copied before push-down, whose nested calls reset the field
+                final boolean liftScalarCountFilters = isScalarCountBody && scalarCountFilterLiftable;
                 scalarCountGuard = null;
                 scalarCountGuardBlocker = null;
                 scalarCountGuardDisarmed = false;
@@ -1426,7 +1437,9 @@ class LateralJoinRewriter implements Mutable {
                             ? model : parent;
                     rejectCorrelatedScalarCountLimit();
                     selectModel.setLateralCountCoalesceRequired(true);
-                    selectModel.setLateralCountCoalesceGuard(scalarCountGuard);
+                    selectModel.setLateralCountCoalesceGuard(
+                            andScalarCountGuard(liftScalarCountFilters ? liftNonTotalFilters(topInner) : null)
+                    );
                 }
             } else if (joinModel.getNestedModel() != null) {
                 decorrelate(joinModel.getNestedModel(), lateralDepth, null);
@@ -1727,7 +1740,14 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
-    private boolean hasScalarCountBody(IQueryModel model) throws SqlException {
+    private boolean hasScalarCountBody(IQueryModel model, boolean allowFilterLift) throws SqlException {
+        scalarCountFilterLiftable = false;
+        // Lifting a filter out of the body exposes every other column of that body
+        // to rows the filter would have removed, and only the count is compensated.
+        // While the body projects nothing but the count there is no other column to
+        // get wrong.
+        final boolean liftable = allowFilterLift && bodyProjectsOnlyScalarCount(model);
+        boolean liftRequired = false;
         IQueryModel current = model;
         while (current != null) {
             // The compensation can only ever produce one row, so a set operation is
@@ -1782,6 +1802,7 @@ class LateralJoinRewriter implements Mutable {
                 ObjList<QueryColumn> columns = current.getBottomUpColumns();
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     if (isCountAggregate(columns.getQuick(i).getAst())) {
+                        scalarCountFilterLiftable = liftRequired;
                         return true;
                     }
                 }
@@ -1797,19 +1818,93 @@ class LateralJoinRewriter implements Mutable {
             if (current.getJoinModels().size() > 1 && !joinKeepsSingleRow(current)) {
                 return false;
             }
-            // A filter above the aggregate must accept every count, not merely the
-            // zero one. coalesce(cnt, 0) cannot tell a group the filter rejected
-            // from a group that never existed - both reach the outer projection as
-            // NULL - so compensating under a filter that rejects any count would
-            // turn a legitimate NULL into 0. Presence of a WHERE still proves
-            // nothing: cnt >= 0 accepts everything, cnt < 100 does not.
-            if (!filterAcceptsEveryCount(current.getWhereClause(), current)
-                    || !filterAcceptsEveryCount(current.getPostJoinWhereClause(), current)) {
+            // A filter above the aggregate that accepts every count can stay where
+            // it is: it never removes a row, so the compensation below it is sound.
+            // One that rejects some counts cannot stay, because coalesce(cnt, 0)
+            // cannot tell a group the filter rejected from a group that never
+            // existed - both reach the outer projection as NULL. Such a filter is
+            // instead lifted into the guard, where it judges the compensated value
+            // and the two cases separate again.
+            if (!filterAcceptsEveryCount(current.getPostJoinWhereClause(), current)) {
                 return false;
+            }
+            final ExpressionNode where = current.getWhereClause();
+            if (!filterAcceptsEveryCount(where, current)) {
+                // decidable over the count domain, or there is nothing to lift
+                if (!liftable || !truthIntervalOf(where, current, 0, false)) {
+                    return false;
+                }
+                liftRequired = true;
             }
             current = current.getNestedModel();
         }
         return false;
+    }
+
+    private boolean bodyProjectsOnlyScalarCount(IQueryModel model) {
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        if (columns.size() != 1) {
+            return false;
+        }
+        final ExpressionNode ast = columns.getQuick(0).getAst();
+        if (ast == null) {
+            return false;
+        }
+        return isCountAggregate(ast)
+                || (ast.type == ExpressionNode.LITERAL && resolvesToScalarCount(ast.token, model, 0));
+    }
+
+    // Removes every filter that rejects part of the count domain and returns them
+    // ANDed together, with the count replaced by a placeholder. Called only after
+    // the body has been admitted, so each filter found here was proved decidable.
+    private ExpressionNode andScalarCountGuard(ExpressionNode lifted) {
+        if (lifted == null) {
+            return scalarCountGuard;
+        }
+        return scalarCountGuard == null ? lifted : createBinaryOp("and", scalarCountGuard, lifted);
+    }
+
+    private ExpressionNode liftNonTotalFilters(IQueryModel model) {
+        ExpressionNode lifted = null;
+        IQueryModel current = model;
+        int guard = 0;
+        while (current != null && guard++ < 64) {
+            if (hasAggregateFunctions(current)) {
+                // at and below the aggregate a filter constrains the counted input
+                // rather than the aggregate row - including the correlation
+                // predicate itself, which must never be lifted
+                break;
+            }
+            final ExpressionNode where = current.getWhereClause();
+            if (where != null && !filterAcceptsEveryCount(where, current)) {
+                final ExpressionNode templated = cloneWithCountPlaceholder(where, current);
+                lifted = lifted == null ? templated : createBinaryOp("and", lifted, templated);
+                current.setWhereClause(null);
+            }
+            current = current.getNestedModel();
+        }
+        return lifted;
+    }
+
+    private ExpressionNode cloneWithCountPlaceholder(ExpressionNode node, IQueryModel layer) {
+        if (node == null) {
+            return null;
+        }
+        if (node.type == ExpressionNode.LITERAL && resolvesToScalarCount(node.token, layer, 0)) {
+            return expressionNodePool.next().of(
+                    ExpressionNode.LITERAL, LATERAL_COUNT_PLACEHOLDER, 0, node.position
+            );
+        }
+        final ExpressionNode copy = expressionNodePool.next().of(
+                node.type, node.token, node.precedence, node.position
+        );
+        copy.paramCount = node.paramCount;
+        copy.lhs = cloneWithCountPlaceholder(node.lhs, layer);
+        copy.rhs = cloneWithCountPlaceholder(node.rhs, layer);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            copy.args.add(cloneWithCountPlaceholder(node.args.getQuick(i), layer));
+        }
+        return copy;
     }
 
     private boolean hasUnmappedOuterRefLiteral(
@@ -2908,7 +3003,7 @@ class LateralJoinRewriter implements Mutable {
         CharSequence cloneAlias = clonedOuterRef.getAlias().token;
         int aliasSaveBase = saveAndRemapOuterToInnerAlias(cloneAlias);
 
-        boolean isScalarCountBody = isLeftJoin && hasScalarCountBody(jmNested);
+        boolean isScalarCountBody = isLeftJoin && hasScalarCountBody(jmNested, false);
         // Branch-local guard scope: consumed below onto localCountModel; the caller's
         // guard state must be restored, or this branch's guard would leak onto the
         // outer model (and a leftover blocker would spuriously reject valid queries)
@@ -3007,7 +3102,7 @@ class LateralJoinRewriter implements Mutable {
             if (isLeftJoin
                     && branchNested != null
                     && branchNested.isCorrelatedAtDepth(depth)
-                    && hasScalarCountBody(branchNested)) {
+                    && hasScalarCountBody(branchNested, false)) {
                 scalarCountDriver = cloneOuterRef(outerRefJoinModel, COUNT_DRIVER_PREFIX, terminateLevel);
                 terminateJoins.insert(1, 1, null);
                 terminateJoins.setQuick(1, scalarCountDriver);
@@ -3052,7 +3147,7 @@ class LateralJoinRewriter implements Mutable {
                 branch.setJoinCriteria(rewriteOuterRefs(branch.getJoinCriteria(), outerToInnerAlias, depth));
             }
 
-            boolean isScalarCountBody = isLeftJoin && hasScalarCountBody(branchNested);
+            boolean isScalarCountBody = isLeftJoin && hasScalarCountBody(branchNested, false);
             scalarCountGuard = null;
             scalarCountGuardBlocker = null;
             scalarCountGuardDisarmed = false;

@@ -5693,6 +5693,8 @@ public class SqlOptimiser implements Mutable {
 
         ExpressionNode result = coalesce;
         if (guard != null) {
+            // a guard carrying a lifted body filter judges the compensated value, so
+            // the placeholder standing in for it becomes coalesce(count, 0) here
             // The lateral body carried a LIMIT whose value is only known per execution
             // (a bind variable), so whether the aggregate row survived it cannot be
             // folded at compile time - a cached plan may be re-executed with a different
@@ -5703,7 +5705,9 @@ public class SqlOptimiser implements Mutable {
             caseNode.paramCount = 3;
             caseNode.args.add(expressionNodePool.next().of(ExpressionNode.CONSTANT, "null", 0, ast.position));
             caseNode.args.add(coalesce);
-            caseNode.args.add(ExpressionNode.deepClone(expressionNodePool, guard));
+            caseNode.args.add(substituteLateralCountPlaceholder(
+                    ExpressionNode.deepClone(expressionNodePool, guard), coalesce
+            ));
             result = caseNode;
         }
         column.of(
@@ -5713,6 +5717,22 @@ public class SqlOptimiser implements Mutable {
                 column.getColumnType()
         );
         return true;
+    }
+
+    private ExpressionNode substituteLateralCountPlaceholder(ExpressionNode node, ExpressionNode replacement) {
+        if (node == null) {
+            return null;
+        }
+        if (node.type == ExpressionNode.LITERAL
+                && Chars.equals(node.token, LateralJoinRewriter.LATERAL_COUNT_PLACEHOLDER)) {
+            return ExpressionNode.deepClone(expressionNodePool, replacement);
+        }
+        node.lhs = substituteLateralCountPlaceholder(node.lhs, replacement);
+        node.rhs = substituteLateralCountPlaceholder(node.rhs, replacement);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            node.args.setQuick(i, substituteLateralCountPlaceholder(node.args.getQuick(i), replacement));
+        }
+        return node;
     }
 
     private void moveWhereInsideSubQueries(IQueryModel model) throws SqlException {
