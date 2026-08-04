@@ -113,15 +113,22 @@ import java.util.Locale;
  * {@code OrderedMap} fused against two {@code UnorderedVarcharMap}s unfused.
  *
  * <h2>The bounded-frame shapes</h2>
- * {@code --shape=rows-frame-sum-avg} and {@code rows-frame-sum-avg-count} are the two ring-backed
- * shapes, and they are the only ones here whose state is not all in a map value: a bounded ROWS
- * accumulator keeps the frame's own values in an arena its contributing function owns. So the
- * unfused arm allocates one ring per call and the fused arm one per component, and the fused value
- * is four slots per bounded {@code (sum, count)} and three per bounded counter - wide enough that
- * every configured entry-size limit puts the group on an {@code OrderedMap} while a narrow key's
- * unfused members may sit on an {@code Unordered4Map}. That trade is cases 4 and 12's, measured
- * there; what these two add is the ring, which the retained-bytes column counts because the arena is
- * tracked like the maps are.
+ * {@code --shape=rows-frame-sum-avg}, {@code rows-frame-sum-avg-count} and their
+ * {@code range-frame-*} counterparts are the ring-backed shapes, and they are the only ones here
+ * whose state is not all in a map value: a bounded accumulator keeps the frame's own values in an
+ * arena its contributing function owns. So the unfused arm allocates one ring per call and the
+ * fused arm one per component, and the fused value is four slots per bounded ROWS
+ * {@code (sum, count)} and six per bounded RANGE one - wide enough that every configured entry-size
+ * limit puts the group on an {@code OrderedMap} while a narrow key's unfused members may sit on an
+ * {@code Unordered4Map}. That trade is cases 4 and 12's, measured there; what these add is the ring,
+ * which the retained-bytes column counts because the arena is tracked like the maps are.
+ * <p>
+ * The RANGE pair prices what a resizable ring costs on top of that: its cells are
+ * {@code (timestamp, value)} pairs rather than bare values, and its span is expressed in the
+ * table's own timestamp step so that it holds the same rows the ROWS pair's does. It has no ordered
+ * cached arm - a bounded RANGE frame is compiled only where the window's order was dismissed
+ * against the base cursor - so {@code --cached-bucket=ordered} still forces its cached run with the
+ * residual whole-partition call.
  *
  * <h2>Case 11: the cached cursors</h2>
  * {@code --cursor=cached} and {@code --cursor=cached-light} run the same shapes through
@@ -469,7 +476,7 @@ public class WindowMapFusionBenchmark {
             int warmups,
             int runs
     ) throws Exception {
-        final String sql = shape.sql(tableName(keyType, keys), cursor, orderedBucket);
+        final String sql = shape.sql(tableName(keyType, keys), cursor, orderedBucket, keys);
         RecordCursorFactory factory = null;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             factory = compiler.compile(sql, sqlCtx).getRecordCursorFactory();
@@ -975,6 +982,25 @@ public class WindowMapFusionBenchmark {
          */
         ROWS_FRAME_SUM_AVG_COUNT("rows-frame-sum-avg-count", false),
         /**
+         * The bounded-RANGE spelling of {@link #ROWS_FRAME_SUM_AVG}: the same merge over a frame
+         * whose length is the timestamps' rather than the query's.
+         * <p>
+         * What it prices that the ROWS shape does not is the resizable ring. Its slice is six slots
+         * where the ROWS one is four - the address, the read cursor, the length and the capacity -
+         * and each of its cells is a {@code (timestamp, value)} pair rather than a bare value, so
+         * the retained-bytes column carries twice the arena per row of frame. The frame's span is
+         * chosen to hold about {@link #BOUNDED_ROWS_PRECEDING} rows, so the two shapes are
+         * comparable.
+         */
+        RANGE_FRAME_SUM_AVG("range-frame-sum-avg", false),
+        /**
+         * The same frame with a counter beside it: two components, eleven slots and two rings
+         * fused, against three maps and three rings unfused. Nothing folds between a bounded sum
+         * and a bounded count, so this prices physical co-location for the RANGE ring families with
+         * the merge held constant.
+         */
+        RANGE_FRAME_SUM_AVG_COUNT("range-frame-sum-avg-count", false),
+        /**
          * Case 1: the single-function control. It forms no group - moving one map is not removing
          * one - so both arms run the same path, and a difference between them is the noise floor
          * every other row of the report is read against.
@@ -1035,16 +1061,20 @@ public class WindowMapFusionBenchmark {
          *                      own sort bucket and the SELECT list is the streaming one exactly) or
          *                      with a residual whole-partition call (the group is then traversed
          *                      with the scan that fills the chain). Ignored for the streaming
-         *                      cursor and for a whole-partition shape, neither of which has a
-         *                      choice to make
+         *                      cursor, for a whole-partition shape and for a bounded RANGE one,
+         *                      none of which has a choice to make
+         * @param keys          the table's key cardinality, which a bounded RANGE frame's span is a
+         *                      function of: one partition's rows are that many table rows apart
          */
-        String sql(String table, Cursor cursor, boolean orderedBucket) {
+        String sql(String table, Cursor cursor, boolean orderedBucket, long keys) {
             final String projections = switch (this) {
                 case COUNT_COUNT -> "count(x) over w, count(y) over w";
                 case DISPERSION -> "stddev_samp(x) over w, stddev_pop(x) over w, var_samp(x) over w, "
                         + "var_pop(x) over w, count(x) over w";
                 case PARTITION_AVG -> "avg(x) over w";
                 case PARTITION_SUM_AVG_COUNT -> "sum(x) over w, avg(x) over w, count(x) over w";
+                case RANGE_FRAME_SUM_AVG -> "sum(x) over w, avg(x) over w";
+                case RANGE_FRAME_SUM_AVG_COUNT -> "sum(x) over w, avg(x) over w, count(x) over w";
                 case ROW_COUNT -> "count(*) over w, row_number() over w, count(k) over w";
                 case ROWS_FRAME_SUM_AVG -> "sum(x) over w, avg(x) over w";
                 case ROWS_FRAME_SUM_AVG_COUNT -> "sum(x) over w, avg(x) over w, count(x) over w";
@@ -1059,18 +1089,33 @@ public class WindowMapFusionBenchmark {
                         + " window w as (partition by k)";
             }
             final boolean cached = cursor != Cursor.STREAMING;
+            final boolean boundedRange = this == RANGE_FRAME_SUM_AVG || this == RANGE_FRAME_SUM_AVG_COUNT;
             // Descending on the designated timestamp rather than on an ordinary column: no two
             // rows tie, so the cumulative answers stay a function of the data alone and the two
-            // fusion arms remain comparable as answers.
-            final String order = cached && orderedBucket ? "order by ts desc" : "order by ts";
-            final String forcing = cached && !orderedBucket ? ", avg(x) over (partition by k)" : "";
+            // fusion arms remain comparable as answers. A bounded RANGE frame has no such choice -
+            // it is compiled only where the window's order was dismissed against the base cursor -
+            // so it always takes the ascending spelling and always needs the residual forcing call.
+            final String order = cached && orderedBucket && !boundedRange ? "order by ts desc" : "order by ts";
+            final String forcing =
+                    cached && (!orderedBucket || boundedRange) ? ", avg(x) over (partition by k)" : "";
             // A bounded low bound is what makes the state ring-backed, and the span is small on
             // purpose: the ring is one cell per row of the frame per key, so a wide frame would
-            // measure the arena's size rather than the group's saving.
+            // measure the arena's size rather than the group's saving. The RANGE span is the same
+            // number of rows expressed in the table's own timestamp step, so the two bounded
+            // shapes hold the same frame and differ only in the state that holds it.
             final boolean boundedRows = this == ROWS_FRAME_SUM_AVG || this == ROWS_FRAME_SUM_AVG_COUNT;
-            final String frame = boundedRows
-                    ? "rows between " + BOUNDED_ROWS_PRECEDING + " preceding and current row"
-                    : "rows between unbounded preceding and current row";
+            final String frame;
+            if (boundedRange) {
+                // Consecutive rows of one partition are `keys` rows apart in the table, so this is
+                // the span BOUNDED_ROWS_PRECEDING of them occupy - which is what makes the two
+                // bounded shapes hold the same frame over the same data.
+                frame = "range between " + (BOUNDED_ROWS_PRECEDING * keys * TS_STEP_MICROS)
+                        + " microseconds preceding and current row";
+            } else if (boundedRows) {
+                frame = "rows between " + BOUNDED_ROWS_PRECEDING + " preceding and current row";
+            } else {
+                frame = "rows between unbounded preceding and current row";
+            }
             final String windows = "window w as (partition by k " + order + " " + frame + ")"
                     + (this == TWO_FRAMES
                     ? ", w2 as (partition by k " + order + " range between unbounded preceding and current row)"
