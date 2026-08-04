@@ -352,6 +352,48 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testABoundedRangeSumAnswersTheSameOnBothCursors() throws Exception {
+        // Not a fusion assertion, and here because no fusion assertion can be one. Every other
+        // comparison in this class holds the fused arm against the unfused arm of the same cursor,
+        // so a shape that answered wrongly on both would pass all of them - and a bounded RANGE
+        // {@code sum} did exactly that: the two sum classes over a RANGE frame inherited the avg
+        // class's pass1, which writes the average, and pass1 is what the cached cursors call and
+        // the streaming one does not. The reference here is therefore the other cursor.
+        //
+        // Both spellings, because the omission was in both: the partitioned class and the
+        // unpartitioned one beside it, which owns no map.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertRows();
+            final String window = " window w as (partition by k order by ts "
+                    + "range between 3000000 microseconds preceding and current row), "
+                    + "u as (order by ts range between 3000000 microseconds preceding and current row)";
+            final String outputs = "sum(x) over w, avg(x) over w, sum(x) over u, avg(x) over u";
+            final String streaming = render("select ts, " + outputs + " from t" + window);
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                for (int fusion = 0; fusion < 2; fusion++) {
+                    setProperty(
+                            PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED,
+                            fusion == 0 ? "true" : "false"
+                    );
+                    // FORCING_CALL is what moves the same SELECT list onto a cached cursor; its
+                    // own column is dropped from the comparison by taking the streaming reference
+                    // without it and the cached one with it in front.
+                    final String cached = render(
+                            "select ts, " + FORCING_CALL + " forced, " + outputs + " from t" + window
+                    );
+                    Assert.assertEquals(
+                            "light=" + light + " fusion=" + fusion,
+                            body(streaming),
+                            dropSecondColumn(body(cached))
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testEveryWholePartitionShapeMatchesTheUnfusedPath() throws Exception {
         // The same differential over the two-pass families, in both bucket spellings and on
         // both factories. The references are the unfused whole-partition path: asked for on
@@ -827,6 +869,30 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     private static String body(String rendered) {
         final int lineEnd = rendered.indexOf('\n');
         return lineEnd < 0 ? "" : rendered.substring(lineEnd + 1);
+    }
+
+    /**
+     * Drops each row's second field, which is where a comparison against a query that carries no
+     * forcing call puts that call's output.
+     */
+    private static String dropSecondColumn(String body) {
+        final StringBuilder out = new StringBuilder();
+        final String[] rows = body.split("\n", -1);
+        for (int i = 0; i < rows.length; i++) {
+            if (i > 0) {
+                out.append('\n');
+            }
+            final String row = rows[i];
+            if (row.isEmpty()) {
+                continue;
+            }
+            final int first = row.indexOf('\t');
+            Assert.assertTrue("a row with no second field: " + row, first >= 0);
+            final int second = row.indexOf('\t', first + 1);
+            Assert.assertTrue("a row with no third field: " + row, second >= 0);
+            out.append(row, 0, first).append(row, second, row.length());
+        }
+        return out.toString();
     }
 
     private static RecordCursorFactory cachedFactory(RecordCursorFactory factory) {

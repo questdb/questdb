@@ -402,6 +402,18 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public String getName() {
             return NAME;
         }
+
+        /**
+         * The total rather than the average, which the inherited {@code pass1} writes. Its
+         * counterpart on the ROWS spelling below has always been here; this one was missing, so
+         * the cached cursors - the only callers of {@code pass1} - answered a bounded-RANGE
+         * {@code sum} with the {@code avg} of the same frame.
+         */
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+        }
     }
 
     // handles sum() over (partition by x [order by o] rows between y and z)
@@ -484,6 +496,18 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public String getName() {
             return NAME;
+        }
+
+        /**
+         * The total rather than the average, which the inherited {@code pass1} writes. Its
+         * counterpart on the ROWS spelling below has always been here; this one was missing, so
+         * the cached cursors - the only callers of {@code pass1} - answered a bounded-RANGE
+         * {@code sum} with the {@code avg} of the same frame.
+         */
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
         }
     }
 
