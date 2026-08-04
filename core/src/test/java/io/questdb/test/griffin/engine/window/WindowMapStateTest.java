@@ -77,6 +77,30 @@ public class WindowMapStateTest extends AbstractCairoTest {
      * and the one whose ring the deferred subtraction is easiest to read against.
      */
     private static final String ROWS_FRAME_WINDOW = ROWS_FRAME_GEOMETRIES[0];
+    /**
+     * The same three shapes spelled as a span of time. The rows below are one second apart, so a
+     * three-second frame is three preceding rows where a partition is dense and fewer where it is
+     * not - which is the difference from the ROWS spelling that matters: how many rows a RANGE
+     * frame holds is the timestamps' answer, so the ring it needs grows with the data.
+     * <p>
+     * Every one of them orders by the designated timestamp in the direction the base is already
+     * scanned in. That is not a style choice: a RANGE frame is compiled only where the window's
+     * order was dismissed against the base cursor, so a bounded RANGE window is always a
+     * natural-order one.
+     */
+    private static final String[] RANGE_FRAME_GEOMETRIES = {
+            "window w as (partition by k order by ts "
+                    + "range between 3000000 microseconds preceding and current row)",
+            "window w as (partition by k order by ts "
+                    + "range between 5000000 microseconds preceding and 2000000 microseconds preceding)",
+            "window w as (partition by k order by ts "
+                    + "range between unbounded preceding and 2000000 microseconds preceding)",
+    };
+    /**
+     * The bounded-RANGE reference window, the geometry a moving aggregate over a time span is
+     * written in.
+     */
+    private static final String RANGE_FRAME_WINDOW = RANGE_FRAME_GEOMETRIES[0];
     private static final String SUM_AND_COUNT_PLAN = """
             Window
               functions: [sum(x) over (partition by [k] rows between unbounded preceding and current row),count(y) over (partition by [k] rows between unbounded preceding and current row)]
@@ -965,6 +989,217 @@ public class WindowMapStateTest extends AbstractCairoTest {
                     }
                 }
                 Assert.assertEquals("exactly one group is the bounded one", 1, ringBacked);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, states.getQuick(0).getLookupCount());
+                    Assert.assertEquals(rows, states.getQuick(1).getLookupCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testABoundedRangeSumAndAvgShareOneFrame() throws Exception {
+        // The acceptance shape for the bounded-RANGE families. It is the bounded-ROWS one with a
+        // wider slice: a RANGE frame's length is the timestamps' answer, so the ring grows on
+        // demand and the value carries its length and capacity beside its address. sum(x) and
+        // avg(x) over one such frame are two readings of one state, so the group keeps one
+        // component, one ring and one argument evaluation where the unfused pair keeps two of each.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, sum(x) over w, avg(x) over w from t " + RANGE_FRAME_WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(1, plan.getComponentCount());
+                Assert.assertEquals(2, plan.getProjectionCount());
+                // [sum, count, ringIndex, ringOffset, ringSize, ringCapacity] - the widest single
+                // component this build fuses, and every slot of it is the state's.
+                Assert.assertEquals(6, plan.getSlotCount());
+                Assert.assertTrue(plan.getComponent(0).isRingBacked());
+                Assert.assertEquals(
+                        WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT,
+                        plan.getComponent(0).getFamily()
+                );
+                Assert.assertFalse(plan.getProjection(0).isDerived());
+                Assert.assertFalse(plan.getProjection(1).isDerived());
+                Assert.assertEquals(0, plan.getProjection(0).getSumSlot());
+                Assert.assertEquals(1, plan.getProjection(0).getNonNullCountSlot());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    // One accumulator for two outputs, so the frame is maintained once.
+                    Assert.assertEquals(rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfusedOnWindow("t", RANGE_FRAME_WINDOW, "sum(x) over w", "avg(x) over w");
+        });
+    }
+
+    @Test
+    public void testABoundedRangeCountKeepsItsOwnRing() throws Exception {
+        // The bounded-RANGE half of the decline the ROWS families made: a bounded count(x) emits
+        // the very number the bounded sum(x) beside it keeps in its counter and still gets a
+        // component of its own, because its state continues outside the slice in a ring of its own
+        // shape - timestamps where the host keeps (timestamp, value) pairs. Here a second reason
+        // stands behind the first: the guest's five slots are not a run inside the host's six
+        // either, since the host keeps a total in front of its counter.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, sum(x) over w, count(x) over w from t " + RANGE_FRAME_WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(2, plan.getComponentCount());
+                Assert.assertEquals(2, plan.getProjectionCount());
+                // The six-slot pair then the five-slot counter.
+                Assert.assertEquals(11, plan.getSlotCount());
+                Assert.assertEquals(0, plan.getComponentSlotBase(0));
+                Assert.assertEquals(6, plan.getComponentSlotBase(1));
+                Assert.assertTrue(plan.getComponent(0).isRingBacked());
+                Assert.assertTrue(plan.getComponent(1).isRingBacked());
+                Assert.assertFalse(plan.getProjection(0).isDerived());
+                Assert.assertFalse(plan.getProjection(1).isDerived());
+                // Two counters, and they are two slots.
+                Assert.assertEquals(1, plan.getProjection(0).getNonNullCountSlot());
+                Assert.assertEquals(6, plan.getProjection(1).getNonNullCountSlot());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfusedOnWindow("t", RANGE_FRAME_WINDOW, "sum(x) over w", "count(x) over w");
+        });
+    }
+
+    @Test
+    public void testEveryBoundedRangeGeometryMatchesTheUnfusedPath() throws Exception {
+        // The three shapes a bounded RANGE frame comes in - ending at the current row, ending
+        // short of it, and with no low bound at all - which are the three arms the contributor's
+        // ring bookkeeping takes. What a RANGE frame adds over the ROWS spelling is the resize: a
+        // partition denser than the initial buffer grows its ring mid-traversal, which moves the
+        // address and the read cursor the slice carries, so a group that dropped either would
+        // answer from the wrong slab rather than merely from the wrong row.
+        //
+        // Run over both data sets, for the reasons the ROWS case gives: the key shapes carry a
+        // partition of a single row and one whose only non-null x is an infinity, and the
+        // nulls-and-infinities one puts the absent and non-finite values inside the frame.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            for (int i = 0; i < RANGE_FRAME_GEOMETRIES.length; i++) {
+                final String window = RANGE_FRAME_GEOMETRIES[i];
+                assertFusedMatchesUnfusedOnWindow("t", window, "sum(x) over w", "avg(x) over w");
+                assertFusedMatchesUnfusedOnWindow(
+                        "t",
+                        window,
+                        "sum(x) over w",
+                        "avg(x) over w",
+                        "count(x) over w",
+                        "count(y) over w"
+                );
+                assertFusedMatchesUnfusedOnWindow("t", window, "count(k) over w", "count(y) over w");
+            }
+            execute("truncate table t");
+            insertNullsAndInfinities();
+            for (int i = 0; i < RANGE_FRAME_GEOMETRIES.length; i++) {
+                assertFusedMatchesUnfusedOnWindow(
+                        "t",
+                        RANGE_FRAME_GEOMETRIES[i],
+                        "sum(x) over w",
+                        "avg(x) over w",
+                        "count(x) over w",
+                        "count(y) over w"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testABoundedRangeRingGrowsWithTheData() throws Exception {
+        // The one thing a RANGE ring does that a ROWS ring cannot: outgrow itself mid-traversal.
+        // A partition denser than the configured initial buffer expands its slab, which moves the
+        // ring's address, its read cursor and its capacity - three of the six slots the group's
+        // value carries - so a contributor that failed to carry any of them back into the slice
+        // would answer the next row out of the wrong slab.
+        //
+        // The frame has to be both wider than the configured initial buffer of 32 and narrower
+        // than the partition, and both halves are load-bearing. The first is what makes the ring
+        // grow; the second is what makes the corruption visible, because a frame that never drops
+        // a row never reads a cell back - the accumulator is incremental, so a stale slab is only
+        // an answer once a value has to leave it. Fifty-one rows of a two-hundred-row partition
+        // is both.
+        //
+        // Driven rather than asserted: what a resize has to produce is the rows the unfused path
+        // produces, and the group's own map is not where the resize happens.
+        assertMemoryLeak(() -> {
+            createTable();
+            execute("insert into t select (x * 1000000L)::timestamp, "
+                    + "'k' || (x % 2), 'p', "
+                    + "case when x % 7 = 0 then null else (x % 29)::double end, "
+                    + "case when x % 5 = 0 then null else (x % 13)::double end, "
+                    + "x from long_sequence(400)");
+            final String window = "window w as (partition by k order by ts "
+                    + "range between 100000000 microseconds preceding and current row)";
+            assertFusedMatchesUnfusedOnWindow("t", window, "sum(x) over w", "avg(x) over w");
+            assertFusedMatchesUnfusedOnWindow(
+                    "t",
+                    window,
+                    "sum(x) over w",
+                    "avg(x) over w",
+                    "count(x) over w",
+                    "count(y) over w"
+            );
+        });
+    }
+
+    @Test
+    public void testABoundedRangeAndABoundedRowsFrameAreTwoGroups() throws Exception {
+        // Two windows over one key that differ in nothing but how the frame is measured. Both are
+        // ring-backed and their states are different shapes, and what keeps them apart is the
+        // framing mode in the group's spec: this is the pair that would answer a span of time with
+        // a count of rows if the spec stopped discriminating.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, sum(x) over w, avg(x) over w, sum(x) over r, avg(x) over r from t "
+                    + "window w as (partition by k order by ts rows between 3 preceding and current row), "
+                    + "r as (partition by k order by ts "
+                    + "range between 3000000 microseconds preceding and current row)";
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 2);
+                final ObjList<WindowMapState> states = windowFactory.getWindowMapStates();
+                int range = 0;
+                for (int i = 0; i < 2; i++) {
+                    final WindowAccumulatorPlan plan = states.getQuick(i).getPlan();
+                    Assert.assertEquals(1, plan.getComponentCount());
+                    Assert.assertEquals(2, plan.getProjectionCount());
+                    Assert.assertTrue(plan.getComponent(0).isRingBacked());
+                    if (plan.getComponent(0).getFamily()
+                            == WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT) {
+                        range++;
+                        Assert.assertEquals(6, plan.getSlotCount());
+                    } else {
+                        Assert.assertEquals(4, plan.getSlotCount());
+                    }
+                }
+                Assert.assertEquals("exactly one group is the RANGE one", 1, range);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);

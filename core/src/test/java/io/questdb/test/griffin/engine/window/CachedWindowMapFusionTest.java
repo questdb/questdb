@@ -97,6 +97,21 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     // the one leaving it.
     private static final String ORDERED_LAGGING_ROWS_FRAME_WINDOW =
             " from t window w as (partition by k order by ts desc rows between 5 preceding and 2 preceding)";
+    // The bounded-RANGE windows, whose ring holds (timestamp, value) pairs and grows with the
+    // data. There is no ordered spelling of one: a RANGE frame is compiled only where the
+    // window's order was dismissed against the base cursor, so such a window is always in the
+    // natural-order bucket and something else has to force the cached path. What these add over
+    // the ROWS frames above is the resize - a chain-fed contributor grows its slab mid-traversal
+    // and the slice's address and read cursor move with it.
+    private static final String NATURAL_RANGE_FRAME_WINDOW =
+            " from t window w as (partition by k order by ts "
+                    + "range between 3000000 microseconds preceding and current row)";
+    private static final String NATURAL_LAGGING_RANGE_FRAME_WINDOW =
+            " from t window w as (partition by k order by ts "
+                    + "range between 5000000 microseconds preceding and 2000000 microseconds preceding)";
+    private static final String NATURAL_UNBOUNDED_LO_RANGE_FRAME_WINDOW =
+            " from t window w as (partition by k order by ts "
+                    + "range between unbounded preceding and 2000000 microseconds preceding)";
     // A whole-partition window that needs a sort of its own, so its two-pass group runs inside
     // a sort group's traversal rather than in the natural-order loops. The same ORDER BY as
     // ORDERED_WINDOW, which is what puts the two in one sort bucket.
@@ -347,6 +362,27 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                             "count(y) over w"
                     );
                 }
+                // The bounded-RANGE families, in the three geometries their ring bookkeeping takes.
+                // All three are natural-order windows and so all three need the forcing call - see
+                // the constants. The counter beside the pair is the shape whose two rings are
+                // filled by two contributors off one chain record.
+                for (int range = 0; range < 3; range++) {
+                    final String window = range == 0
+                            ? NATURAL_RANGE_FRAME_WINDOW
+                            : (range == 1
+                            ? NATURAL_LAGGING_RANGE_FRAME_WINDOW
+                            : NATURAL_UNBOUNDED_LO_RANGE_FRAME_WINDOW);
+                    final String lead = ", " + FORCING_CALL;
+                    assertFusedMatchesUnfused(window, lead, "sum(x) over w", "avg(x) over w");
+                    assertFusedMatchesUnfused(
+                            window,
+                            lead,
+                            "sum(x) over w",
+                            "avg(x) over w",
+                            "count(x) over w",
+                            "count(y) over w"
+                    );
+                }
             }
         });
     }
@@ -360,8 +396,8 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         // class's pass1, which writes the average, and pass1 is what the cached cursors call and
         // the streaming one does not. The reference here is therefore the other cursor.
         //
-        // Both spellings, because the omission was in both: the partitioned class and the
-        // unpartitioned one beside it, which owns no map.
+        // Both spellings, because the omission was in both: the partitioned class this box fuses
+        // and the unpartitioned one beside it, which owns no map and joins no group.
         assertMemoryLeak(() -> {
             createTable();
             insertRows();

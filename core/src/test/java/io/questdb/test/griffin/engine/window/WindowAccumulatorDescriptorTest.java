@@ -474,6 +474,175 @@ public class WindowAccumulatorDescriptorTest {
     }
 
     @Test
+    public void testTheBoundedRangeFamiliesCarryTheirRingsGeometry() {
+        // The RANGE spelling of the pair above, and the one thing about it that is not the ROWS
+        // one's: a RANGE frame's length is the data's answer rather than the query's, so the ring
+        // grows on demand and the slice carries how long it is and how long it can be beside where
+        // it starts. Two more slots each, and everything else about being ring-backed unchanged.
+        final WindowAccumulatorDescriptor rangeSum = WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        final WindowAccumulatorDescriptor rangeCount = WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_RANGE_NON_NULL_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        Assert.assertNotNull(rangeSum);
+        Assert.assertNotNull(rangeCount);
+
+        Assert.assertEquals(6, rangeSum.getSlotCount());
+        Assert.assertEquals(0, rangeSum.getFieldSlot(WindowAccumulatorDescriptor.FIELD_SUM));
+        Assert.assertEquals(1, rangeSum.getFieldSlot(WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT));
+        Assert.assertEquals(2, rangeSum.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_INDEX));
+        Assert.assertEquals(3, rangeSum.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_OFFSET));
+        Assert.assertEquals(4, rangeSum.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_SIZE));
+        Assert.assertEquals(5, rangeSum.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_CAPACITY));
+        Assert.assertEquals(ColumnType.DOUBLE, rangeSum.getSlotColumnType(0));
+        Assert.assertEquals(5, rangeCount.getSlotCount());
+        Assert.assertEquals(0, rangeCount.getFieldSlot(WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT));
+        Assert.assertEquals(1, rangeCount.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_INDEX));
+        Assert.assertEquals(2, rangeCount.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_OFFSET));
+        Assert.assertEquals(3, rangeCount.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_SIZE));
+        Assert.assertEquals(4, rangeCount.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_CAPACITY));
+        Assert.assertEquals(-1, rangeCount.getFieldSlot(WindowAccumulatorDescriptor.FIELD_SUM));
+        // The two ring-geometry fields belong to these families and to no other: the ROWS ring is
+        // as long as the query says, so its slice names neither.
+        final WindowAccumulatorDescriptor rowsSum = WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_ROWS_SUM_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        Assert.assertNotNull(rowsSum);
+        Assert.assertEquals(-1, rowsSum.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_SIZE));
+        Assert.assertEquals(-1, rowsSum.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_CAPACITY));
+
+        final ObjList<WindowAccumulatorDescriptor> ringBacked = new ObjList<>();
+        ringBacked.add(rangeSum);
+        ringBacked.add(rangeCount);
+        for (int i = 0, n = ringBacked.size(); i < n; i++) {
+            final WindowAccumulatorDescriptor component = ringBacked.getQuick(i);
+            final String what = "family " + component.getFamily();
+            Assert.assertTrue(what, component.isRingBacked());
+            final int ringOffsetSlot = component.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_OFFSET);
+            for (int slot = 0, slots = component.getSlotCount(); slot < slots; slot++) {
+                if (slot != ringOffsetSlot) {
+                    // A total, a counter, a read cursor, a length and a capacity all start at zero
+                    // and mean it: an unallocated ring holds nothing and can hold nothing.
+                    Assert.assertEquals(what + ": slot " + slot, 0L, component.getSlotIdentityBits(slot));
+                } else {
+                    Assert.assertEquals(
+                            what + ": ring offset",
+                            WindowAccumulatorDescriptor.RING_STATE_UNALLOCATED,
+                            component.getSlotIdentityBits(slot)
+                    );
+                    Assert.assertEquals(ColumnType.LONG, component.getSlotColumnType(slot));
+                }
+            }
+            Assert.assertEquals(what, -1, LiveViewAccumulatorDescriptor.familyCodecVersion(component.getFamily()));
+            Assert.assertNull(what, LiveViewAccumulatorDescriptor.of(component));
+            try {
+                component.copyState(null, 0, null, 0);
+                Assert.fail(what + ": a ring-backed state must not move between maps");
+            } catch (UnsupportedOperationException expected) {
+                // as required
+            }
+        }
+
+        // Nothing folds, in either direction, for the reason the ROWS pair does not - and here a
+        // second reason stands behind it: a RANGE counter's five slots are not even a run inside a
+        // RANGE (sum, count)'s six, because the host keeps a total in front of its counter.
+        Assert.assertEquals(-1, rangeSum.derivedSlotOffset(rangeCount));
+        Assert.assertEquals(-1, rangeCount.derivedSlotOffset(rangeSum));
+        Assert.assertEquals(0, rangeSum.derivedSlotOffset(rangeSum));
+        // Nor across the frames. A bounded ROWS state and a bounded RANGE one over one column
+        // agree on the argument and the contribution predicate and are still two states, which is
+        // what the two families being separate says; a group never puts them together anyway.
+        final WindowAccumulatorDescriptor rowsCount = WindowAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        Assert.assertNotNull(rowsCount);
+        final ObjList<WindowAccumulatorDescriptor> others = new ObjList<>();
+        others.add(rowsSum);
+        others.add(rowsCount);
+        final ObjList<LiveViewAccumulatorDescriptor> durable = components();
+        for (int j = 0, m = durable.size(); j < m; j++) {
+            others.add(durable.getQuick(j).getRuntime());
+        }
+        for (int i = 0, n = ringBacked.size(); i < n; i++) {
+            final WindowAccumulatorDescriptor component = ringBacked.getQuick(i);
+            for (int j = 0, m = others.size(); j < m; j++) {
+                final WindowAccumulatorDescriptor other = others.getQuick(j);
+                Assert.assertFalse(component.isSameIdentity(other));
+                Assert.assertEquals(-1, component.derivedSlotOffset(other));
+                Assert.assertEquals(-1, other.derivedSlotOffset(component));
+            }
+        }
+
+        // The readings each family admits, and the one it must not: a bounded RANGE (sum, count)
+        // serves a sum and an avg and never a count, which is the second lock on the decline above.
+        Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT,
+                WindowAccumulatorProjection.PROJECTION_SUM
+        ));
+        Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT,
+                WindowAccumulatorProjection.PROJECTION_AVG
+        ));
+        Assert.assertFalse(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT,
+                WindowAccumulatorProjection.PROJECTION_COUNT
+        ));
+        Assert.assertTrue(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_RANGE_NON_NULL_COUNT,
+                WindowAccumulatorProjection.PROJECTION_COUNT
+        ));
+        Assert.assertFalse(WindowAccumulatorProjection.isCompatible(
+                WindowAccumulatorDescriptor.FAMILY_RANGE_NON_NULL_COUNT,
+                WindowAccumulatorProjection.PROJECTION_SUM
+        ));
+
+        // The predicates are the cumulative families' own, one argument type at a time: one class
+        // serves every bounded-RANGE count and applies the very lambda the cumulative one does.
+        final int[] argumentTypes = {
+                ColumnType.DOUBLE,
+                ColumnType.LONG,
+                ColumnType.SYMBOL,
+                ColumnType.VARCHAR,
+                ColumnType.getDecimalType(18, 3),
+                ColumnType.CHAR,
+        };
+        for (int i = 0; i < argumentTypes.length; i++) {
+            final String what = ColumnType.nameOf(argumentTypes[i]);
+            Assert.assertEquals(
+                    what,
+                    WindowAccumulatorDescriptor.contributionKindFor(
+                            WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                            argumentTypes[i]
+                    ),
+                    WindowAccumulatorDescriptor.contributionKindFor(
+                            WindowAccumulatorDescriptor.FAMILY_RANGE_NON_NULL_COUNT,
+                            argumentTypes[i]
+                    )
+            );
+            Assert.assertEquals(
+                    what,
+                    WindowAccumulatorDescriptor.contributionKindFor(
+                            WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                            argumentTypes[i]
+                    ),
+                    WindowAccumulatorDescriptor.contributionKindFor(
+                            WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT,
+                            argumentTypes[i]
+                    )
+            );
+        }
+    }
+
+    @Test
     public void testTheExtremumFamiliesAreRuntimeOnlyAndStartAtNull() {
         // The four extremum families are the first this build admits at runtime and not on
         // disk, and the first whose starting state is not a zeroed slice. Both halves matter

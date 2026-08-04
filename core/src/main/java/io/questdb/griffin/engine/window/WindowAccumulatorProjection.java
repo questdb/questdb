@@ -211,11 +211,12 @@ public final class WindowAccumulatorProjection {
         switch (kind) {
             case PROJECTION_SUM:
             case PROJECTION_AVG:
-                // The cumulative pair and the bounded-ROWS one, which carry the same two fields
+                // The cumulative pair and the two bounded ones, which carry the same two fields
                 // and mean the same two things by them: a total over the rows the component
                 // currently holds and the count of them. What differs is which rows those are,
                 // and that is the group's frame rather than the projection's business.
                 return family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT
+                        || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT
                         || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_ROWS_SUM_COUNT;
             case PROJECTION_KAHAN_SUM:
                 // The compensated total's own family and no other, which is the whole reason
@@ -229,15 +230,17 @@ public final class WindowAccumulatorProjection {
                 // host's counter. Which counter a given call may read is still the component
                 // identity's answer, not this one's.
                 //
-                // FAMILY_DOUBLE_ROWS_SUM_COUNT is deliberately absent even though its counter is
-                // exactly what a count(x) over the same bounded frame emits: nothing folds onto
-                // a ring-backed component - see WindowAccumulatorDescriptor#derivedSlotOffset -
-                // so a count there keeps FAMILY_ROWS_NON_NULL_COUNT, and listing the pair here
-                // would state a reading no plan can produce.
+                // The two bounded (sum, count) families are deliberately absent even though their
+                // counter is exactly what a count(x) over the same bounded frame emits: nothing
+                // folds onto a ring-backed component - see
+                // WindowAccumulatorDescriptor#derivedSlotOffset - so a count there keeps a
+                // ring-backed counter of its own, and listing the pairs here would state a reading
+                // no plan can produce.
                 return family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT
                         || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT
                         || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD
                         || family == WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT
+                        || family == WindowAccumulatorDescriptor.FAMILY_RANGE_NON_NULL_COUNT
                         || family == WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT
                         || family == WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;
             case PROJECTION_EXTREMUM:

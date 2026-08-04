@@ -506,6 +506,14 @@ public class CountFunctionFactoryHelper {
         private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int timestampIndex;
         private long count;
+        // The four ring slots of the group's fused map value, or -1 when this function owns its
+        // state. Installed by bindWindowStateSlots and cleared the same way. A RANGE ring is
+        // resizable, so its geometry is two more slots than a ROWS one's: the address and the read
+        // cursor, plus how many timestamps it holds and how many it can hold.
+        private int windowStateRingCapacitySlot = -1;
+        private int windowStateRingIndexSlot = -1;
+        private int windowStateRingOffsetSlot = -1;
+        private int windowStateRingSizeSlot = -1;
 
         public CountOverPartitionRangeFrameFunction(
                 Map map,
@@ -550,6 +558,146 @@ public class CountFunctionFactoryHelper {
             }
         }
 
+        /**
+         * Absorbs one row into the group's bounded RANGE frame, leaving the frame's own count in
+         * the slice.
+         * <p>
+         * The arithmetic is {@link #computeNext(Record)}'s, operation for operation and in the same
+         * order, against the group's slots instead of this function's own five. No schedule moves,
+         * unlike the bounded ROWS family's: a RANGE row already ends with the frame's own count in
+         * its slots, because what leaves the frame is decided by the timestamps at the top of the
+         * row rather than by a position at the bottom of it.
+         * <p>
+         * The ring is this function's own arena and this method is the only thing that writes to
+         * it: a component has exactly one contributor, so the group's other projections read the
+         * slice and never the frame.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final long timestamp = record.getTimestamp(timestampIndex);
+
+            long frameSize;
+            long startOffset = value.getLong(windowStateRingOffsetSlot);
+            long size;
+            long capacity;
+            long firstIdx;
+
+            if (startOffset == WindowAccumulatorDescriptor.RING_STATE_UNALLOCATED) {
+                // The group put the slice to identity and the ring's address is the one field it
+                // could not fill, so this is the partition's first row and the ring is ours to
+                // allocate. Nothing initializes the cells: a RANGE ring holds only the rows that
+                // contributed, and the length slot is what says how many that is.
+                capacity = initialBufferSize;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+
+                if (isNotNullFunc.isNotNull(arg, record)) {
+                    memory.putLong(startOffset, timestamp);
+                    if (frameIncludesCurrentValue) {
+                        frameSize = 1;
+                        size = frameLoBounded ? 1 : 0;
+                    } else {
+                        frameSize = 0;
+                        size = 1;
+                    }
+                } else {
+                    size = 0;
+                    frameSize = 0;
+                }
+            } else {
+                frameSize = value.getLong(windowStateNonNullCountSlot);
+                size = value.getLong(windowStateRingSizeSlot);
+                capacity = value.getLong(windowStateRingCapacitySlot);
+                firstIdx = value.getLong(windowStateRingIndexSlot);
+                long newFirstIdx = firstIdx;
+
+                if (frameLoBounded) {
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Math.abs(timestamp - ts) > maxDiff) {
+                            // if rangeHi < 0, some elements from the window can be not in the frame
+                            if (frameSize > 0) {
+                                frameSize--;
+                            }
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                firstIdx = newFirstIdx;
+
+                if (isNotNullFunc.isNotNull(arg, record)) {
+                    if (size == capacity) { // buffer full
+                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
+                        AbstractWindowFunctionFactory.expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
+                        capacity = memoryDesc.capacity;
+                        startOffset = memoryDesc.startOffset;
+                        firstIdx = memoryDesc.firstIdx;
+                    }
+
+                    // add ts element to buffer
+                    memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
+                    size++;
+                }
+
+                // find new top border of range frame and add new elements
+                if (frameLoBounded) {
+                    for (long i = frameSize; i < size; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        long diff = Math.abs(ts - timestamp);
+
+                        if (diff <= maxDiff && diff >= minDiff) {
+                            frameSize++;
+                        } else {
+                            break;
+                        }
+                    }
+                } else {
+                    newFirstIdx = firstIdx;
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Math.abs(timestamp - ts) >= minDiff) {
+                            frameSize++;
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    firstIdx = newFirstIdx;
+                }
+            }
+
+            value.putLong(windowStateNonNullCountSlot, frameSize);
+            value.putLong(windowStateRingIndexSlot, firstIdx);
+            value.putLong(windowStateRingOffsetSlot, startOffset);
+            value.putLong(windowStateRingSizeSlot, size);
+            value.putLong(windowStateRingCapacitySlot, capacity);
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateRingIndexSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_INDEX);
+            this.windowStateRingOffsetSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_OFFSET);
+            this.windowStateRingSizeSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_SIZE);
+            this.windowStateRingCapacitySlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_CAPACITY);
+        }
+
         @Override
         public void close() {
             super.close();
@@ -559,6 +707,11 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             // map stores
             // 0 - current counter number
             // 1 - native array start offset (relative to memory address)
@@ -692,6 +845,16 @@ public class CountFunctionFactoryHelper {
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        /**
+         * Reads the frame the group's contributor left in the slice - the count of its
+         * contributing rows, which is exact and never NULL, exactly as a cumulative
+         * {@code count}'s is.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            count = value.getLong(windowStateNonNullCountSlot);
         }
 
         @Override
@@ -935,9 +1098,33 @@ public class CountFunctionFactoryHelper {
         @Override
         public void toTop() {
             super.toTop();
+            // Bound or not, the arena goes back to the start: the group's map is cleared by the
+            // same toTop, so every partition allocates a ring again on its first row and nothing
+            // addresses what this drops.
             memory.truncate();
             freeList.clear();
             tombstoneCount = 0;
+        }
+
+        /**
+         * The counted column, or null for a {@code count(*)}. A null argument is what declines the
+         * family: this class serves both calls, and a {@code count(*)} over a bounded RANGE frame
+         * counts rows rather than a column's non-null values, so its state is not the one
+         * {@link WindowAccumulatorDescriptor#FAMILY_RANGE_NON_NULL_COUNT} describes.
+         */
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_RANGE_NON_NULL_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_COUNT;
         }
     }
 

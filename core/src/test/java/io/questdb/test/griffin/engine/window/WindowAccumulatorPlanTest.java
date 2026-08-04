@@ -544,6 +544,103 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTheBoundedRangeFamiliesKeepTheirRingsGeometry() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // The RANGE spelling of the case above, and the two things that differ. The components
+            // are two slots wider each, because a RANGE ring grows with the data and the slice has
+            // to carry its length and capacity as well as its address; and the layout puts the
+            // wider family first for the same reason it always does - the canonical order is by
+            // family id, and the (sum, count) family's is the lower of the two.
+            assertPlans(
+                    "select ts, sum(x) over w, avg(x) over w, count(x) over w, count(y) over w "
+                            + "from base " + rangeFrameWindow(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(3, plan.getComponentCount());
+                        Assert.assertEquals(4, plan.getProjectionCount());
+                        // [sum, count, ringIndex, ringOffset, ringSize, ringCapacity] then a
+                        // five-slot counter per argument.
+                        Assert.assertEquals(16, plan.getSlotCount());
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_RANGE_NON_NULL_COUNT,
+                                plan.getComponent(1).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_RANGE_NON_NULL_COUNT,
+                                plan.getComponent(2).getFamily()
+                        );
+                        final int xColumn = plan.getComponent(0).getArgumentColumnIndex();
+                        Assert.assertEquals(xColumn, plan.getComponent(1).getArgumentColumnIndex());
+                        Assert.assertTrue(
+                                "the two counters must be ordered by argument",
+                                plan.getComponent(2).getArgumentColumnIndex() > xColumn
+                        );
+                        Assert.assertEquals(0, plan.getComponentSlotBase(0));
+                        Assert.assertEquals(6, plan.getComponentSlotBase(1));
+                        Assert.assertEquals(11, plan.getComponentSlotBase(2));
+                        final ArrayColumnTypes types = new ArrayColumnTypes();
+                        plan.buildMapValueTypes(types);
+                        Assert.assertEquals(16, types.getColumnCount());
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(0));
+                        for (int slot = 1; slot < 16; slot++) {
+                            // Every other slot is a 64-bit word, the ring geometry included.
+                            Assert.assertEquals("slot " + slot, ColumnType.LONG, types.getColumnType(slot));
+                        }
+                        for (int output = 1; output <= 4; output++) {
+                            Assert.assertFalse(
+                                    "output " + output + " should keep its own component",
+                                    projectionAt(plan, output).isDerived()
+                            );
+                        }
+                        for (int c = 0; c < 3; c++) {
+                            Assert.assertTrue("component " + c, plan.getComponent(c).isRingBacked());
+                        }
+                    }
+            );
+            // The two bounded frames side by side. Both are ring-backed and neither reaches the
+            // other: the framing mode is part of a group's identity, so a RANGE (sum, count) and a
+            // ROWS one are never compared however alike the calls look - which is the thing that
+            // would silently answer a span of time with a count of rows if it stopped holding.
+            assertPlans(
+                    "select ts, sum(x) over w, avg(x) over w, sum(x) over r, avg(x) over r from base "
+                            + "window w as (partition by k order by ts rows between 3 preceding and current row), "
+                            + "r as (partition by k order by ts "
+                            + "range between 3000000 microseconds preceding and current row)",
+                    plans -> {
+                        Assert.assertNotNull(plans);
+                        Assert.assertEquals(2, plans.size());
+                        int rows = 0;
+                        int range = 0;
+                        for (int i = 0; i < 2; i++) {
+                            final WindowAccumulatorPlan plan = plans.getQuick(i);
+                            Assert.assertEquals(1, plan.getComponentCount());
+                            Assert.assertEquals(2, plan.getProjectionCount());
+                            Assert.assertTrue(plan.getComponent(0).isRingBacked());
+                            if (plan.getComponent(0).getFamily()
+                                    == WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT) {
+                                range++;
+                                Assert.assertEquals(6, plan.getSlotCount());
+                            } else {
+                                rows++;
+                                Assert.assertEquals(4, plan.getSlotCount());
+                            }
+                        }
+                        Assert.assertEquals(1, rows);
+                        Assert.assertEquals(1, range);
+                        Assert.assertFalse(
+                                plans.getQuick(0).getSpec().isSameSpec(plans.getQuick(1).getSpec())
+                        );
+                    }
+            );
+        });
+    }
+
+    @Test
     public void testTheGenericAndLiveViewPlansAgreeOnTheAnchoredShapes() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();
@@ -810,6 +907,17 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
      */
     private static String rowsFrameWindow() {
         return "window w as (partition by k order by ts rows between 3 preceding and current row)";
+    }
+
+    /**
+     * The RANGE spelling of the same thing, whose frame is a span of time rather than a count of
+     * rows. Its ORDER BY has to be the designated timestamp in the direction the base is already
+     * scanned in - a RANGE frame is compiled only where the order was dismissed - which is what
+     * {@code order by ts} over this base is.
+     */
+    private static String rangeFrameWindow() {
+        return "window w as (partition by k order by ts "
+                + "range between 3000000 microseconds preceding and current row)";
     }
 
     private void createBaseTable() throws Exception {

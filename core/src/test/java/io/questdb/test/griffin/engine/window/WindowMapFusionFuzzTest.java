@@ -85,6 +85,12 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
      * accumulator has to give rows back, and so the ones the ring-backed families serve.
      */
     private static final int FRAME_BOUNDED_ROWS = 2;
+    /**
+     * A RANGE frame with a bounded low bound, a bounded high bound, or both - the same three
+     * geometries as {@link #FRAME_BOUNDED_ROWS}, over a ring that grows with the data rather than
+     * one the query's own span sizes.
+     */
+    private static final int FRAME_BOUNDED_RANGE = 3;
     private static final int FRAME_RANGE = 0;
     private static final int FRAME_ROWS = 1;
     private static final int ITERATIONS = 40;
@@ -146,6 +152,32 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
      * group.
      */
     private static final String[] BOUNDED_ROWS_FRAME_CALLS = {
+            "sum(xd)",
+            "sum(yd)",
+            "avg(xd)",
+            "avg(yd)",
+            "count(xd)",
+            "count(yd)",
+            "count(ki)",
+            "count(ks)",
+            "count(kv)",
+            "count(xdec)",
+            "count(xdec128)",
+            // Residual over this frame, and here on purpose: a bound group and a function still on
+            // its own map and its own ring in one cursor is what an ordinary query looks like.
+            "count(*)",
+            "max(xd)",
+            "min(xd)",
+            "ksum(xd)",
+    };
+    /**
+     * The calls a <b>bounded</b> RANGE window can fuse. The same two families the bounded ROWS arm
+     * carries, spelled over a resizable ring - and the same residuals for the same reason: a
+     * {@code count(*)} over such a frame counts rows rather than a column's values, and the
+     * extremum and compensated-sum implementations behind a bounded RANGE frame are separate
+     * classes that declare no family.
+     */
+    private static final String[] BOUNDED_RANGE_FRAME_CALLS = {
             "sum(xd)",
             "sum(yd)",
             "avg(xd)",
@@ -385,34 +417,80 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
     }
 
     /**
+     * One random bounded RANGE frame, in the same three geometries. The spans are multiples of the
+     * one-second row spacing the table is built with, so a frame holds a handful of rows and the
+     * ring is crossed and regrown many times over the rows a table carries.
+     */
+    private String randomBoundedRangeFrame() {
+        final int precedingSeconds = 1 + rnd.nextInt(8);
+        final long preceding = precedingSeconds * 1_000_000L;
+        final long lagging = (1 + rnd.nextInt(precedingSeconds)) * 1_000_000L;
+        if (rnd.nextInt(3) == 0) {
+            // No low bound: nothing ever leaves the frame, and the contributor takes the arm that
+            // consumes the ring from its head rather than trimming it from behind.
+            return "unbounded preceding and " + lagging + " microseconds preceding";
+        }
+        if (rnd.nextBoolean()) {
+            return preceding + " microseconds preceding and current row";
+        }
+        // A lagging high bound, where the frame's own top edge trails the row being answered.
+        return preceding + " microseconds preceding and " + lagging + " microseconds preceding";
+    }
+
+    /**
      * One random streaming query: one or two partitioned windows, two to five outputs spread over
      * them in random order, each window referenced by name or spelled inline.
      * <p>
      * Every window is partitioned and ordered by the designated timestamp the base is already
      * scanned in, which is what keeps the query on the streaming path the group compiler runs
-     * under. What varies is everything the group identity is a function of, the frame included: a
-     * cumulative ROWS or RANGE frame, or a bounded ROWS one in each of the three geometries its
-     * ring comes in.
+     * under - and what a bounded RANGE frame requires outright, since one is compiled only where
+     * that order was dismissed. What varies is everything the group identity is a function of, the
+     * frame included: a cumulative ROWS or RANGE frame, or a bounded ROWS or RANGE one in each of
+     * the three geometries its ring comes in.
      */
     private String randomQuery(String table) {
         final int windowCount = 1 + rnd.nextInt(2);
         final String[] specs = new String[windowCount];
         final int[] frameKinds = new int[windowCount];
         for (int w = 0; w < windowCount; w++) {
-            frameKinds[w] = rnd.nextInt(4) == 0 ? FRAME_RANGE : (rnd.nextBoolean() ? FRAME_ROWS : FRAME_BOUNDED_ROWS);
+            final int roll = rnd.nextInt(8);
+            frameKinds[w] = roll < 2
+                    ? FRAME_RANGE
+                    : (roll < 4 ? FRAME_BOUNDED_RANGE : (rnd.nextBoolean() ? FRAME_ROWS : FRAME_BOUNDED_ROWS));
+            final boolean range = frameKinds[w] == FRAME_RANGE || frameKinds[w] == FRAME_BOUNDED_RANGE;
+            final String frame;
+            if (frameKinds[w] == FRAME_BOUNDED_ROWS) {
+                frame = randomBoundedRowsFrame();
+            } else if (frameKinds[w] == FRAME_BOUNDED_RANGE) {
+                frame = randomBoundedRangeFrame();
+            } else {
+                frame = "unbounded preceding and current row";
+            }
             specs[w] = "partition by " + KEY_COLUMNS[rnd.nextInt(KEY_COLUMNS.length)]
                     + " order by ts "
-                    + (frameKinds[w] == FRAME_RANGE ? "range" : "rows")
+                    + (range ? "range" : "rows")
                     + " between "
-                    + (frameKinds[w] == FRAME_BOUNDED_ROWS ? randomBoundedRowsFrame() : "unbounded preceding and current row");
+                    + frame;
         }
         final int outputs = 2 + rnd.nextInt(4);
         final StringBuilder sql = new StringBuilder("select ts");
         for (int o = 0; o < outputs; o++) {
             final int w = rnd.nextInt(windowCount);
-            final String[] calls = frameKinds[w] == FRAME_RANGE
-                    ? RANGE_FRAME_CALLS
-                    : (frameKinds[w] == FRAME_ROWS ? ROWS_FRAME_CALLS : BOUNDED_ROWS_FRAME_CALLS);
+            final String[] calls;
+            switch (frameKinds[w]) {
+                case FRAME_RANGE:
+                    calls = RANGE_FRAME_CALLS;
+                    break;
+                case FRAME_BOUNDED_RANGE:
+                    calls = BOUNDED_RANGE_FRAME_CALLS;
+                    break;
+                case FRAME_ROWS:
+                    calls = ROWS_FRAME_CALLS;
+                    break;
+                default:
+                    calls = BOUNDED_ROWS_FRAME_CALLS;
+                    break;
+            }
             final String call = rnd.nextInt(8) == 0
                     ? RESIDUAL_CALLS[rnd.nextInt(RESIDUAL_CALLS.length)]
                     : calls[rnd.nextInt(calls.length)];

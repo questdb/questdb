@@ -407,12 +407,23 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
          * The total rather than the average, which the inherited {@code pass1} writes. Its
          * counterpart on the ROWS spelling below has always been here; this one was missing, so
          * the cached cursors - the only callers of {@code pass1} - answered a bounded-RANGE
-         * {@code sum} with the {@code avg} of the same frame.
+         * {@code sum} with the {@code avg} of the same frame. Bound or not: a bound function's
+         * {@code computeNext} returns at once and {@code sum} is what
+         * {@code projectWindowState} has just materialized.
          */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+        }
+
+        /**
+         * The total rather than the average, off the component the superclass declares and
+         * maintains - the bounded-RANGE counterpart of the ROWS pair below.
+         */
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_SUM;
         }
     }
 

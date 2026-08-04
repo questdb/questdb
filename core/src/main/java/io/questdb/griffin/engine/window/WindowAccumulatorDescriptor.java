@@ -128,6 +128,13 @@ import org.jetbrains.annotations.Nullable;
  * ever merges inside one group; what changes is that the group is no longer the only owner of a
  * fused query's state, and that such a state cannot be moved between maps or reset into
  * existence.
+ * <p>
+ * {@link #FAMILY_DOUBLE_RANGE_SUM_COUNT} and {@link #FAMILY_RANGE_NON_NULL_COUNT} are the bounded
+ * RANGE counterparts, and they are ring-backed in the same way and wider: a RANGE frame's length
+ * is the data's rather than the query's, so its ring is <b>resizable</b> and the slice has to
+ * carry its length and its capacity as well as its address. That is the whole of the difference -
+ * the ring is still the contributor's, still written by nothing else, and still invisible to
+ * every projection.
  *
  * <h2>Two sums over one column can still be two components</h2>
  * {@link #FAMILY_DOUBLE_KAHAN_SUM_COUNT} and {@link #FAMILY_DOUBLE_SUM_COUNT} agree on which
@@ -230,6 +237,31 @@ public final class WindowAccumulatorDescriptor {
      */
     public static final int FAMILY_DOUBLE_MIN = 6;
     /**
+     * State {@code [sum: DOUBLE, nonNullCount: LONG, ringIndex: LONG, ringOffset: LONG,
+     * ringSize: LONG, ringCapacity: LONG]} plus the contributor's own resizable ring of
+     * {@code (timestamp, value)} pairs, contributed by a DOUBLE {@code sum} or {@code avg} over a
+     * <b>bounded</b> RANGE frame.
+     * <p>
+     * {@link #FAMILY_DOUBLE_ROWS_SUM_COUNT}'s state with the ring's geometry added, and
+     * {@link #isRingBacked ring-backed} for the same reason: a bounded frame gives rows back. What
+     * a RANGE frame adds is that how many rows it spans is the timestamps' answer rather than the
+     * query's, so the ring grows on demand - and the three slots that describe it are the address,
+     * the number of pairs it holds and the number it can hold. The pairs carry their own timestamp
+     * because that, and not a position, is what decides when one leaves.
+     * <p>
+     * Separate from every other family here, the bounded ROWS one included: two frames of different
+     * kinds never meet in one group - the framing mode is part of a group's {@link WindowMapSpec} -
+     * and the states are not the same shape anyway.
+     * <p>
+     * The slice holds the <b>current frame's</b> total and count, exactly as the ROWS family's
+     * does, so {@link WindowAccumulatorProjection#PROJECTION_SUM} and
+     * {@link WindowAccumulatorProjection#PROJECTION_AVG} read the same two fields here. Unlike the
+     * ROWS family it needs no schedule shift to get there: a RANGE row drops what the frame has
+     * left before it absorbs what the frame has gained, so the unfused implementation already ends
+     * every row with the answer in its slots.
+     */
+    public static final int FAMILY_DOUBLE_RANGE_SUM_COUNT = 14;
+    /**
      * State {@code [sum: DOUBLE, nonNullCount: LONG, ringIndex: LONG, ringOffset: LONG]} plus
      * the contributor's own ring of {@code ringSize} doubles, contributed by a DOUBLE
      * {@code sum} or {@code avg} over a <b>bounded</b> ROWS frame.
@@ -303,6 +335,16 @@ public final class WindowAccumulatorDescriptor {
      */
     public static final int FAMILY_NON_NULL_COUNT = 2;
     /**
+     * State {@code [nonNullCount: LONG, ringIndex: LONG, ringOffset: LONG, ringSize: LONG,
+     * ringCapacity: LONG]} plus the contributor's own resizable ring of timestamps, contributed by
+     * a {@code count(x)} over a <b>bounded</b> RANGE frame.
+     * <p>
+     * {@link #FAMILY_DOUBLE_RANGE_SUM_COUNT}'s state without a total. The ring is a timestamp per
+     * contributing row where the sum family's is a {@code (timestamp, value)} pair, which is the
+     * contributor's own business - the map value carries the same five slots either way.
+     */
+    public static final int FAMILY_RANGE_NON_NULL_COUNT = 15;
+    /**
      * State {@code [nonNullCount: LONG, ringIndex: LONG, ringOffset: LONG]} plus the
      * contributor's own ring of {@code ringSize} flags, contributed by a {@code count(x)} over a
      * <b>bounded</b> ROWS frame.
@@ -354,19 +396,32 @@ public final class WindowAccumulatorDescriptor {
      */
     public static final int FIELD_NON_NULL_COUNT = 1;
     /**
+     * How many cells this partition's ring can hold. Present only in the two bounded-RANGE
+     * families, whose ring grows on demand because a RANGE frame's length is the data's answer,
+     * and the contributor's alone for the reason {@link #FIELD_RING_INDEX} is.
+     */
+    public static final int FIELD_RING_CAPACITY = 9;
+    /**
      * The ring cell the oldest of the frame's values sits in - the one the next row drops.
-     * Present only in the two {@link #isRingBacked ring-backed} families, and read and written
+     * Present only in the {@link #isRingBacked ring-backed} families, and read and written
      * by their contributor alone: it addresses the contributor's own ring, so no output has any
      * use for it.
      */
     public static final int FIELD_RING_INDEX = 6;
     /**
      * Where this partition's ring starts in the contributor's arena, or
-     * {@link #RING_STATE_UNALLOCATED} while it has none. Present only in the two
+     * {@link #RING_STATE_UNALLOCATED} while it has none. Present only in the
      * {@link #isRingBacked ring-backed} families, and the contributor's alone for the reason
      * {@link #FIELD_RING_INDEX} is.
      */
     public static final int FIELD_RING_OFFSET = 7;
+    /**
+     * How many cells of this partition's ring are in use - which is not the frame's own count,
+     * because a ring also buffers the rows between the frame's high bound and the current one.
+     * Present only in the two bounded-RANGE families, and the contributor's alone for the reason
+     * {@link #FIELD_RING_INDEX} is.
+     */
+    public static final int FIELD_RING_SIZE = 8;
     /**
      * The running sum. Present only in {@link #FAMILY_DOUBLE_SUM_COUNT}.
      */
@@ -426,6 +481,7 @@ public final class WindowAccumulatorDescriptor {
             case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
             case FAMILY_DOUBLE_MAX:
             case FAMILY_DOUBLE_MIN:
+            case FAMILY_DOUBLE_RANGE_SUM_COUNT:
             case FAMILY_DOUBLE_ROWS_SUM_COUNT:
             case FAMILY_DOUBLE_SUM_COUNT:
             case FAMILY_DOUBLE_WELFORD:
@@ -436,7 +492,9 @@ public final class WindowAccumulatorDescriptor {
                 // - which is also why an extremum over a DOUBLE argument never sees an
                 // infinity, and its empty state can be NaN. The bounded-ROWS sum applies that
                 // same test twice, once as a value enters the frame and once as it leaves, so
-                // the rows it holds are exactly the rows this predicate names.
+                // the rows it holds are exactly the rows this predicate names. The bounded-RANGE
+                // one applies it once and keeps only the values that passed, which names the same
+                // rows a different way.
                 return isWidenedToDouble(argumentColumnType)
                         ? CONTRIBUTION_FINITE_DOUBLE
                         : CONTRIBUTION_NONE;
@@ -462,13 +520,14 @@ public final class WindowAccumulatorDescriptor {
                         ? CONTRIBUTION_TYPED_NOT_NULL
                         : CONTRIBUTION_NONE;
             case FAMILY_NON_NULL_COUNT:
+            case FAMILY_RANGE_NON_NULL_COUNT:
             case FAMILY_ROWS_NON_NULL_COUNT:
                 // count() has a factory per argument shape, so this arm is the one that
                 // can name a predicate other than the DOUBLE one - and the type is what
-                // selects between them. Both counting families share the arm because they
-                // share those predicates exactly: one class serves every bounded-ROWS count
-                // and it applies the very lambda the cumulative one does, to the row entering
-                // the frame and to the row leaving it alike.
+                // selects between them. All three counting families share the arm because they
+                // share those predicates exactly: one class serves every bounded-ROWS count and
+                // one every bounded-RANGE count, and each applies the very lambda the cumulative
+                // one does - to the row entering the frame and to the row leaving it alike.
                 if (isWidenedToDouble(argumentColumnType)) {
                     return CONTRIBUTION_FINITE_DOUBLE;
                 }
@@ -541,6 +600,10 @@ public final class WindowAccumulatorDescriptor {
      */
     public static int familySlotCount(int family) {
         switch (family) {
+            case FAMILY_DOUBLE_RANGE_SUM_COUNT:
+                return 6;
+            case FAMILY_RANGE_NON_NULL_COUNT:
+                return 5;
             case FAMILY_DOUBLE_ROWS_SUM_COUNT:
                 return 4;
             case FAMILY_DOUBLE_SUM_COUNT:
@@ -723,14 +786,17 @@ public final class WindowAccumulatorDescriptor {
         // answer, so it is not a run inside anything wider either - a sum's first slot is a
         // running total and not the largest thing ever added to it.
         //
-        // Neither ring-backed family appears either, and there the arithmetic would allow what
-        // the relation does not. A bounded count(x)'s answer really is the counter a bounded
-        // sum(x) over the same frame keeps beside its total, so a projection reading that slot
-        // would emit the right number. What this method licenses is wider than that: a
-        // non-negative answer says the guest's whole state is a run inside the host's, and the
-        // guest's state here continues outside the map value in a ring of its own shape - a flag
-        // per row where the host keeps a double. Admitting it would make containment a claim
-        // about two arenas, which is a different proof from the one every pair above rests on.
+        // No ring-backed family appears either, and there the arithmetic would allow what the
+        // relation does not. A bounded count(x)'s answer really is the counter a bounded sum(x)
+        // over the same frame keeps beside its total, so a projection reading that slot would emit
+        // the right number. What this method licenses is wider than that: a non-negative answer
+        // says the guest's whole state is a run inside the host's, and the guest's state here
+        // continues outside the map value in a ring of its own shape - a flag or a timestamp where
+        // the host keeps a double or a (timestamp, value) pair. Admitting it would make containment
+        // a claim about two arenas, which is a different proof from the one every pair above rests
+        // on. It is also not a run in the slice either way: a RANGE counter's five slots and a
+        // RANGE (sum, count)'s six agree on the ring's geometry and disagree about where the
+        // counter sits, since the host keeps a total in front of it.
         return -1;
     }
 
@@ -771,6 +837,37 @@ public final class WindowAccumulatorDescriptor {
                     return 1;
                 }
                 return field == FIELD_NON_NULL_COUNT ? 2 : -1;
+            case FAMILY_DOUBLE_RANGE_SUM_COUNT:
+                if (field == FIELD_SUM) {
+                    return 0;
+                }
+                if (field == FIELD_NON_NULL_COUNT) {
+                    return 1;
+                }
+                if (field == FIELD_RING_INDEX) {
+                    return 2;
+                }
+                if (field == FIELD_RING_OFFSET) {
+                    return 3;
+                }
+                if (field == FIELD_RING_SIZE) {
+                    return 4;
+                }
+                return field == FIELD_RING_CAPACITY ? 5 : -1;
+            case FAMILY_RANGE_NON_NULL_COUNT:
+                if (field == FIELD_NON_NULL_COUNT) {
+                    return 0;
+                }
+                if (field == FIELD_RING_INDEX) {
+                    return 1;
+                }
+                if (field == FIELD_RING_OFFSET) {
+                    return 2;
+                }
+                if (field == FIELD_RING_SIZE) {
+                    return 3;
+                }
+                return field == FIELD_RING_CAPACITY ? 4 : -1;
             case FAMILY_DOUBLE_ROWS_SUM_COUNT:
                 if (field == FIELD_SUM) {
                     return 0;
@@ -843,6 +940,19 @@ public final class WindowAccumulatorDescriptor {
             case FAMILY_LONG_MAX:
             case FAMILY_LONG_MIN:
                 if (slot == 0) {
+                    return ColumnType.LONG;
+                }
+                break;
+            case FAMILY_DOUBLE_RANGE_SUM_COUNT:
+                if (slot == 0) {
+                    return ColumnType.DOUBLE;
+                }
+                if (slot >= 1 && slot <= 5) {
+                    return ColumnType.LONG;
+                }
+                break;
+            case FAMILY_RANGE_NON_NULL_COUNT:
+                if (slot >= 0 && slot <= 4) {
                     return ColumnType.LONG;
                 }
                 break;
@@ -930,13 +1040,18 @@ public final class WindowAccumulatorDescriptor {
             case FAMILY_LONG_MAX:
             case FAMILY_LONG_MIN:
                 return Numbers.LONG_NULL;
+            case FAMILY_DOUBLE_RANGE_SUM_COUNT:
             case FAMILY_DOUBLE_ROWS_SUM_COUNT:
+            case FAMILY_RANGE_NON_NULL_COUNT:
             case FAMILY_ROWS_NON_NULL_COUNT:
                 // Zero for the accumulating slots, which a bounded total and a bounded counter
                 // both start at and mean, and RING_STATE_UNALLOCATED for the ring's address,
                 // which is the one slot in this build whose identity is not a value the
                 // arithmetic could produce - it says "no ring yet" and is what makes the
-                // contributor's first row on a partition allocate one.
+                // contributor's first row on a partition allocate one. The RANGE families'
+                // length and capacity start at zero too and mean it: an unallocated ring holds
+                // nothing and can hold nothing, and the contributor writes both when it
+                // allocates.
                 return slot == getFieldSlot(FIELD_RING_OFFSET) ? RING_STATE_UNALLOCATED : 0L;
             default:
                 // Zero, whichever way the slot is read back: a DOUBLE zero and a LONG zero are
@@ -947,13 +1062,13 @@ public final class WindowAccumulatorDescriptor {
 
     /**
      * Whether this component's state continues outside the group's map value, in a ring of the
-     * frame's own values that its <b>contributor</b> owns and the two index slots address.
+     * frame's own values that its <b>contributor</b> owns and the ring slots address.
      * <p>
-     * True for the bounded-ROWS families and false for every other, and it is the model change
-     * they bring: until them a component's whole state was the slice, so the group's map was the
-     * only thing a fused query allocated. A ring-backed component keeps the slice - the total,
-     * the counter and the ring's address - in the shared value like anything else, and the ring
-     * itself in the arena the contributing function already owned and already frees. That
+     * True for the four bounded-frame families and false for every other, and it is the model
+     * change they bring: until them a component's whole state was the slice, so the group's map
+     * was the only thing a fused query allocated. A ring-backed component keeps the slice - the
+     * total, the counter and the ring's geometry - in the shared value like anything else, and the
+     * ring itself in the arena the contributing function already owned and already frees. That
      * division is deliberate: the group owns the key domain and nothing per-function, so the
      * arena's lifecycle stays exactly where {@code close}, {@code reset} and {@code toTop} left
      * it, and a projection that reads the slice needs no arena at all.
@@ -961,9 +1076,17 @@ public final class WindowAccumulatorDescriptor {
      * Two things follow for anything that moves such a state. Its slots are meaningless in
      * another map - {@link #copyState} refuses them - and its identity cannot be produced by a
      * reset alone, which is why {@link #RING_STATE_UNALLOCATED} exists.
+     * <p>
+     * How much geometry the slice carries is the frame's: a ROWS ring is as long as the query says
+     * and needs an address and a read cursor, while a RANGE ring grows with the data and needs its
+     * length and its capacity beside them. That is a layout difference and not a lifecycle one, so
+     * everything above holds for all four alike.
      */
     public boolean isRingBacked() {
-        return family == FAMILY_DOUBLE_ROWS_SUM_COUNT || family == FAMILY_ROWS_NON_NULL_COUNT;
+        return family == FAMILY_DOUBLE_RANGE_SUM_COUNT
+                || family == FAMILY_DOUBLE_ROWS_SUM_COUNT
+                || family == FAMILY_RANGE_NON_NULL_COUNT
+                || family == FAMILY_ROWS_NON_NULL_COUNT;
     }
 
     /**
