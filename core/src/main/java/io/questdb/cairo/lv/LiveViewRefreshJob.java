@@ -5089,39 +5089,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
                 repairPublication.watermarkAdvanced();
                 if (lvConsumedPersisted && (appendedRows > 0 || repairPublication.isKeepPrimaryRuntime())) {
-                    // Post-replay head: retireCheckpointStateOnO3 cleared the head
-                    // metadata above, so force seals a fresh boundary reflecting the
-                    // post-replay state (firstCp is already true here; force keeps the
-                    // intent explicit and robust). A subsequent O3 above it can then
-                    // resume from it instead of paying for another full rebuild.
+                    // Post-replay head: retireCheckpointStateOnO3 cleared the head metadata
+                    // above, so force seals a fresh boundary reflecting the post-replay state
+                    // (firstCp is already true here; force keeps the intent explicit). A
+                    // subsequent O3 above it resumes from there instead of rebuilding in full.
                     //
                     // The head's maxTs has to describe the state the checkpoint is about to
-                    // serialise. That is replayMaxTs for a rebuild that ran to the end of the
-                    // base table, but the runtime frontier for one that stopped at a finite H
-                    // and put its own state back - the restore just rewound the functions past
+                    // serialise: replayMaxTs for a rebuild that ran to the end of the base
+                    // table, but the runtime frontier for one that stopped at a finite H and
+                    // put its own state back - the restore just rewound the functions past
                     // replayMaxTs, so sealing them under it would claim a boundary the state
                     // does not sit at, and the next O3 would resume from it and re-read rows
                     // the state already holds. The frontier is a real timestamp whenever the
                     // plan tagged a finite H (it had to be at or above H to do so), so this
-                    // seals even when the replacement emitted nothing at all - the retire above
+                    // seals even when the replacement emitted nothing at all - the retire
                     // dropped every boundary, and a view left with none rebuilds from scratch
                     // on the next restart.
                     //
-                    // Pass 0 appendedRows: lvRowsTotal already includes them (sourced
-                    // from the on-disk size above), so adding them again would
-                    // double-count lvRowPosition. Mirrors the seed-completion path.
+                    // Pass 0 appendedRows: lvRowsTotal already includes them (sourced from the
+                    // on-disk size above), so adding them again would double-count
+                    // lvRowPosition. Mirrors the seed-completion path.
                     //
-                    // A published splice already IS this repair's timeline publication,
-                    // and it appended no root. That is enough only while the newest
-                    // root it kept still sits at the frontier: the splice moved the
-                    // generation's normalizedBaseSeqTxn up to E, and restart replays
-                    // (E, durableBase] alone, so any row above that root came from a
-                    // base transaction the replay will not walk and the restored state
-                    // would never see it. Seal the frontier as a root of its own
-                    // whenever it has run past the splice's head key - the convergence
-                    // that let the repair keep the primary runtime is exactly what
-                    // makes that runtime the correct state there - and leave the seal
-                    // to re-stamp the head metadata alone when the two already agree.
+                    // A published splice already IS this repair's timeline publication and
+                    // appended no root, which is enough only while the newest root it kept
+                    // still sits at the frontier: the splice moved the generation's
+                    // normalizedBaseSeqTxn up to E, and restart replays (E, durableBase]
+                    // alone, so any row above that root came from a base transaction the
+                    // replay will not walk and the restored state would never see it. Seal
+                    // the frontier as a root of its own whenever it has run past the splice's
+                    // head key - the convergence that let the repair keep the primary runtime
+                    // is exactly what makes that runtime the correct state there - and leave
+                    // the seal to re-stamp the head metadata alone when the two agree.
                     final long headMaxTs = repairPublication.isKeepPrimaryRuntime()
                             ? instance.getLatestSeenTs()
                             : replayMaxTs;
