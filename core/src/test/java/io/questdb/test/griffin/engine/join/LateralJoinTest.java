@@ -1776,6 +1776,176 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // C1 guards, the other direction. The compensation must stay suppressed
+    // wherever the wrapper provably rejects the zero row, so these pin NULL as
+    // the right answer and fail if the classifier ever turns permissive.
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterConjunctionDropsZeroRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // cnt >= 0 holds at 0 but cnt > 1 does not, and FALSE AND TRUE is FALSE
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt >= 0 AND cnt > 1
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterInequalityDropsZeroRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt <> 0
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\tnull
+                            """);
+        });
+    }
+
+    // Soundness guard. coalesce(cnt, 0) cannot tell a group the wrapper rejected
+    // from a group that never existed: both reach the outer projection as NULL.
+    // So the compensation is only sound under a filter that accepts the count's
+    // whole domain. Here the filter rejects cnt = 2, the row really is gone, and
+    // NULL is the answer SQL requires - fabricating 0 would be a wrong value, not
+    // a conservative one. Fails if the classifier is ever loosened back to merely
+    // "the predicate accepts the zero row".
+    @Test
+    public void testNestedLateralLeftCountWrapperNegatedFilterNeverFabricatesZero() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE NOT (cnt > 1)
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperNonTotalFilterNeverFabricatesZero() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // cnt < 2 accepts the zero row but rejects this row's count of 2
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt < 2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\tnull
+                            """);
+        });
+    }
+
+    // Open: the conservative half of the same limitation. The filter accepts the
+    // zero row, so SQL requires 0 for an outer row with no match, but the filter
+    // also rejects some counts, so the compensation has to stay off and the outer
+    // row keeps a NULL. Expressing both cells at once needs a compensation that
+    // can distinguish "filter rejected the group" from "group never existed",
+    // which coalesce alone cannot.
+    @Test
+    public void testNestedLateralLeftCountWrapperNonTotalFilterUnmatchedOuterRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt < 2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            2\t0
+                            """);
+        });
+    }
+
     @Test
     public void testNestedLateralLeftCountWrapperFilterKeepsZeroRow() throws Exception {
         assertMemoryLeak(() -> {
@@ -1839,13 +2009,14 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNestedLateralLeftCountWrapperFilterUpperBound() throws Exception {
+    public void testNestedLateralLeftCountWrapperFilterLowerBoundAcceptsWholeDomain() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT)");
             execute("INSERT INTO t0 VALUES (1), (2)");
             execute("CREATE TABLE t2 (x INT)");
             execute("INSERT INTO t2 VALUES (1), (1)");
 
+            // count() is non-negative, so cnt > -1 cannot reject anything
             assertQuery("""
                     SELECT t0.a, l1.cnt
                     FROM t0
@@ -1856,7 +2027,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             FROM t2
                             WHERE t2.x = t0.a
                         ) counted
-                        WHERE cnt < 100
+                        WHERE cnt > -1
                     ) l1
                     ORDER BY t0.a
                     """)

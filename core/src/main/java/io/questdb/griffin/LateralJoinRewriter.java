@@ -68,14 +68,29 @@ class LateralJoinRewriter implements Mutable {
     // sentinel for a LIMIT term that is not a compile-time constant; a bare
     // CONSTANT token is unsigned so a real limit can never collide with it
     private static final long LIMIT_NOT_CONSTANT = Long.MIN_VALUE;
-    private static final int LIMIT_DROPS_ROW = 1;
-    private static final int LIMIT_KEEPS_ROW = 0;
-    private static final int LIMIT_UNPROVABLE = 2;
+    // Verdict on what one lateral body layer does to the single row a scalar
+    // count emits: the row provably survives, it provably goes, or it cannot be
+    // decided at compile time. Introduced for LIMIT, now applied to every layer
+    // that could remove the aggregate row.
+    private static final int ROW_DROPPED = 1;
+    private static final int ROW_KEPT = 0;
+    private static final int ROW_UNPROVABLE = 2;
+    private static final int CMP_EQ = 0;
+    private static final int CMP_GE = 5;
+    private static final int CMP_GT = 4;
+    private static final int CMP_LE = 3;
+    private static final int CMP_LT = 2;
+    private static final int CMP_NE = 1;
+    private static final int CMP_NONE = -1;
     private static final String OUTER_REF_PREFIX = "__qdb_outer_ref__";
     private static final byte TERMINATE_AT_NESTED = 2;
     private static final byte TERMINATE_DESCEND = 3;
     private static final byte TERMINATE_HERE = 1;
     private static final byte TERMINATE_SKIP = 0;
+    // truth interval of the wrapper predicate currently being analysed, over the
+    // count column's domain; written by truthIntervalOf
+    private long truthLo;
+    private long truthHi;
     private final CharacterStore characterStore;
     private final ObjList<ExpressionNode> correlatedPreds = new ObjList<>();
     private final ObjectPool<ExpressionNode> expressionNodePool;
@@ -1722,16 +1737,23 @@ class LateralJoinRewriter implements Mutable {
             rejectNegativeLateralLimit(limitLo);
             rejectNegativeLateralLimit(limitHi);
             switch (classifyLateralLimit(limitLo, limitHi)) {
-                case LIMIT_DROPS_ROW:
+                case ROW_DROPPED:
                     // body provably yields no rows: NULL fill is correct, no coalesce
                     return false;
                 default:
-                    // LIMIT_UNPROVABLE is decided at execution time by the guard
+                    // ROW_UNPROVABLE is decided at execution time by the guard
                     break;
             }
+            if (current.getSampleBy() != null || current.getLatestBy().size() > 0) {
+                return false;
+            }
+            // A GROUP BY on the aggregate's own layer partitions the counted input,
+            // so the empty group really is gone and NULL is right. A GROUP BY above
+            // the aggregate instead groups the single count row by a value that row
+            // determines: one group in, one group out, so the row survives.
             if (current.getGroupBy().size() > 0
-                    || current.getSampleBy() != null
-                    || current.getLatestBy().size() > 0) {
+                    && (hasAggregateFunctions(current)
+                    || classifyGroupByOnZeroCountRow(current) != ROW_KEPT)) {
                 return false;
             }
             if (hasAggregateFunctions(current)) {
@@ -1758,9 +1780,17 @@ class LateralJoinRewriter implements Mutable {
                 }
                 return false;
             }
-            if (current.getWhereClause() != null
-                    || current.getPostJoinWhereClause() != null
-                    || current.getJoinModels().size() > 1) {
+            if (current.getJoinModels().size() > 1) {
+                return false;
+            }
+            // A filter above the aggregate must accept every count, not merely the
+            // zero one. coalesce(cnt, 0) cannot tell a group the filter rejected
+            // from a group that never existed - both reach the outer projection as
+            // NULL - so compensating under a filter that rejects any count would
+            // turn a legitimate NULL into 0. Presence of a WHERE still proves
+            // nothing: cnt >= 0 accepts everything, cnt < 100 does not.
+            if (!filterAcceptsEveryCount(current.getWhereClause(), current)
+                    || !filterAcceptsEveryCount(current.getPostJoinWhereClause(), current)) {
                 return false;
             }
             current = current.getNestedModel();
@@ -1877,25 +1907,25 @@ class LateralJoinRewriter implements Mutable {
     // LIMIT lo,hi selects the half-open row range (lo, hi].
     private static int classifyLateralLimit(ExpressionNode limitLo, ExpressionNode limitHi) {
         if (limitLo == null && limitHi == null) {
-            return LIMIT_KEEPS_ROW;
+            return ROW_KEPT;
         }
         final long lo = constLimitValue(limitLo);
         final long hi = constLimitValue(limitHi);
         if (lo == LIMIT_NOT_CONSTANT || hi == LIMIT_NOT_CONSTANT) {
-            return LIMIT_UNPROVABLE;
+            return ROW_UNPROVABLE;
         }
         if (limitHi == null) {
             // negative limit keeps the last |lo| rows, which for a one-row body is the row
-            return lo == 0 ? LIMIT_DROPS_ROW : LIMIT_KEEPS_ROW;
+            return lo == 0 ? ROW_DROPPED : ROW_KEPT;
         }
         if (limitLo == null) {
-            return hi == 0 ? LIMIT_DROPS_ROW : LIMIT_KEEPS_ROW;
+            return hi == 0 ? ROW_DROPPED : ROW_KEPT;
         }
         if (lo < 0 || hi < 0) {
             // negative two-sided windows are rejected by compensateLimit
-            return LIMIT_UNPROVABLE;
+            return ROW_UNPROVABLE;
         }
-        return (lo <= 0 && hi >= 1) ? LIMIT_KEEPS_ROW : LIMIT_DROPS_ROW;
+        return (lo <= 0 && hi >= 1) ? ROW_KEPT : ROW_DROPPED;
     }
 
     // QuestDB parses `LIMIT -N` as unary minus applied to a CONSTANT, never as a
@@ -1924,6 +1954,320 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
+    // Classifies what a GROUP BY sitting above the aggregate does to the single
+    // count row. Grouping by a value that row functionally determines yields
+    // exactly one group, so the row survives; grouping by anything this method
+    // cannot tie back to the count stays unprovable.
+    private int classifyGroupByOnZeroCountRow(IQueryModel layer) {
+        final ObjList<ExpressionNode> groupBy = layer.getGroupBy();
+        for (int i = 0, n = groupBy.size(); i < n; i++) {
+            final ExpressionNode g = groupBy.getQuick(i);
+            if (g == null
+                    || g.type != ExpressionNode.LITERAL
+                    || !resolvesToScalarCount(g.token, layer, 0)) {
+                return ROW_UNPROVABLE;
+            }
+        }
+        return ROW_KEPT;
+    }
+
+    // True when a filter above the aggregate provably accepts the count column's
+    // whole domain, so it can never remove a row and the compensation below it
+    // stays sound. Anything this method cannot describe answers false and the
+    // caller keeps suppressing, which is always safe: suppressing only ever
+    // leaves a NULL where a 0 was wanted, never a 0 where a NULL was wanted.
+    private boolean filterAcceptsEveryCount(ExpressionNode filter, IQueryModel layer) {
+        if (filter == null) {
+            return true;
+        }
+        if (!truthIntervalOf(filter, layer, 0, false)) {
+            return false;
+        }
+        // count() is non-negative, so covering [0, Long.MAX_VALUE] covers the domain
+        return truthLo <= 0 && truthHi == Long.MAX_VALUE;
+    }
+
+    // Under-approximates the set of count values for which a predicate holds, as
+    // a single interval left in truthLo/truthHi. Returns false when the truth set
+    // cannot be described that way. count() never produces NULL, so two-valued
+    // logic is sound here; any operand that is not the count or an integer
+    // constant ends the analysis rather than being guessed at. `negated` carries
+    // an enclosing NOT down by De Morgan instead of complementing intervals.
+    private boolean truthIntervalOf(ExpressionNode pred, IQueryModel layer, int depth, boolean negated) {
+        if (pred == null || depth > 24) {
+            return false;
+        }
+        final CharSequence token = pred.token;
+        final boolean isAnd = SqlKeywords.isAndKeyword(token);
+        if (isAnd || SqlKeywords.isOrKeyword(token)) {
+            if (!truthIntervalOf(pred.lhs, layer, depth + 1, negated)) {
+                return false;
+            }
+            final long aLo = truthLo;
+            final long aHi = truthHi;
+            if (!truthIntervalOf(pred.rhs, layer, depth + 1, negated)) {
+                return false;
+            }
+            // negation swaps the connective, so AND under a NOT unions instead
+            if (isAnd != negated) {
+                truthLo = Math.max(aLo, truthLo);
+                truthHi = Math.min(aHi, truthHi);
+                return true;
+            }
+            return unionInterval(aLo, aHi, truthLo, truthHi);
+        }
+        if (SqlKeywords.isNotKeyword(token)) {
+            return truthIntervalOf(pred.rhs != null ? pred.rhs : pred.lhs, layer, depth + 1, !negated);
+        }
+        if (pred.type == ExpressionNode.CONSTANT) {
+            if (SqlKeywords.isTrueKeyword(token)) {
+                return constantTruth(!negated);
+            }
+            return SqlKeywords.isFalseKeyword(token) && constantTruth(negated);
+        }
+
+        int op = comparisonOp(token);
+        if (op == CMP_NONE) {
+            return false;
+        }
+        final boolean lhsIsCount = isScalarCountRef(pred.lhs, layer);
+        final boolean rhsIsCount = isScalarCountRef(pred.rhs, layer);
+        final long lhsConst = constOperand(pred.lhs);
+        final long rhsConst = constOperand(pred.rhs);
+        if (negated) {
+            op = negateComparison(op);
+        }
+        if (lhsIsCount == rhsIsCount) {
+            // both sides constant folds to a verdict; anything else is undecidable
+            if (lhsIsCount || lhsConst == LIMIT_NOT_CONSTANT || rhsConst == LIMIT_NOT_CONSTANT) {
+                return false;
+            }
+            return constantTruth(compare(op, lhsConst, rhsConst));
+        }
+        final long k = lhsIsCount ? rhsConst : lhsConst;
+        if (k == LIMIT_NOT_CONSTANT) {
+            return false;
+        }
+        if (rhsIsCount) {
+            // normalise to `count OP constant`
+            op = flipComparison(op);
+        }
+        return countIntervalFor(op, k);
+    }
+
+    private boolean countIntervalFor(int op, long k) {
+        switch (op) {
+            case CMP_EQ:
+                truthLo = k;
+                truthHi = k;
+                return true;
+            case CMP_NE:
+                // the complement of a point is two intervals; only a negative k,
+                // which no count can equal, collapses back to the whole domain
+                if (k >= 0) {
+                    return false;
+                }
+                truthLo = Long.MIN_VALUE;
+                truthHi = Long.MAX_VALUE;
+                return true;
+            case CMP_LT:
+                if (k == Long.MIN_VALUE) {
+                    return constantTruth(false);
+                }
+                truthLo = Long.MIN_VALUE;
+                truthHi = k - 1;
+                return true;
+            case CMP_LE:
+                truthLo = Long.MIN_VALUE;
+                truthHi = k;
+                return true;
+            case CMP_GT:
+                if (k == Long.MAX_VALUE) {
+                    return constantTruth(false);
+                }
+                truthLo = k + 1;
+                truthHi = Long.MAX_VALUE;
+                return true;
+            default:
+                truthLo = k;
+                truthHi = Long.MAX_VALUE;
+                return true;
+        }
+    }
+
+    private boolean constantTruth(boolean holds) {
+        if (holds) {
+            truthLo = Long.MIN_VALUE;
+            truthHi = Long.MAX_VALUE;
+        } else {
+            // empty interval
+            truthLo = Long.MAX_VALUE;
+            truthHi = Long.MIN_VALUE;
+        }
+        return true;
+    }
+
+    // Two intervals only union back into one when they overlap or abut; a gap
+    // between them cannot be described here and ends the analysis.
+    private boolean unionInterval(long aLo, long aHi, long bLo, long bHi) {
+        if (aLo > aHi) {
+            truthLo = bLo;
+            truthHi = bHi;
+            return true;
+        }
+        if (bLo > bHi) {
+            truthLo = aLo;
+            truthHi = aHi;
+            return true;
+        }
+        if (aLo > bLo) {
+            // order so the lower-starting interval is first
+            final long tLo = aLo;
+            final long tHi = aHi;
+            aLo = bLo;
+            aHi = bHi;
+            bLo = tLo;
+            bHi = tHi;
+        }
+        if (aHi != Long.MAX_VALUE && aHi + 1 < bLo) {
+            return false;
+        }
+        truthLo = aLo;
+        truthHi = aHi >= bHi ? aHi : bHi;
+        return true;
+    }
+
+    private boolean isScalarCountRef(ExpressionNode node, IQueryModel layer) {
+        return node != null
+                && node.type == ExpressionNode.LITERAL
+                && resolvesToScalarCount(node.token, layer, 0);
+    }
+
+    private static long constOperand(ExpressionNode node) {
+        if (node == null) {
+            return LIMIT_NOT_CONSTANT;
+        }
+        if (node.type != ExpressionNode.CONSTANT && !isUnaryMinusConstant(node)) {
+            return LIMIT_NOT_CONSTANT;
+        }
+        return constLimitValue(node);
+    }
+
+    private static boolean compare(int op, long l, long r) {
+        switch (op) {
+            case CMP_EQ:
+                return l == r;
+            case CMP_NE:
+                return l != r;
+            case CMP_LT:
+                return l < r;
+            case CMP_LE:
+                return l <= r;
+            case CMP_GT:
+                return l > r;
+            default:
+                return l >= r;
+        }
+    }
+
+    private static int comparisonOp(CharSequence token) {
+        if (Chars.equals(token, "=")) {
+            return CMP_EQ;
+        }
+        if (Chars.equals(token, "!=") || Chars.equals(token, "<>")) {
+            return CMP_NE;
+        }
+        if (Chars.equals(token, "<")) {
+            return CMP_LT;
+        }
+        if (Chars.equals(token, "<=")) {
+            return CMP_LE;
+        }
+        if (Chars.equals(token, ">")) {
+            return CMP_GT;
+        }
+        return Chars.equals(token, ">=") ? CMP_GE : CMP_NONE;
+    }
+
+    // operand swap: `k < count` becomes `count > k`
+    private static int flipComparison(int op) {
+        switch (op) {
+            case CMP_LT:
+                return CMP_GT;
+            case CMP_LE:
+                return CMP_GE;
+            case CMP_GT:
+                return CMP_LT;
+            case CMP_GE:
+                return CMP_LE;
+            default:
+                return op;
+        }
+    }
+
+    private static int negateComparison(int op) {
+        switch (op) {
+            case CMP_EQ:
+                return CMP_NE;
+            case CMP_NE:
+                return CMP_EQ;
+            case CMP_LT:
+                return CMP_GE;
+            case CMP_LE:
+                return CMP_GT;
+            case CMP_GT:
+                return CMP_LE;
+            default:
+                return CMP_LT;
+        }
+    }
+
+    private static boolean isUnaryMinusConstant(ExpressionNode node) {
+        return node.type == ExpressionNode.OPERATION
+                && node.paramCount == 1
+                && node.lhs == null
+                && node.rhs != null
+                && Chars.equals(node.token, '-');
+    }
+
+    // Resolves a column referenced by a layer above the aggregate to the scalar
+    // count below it, following pure renames down the projection chain. Anything
+    // that is not a straight rename of the count breaks the chain and the caller
+    // treats the reference as unknown.
+    private boolean resolvesToScalarCount(CharSequence token, IQueryModel layer, int depth) {
+        if (token == null || layer == null || depth > 16) {
+            return false;
+        }
+        final IQueryModel below = layer.getNestedModel();
+        if (below == null) {
+            return false;
+        }
+        CharSequence name = token;
+        final int dot = Chars.indexOfLastUnquoted(name, '.');
+        if (dot >= 0) {
+            name = name.subSequence(dot + 1, name.length());
+        }
+        final ObjList<QueryColumn> cols = below.getBottomUpColumns();
+        if (cols.size() == 0) {
+            // a layer that projects nothing of its own passes the name straight down
+            return resolvesToScalarCount(token, below, depth + 1);
+        }
+        for (int i = 0, n = cols.size(); i < n; i++) {
+            final QueryColumn col = cols.getQuick(i);
+            if (Chars.equalsIgnoreCase(col.getAlias(), name)) {
+                final ExpressionNode ast = col.getAst();
+                if (isCountAggregate(ast)) {
+                    return true;
+                }
+                if (ast != null && ast.type == ExpressionNode.LITERAL) {
+                    return resolvesToScalarCount(ast.token, below, depth + 1);
+                }
+                return false;
+            }
+        }
+        return false;
+    }
+
     // Builds the row-1 evaluation of the row_number filter for one body layer and
     // ANDs it into the guard for the lateral body currently being rewritten.
     private void accumulateScalarCountGuard(ExpressionNode limitLo, ExpressionNode limitHi, boolean readsColumn) {
@@ -1936,7 +2280,7 @@ class LateralJoinRewriter implements Mutable {
             // with no guard (and an outer-column LIMIT here needs no blocker)
             return;
         }
-        if (classifyLateralLimit(limitLo, limitHi) != LIMIT_UNPROVABLE) {
+        if (classifyLateralLimit(limitLo, limitHi) != ROW_UNPROVABLE) {
             // compile-time decidable: hasScalarCountBody already folded it, no guard needed
             return;
         }
