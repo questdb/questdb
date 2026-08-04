@@ -168,6 +168,54 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemovesLastPartitionThenNormalCommitDoesNotSuspend() throws Exception {
+        // Reproduces questdb-enterprise #1123. A REPLACE_RANGE commit that removes the table's
+        // last partition moves maxTimestamp back to an earlier partition, but partitionTimestampHi
+        // (advanced only via Math.max in the replace path) stays at the now-removed partition.
+        // finishO3Commit normally re-syncs partitionTimestampHi by re-opening the new last
+        // partition, but it skips that when the new last partition is PARQUET. When the SAME writer
+        // instance then applies the next non-replace commit, the partition-timestamp consistency
+        // assert at the top of TableWriter.processWalCommit fires and the table is suspended.
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            // Data spanning 2022-02-24, -25 and -26; last partition 2022-02-26.
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(200)");
+            drainWalQueue();
+
+            // Make 2022-02-25 (the partition that becomes last once 2022-02-26 is removed) parquet,
+            // so finishO3Commit's non-parquet re-open path does not re-sync partitionTimestampHi.
+            execute("alter table rg convert partition to parquet list '2022-02-25'");
+            drainWalQueue();
+
+            // Commit A: REPLACE_RANGE removing the last partition (2022-02-26), no rows added.
+            // maxTimestamp moves back to 2022-02-25; partitionTimestampHi stays at 2022-02-26.
+            commitNoRowsWithRangeReplace(tableToken, "2022-02-26", "2022-02-27");
+
+            // Commit B: a plain insert into an earlier (native) partition. Do NOT drain in between,
+            // so the apply job runs A and B back-to-back on the same writer instance.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2022-02-24T13:00"));
+                row.putInt(0, 999);
+                row.append();
+                ww.commit();
+            }
+
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            // The last partition (2022-02-26) is gone and commit B's row landed in 2022-02-24.
+            assertQuery("select count() count, min(ts) min, max(ts) max from rg")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tmin\tmax\n143\t2022-02-24T12:30:00.000000Z\t2022-02-25T23:45:00.000000Z\n");
+        });
+    }
+
+    @Test
     public void testReplaceBetweenExisting() throws Exception {
         testReplaceRangeCommit("2022-02-24T16:25", "2022-02-24T16:25", "2022-02-24T16:26");
     }
