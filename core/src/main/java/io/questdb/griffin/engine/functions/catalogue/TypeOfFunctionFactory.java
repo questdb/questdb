@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 import static io.questdb.cairo.ColumnType.*;
@@ -60,14 +61,20 @@ public class TypeOfFunctionFactory implements FunctionFactory {
             if (argType == UNDEFINED) {
                 throw SqlException.$(position, "bind variables are not supported");
             }
+            final Function result;
             if (isNull(argType)) {
-                return NULL;
-            }
-            if (isDecimal(argType)) {
+                result = NULL;
+            } else if (isDecimal(argType)) {
                 // there are thousands of DECIMAL(p,s) types, resolve the name on demand
-                return new StrConstant(nameOf(argType));
+                result = new StrConstant(nameOf(argType));
+            } else {
+                result = TYPE_NAMES.get(argType);
             }
-            return TYPE_NAMES.get(argType);
+            if (result != null) {
+                // the returned constant keeps no argument, so this branch owns it
+                Misc.free(arg);
+            }
+            return result;
         }
         throw SqlException.$(position, "exactly one argument expected");
     }

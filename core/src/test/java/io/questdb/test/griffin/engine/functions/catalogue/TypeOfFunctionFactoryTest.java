@@ -35,6 +35,16 @@ import org.junit.Test;
 public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testArgumentIsClosed() throws Exception {
+        // typeOf answers from the argument's type alone and keeps no argument, so it owns and must
+        // close it; trim() holds two native sinks that only its close() frees
+        assertQuery("select typeOf(trim(a)) t from test")
+                .ddl("create table test as (select cast(x as varchar) a from long_sequence(4))")
+                .expectSize()
+                .returns("t\nVARCHAR\nVARCHAR\nVARCHAR\nVARCHAR\n");
+    }
+
+    @Test
     public void testBindVarNotSupported() throws Exception {
         assertQuery("select typeOf($1) from test")
                 .ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))")
