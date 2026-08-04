@@ -60,6 +60,13 @@ import org.junit.Test;
 public class WindowMapStateTest extends AbstractCairoTest {
 
     private static final int ORDINARY_ROW_COUNT = 9;
+    private static final String SUM_AND_COUNT_PLAN = """
+            Window
+              functions: [sum(x) over (partition by [k] rows between unbounded preceding and current row),count(y) over (partition by [k] rows between unbounded preceding and current row)]
+                PageFrame
+                    Row forward scan
+                    Frame forward scan on: t
+            """;
     private static final String WINDOW =
             "window w as (partition by k order by ts rows between unbounded preceding and current row)";
 
@@ -200,6 +207,32 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAGroupWhoseMemberIsAlreadyOrderedStillBinds() throws Exception {
+        // The other half of the Map-implementation rule. sum(x)'s own [DOUBLE, LONG] value is
+        // 4 + 16 = 20 against a 16-byte limit, so its private map is an OrderedMap before any
+        // fusion; co-locating count(y)'s counter beside it removes a map without changing the
+        // implementation of the one left. Nothing is traded away, so nothing declines.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertOrdinaryRows();
+            setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 16);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sumAndCount(), sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                Assert.assertFalse(WindowMapState.declinesForMapImplementation(configuration, state.getPlan()));
+                Assert.assertEquals(16, state.getUnorderedMapMaxEntrySize());
+                Assert.assertEquals("OrderedMap", state.getMapImplementation());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(ORDINARY_ROW_COUNT, drain(cursor));
+                    Assert.assertEquals(ORDINARY_ROW_COUNT, state.getLookupCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAllNullPartitionAndNullKey() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
@@ -233,18 +266,18 @@ public class WindowMapStateTest extends AbstractCairoTest {
     public void testExplainOutputIsUnchanged() throws Exception {
         // A group is an internal decision about how the same rows are computed, and window plan
         // text is asserted across a large number of existing tests. Pinned here so a group line
-        // cannot arrive unnoticed in either direction.
+        // cannot arrive unnoticed in either direction - and pinned at both settings of the kill
+        // switch, so the two runs of the differential suite compare like with like and a plan
+        // that quietly depended on the switch could not pass.
         assertMemoryLeak(() -> {
             createTable();
             assertQuery(sumAndCount())
                     .noLeakCheck()
-                    .assertsPlan("""
-                            Window
-                              functions: [sum(x) over (partition by [k] rows between unbounded preceding and current row),count(y) over (partition by [k] rows between unbounded preceding and current row)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                            """);
+                    .assertsPlan(SUM_AND_COUNT_PLAN);
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
+            assertQuery(sumAndCount())
+                    .noLeakCheck()
+                    .assertsPlan(SUM_AND_COUNT_PLAN);
         });
     }
 
@@ -341,6 +374,48 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTheKillSwitchLeavesEveryFunctionOnItsOwnMap() throws Exception {
+        // cairo.sql.window.map.fusion.enabled is the operational escape hatch, so what it turns
+        // off has to be the whole runtime and nothing else: no group owns a map, every function
+        // is back on its own, and the rows are the ones the fused run produced.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertOrdinaryRows();
+            final String fused = render(sumAndCount());
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sumAndCount(), sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                // The compile is untouched: the group is still worked out and still has the
+                // shape this build binds. The switch gates the binding, which is the only part
+                // a query pays for.
+                final ObjList<WindowAccumulatorPlan> plans = windowFactory.getWindowAccumulatorPlans();
+                Assert.assertNotNull(plans);
+                Assert.assertEquals(1, plans.size());
+                Assert.assertTrue(WindowMapState.isPhysicalCoLocationOnly(plans.getQuick(0)));
+                Assert.assertNull(windowFactory.getWindowMapStates());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(ORDINARY_ROW_COUNT, drain(cursor));
+                    final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+                    Assert.assertEquals(2, functions.size());
+                    for (int i = 0, n = functions.size(); i < n; i++) {
+                        final WindowFunction function = functions.getQuick(i);
+                        Assert.assertFalse("a function stayed bound with fusion off", function.isWindowStateOwned());
+                        Assert.assertNotNull(function.getPartitionMap());
+                        Assert.assertTrue(
+                                "a function's own map never opened",
+                                function.getPartitionMap().isOpen()
+                        );
+                    }
+                }
+            }
+            // Same answers with the switch either way, which is the whole of its contract and
+            // what makes running a suite twice a test rather than a comparison of two unknowns.
+            Assert.assertEquals(fused, render(sumAndCount()));
+        });
+    }
+
+    @Test
     public void testToTopRestartsTheSharedKeyDomain() throws Exception {
         // toTop clears the group once - the cursor loops over groups, not over the bound
         // functions that read them, and a bound function's own toTop deliberately leaves the
@@ -366,6 +441,53 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 }
                 TestUtils.assertEquals(first, second);
             }
+        });
+    }
+
+    @Test
+    public void testTwoCountersDeclineWhenFusionWouldCrossTheEntryLimit() throws Exception {
+        // The shape the Map-implementation rule exists for, asserted at both settings that ship:
+        // count(x) and count(y) over one SYMBOL key are 4 + 8 = 12 each, so each takes an
+        // Unordered4Map, while the fused value is two counters at 4 + 16 = 20. At the 16-byte
+        // limit DefaultCairoConfiguration returns that entry is an OrderedMap and the group
+        // declines; at the 32 a server defaults to it is the same Unordered4Map its members had
+        // and the group binds. The answers do not move with it.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertOrdinaryRows();
+            final String sql = "select ts, count(x) over w, count(y) over w from t " + WINDOW;
+            setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 16);
+            final String declined = render(sql);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                // Compiled, and compiled as the shape this build binds - so what declined it is
+                // the Map-implementation rule and not the merge rule that leaves
+                // sum(x) + avg(x) + count(x) unbound.
+                final ObjList<WindowAccumulatorPlan> plans = windowFactory.getWindowAccumulatorPlans();
+                Assert.assertNotNull(plans);
+                Assert.assertEquals(1, plans.size());
+                Assert.assertTrue(WindowMapState.isPhysicalCoLocationOnly(plans.getQuick(0)));
+                Assert.assertTrue(WindowMapState.declinesForMapImplementation(configuration, plans.getQuick(0)));
+                Assert.assertNull(windowFactory.getWindowMapStates());
+            }
+            setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                Assert.assertFalse(WindowMapState.declinesForMapImplementation(configuration, state.getPlan()));
+                Assert.assertEquals(32, state.getUnorderedMapMaxEntrySize());
+                // The rule's prediction against what MapFactory actually built: the two answer
+                // the same question through the same code, and this is where that shows.
+                Assert.assertEquals("Unordered4Map", state.getMapImplementation());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(ORDINARY_ROW_COUNT, drain(cursor));
+                    Assert.assertEquals(ORDINARY_ROW_COUNT, state.getLookupCount());
+                }
+            }
+            Assert.assertEquals(declined, render(sql));
         });
     }
 

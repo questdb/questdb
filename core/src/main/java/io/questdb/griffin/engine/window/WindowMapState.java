@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -36,6 +37,8 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -75,8 +78,16 @@ import org.jetbrains.annotations.TestOnly;
  * folded one into another, is compiled and left unbound: the merge is a separate optimization
  * with its own proof obligations, and keeping it out of this slice means an output that
  * changes when the group binds can only be the co-location's doing.
+ *
+ * <h2>What declines</h2>
+ * Beyond the shape above, two things stop a compiled plan from getting a runtime:
+ * {@code cairo.sql.window.map.fusion.enabled}, the operational escape hatch, and the
+ * Map-implementation rule in {@link #declinesForMapImplementation} - a group that would trade
+ * several narrow unordered maps for one {@link io.questdb.cairo.map.OrderedMap} buys a probe at
+ * the price of a slower one.
  */
 public final class WindowMapState implements QuietCloseable, Reopenable {
+    private static final Log LOG = LogFactory.getLog(WindowMapState.class);
     private final int componentCount;
     private final RecordSink keySink;
     private final Map map;
@@ -99,9 +110,9 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         this.unorderedMapMaxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
         final WindowMapSpec spec = plan.getSpec();
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        appendKeyTypes(spec, keyTypes);
         final ListColumnFilter keyColumnFilter = new ListColumnFilter();
         for (int i = 0, n = spec.getPartitionColumnCount(); i < n; i++) {
-            keyTypes.add(spec.getKeyColumnType(i));
             // The RecordSink contract: the filter holds 1-based indexes into the source
             // record's metadata, and the ColumnTypes argument carries that whole metadata's
             // types rather than the filtered subset's.
@@ -136,7 +147,11 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
             @Nullable ObjList<WindowAccumulatorPlan> plans,
             @NotNull RecordMetadata baseMetadata
     ) {
-        if (plans == null) {
+        // The switch gates the binding rather than the compile: what it turns off is a runtime
+        // that owns a map, and a plan that no runtime reads costs a query nothing. So the group
+        // this query forms stays visible either way, and the two settings differ in exactly one
+        // thing - whether the functions keep their own maps.
+        if (plans == null || !configuration.isSqlWindowMapFusionEnabled()) {
             return null;
         }
         ObjList<WindowMapState> states = null;
@@ -144,6 +159,9 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
             for (int i = 0, n = plans.size(); i < n; i++) {
                 final WindowAccumulatorPlan plan = plans.getQuick(i);
                 if (!isPhysicalCoLocationOnly(plan)) {
+                    continue;
+                }
+                if (declinesForMapImplementation(configuration, plan)) {
                     continue;
                 }
                 if (states == null) {
@@ -161,6 +179,67 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
             }
         }
         return states;
+    }
+
+    /**
+     * Whether co-locating {@code plan}'s components would cost the group the Map implementation
+     * every member would have had on its own, which is the one way this optimization can lose.
+     * <p>
+     * {@code MapFactory} picks the implementation from the key shape and the value width against
+     * {@code cairo.sql.unordered.map.max.entry.size}: a single supported key stays on an
+     * unordered map only while the entry fits. Co-location widens the value and nothing else, so
+     * it can push a group over that limit while every member was under it. Two counters over one
+     * INT key are the clearest case - {@code 4 + 8 = 12} each, {@code 4 + 16 = 20} fused - and
+     * trading two {@code Unordered4Map} probes for one {@code OrderedMap} probe is not a trade
+     * worth making blind.
+     * <p>
+     * So the rule declines only that: the fused entry falls back to {@code OrderedMap} while
+     * every member's own entry would not have. A group whose largest member is already ordered
+     * loses nothing by fusing - it removes maps without changing the implementation of the one
+     * left - and a multi-column key is already ordered on both sides. The arithmetic is
+     * deterministic and cheap at compile time, which is why it is a rule here rather than a note
+     * in a benchmark.
+     * <p>
+     * A component is read as one member's whole private value, which holds because this slice
+     * binds only {@link #isPhysicalCoLocationOnly} plans. Admitting a merged plan means asking
+     * each output for its own standalone image instead, since the merged component is by then
+     * nobody's private value.
+     */
+    public static boolean declinesForMapImplementation(
+            @NotNull CairoConfiguration configuration,
+            @NotNull WindowAccumulatorPlan plan
+    ) {
+        final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
+        final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        appendKeyTypes(plan.getSpec(), keyTypes);
+        final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+        // The whole fused value, which for an ordinary query is the components and nothing else -
+        // the plan's slot prefix is zero, and the constructor builds the group's map from this
+        // same call, so what is measured here is what would be allocated.
+        plan.buildMapValueTypes(valueTypes);
+        final int fusedValueSize = ColumnTypes.sizeInBytes(valueTypes);
+        if (MapFactory.selectUnorderedMapImplementation(keyTypes, fusedValueSize, maxEntrySize) != MapFactory.MAP_IMPL_ORDERED) {
+            return false;
+        }
+        for (int i = 0, n = plan.getComponentCount(); i < n; i++) {
+            valueTypes.clear();
+            final WindowAccumulatorDescriptor component = plan.getComponent(i);
+            for (int slot = 0, slots = component.getSlotCount(); slot < slots; slot++) {
+                valueTypes.add(component.getSlotColumnType(slot));
+            }
+            final int memberValueSize = ColumnTypes.sizeInBytes(valueTypes);
+            if (MapFactory.selectUnorderedMapImplementation(keyTypes, memberValueSize, maxEntrySize) == MapFactory.MAP_IMPL_ORDERED) {
+                return false;
+            }
+        }
+        LOG.debug()
+                .$("declined window map co-location, the fused entry leaves the unordered map [components=")
+                .$(plan.getComponentCount())
+                .$(", keyColumns=").$(keyTypes.getColumnCount())
+                .$(", fusedValueSize=").$(fusedValueSize)
+                .$(", maxEntrySize=").$(maxEntrySize)
+                .I$();
+        return true;
     }
 
     /**
@@ -319,6 +398,12 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
 
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         map.setMemoryTracker(tracker);
+    }
+
+    private static void appendKeyTypes(@NotNull WindowMapSpec spec, @NotNull ArrayColumnTypes types) {
+        for (int i = 0, n = spec.getKeyColumnCount(); i < n; i++) {
+            types.add(spec.getKeyColumnType(i));
+        }
     }
 
     /**

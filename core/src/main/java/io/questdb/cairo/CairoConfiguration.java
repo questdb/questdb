@@ -1313,6 +1313,19 @@ public interface CairoConfiguration {
 
     boolean isSqlWindowCachedLightEnabled();
 
+    /**
+     * When true (the default), several window functions over one identical window may share a
+     * single partition Map: the group keeps one key domain and makes one lookup per row where
+     * each function would otherwise keep and probe a Map of its own.
+     * <p>
+     * The switch changes no answer - a group co-locates state that stays each member's own - so
+     * it is an operational escape hatch for a shape whose Map implementation or key distribution
+     * regresses in the field, and the control the differential tests compare against. It gates
+     * the runtime binding only; the group is compiled either way, and nothing user-visible,
+     * {@code EXPLAIN} included, differs between the two settings.
+     */
+    boolean isSqlWindowMapFusionEnabled();
+
     boolean isTableTypeConversionEnabled();
 
     /**

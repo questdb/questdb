@@ -593,6 +593,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlWindowCachedLightEnabled;
     private final int sqlWindowColumnPoolCapacity;
     private final int sqlWindowInitialRangeBufferSize;
+    private final boolean sqlWindowMapFusionEnabled;
     private final int sqlWindowMaxRecursion;
     private final long sqlWindowRowIdMaxBytes;
     private final int sqlWindowRowIdPageSize;
@@ -1874,6 +1875,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rndFunctionMemoryMaxPages = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_RND_MEMORY_MAX_PAGES, 128));
             this.sqlStrFunctionBufferMaxSize = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, Numbers.SIZE_1MB));
             this.sqlWindowCachedLightEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+            this.sqlWindowMapFusionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, true);
             this.sqlWindowMaxRecursion = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 128);
             int sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE, Numbers.SIZE_1MB));
             this.sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, sqlWindowStorePageSize));
@@ -5554,6 +5556,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlWindowCachedLightEnabled() {
             return sqlWindowCachedLightEnabled;
+        }
+
+        @Override
+        public boolean isSqlWindowMapFusionEnabled() {
+            return sqlWindowMapFusionEnabled;
         }
 
         @Override
