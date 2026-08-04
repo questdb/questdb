@@ -44,31 +44,33 @@ public class SampleByFirstLastDecimalTest extends AbstractCairoTest {
             FROM trades
             WHERE sym = 'A'
             SAMPLE BY 1h ALIGN TO FIRST OBSERVATION""";
+    private static final String TRADES_DDL = """
+            CREATE TABLE trades (
+              ts TIMESTAMP,
+              sym SYMBOL INDEX,
+              d8 DECIMAL(2, 1),
+              d16 DECIMAL(4, 1),
+              d32 DECIMAL(9, 2),
+              d64 DECIMAL(18, 2),
+              v LONG
+            ) TIMESTAMP(ts) PARTITION BY DAY""";
+    private static final String TRADES_INSERT = """
+            INSERT INTO trades VALUES
+              ('2023-01-01T00:00:00.000000Z', 'A', 1.1m, 11.1m, 111.11m, 1111.11m, 1),
+              ('2023-01-01T00:20:00.000000Z', 'A', 2.2m, 22.2m, 222.22m, 2222.22m, 2),
+              ('2023-01-01T00:40:00.000000Z', 'A', 3.3m, 33.3m, 333.33m, 3333.33m, 3),
+              ('2023-01-01T01:10:00.000000Z', 'B', 9.9m, 99.9m, 999.99m, 9999.99m, 4),
+              ('2023-01-01T02:00:00.000000Z', 'A', null, null, null, null, 5),
+              ('2023-01-01T02:30:00.000000Z', 'A', 4.4m, 44.4m, 444.44m, 4444.44m, 6),
+              ('2023-01-01T03:00:00.000000Z', 'A', 5.5m, 55.5m, 555.55m, 5555.55m, 7),
+              ('2023-01-01T03:30:00.000000Z', 'A', null, null, null, null, 8),
+              ('2023-01-01T04:00:00.000000Z', 'A', null, null, null, null, 9)""";
 
     @Test
     public void testFirstLastOverDecimalColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE trades (
-                      ts TIMESTAMP,
-                      sym SYMBOL INDEX,
-                      d8 DECIMAL(2, 1),
-                      d16 DECIMAL(4, 1),
-                      d32 DECIMAL(9, 2),
-                      d64 DECIMAL(18, 2),
-                      v LONG
-                    ) TIMESTAMP(ts) PARTITION BY DAY""");
-            execute("""
-                    INSERT INTO trades VALUES
-                      ('2023-01-01T00:00:00.000000Z', 'A', 1.1m, 11.1m, 111.11m, 1111.11m, 1),
-                      ('2023-01-01T00:20:00.000000Z', 'A', 2.2m, 22.2m, 222.22m, 2222.22m, 2),
-                      ('2023-01-01T00:40:00.000000Z', 'A', 3.3m, 33.3m, 333.33m, 3333.33m, 3),
-                      ('2023-01-01T01:10:00.000000Z', 'B', 9.9m, 99.9m, 999.99m, 9999.99m, 4),
-                      ('2023-01-01T02:00:00.000000Z', 'A', null, null, null, null, 5),
-                      ('2023-01-01T02:30:00.000000Z', 'A', 4.4m, 44.4m, 444.44m, 4444.44m, 6),
-                      ('2023-01-01T03:00:00.000000Z', 'A', 5.5m, 55.5m, 555.55m, 5555.55m, 7),
-                      ('2023-01-01T03:30:00.000000Z', 'A', null, null, null, null, 8),
-                      ('2023-01-01T04:00:00.000000Z', 'A', null, null, null, null, 9)""");
+            execute(TRADES_DDL);
+            execute(TRADES_INSERT);
 
             // The 01:00 bucket holds only symbol B, so it is empty for this query and gets skipped.
             // 02:00 opens with a null, 03:00 closes with one, 04:00 is null throughout.
@@ -122,6 +124,35 @@ public class SampleByFirstLastDecimalTest extends AbstractCairoTest {
                             2023-01-02T01:00:00.000000Z\tA\t8.8\t8.8\t88.8\t88.8\t888.88\t888.88\t8888.88\t8888.88\t6
                             """);
         });
+    }
+
+    @Test
+    public void testFirstLastPlanNamesProjectedColumns() throws Exception {
+        // toPlan() resolves names through queryToFrameColumnMapping. Projecting d8 twice makes the
+        // mapping differ from the projection order, so an unmapped plan misnames two of the three.
+        assertQuery("""
+                SELECT sym, first(d8) f8, last(d8) l8, first(d32) f32
+                FROM trades
+                WHERE sym = 'A'
+                SAMPLE BY 1h ALIGN TO FIRST OBSERVATION""")
+                .ddl(TRADES_DDL, TRADES_INSERT)
+                .noRandomAccess()
+                .withPlan("""
+                        SampleByFirstLast
+                          keys: [sym]
+                          values: [first(d8), last(d8), first(d32)]
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: sym
+                                  filter: sym=1
+                                Frame forward scan on: trades
+                        """)
+                .returns("""
+                        sym\tf8\tl8\tf32
+                        A\t1.1\t3.3\t111.11
+                        A\t\t4.4\t
+                        A\t5.5\t\t555.55
+                        A\t\t\t
+                        """);
     }
 
     @Test

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.math.GreatestNumericFunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
@@ -75,68 +76,156 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
     @Test
     public void testGreatestNumericFunctionFactoryDecimalNulls() throws Exception {
         // NULL arguments are skipped, the result is NULL only when every argument is NULL
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(2,0), null::decimal(2,0)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(4,0), null::decimal(4,0)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(9,0), null::decimal(9,0)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(18,0), null::decimal(18,0)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(38,0), null::decimal(38,0)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(76,0), null::decimal(76,0)) is null n");
+        assertQuery("select greatest(null::decimal(2,0), null::decimal(2,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(4,0), null::decimal(4,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(9,0), null::decimal(9,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(18,0), null::decimal(18,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(38,0), null::decimal(38,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(76,0), null::decimal(76,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
 
         // single argument
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(2,0)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(4,0)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(9,0)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(18,0)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(38,0)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(76,0)) is null n");
+        assertQuery("select greatest(null::decimal(2,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(4,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(9,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(18,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(38,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(76,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
 
         // differing scales
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(1,0), null::decimal(2,1)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(2,0), null::decimal(4,2)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(5,0), null::decimal(9,4)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(9,0), null::decimal(18,9)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(19,0), null::decimal(38,19)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(38,0), null::decimal(76,38)) is null n");
+        assertQuery("select greatest(null::decimal(1,0), null::decimal(2,1)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(2,0), null::decimal(4,2)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(5,0), null::decimal(9,4)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(9,0), null::decimal(18,9)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(19,0), null::decimal(38,19)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(38,0), null::decimal(76,38)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
 
         // mixed NULL and non-NULL, the non-NULL argument wins
-        assertSqlWithTypes("greatest\n1.0:DECIMAL(2,1)\n", "select greatest(1::decimal(1,0), null::decimal(2,1))");
-        assertSqlWithTypes("greatest\n1.00:DECIMAL(4,2)\n", "select greatest(null::decimal(2,0), 1::decimal(4,2))");
-        assertSqlWithTypes("greatest\n1.0000:DECIMAL(9,4)\n", "select greatest(1::decimal(5,0), null::decimal(9,4))");
-        assertSqlWithTypes("greatest\n1.000000000:DECIMAL(18,9)\n", "select greatest(null::decimal(9,0), 1::decimal(18,9))");
-        assertSqlWithTypes("greatest\n1.0000000000000000000:DECIMAL(38,19)\n", "select greatest(1::decimal(19,0), null::decimal(38,19))");
-        assertSqlWithTypes("greatest\n1.00000000000000000000000000000000000000:DECIMAL(76,38)\n", "select greatest(null::decimal(38,0), 1::decimal(76,38))");
+        assertQuery("select greatest(1::decimal(1,0), null::decimal(2,1))")
+                .expectSize()
+                .columnType(0, ColumnType.getDecimalType(2, 1))
+                .returns("greatest\n1.0\n");
+        assertQuery("select greatest(null::decimal(2,0), 1::decimal(4,2))")
+                .expectSize()
+                .columnType(0, ColumnType.getDecimalType(4, 2))
+                .returns("greatest\n1.00\n");
+        assertQuery("select greatest(1::decimal(5,0), null::decimal(9,4))")
+                .expectSize()
+                .columnType(0, ColumnType.getDecimalType(9, 4))
+                .returns("greatest\n1.0000\n");
+        assertQuery("select greatest(null::decimal(9,0), 1::decimal(18,9))")
+                .expectSize()
+                .columnType(0, ColumnType.getDecimalType(18, 9))
+                .returns("greatest\n1.000000000\n");
+        assertQuery("select greatest(1::decimal(19,0), null::decimal(38,19))")
+                .expectSize()
+                .columnType(0, ColumnType.getDecimalType(38, 19))
+                .returns("greatest\n1.0000000000000000000\n");
+        assertQuery("select greatest(null::decimal(38,0), 1::decimal(76,38))")
+                .expectSize()
+                .columnType(0, ColumnType.getDecimalType(76, 38))
+                .returns("greatest\n1.00000000000000000000000000000000000000\n");
     }
 
     @Test
     public void testGreatestNumericFunctionFactoryDecimalNullsMixedWithDouble() throws Exception {
         // a NULL decimal must be skipped, not treated as a value, once the result is promoted to double
-        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5, null::decimal(2,0)) = -1.5 v");
-        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5, null::decimal(4,1)) = -1.5 v");
-        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5, null::decimal(9,2)) = -1.5 v");
-        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5, null::decimal(18,3)) = -1.5 v");
-        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5, null::decimal(38,2)) = -1.5 v");
-        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5, null::decimal(76,2)) = -1.5 v");
+        assertQuery("select greatest(-1.5, null::decimal(2,0)) = -1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select greatest(-1.5, null::decimal(4,1)) = -1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select greatest(-1.5, null::decimal(9,2)) = -1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select greatest(-1.5, null::decimal(18,3)) = -1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select greatest(-1.5, null::decimal(38,2)) = -1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select greatest(-1.5, null::decimal(76,2)) = -1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
 
         // reversed argument order
-        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(null::decimal(2,0), -1.5) = -1.5 v");
-        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(null::decimal(38,2), -1.5) = -1.5 v");
-        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(null::decimal(76,2), -1.5) = -1.5 v");
+        assertQuery("select greatest(null::decimal(2,0), -1.5) = -1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select greatest(null::decimal(38,2), -1.5) = -1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select greatest(null::decimal(76,2), -1.5) = -1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
 
         // float promotes to the double path too
-        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5f, null::decimal(38,2)) = -1.5 v");
+        assertQuery("select greatest(-1.5f, null::decimal(38,2)) = -1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
 
         // a NULL decimal next to a non-NULL decimal, both widened to the double path
-        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-9.5, -2::decimal(9,2), null::decimal(9,2)) = -2.0 v");
-        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-9.5, null::decimal(76,2), -2::decimal(38,2)) = -2.0 v");
+        assertQuery("select greatest(-9.5, -2::decimal(9,2), null::decimal(9,2)) = -2.0 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select greatest(-9.5, null::decimal(76,2), -2::decimal(38,2)) = -2.0 v")
+                .expectSize()
+                .returns("v\ntrue\n");
 
         // NULL only when every argument is NULL
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::double, null::decimal(38,2)) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(2,0), null::double) is null n");
-        assertSqlWithTypes("n\ntrue:BOOLEAN\n", "select greatest(null::decimal(76,2), null::decimal(2,0), null::double) is null n");
+        assertQuery("select greatest(null::double, null::decimal(38,2)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(2,0), null::double) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select greatest(null::decimal(76,2), null::decimal(2,0), null::double) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
 
         // no-regression guard, no NULL argument at all
-        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-9.5, -2::decimal(38,2)) = -2.0 v");
-        assertSqlWithTypes("v\ntrue:BOOLEAN\n", "select greatest(-1.5, -2::decimal(38,2)) = -1.5 v");
+        assertQuery("select greatest(-9.5, -2::decimal(38,2)) = -2.0 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select greatest(-1.5, -2::decimal(38,2)) = -1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
     }
 
     @Test
