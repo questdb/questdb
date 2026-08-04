@@ -253,20 +253,17 @@ public class CastDecimalToFloatFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCastFloatRangeBoundary() throws Exception {
-        assertMemoryLeak(
-                () -> assertQuery("select cast(340282346638528859811704183484516925440m as float) atMax, " +
-                        "cast(-340282346638528859811704183484516925440m as float) atMaxNeg, " +
-                        "cast(340282346638528900000000000000000000000m as float) justAboveMax, " +
-                        "cast(340282356779733600000000000000000000000m as float) aboveRoundingThreshold, " +
-                        "cast(cast(340282346638528859811704183484516925440m as double) as float) atMaxViaDouble, " +
-                        "cast(cast(340282346638528900000000000000000000000m as double) as float) justAboveMaxViaDouble")
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns("""
-                                atMax\tatMaxNeg\tjustAboveMax\taboveRoundingThreshold\tatMaxViaDouble\tjustAboveMaxViaDouble
-                                3.4028235E38\t-3.4028235E38\tnull\tnull\t3.4028235E38\tnull
-                                """)
-        );
+        assertQuery("select cast(340282346638528859811704183484516925440m as float) atMax, " +
+                "cast(-340282346638528859811704183484516925440m as float) atMaxNeg, " +
+                "cast(340282346638528900000000000000000000000m as float) justAboveMax, " +
+                "cast(340282356779733600000000000000000000000m as float) aboveRoundingThreshold, " +
+                "cast(cast(340282346638528859811704183484516925440m as double) as float) atMaxViaDouble, " +
+                "cast(cast(340282346638528900000000000000000000000m as double) as float) justAboveMaxViaDouble")
+                .expectSize()
+                .returns("""
+                        atMax\tatMaxNeg\tjustAboveMax\taboveRoundingThreshold\tatMaxViaDouble\tjustAboveMaxViaDouble
+                        3.4028235E38\t-3.4028235E38\tnull\tnull\t3.4028235E38\tnull
+                        """);
     }
 
     @Test
@@ -702,33 +699,30 @@ public class CastDecimalToFloatFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCastOutOfFloatRangeReturnsNullFromColumn() throws Exception {
-        assertMemoryLeak(
-                () -> assertQuery("select v, cast(v as float) float_value from x")
-                        .ddl(
-                                "create table x (v DECIMAL(76,2))",
-                                "insert into x values (340282400000000000000000000000000000000.00m), " +
-                                        "(-340282400000000000000000000000000000000.00m), " +
-                                        "(340282000000000000000000000000000000000.00m), " +
-                                        "(340282346638528859811704183484516925440.00m), " +
-                                        "(-340282346638528859811704183484516925440.00m), " +
-                                        "(340282346638528900000000000000000000000.00m), " +
-                                        "(123.45m), (-0.25m), (null)"
-                        )
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns("""
-                                v\tfloat_value
-                                340282400000000000000000000000000000000.00\tnull
-                                -340282400000000000000000000000000000000.00\tnull
-                                340282000000000000000000000000000000000.00\t3.40282E38
-                                340282346638528859811704183484516925440.00\t3.4028235E38
-                                -340282346638528859811704183484516925440.00\t-3.4028235E38
-                                340282346638528900000000000000000000000.00\tnull
-                                123.45\t123.45
-                                -0.25\t-0.25
-                                \tnull
-                                """)
-        );
+        assertQuery("select v, cast(v as float) float_value from x")
+                .ddl(
+                        "create table x (v DECIMAL(76,2))",
+                        "insert into x values (340282400000000000000000000000000000000.00m), " +
+                                "(-340282400000000000000000000000000000000.00m), " +
+                                "(340282000000000000000000000000000000000.00m), " +
+                                "(340282346638528859811704183484516925440.00m), " +
+                                "(-340282346638528859811704183484516925440.00m), " +
+                                "(340282346638528900000000000000000000000.00m), " +
+                                "(123.45m), (-0.25m), (null)"
+                )
+                .expectSize()
+                .returns("""
+                        v\tfloat_value
+                        340282400000000000000000000000000000000.00\tnull
+                        -340282400000000000000000000000000000000.00\tnull
+                        340282000000000000000000000000000000000.00\t3.40282E38
+                        340282346638528859811704183484516925440.00\t3.4028235E38
+                        -340282346638528859811704183484516925440.00\t-3.4028235E38
+                        340282346638528900000000000000000000000.00\tnull
+                        123.45\t123.45
+                        -0.25\t-0.25
+                        \tnull
+                        """);
     }
 
     @Test

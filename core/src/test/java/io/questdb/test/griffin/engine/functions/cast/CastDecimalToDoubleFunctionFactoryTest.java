@@ -637,42 +637,36 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCastLargestDecimal256Magnitudes() throws Exception {
-        assertMemoryLeak(
-                () -> assertQuery("select cast(9999999999999999999999999999999999999999999999999999999999999999999999999999m as double) maxDecimal, " +
-                        "cast(-9999999999999999999999999999999999999999999999999999999999999999999999999999m as double) minDecimal, " +
-                        "cast(340282400000000000000000000000000000000m as double) aboveFloatRange, " +
-                        "cast(-340282400000000000000000000000000000000m as double) belowFloatRange, " +
-                        "cast(cast(null as DECIMAL(39,0)) as double) nullDecimal")
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns("""
-                                maxDecimal\tminDecimal\taboveFloatRange\tbelowFloatRange\tnullDecimal
-                                1.0E76\t-1.0E76\t3.402824E38\t-3.402824E38\tnull
-                                """)
-        );
+        assertQuery("select cast(9999999999999999999999999999999999999999999999999999999999999999999999999999m as double) maxDecimal, " +
+                "cast(-9999999999999999999999999999999999999999999999999999999999999999999999999999m as double) minDecimal, " +
+                "cast(340282400000000000000000000000000000000m as double) aboveFloatRange, " +
+                "cast(-340282400000000000000000000000000000000m as double) belowFloatRange, " +
+                "cast(cast(null as DECIMAL(39,0)) as double) nullDecimal")
+                .expectSize()
+                .returns("""
+                        maxDecimal\tminDecimal\taboveFloatRange\tbelowFloatRange\tnullDecimal
+                        1.0E76\t-1.0E76\t3.402824E38\t-3.402824E38\tnull
+                        """);
     }
 
     @Test
     public void testCastLargestDecimal256MagnitudesFromColumn() throws Exception {
-        assertMemoryLeak(
-                () -> assertQuery("select v, cast(v as double) double_value from y")
-                        .ddl(
-                                "create table y (v DECIMAL(76,2))",
-                                "insert into y values (340282400000000000000000000000000000000.00m), " +
-                                        "(-340282400000000000000000000000000000000.00m), " +
-                                        "(123.45m), (-0.25m), (null)"
-                        )
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns("""
-                                v\tdouble_value
-                                340282400000000000000000000000000000000.00\t3.402824E38
-                                -340282400000000000000000000000000000000.00\t-3.402824E38
-                                123.45\t123.45
-                                -0.25\t-0.25
-                                \tnull
-                                """)
-        );
+        assertQuery("select v, cast(v as double) double_value from y")
+                .ddl(
+                        "create table y (v DECIMAL(76,2))",
+                        "insert into y values (340282400000000000000000000000000000000.00m), " +
+                                "(-340282400000000000000000000000000000000.00m), " +
+                                "(123.45m), (-0.25m), (null)"
+                )
+                .expectSize()
+                .returns("""
+                        v\tdouble_value
+                        340282400000000000000000000000000000000.00\t3.402824E38
+                        -340282400000000000000000000000000000000.00\t-3.402824E38
+                        123.45\t123.45
+                        -0.25\t-0.25
+                        \tnull
+                        """);
     }
 
     @Test
