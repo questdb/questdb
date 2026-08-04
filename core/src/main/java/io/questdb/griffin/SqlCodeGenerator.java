@@ -319,6 +319,7 @@ import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PostingIndexDistinctRecordCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
+import io.questdb.griffin.engine.table.RetimestampedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
@@ -1416,6 +1417,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             metadata.add(new TableColumnMetadata(typesA.getColumnName(i), targetType));
         }
         return metadata;
+    }
+
+    // Bare subqueries and non-SAMPLE-BY GROUP BY paths do not otherwise apply their model's explicit
+    // timestamp designation. Relabel metadata without projecting records so cursor identity and
+    // random-access behavior remain unchanged.
+    private RecordCursorFactory applyExplicitTimestamp(
+            IQueryModel model,
+            RecordCursorFactory factory
+    ) throws SqlException {
+        if (!model.hasExplicitTimestamp()) {
+            return factory;
+        }
+        final RecordMetadata metadata = factory.getMetadata();
+        try {
+            final int explicitTimestampIndex = getTimestampIndex(model, metadata);
+            if (explicitTimestampIndex == metadata.getTimestampIndex()) {
+                return factory;
+            }
+            final RecordCursorFactory ownedFactory = factory;
+            factory = null;
+            return RetimestampedRecordCursorFactory.create(ownedFactory, explicitTimestampIndex);
+        } catch (Throwable e) {
+            Misc.free(factory);
+            throw e;
+        }
     }
 
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
@@ -7503,7 +7529,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return generateTableQuery(model, executionContext);
             }
         }
-        return generateSubQuery(model, executionContext);
+        return applyExplicitTimestamp(model, generateSubQuery(model, executionContext));
     }
 
     private RecordCursorFactory generateOrderBy(
@@ -8792,28 +8818,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectDistinct(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        Function limitHiFunc = null;
+        Function limitLoFunc = null;
         try {
             if (factory.recordCursorSupportsRandomAccess() && factory.getMetadata().getTimestampIndex() != -1) {
-                return new DistinctTimeSeriesRecordCursorFactory(
+                final DistinctTimeSeriesRecordCursorFactory distinctFactory = new DistinctTimeSeriesRecordCursorFactory(
                         configuration,
                         factory,
                         entityColumnFilter,
                         asm
                 );
+                factory = null;
+                return distinctFactory;
             }
 
-            final Function limitLoFunc;
-            final Function limitHiFunc;
             if (model.getOrderBy().size() == 0) {
                 limitLoFunc = getLoFunction(model, executionContext);
                 limitHiFunc = getHiFunction(model, executionContext);
-            } else {
-                limitLoFunc = null;
-                limitHiFunc = null;
             }
 
-            return new DistinctRecordCursorFactory(
+            final DistinctRecordCursorFactory distinctFactory = new DistinctRecordCursorFactory(
                     configuration,
                     factory,
                     entityColumnFilter,
@@ -8821,13 +8846,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     limitLoFunc,
                     limitHiFunc
             );
+            factory = null;
+            limitHiFunc = null;
+            limitLoFunc = null;
+            return distinctFactory;
         } catch (Throwable e) {
             Misc.free(factory);
+            Misc.free(limitHiFunc);
+            Misc.free(limitLoFunc);
             throw e;
         }
     }
 
     private RecordCursorFactory generateSelectGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final ExpressionNode sampleByNode = model.getSampleBy();
+        if (sampleByNode != null) {
+            // SAMPLE BY manages its own designated timestamp and does not tolerate a relabeling wrap
+            // over its cursor-stateful output, so it must NOT be retimestamped -- return it directly.
+            return generateSampleBy(model, executionContext, sampleByNode, model.getSampleByUnit());
+        }
+        // Wrap every non-SAMPLE-BY return path in one place so an explicit timestamp() redesignation
+        // (notably the production-default DISTINCT-to-GROUP-BY rewrite) survives. applyExplicitTimestamp
+        // is a no-op when there is no explicit timestamp or it already matches the generated factory.
+        return applyExplicitTimestamp(model, generateSelectGroupBy0(model, executionContext));
+    }
+
+    private RecordCursorFactory generateSelectGroupBy0(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         // Catch-visible owners of the assembled group-by/projection functions and the per-worker
         // clones compiled for the parallel path. The transfer blocks before the adopting factory
         // constructors null them out; until then the catch frees them. groupByFunctions and the
@@ -8840,11 +8884,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
         ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
         ObjList<Function> perWorkerFilters = null;
-        final ExpressionNode sampleByNode = model.getSampleBy();
-        if (sampleByNode != null) {
-            return generateSampleBy(model, executionContext, sampleByNode, model.getSampleByUnit());
-        }
-
         RecordCursorFactory factory = null;
         try {
             ObjList<QueryColumn> columns;

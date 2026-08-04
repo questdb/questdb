@@ -5576,7 +5576,12 @@ public class SqlOptimiser implements Mutable {
             ) {
                 model.setTimestamp(timestamp);
                 model.setExplicitTimestamp(nested.isExplicitTimestamp());
-                if (!nested.hasSharedRefs()) {
+                // Don't strip it from `nested` when `nested` is itself a join root (i.e. has
+                // its own join partners beyond itself): generateJoins() generates `nested`'s
+                // own factory independently to feed the join, and that generation needs to see
+                // this model's explicit timestamp directly -- hoisting it up to `model` only
+                // helps consumers of the *already-joined* result, not the join operation itself.
+                if (!nested.hasSharedRefs() && nested.getJoinModels().size() <= 1) {
                     nested.setTimestamp(null);
                     nested.setExplicitTimestamp(false);
                 }
@@ -8100,8 +8105,10 @@ public class SqlOptimiser implements Mutable {
                 // move model attributes to the wrapper
                 wrapperModel.setAlias(model.getAlias());
                 wrapperModel.setTimestamp(model.getTimestamp());
+                wrapperModel.setExplicitTimestamp(model.isExplicitTimestamp());
                 wrapperNested.setAlias(model.getAlias());
                 wrapperNested.setTimestamp(model.getTimestamp());
+                wrapperNested.setExplicitTimestamp(model.isExplicitTimestamp());
 
                 // before dispatching our rewrite, make sure our sub-query has also been re-written
                 // the immediate "nested" model is part of the "distinct" pair or model, we skip rewriting that

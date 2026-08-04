@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.functions.test.TestAllocatingFunctionFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.CairoTestConfiguration;
@@ -132,6 +133,77 @@ public class DistinctTimeSeriesMemoryTrackerTest extends AbstractCairoTest {
                         "1970-01-01T00:00:04.000000Z\t1\n" +
                         "1970-01-01T00:00:05.000000Z\t2\n" +
                         "1970-01-01T00:00:06.000000Z\t0\n");
+    }
+
+    @Test
+    public void testDistinctLimitHiCompilationFailureReleasesLimitLoFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (v LONG)");
+            TestAllocatingFunctionFactory.resetCloseCount();
+            try {
+                final String sql = "SELECT DISTINCT v FROM tab LIMIT alloc(64), npe()";
+                assertException(sql, sql.indexOf("npe"), "LIMIT expressions must be convertible to INT");
+                Assert.assertEquals(1, TestAllocatingFunctionFactory.getCloseCount());
+            } finally {
+                TestAllocatingFunctionFactory.disableAllocationForTests();
+            }
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampRedesignationSurvivesDistinct() throws Exception {
+        // An explicit timestamp() on the subquery must survive DISTINCT, and the redesignated column
+        // must feed DistinctTimeSeriesRecordCursor's dedup fast path (which reads its row-adjacency
+        // decision directly off the factory's own timestampIndex). NOTE on what this specific test
+        // covers: this class disables the DISTINCT->GROUP-BY rewrite, so the query routes through
+        // generateSelectDistinct, where ts2 reaches DistinctTimeSeries because the optimizer pushes
+        // timestamp(ts2) down into the inner table scan (generateTableQuery) -- NOT via
+        // applyExplicitTimestamp. It therefore validates the end-to-end DISTINCT-over-redesignation
+        // behavior + dedup adjacency; the dedicated regression guard for THIS PR's generateSelectGroupBy
+        // wiring is DistinctTest#testDistinctExplicitTimestampSurvivesGroupByRewrite (default config).
+        assertQuery("SELECT DISTINCT * FROM (SELECT * FROM tab) timestamp(ts2)")
+                .ddl(
+                        "CREATE TABLE tab (ts TIMESTAMP, ts2 TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO tab VALUES " +
+                                "('2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:01.000000Z', 1), " +
+                                "('2024-01-01T00:01:00.000000Z', '2024-01-01T00:01:01.000000Z', 2)"
+                )
+                .timestamp("ts2")
+                .withPlanContaining("DistinctTimeSeries")
+                .returns("""
+                        ts\tts2\tv
+                        2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:01.000000Z\t1
+                        2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:01.000000Z\t2
+                        """);
+    }
+
+    @Test
+    public void testExplicitTimestampRedesignationDrivesDistinctAdjacency() throws Exception {
+        // Unlike testExplicitTimestampRedesignationSurvivesDistinct (globally-unique rows that never
+        // reach checkIfNotDupe), this exercises the fast-path dedup ADJACENCY under the redesignation.
+        // ts2 forms a three-row group (10,10,10) then a singleton (20); the natural ts is unique per
+        // row except the exact-duplicate pair. DistinctTimeSeriesRecordCursor emits a row unconditionally
+        // when the DESIGNATED timestamp changes and only consults the dataMap within a run of equal
+        // timestamps -- so it can only dedupe the duplicate against its partner, and keep the distinct
+        // third row of the same ts2 group, if the fast path keys off ts2 (the redesignation reached it).
+        // The output's designated timestamp is ts2, which a downstream temporal consumer would use.
+        assertQuery("SELECT DISTINCT * FROM (SELECT * FROM tab) timestamp(ts2)")
+                .ddl(
+                        "CREATE TABLE tab (ts TIMESTAMP, ts2 TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO tab VALUES " +
+                                "('2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:10.000000Z', 1), " +
+                                "('2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:10.000000Z', 1), " +
+                                "('2024-01-01T00:00:01.000000Z', '2024-01-01T00:00:10.000000Z', 2), " +
+                                "('2024-01-01T00:00:02.000000Z', '2024-01-01T00:00:20.000000Z', 3)"
+                )
+                .timestamp("ts2")
+                .withPlanContaining("DistinctTimeSeries")
+                .returns("""
+                        ts\tts2\tv
+                        2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:10.000000Z\t1
+                        2024-01-01T00:00:01.000000Z\t2024-01-01T00:00:10.000000Z\t2
+                        2024-01-01T00:00:02.000000Z\t2024-01-01T00:00:20.000000Z\t3
+                        """);
     }
 
     private static void assertBreach(String sql) throws Exception {

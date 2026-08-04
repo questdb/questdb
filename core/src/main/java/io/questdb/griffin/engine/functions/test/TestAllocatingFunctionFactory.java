@@ -38,13 +38,33 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Always returns 42 long value. Allocates the given number of bytes in native memory
  * to simplify testing record factory / function leaks.
  */
 public class TestAllocatingFunctionFactory implements FunctionFactory {
+    private static final AtomicInteger CLOSE_COUNT = new AtomicInteger();
     private static final long MAX_BYTES = Numbers.SIZE_1MB;
+    private static volatile boolean isForceAllocation;
+
+    @TestOnly
+    public static void disableAllocationForTests() {
+        isForceAllocation = false;
+    }
+
+    public static int getCloseCount() {
+        return CLOSE_COUNT.get();
+    }
+
+    @TestOnly
+    public static void resetCloseCount() {
+        CLOSE_COUNT.set(0);
+        isForceAllocation = true;
+    }
 
     @Override
     public String getSignature() {
@@ -59,7 +79,7 @@ public class TestAllocatingFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        if (configuration.isDevModeEnabled()) {
+        if (configuration.isDevModeEnabled() || isForceAllocation) {
             long bytes = args.getQuick(0).getLong(null);
             if (bytes > MAX_BYTES) {
                 throw SqlException.$(argPositions.getQuick(0), "too much to allocate: ").put(bytes);
@@ -80,12 +100,18 @@ public class TestAllocatingFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
+            CLOSE_COUNT.incrementAndGet();
             addr = Unsafe.free(addr, allocSize, MemoryTag.NATIVE_DEFAULT);
         }
 
         @Override
         public long getLong(Record rec) {
             return 42;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return true;
         }
 
         @Override
