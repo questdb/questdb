@@ -221,7 +221,7 @@ public class SampleByFillTest extends AbstractCairoTest {
             String sql = "SELECT first(val), ts FROM x SAMPLE BY 1h FILL('a') ALIGN TO CALENDAR";
             assertQuery(sql)
                     .noLeakCheck()
-                    .fails(sql.indexOf("'a'"), "inconvertible value: `a` [STRING -> DECIMAL(10,2)]");
+                    .fails(sql.indexOf("'a'"), "inconvertible value: `a` [CHAR -> DECIMAL(10,2)]");
         });
     }
 
