@@ -36,19 +36,19 @@ public class MapFactory {
      * {@link OrderedMap} - what {@link #createUnorderedMap} falls back to for a multi-column key,
      * an unsupported key type, or an entry the configured limit does not admit.
      */
-    public static final int MAP_IMPL_ORDERED = 0;
+    private static final int MAP_IMPL_ORDERED = 0;
     /**
      * {@link Unordered4Map}, for a single 4-byte key.
      */
-    public static final int MAP_IMPL_UNORDERED_4 = 1;
+    private static final int MAP_IMPL_UNORDERED_4 = 1;
     /**
      * {@link Unordered8Map}, for a single 8-byte key.
      */
-    public static final int MAP_IMPL_UNORDERED_8 = 2;
+    private static final int MAP_IMPL_UNORDERED_8 = 2;
     /**
      * {@link UnorderedVarcharMap}, for a single VARCHAR key.
      */
-    public static final int MAP_IMPL_UNORDERED_VARCHAR = 3;
+    private static final int MAP_IMPL_UNORDERED_VARCHAR = 3;
 
     /**
      * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
@@ -256,22 +256,17 @@ public class MapFactory {
     }
 
     /**
-     * Returns the {@code MAP_IMPL_*} implementation {@link #createUnorderedMap} would build for
-     * this key shape and value width, without building it.
-     * <p>
-     * The selection is the whole of what makes a wider value a slower map: a single-column key of
-     * a supported type stays on an unordered map only while the key's own width plus
-     * {@code valueSize} fits {@code cairo.sql.unordered.map.max.entry.size}, and anything else -
-     * every multi-column key included - falls back to {@link OrderedMap}. A caller deciding
-     * whether to widen a value on purpose has to be able to ask that question ahead of the
-     * allocation, and asking it here rather than restating the arithmetic is what keeps the two
-     * answers from drifting.
+     * Returns the {@code MAP_IMPL_*} implementation {@link #createUnorderedMap} builds for this
+     * key shape and value width: a single-column key of a supported type stays on an unordered
+     * map only while the key's own width plus {@code valueSize} fits
+     * {@code cairo.sql.unordered.map.max.entry.size}, and anything else - every multi-column key
+     * included - falls back to {@link OrderedMap}.
      *
      * @param keyTypes     the map's key columns
      * @param valueSize    the value width in bytes, as {@link ColumnTypes#sizeInBytes} reports it
      * @param maxEntrySize the configured {@code cairo.sql.unordered.map.max.entry.size}
      */
-    public static int selectUnorderedMapImplementation(
+    private static int selectUnorderedMapImplementation(
             @Transient @NotNull ColumnTypes keyTypes,
             int valueSize,
             int maxEntrySize

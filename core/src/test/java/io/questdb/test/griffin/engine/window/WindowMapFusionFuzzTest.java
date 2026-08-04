@@ -53,8 +53,8 @@ import org.junit.Test;
  * plan is a function of: the partition key's type and cardinality (including a NULL key), how
  * often an accumulator argument is absent, which families sit in one window, how many windows
  * a query carries, whether a window is named or spelled inline, the SELECT-list order, and
- * {@code cairo.sql.unordered.map.max.entry.size}, which decides both the Map implementation and
- * whether {@link WindowMapState#declinesForMapImplementation} declines the group at all.
+ * {@code cairo.sql.unordered.map.max.entry.size}, which decides which {@link io.questdb.cairo.map.Map}
+ * implementation the group's widened value lands on.
  * <p>
  * Two properties make the comparison meaningful rather than merely green:
  * <ul>
@@ -77,7 +77,7 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
     /**
      * The Map-entry limits that ship: 16 is what {@code DefaultCairoConfiguration} returns for
      * embedded use and the benchmarks, 32 is a server's default, and 64 is neither - it is here
-     * to fuse the wide groups the other two decline, so the runtime sees them too.
+     * so a wide group runs on an unordered map too, which the other two put on an OrderedMap.
      */
     private static final int[] ENTRY_SIZES = {16, 32, 64};
     private static final int ITERATIONS = 40;

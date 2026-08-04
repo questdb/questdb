@@ -86,22 +86,28 @@ import java.util.Locale;
  * sitting beside a bound group. Adding production counters to the private path for a measurement is
  * what step 3.2 declined to do for its own rule, and the same reasoning holds here.
  *
- * <h2>Case 4 and the Map-implementation decline rule</h2>
- * {@code count(x) + count(y)} over an INT key is the shape
- * {@link WindowMapState#declinesForMapImplementation} exists for: two {@code Unordered4Map}s at
- * {@code 4 + 8 = 12} each, one {@code OrderedMap} at {@code 4 + 16 = 20} fused. The rule declines
- * exactly the configuration where that trade happens, so measuring the trade needs two
- * configurations rather than a switch:
+ * <h2>Cases 4 and 12: fusing across a Map-implementation change</h2>
+ * Co-location widens the value and can push a group onto an {@code OrderedMap} that every member
+ * would have kept an {@code Unordered4Map} for. Two shapes measure that trade, one at each shipped
+ * entry-size limit, and the switch alone reaches both arms of it:
  * <ul>
- *     <li>{@code --entry-size=16 --fusion=off} - what ships today, two {@code Unordered4Map}s;</li>
- *     <li>{@code --entry-size=11 --fusion=on} - one {@code OrderedMap}. At 11 each member's own
- *     entry is over the limit too, so the rule does not fire and the group binds. The limit selects
- *     the implementation and nothing else, and every row of this report names the limit it was
- *     measured at;</li>
- *     <li>{@code --entry-size=11 --fusion=off} - two {@code OrderedMap}s, which separates the
- *     saving fusion makes from the cost of the implementation change.</li>
+ *     <li>case 4, {@code count(x) + count(y)} over an INT key at {@code --entry-size=16}: two
+ *     {@code Unordered4Map}s at {@code 4 + 8 = 12} each unfused, one {@code OrderedMap} at
+ *     {@code 4 + 16 = 20} fused;</li>
+ *     <li>case 12, {@code sum(x) + sum(y)} at {@code --entry-size=32}: two {@code Unordered4Map}s
+ *     at {@code 4 + 16 = 20} each unfused, one {@code OrderedMap} at {@code 4 + 32 = 36} fused.
+ *     Same trade at the limit a server defaults to.</li>
  * </ul>
- * {@code --shape=count-count --entry-size=11,16} runs all three.
+ * A Map-implementation decline rule used to refuse exactly these two, so reaching them fused
+ * needed a second limit ({@code --entry-size=11}, where each member is over the limit too and the
+ * rule did not fire). The rule is gone - fusing made case 4 2.0x faster and case 12 2.8x faster
+ * over 1e6 INT keys - and the limit-11 arm remains useful for one thing only: run
+ * {@code --shape=count-count --entry-size=11} and both arms are {@code OrderedMap}s, which
+ * separates the saving fusion makes from the cost of the implementation change.
+ * <p>
+ * A VARCHAR key is the third implementation the trade can cross, {@code UnorderedVarcharMap} at
+ * {@code 16 + valueSize}: {@code --shape=sum-count --key-type=varchar --entry-size=32} is one
+ * {@code OrderedMap} fused against two {@code UnorderedVarcharMap}s unfused.
  *
  * <h2>Build and run</h2>
  * <pre>
@@ -127,7 +133,7 @@ public class WindowMapFusionBenchmark {
     public static void main(String[] args) throws Exception {
         long rows = 2_000_000L;
         String keysArg = "1000,1000000";
-        String keyTypesArg = "int,symbol,string";
+        String keyTypesArg = "int,symbol,string,varchar";
         String entrySizesArg = "16,32";
         String shapesArg = "all";
         String fusionArg = "both";
@@ -624,14 +630,17 @@ public class WindowMapFusionBenchmark {
 
     /**
      * The partition key's type. It decides the map implementation as much as the value width
-     * does - {@code MapFactory} weighs 4 bytes for an INT or a SYMBOL, and puts every STRING key
-     * on an {@code OrderedMap} whatever the value - so a claim about the fused implementation
-     * belongs to one of these and not to all three.
+     * does - {@code MapFactory} weighs 4 bytes for an INT or a SYMBOL and 16 for a VARCHAR, and
+     * puts every STRING key on an {@code OrderedMap} whatever the value - so a claim about the
+     * fused implementation belongs to one of these and not to all four. The two that can leave
+     * an unordered map as the value widens leave a different one: an INT or SYMBOL key drops
+     * {@code Unordered4Map}, a VARCHAR key drops {@code UnorderedVarcharMap}.
      */
     private enum KeyType {
         INT("int"),
         STRING("string"),
-        SYMBOL("symbol");
+        SYMBOL("symbol"),
+        VARCHAR("varchar");
 
         private final String name;
 
@@ -645,7 +654,7 @@ public class WindowMapFusionBenchmark {
                     return keyType;
                 }
             }
-            throw new IllegalArgumentException("--key-type must be one of int, symbol, string: " + name);
+            throw new IllegalArgumentException("--key-type must be one of int, symbol, string, varchar: " + name);
         }
 
         String keyExpression(String keyId) {
@@ -653,6 +662,7 @@ public class WindowMapFusionBenchmark {
                 case INT -> keyId + "::int";
                 case STRING -> "('k' || " + keyId + ")::string";
                 case SYMBOL -> "('k' || " + keyId + ")::symbol";
+                case VARCHAR -> "('k' || " + keyId + ")::varchar";
             };
         }
     }
@@ -722,8 +732,8 @@ public class WindowMapFusionBenchmark {
      */
     private enum Shape {
         /**
-         * Case 4: two counters over one narrow key, the shape
-         * {@link WindowMapState#declinesForMapImplementation} exists for.
+         * Case 4: two counters over one narrow key, which fuse across a Map-implementation change
+         * at {@code --entry-size=16} and without one at 32.
          */
         COUNT_COUNT("count-count"),
         /**
@@ -752,6 +762,13 @@ public class WindowMapFusionBenchmark {
          * Case 3: two components behind one key. The counters do not merge; the lookup does.
          */
         SUM_COUNT("sum-count"),
+        /**
+         * Case 12: the same trade as case 4 one limit up. Two {@code (sum, nonNullCount)} pairs
+         * are {@code 4 + 16 = 20} each on their own and {@code 4 + 32 = 36} fused, so over an INT
+         * key at {@code --entry-size=32} - a server's default - the group is one {@code OrderedMap}
+         * against two {@code Unordered4Map}s.
+         */
+        SUM_SUM("sum-sum"),
         /**
          * Case 7: one partition domain, two frames. The two windows are two traversals and so two
          * groups, which is what says co-location is per window rather than per key.
@@ -782,6 +799,7 @@ public class WindowMapFusionBenchmark {
                 case SINGLE_SUM -> "sum(x) over w";
                 case SUM_AVG_COUNT -> "sum(x) over w, avg(x) over w, count(x) over w";
                 case SUM_COUNT -> "sum(x) over w, count(y) over w";
+                case SUM_SUM -> "sum(x) over w, sum(y) over w";
                 case TWO_FRAMES -> "sum(x) over w, count(y) over w, sum(x) over w2, count(y) over w2";
             };
             final String windows = "window w as (partition by k order by ts "

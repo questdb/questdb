@@ -37,13 +37,12 @@ import org.junit.Test;
  * than against the other run. The default run is the switch's other half - the class this one
  * extends, unchanged.
  * <p>
- * What it covers today is narrower than that sounds, and it is worth stating rather than
- * discovering. The suite asks for one window function at a time almost everywhere, and a
- * window carrying one fusible function forms no group; the shapes that do compile a group here
- * are merged ones this build leaves unbound, or wide ones the Map-implementation rule declines.
- * So both runs execute the same path today and the comparison is a formality. It stops being
- * one the moment a step widens what binds - the merge in step 4, a family in step 7 - and this
- * is where that arrives already covered, on 600-odd cases nobody wrote for it.
+ * What it covers is narrower than that sounds, and it is worth stating rather than discovering.
+ * The suite asks for one window function at a time almost everywhere, and a window carrying one
+ * fusible function forms no group; the queries that do form one are the 25 this suite compiles,
+ * all of which bind now that neither the co-location-only rule nor the Map-implementation rule
+ * stands between a compiled plan and a runtime. So the two runs differ on 25 queries of
+ * 600-odd, and the rest of the class is a second run of one path.
  *
  * @see WindowMapFusionFuzzTest for the differential that fuses on purpose
  */

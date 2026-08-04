@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -37,8 +36,6 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -86,14 +83,25 @@ import org.jetbrains.annotations.TestOnly;
  * or a host's.
  *
  * <h2>What declines</h2>
- * Two things stop a compiled plan from getting a runtime:
- * {@code cairo.sql.window.map.fusion.enabled}, the operational escape hatch, and the
- * Map-implementation rule in {@link #declinesForMapImplementation} - a group that would trade
- * several narrow unordered maps for one {@link io.questdb.cairo.map.OrderedMap} buys a probe at
- * the price of a slower one.
+ * One thing stops a compiled plan from getting a runtime: {@code cairo.sql.window.map.fusion.enabled},
+ * the operational escape hatch. Every plan the compiler produces binds otherwise.
+ * <p>
+ * This build shipped a second rule and then removed it, which is worth stating so it is not
+ * written again. It declined a group whose fused value crossed
+ * {@code cairo.sql.unordered.map.max.entry.size} while every member's own value stayed under it -
+ * two counters over one INT key, {@code 4 + 8 = 12} each against {@code 4 + 16 = 20} fused - on
+ * the premise that trading several {@link io.questdb.cairo.map.Unordered4Map} probes for one
+ * {@link io.questdb.cairo.map.OrderedMap} probe is a bad trade. Measured over 2e6 rows, it is
+ * not: that shape runs at 65.2 ns/row fused against 132.2 unfused over 1e6 keys and 33.2 against
+ * 34.7 over 1e3, and {@code sum(x) + sum(y)} - the same trade at the limit a server defaults to -
+ * runs at 75.5 against 209.1 and 39.4 against 44.7. A single {@code sum(x)}, no group in the
+ * picture at all, says why: 55.5 ns/row on an {@code OrderedMap} against 77.5 on an
+ * {@code Unordered4Map} over 1e6 keys, and 22.1 against 19.3 over 1e3. The unordered maps are the
+ * faster ones only while the key domain is small, and a window map's cost is concentrated where
+ * it is not, so the rule turned down its largest win to buy nothing at the cardinality it was
+ * protecting. The same holds for a VARCHAR key and {@link io.questdb.cairo.map.UnorderedVarcharMap}.
  */
 public final class WindowMapState implements QuietCloseable, Reopenable {
-    private static final Log LOG = LogFactory.getLog(WindowMapState.class);
     private final int componentCount;
     private final RecordSink keySink;
     private final Map map;
@@ -135,7 +143,8 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     }
 
     /**
-     * Builds one runtime group per plan this slice binds, or null when it binds none.
+     * Builds one runtime group per compiled plan, or null when the query compiled none and when
+     * the kill switch is off.
      * <p>
      * Binding happens here rather than at cursor start because it is a compile-time fact: the
      * slots a projection reads are the plan's, the plan is the factory's, and a function bound
@@ -157,95 +166,22 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         // that owns a map, and a plan that no runtime reads costs a query nothing. So the group
         // this query forms stays visible either way, and the two settings differ in exactly one
         // thing - whether the functions keep their own maps.
-        if (plans == null || !configuration.isSqlWindowMapFusionEnabled()) {
+        if (plans == null || plans.size() == 0 || !configuration.isSqlWindowMapFusionEnabled()) {
             return null;
         }
-        ObjList<WindowMapState> states = null;
+        final ObjList<WindowMapState> states = new ObjList<>(plans.size());
         try {
             for (int i = 0, n = plans.size(); i < n; i++) {
-                final WindowAccumulatorPlan plan = plans.getQuick(i);
-                if (declinesForMapImplementation(configuration, plan)) {
-                    continue;
-                }
-                if (states == null) {
-                    states = new ObjList<>();
-                }
-                states.add(new WindowMapState(configuration, asm, plan, baseMetadata));
+                states.add(new WindowMapState(configuration, asm, plans.getQuick(i), baseMetadata));
             }
         } catch (Throwable th) {
             Misc.freeObjList(states);
             throw th;
         }
-        if (states != null) {
-            for (int i = 0, n = states.size(); i < n; i++) {
-                states.getQuick(i).bindProjectionFunctions();
-            }
+        for (int i = 0, n = states.size(); i < n; i++) {
+            states.getQuick(i).bindProjectionFunctions();
         }
         return states;
-    }
-
-    /**
-     * Whether co-locating {@code plan}'s components would cost the group the Map implementation
-     * every member would have had on its own, which is the one way this optimization can lose.
-     * <p>
-     * {@code MapFactory} picks the implementation from the key shape and the value width against
-     * {@code cairo.sql.unordered.map.max.entry.size}: a single supported key stays on an
-     * unordered map only while the entry fits. Co-location widens the value and nothing else, so
-     * it can push a group over that limit while every member was under it. Two counters over one
-     * INT key are the clearest case - {@code 4 + 8 = 12} each, {@code 4 + 16 = 20} fused - and
-     * trading two {@code Unordered4Map} probes for one {@code OrderedMap} probe is not a trade
-     * worth making blind.
-     * <p>
-     * So the rule declines only that: the fused entry falls back to {@code OrderedMap} while
-     * every member's own entry would not have. A group whose largest member is already ordered
-     * loses nothing by fusing - it removes maps without changing the implementation of the one
-     * left - and a multi-column key is already ordered on both sides. The arithmetic is
-     * deterministic and cheap at compile time, which is why it is a rule here rather than a note
-     * in a benchmark.
-     * <p>
-     * A member is each <b>output's</b> own standalone image rather than each component, which
-     * are two different things once a plan merges: the component {@code sum(x)} and
-     * {@code count(x)} share is nobody's private map value, while what each of them would have
-     * allocated on its own still is. Reading the components instead would understate a merged
-     * group's members - it would weigh a {@code count(x)} folded into a {@code sum(x)} as the
-     * sum's whole {@code [DOUBLE, LONG]} - and so decline groups that lose nothing.
-     */
-    public static boolean declinesForMapImplementation(
-            @NotNull CairoConfiguration configuration,
-            @NotNull WindowAccumulatorPlan plan
-    ) {
-        final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
-        final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-        appendKeyTypes(plan.getSpec(), keyTypes);
-        final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-        // The whole fused value, which for an ordinary query is the components and nothing else -
-        // the plan's slot prefix is zero, and the constructor builds the group's map from this
-        // same call, so what is measured here is what would be allocated.
-        plan.buildMapValueTypes(valueTypes);
-        final int fusedValueSize = ColumnTypes.sizeInBytes(valueTypes);
-        if (MapFactory.selectUnorderedMapImplementation(keyTypes, fusedValueSize, maxEntrySize) != MapFactory.MAP_IMPL_ORDERED) {
-            return false;
-        }
-        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
-            valueTypes.clear();
-            final WindowAccumulatorDescriptor member = plan.getProjection(i).getFunctionComponent();
-            for (int slot = 0, slots = member.getSlotCount(); slot < slots; slot++) {
-                valueTypes.add(member.getSlotColumnType(slot));
-            }
-            final int memberValueSize = ColumnTypes.sizeInBytes(valueTypes);
-            if (MapFactory.selectUnorderedMapImplementation(keyTypes, memberValueSize, maxEntrySize) == MapFactory.MAP_IMPL_ORDERED) {
-                return false;
-            }
-        }
-        LOG.debug()
-                .$("declined window map co-location, the fused entry leaves the unordered map [components=")
-                .$(plan.getComponentCount())
-                .$(", projections=").$(plan.getProjectionCount())
-                .$(", keyColumns=").$(keyTypes.getColumnCount())
-                .$(", fusedValueSize=").$(fusedValueSize)
-                .$(", maxEntrySize=").$(maxEntrySize)
-                .I$();
-        return true;
     }
 
     /**

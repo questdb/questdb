@@ -157,12 +157,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable();
             insertKeyShapes();
-            // Five slots behind a 4-byte key is 44, which the Map-implementation rule declines
-            // at both settings that ship - every member of this group would have stayed on an
-            // unordered map. 64 is what fuses it, and the point here is the arithmetic rather
-            // than the map, so the rule is stepped around by giving it room instead of by
-            // being disabled.
-            setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 64);
             final String sql = "select ts, stddev_samp(x) over w, sum(x) over w, avg(x) over w, "
                     + "count(x) over w from t " + WINDOW;
             try (SqlCompiler compiler = engine.getSqlCompiler();
@@ -232,28 +226,18 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAGroupWhoseMemberIsAlreadyOrderedStillBinds() throws Exception {
-        // The other half of the Map-implementation rule. sum(x)'s own [DOUBLE, LONG] value is
-        // 4 + 16 = 20 against a 16-byte limit, so its private map is an OrderedMap before any
+    public void testAGroupWhoseMemberIsAlreadyOrderedKeepsThatMap() throws Exception {
+        // sum(x)'s own [DOUBLE, LONG] value is 4 + 16 = 20 against the 16-byte limit
+        // DefaultCairoConfiguration returns, so its private map is an OrderedMap before any
         // fusion; co-locating count(y)'s counter beside it removes a map without changing the
-        // implementation of the one left. Nothing is traded away, so nothing declines.
+        // implementation of the one left. The group's map is the one MapFactory selects for the
+        // widened value, which is what this pins - the second point of that function beside the
+        // transition the case below walks.
         assertMemoryLeak(() -> {
             createTable();
             insertOrdinaryRows();
             setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 16);
-            try (SqlCompiler compiler = engine.getSqlCompiler();
-                 RecordCursorFactory factory = select(compiler, sumAndCount(), sqlExecutionContext)) {
-                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
-                assertBoundGroupCount(windowFactory, 1);
-                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
-                Assert.assertFalse(WindowMapState.declinesForMapImplementation(configuration, state.getPlan()));
-                Assert.assertEquals(16, state.getUnorderedMapMaxEntrySize());
-                Assert.assertEquals("OrderedMap", state.getMapImplementation());
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Assert.assertEquals(ORDINARY_ROW_COUNT, drain(cursor));
-                    Assert.assertEquals(ORDINARY_ROW_COUNT, state.getLookupCount());
-                }
-            }
+            assertBoundMapImplementation(sumAndCount(), "OrderedMap", 16);
         });
     }
 
@@ -584,50 +568,29 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTwoCountersDeclineWhenFusionWouldCrossTheEntryLimit() throws Exception {
-        // The shape the Map-implementation rule exists for, asserted at both settings that ship:
-        // count(x) and count(y) over one SYMBOL key are 4 + 8 = 12 each, so each takes an
-        // Unordered4Map, while the fused value is two counters at 4 + 16 = 20. At the 16-byte
-        // limit DefaultCairoConfiguration returns that entry is an OrderedMap and the group
-        // declines; at the 32 a server defaults to it is the same Unordered4Map its members had
-        // and the group binds. The answers do not move with it.
+    public void testTwoCountersBindOnBothSidesOfTheEntryLimit() throws Exception {
+        // The shape a Map-implementation decline rule used to refuse, walked at both settings
+        // that ship. count(x) and count(y) over one SYMBOL key are 4 + 8 = 12 each, so on their
+        // own each takes an Unordered4Map, while the fused value is two counters at 4 + 16 = 20:
+        // at the 16-byte limit DefaultCairoConfiguration returns, the group trades two narrow
+        // maps for one OrderedMap, and at the 32 a server defaults to it keeps the Unordered4Map
+        // its members had. It binds at both. The trade the smaller limit makes is the one the
+        // rule was written against and it measured a win - 65.2 ns/row fused against 132.2
+        // unfused over 1e6 keys, and 33.2 against 34.7 over 1e3 - because Unordered4Map is the
+        // faster map only while the key domain is small.
         assertMemoryLeak(() -> {
             createTable();
             insertOrdinaryRows();
             final String sql = "select ts, count(x) over w, count(y) over w from t " + WINDOW;
             setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 16);
-            final String declined = render(sql);
-            try (SqlCompiler compiler = engine.getSqlCompiler();
-                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
-                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
-                // Compiled, and compiled with a component per output - the two counters count
-                // different rows and never merge - so what declined it is the
-                // Map-implementation rule, which is asked directly beside the absence.
-                final ObjList<WindowAccumulatorPlan> plans = windowFactory.getWindowAccumulatorPlans();
-                Assert.assertNotNull(plans);
-                Assert.assertEquals(1, plans.size());
-                Assert.assertEquals(2, plans.getQuick(0).getComponentCount());
-                Assert.assertEquals(2, plans.getQuick(0).getProjectionCount());
-                Assert.assertTrue(WindowMapState.declinesForMapImplementation(configuration, plans.getQuick(0)));
-                Assert.assertNull(windowFactory.getWindowMapStates());
-            }
+            final String ordered = assertBoundMapImplementation(sql, "OrderedMap", 16);
             setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
-            try (SqlCompiler compiler = engine.getSqlCompiler();
-                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
-                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
-                assertBoundGroupCount(windowFactory, 1);
-                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
-                Assert.assertFalse(WindowMapState.declinesForMapImplementation(configuration, state.getPlan()));
-                Assert.assertEquals(32, state.getUnorderedMapMaxEntrySize());
-                // The rule's prediction against what MapFactory actually built: the two answer
-                // the same question through the same code, and this is where that shows.
-                Assert.assertEquals("Unordered4Map", state.getMapImplementation());
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Assert.assertEquals(ORDINARY_ROW_COUNT, drain(cursor));
-                    Assert.assertEquals(ORDINARY_ROW_COUNT, state.getLookupCount());
-                }
-            }
-            Assert.assertEquals(declined, render(sql));
+            final String unordered = assertBoundMapImplementation(sql, "Unordered4Map", 32);
+            // The map the value width selects is a physical choice and nothing else, which is
+            // what says the limit may be moved for performance without moving an answer.
+            Assert.assertEquals(ordered, unordered);
+            // And both are the answer the two counters produce on maps of their own.
+            assertFusedMatchesUnfused("count(x) over w", "count(y) over w");
         });
     }
 
@@ -659,6 +622,37 @@ public class WindowMapStateTest extends AbstractCairoTest {
         final ObjList<WindowMapState> states = factory.getWindowMapStates();
         Assert.assertNotNull("no window Map group was bound", states);
         Assert.assertEquals(expected, states.size());
+    }
+
+    /**
+     * Compiles {@code sql} over the ordinary rows, requires one bound group holding the named
+     * {@link io.questdb.cairo.map.Map} implementation under the given configured entry-size
+     * limit, and returns the rows it produced.
+     * <p>
+     * The two numbers are asserted together because {@code MapFactory} selects on the key and
+     * the widened value against that limit, so neither explains the choice on its own - and a
+     * limit that stopped being read would otherwise leave the implementation assertion passing
+     * for the wrong reason.
+     */
+    private static String assertBoundMapImplementation(
+            String sql,
+            String mapImplementation,
+            int maxEntrySize
+    ) throws SqlException {
+        final StringSink localSink = new StringSink();
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+            final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+            assertBoundGroupCount(windowFactory, 1);
+            final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+            Assert.assertEquals(maxEntrySize, state.getUnorderedMapMaxEntrySize());
+            Assert.assertEquals(mapImplementation, state.getMapImplementation());
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                CursorPrinter.println(cursor, factory.getMetadata(), localSink, true, false);
+                Assert.assertEquals(ORDINARY_ROW_COUNT, state.getLookupCount());
+            }
+        }
+        return localSink.toString();
     }
 
     /**

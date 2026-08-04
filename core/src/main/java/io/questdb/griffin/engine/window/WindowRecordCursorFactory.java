@@ -81,11 +81,11 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ObjList<WindowAccumulatorPlan> windowAccumulatorPlans;
     private final ObjList<WindowFunction> windowFunctions;
     private final int windowFunctionsCount;
-    // The runtime owners of the groups above that this build binds: one map and one lookup
-    // per group, with every member's private map left closed. A subset of
-    // windowAccumulatorPlans rather than all of it, since the kill switch and the
-    // Map-implementation decline rule both answer per plan. Owned by this factory, which
-    // frees them; the functions they bind are owned as they always were.
+    // The runtime owners of the groups above: one map and one lookup per group, with every
+    // member's private map left closed. One per compiled plan, or null when
+    // cairo.sql.window.map.fusion.enabled is off - the kill switch is what stands between the
+    // two lists. Owned by this factory, which frees them; the functions they bind are owned as
+    // they always were.
     private final ObjList<WindowMapState> windowMapStates;
     private final int windowMapStatesCount;
     private RecordCursorFactory base;
