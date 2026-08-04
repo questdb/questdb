@@ -104,6 +104,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicLong stableWatchIdSeq = new AtomicLong();
     private final ConcurrentHashMap<Long, StableWatch> stableWatchers = new ConcurrentHashMap<>();
+    private final ObjHashSet<String> startedComponentNames = new ObjHashSet<>();
     private final ConcurrentHashMap<String, AtomicReference<State>> states = new ConcurrentHashMap<>();
     @Nullable
     private final Object tokioRuntime;
@@ -227,6 +228,9 @@ public class LifecycleOrchestrator implements QuietCloseable {
                 }
                 State current = stateOf(c.name());
                 if (current == State.FAILED) {
+                    if (!startedComponentNames.contains(c.name())) {
+                        continue;
+                    }
                     try {
                         if (isBounded) {
                             c.stop(deadlineNanos);
@@ -1020,6 +1024,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
                 continue;
             }
             publishInternal(c.name(), State.STARTING, null);
+            startedComponentNames.add(c.name());
             try {
                 c.start(contextFor(c.name()));
                 State after = stateOf(c.name());

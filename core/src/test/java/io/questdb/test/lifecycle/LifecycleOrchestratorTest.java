@@ -739,6 +739,11 @@ public class LifecycleOrchestratorTest {
                 Assert.assertEquals(State.FAILED, orch.stateOf("c"));
                 // Soft dependent NOT auto-cascaded -- observed events instead.
                 Assert.assertNotEquals(State.FAILED, orch.stateOf("d"));
+                Assert.assertTrue(a.isStopped());
+                Assert.assertEquals(-1, b.getStartSeq());
+                Assert.assertEquals(-1, b.getStopSeq());
+                Assert.assertEquals(-1, c.getStartSeq());
+                Assert.assertEquals(-1, c.getStopSeq());
             }
         } finally {
             orch.close();
