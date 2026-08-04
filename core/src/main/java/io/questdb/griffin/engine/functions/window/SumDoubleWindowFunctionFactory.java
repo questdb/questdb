@@ -333,8 +333,18 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return NAME;
         }
 
+        /**
+         * Writes the partition's sum back over itself, which is what this family's
+         * finalization amounts to. It stays an override rather than being dropped because
+         * inheriting {@code avg}'s would replace the sum with the average; and it stays
+         * skipped when bound for the same reason every bound function's does - the group
+         * keeps the raw pair and there is no map of this function's own to walk.
+         */
         @Override
         public void preparePass2() {
+            if (isWindowStateOwned()) {
+                return;
+            }
             RecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
@@ -345,6 +355,18 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     value.putDouble(0, sum);
                 }
             }
+        }
+
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            windowStateResult = value.getLong(windowStateNonNullCountSlot) != 0
+                    ? value.getDouble(windowStateSumSlot)
+                    : Double.NaN;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_SUM;
         }
     }
 

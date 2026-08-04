@@ -49,6 +49,19 @@ import org.jetbrains.annotations.TestOnly;
  * immediately before the sort group's {@code pass1} loop leaves every member writing the
  * value the group's projection loop has just materialized.
  *
+ * <h2>Two-pass groups</h2>
+ * A group whose functions read the whole partition - {@code sum(x) + avg(x) + count(x)} over
+ * {@code (partition by k)} - is driven from two traversals rather than one, and appears in two
+ * of the lists below: the pass-1 list of its bucket, where {@code computeNext} absorbs the row
+ * and projects nothing, and the pass-2 list, where {@link WindowMapState#projectPass2} writes
+ * every output from the accumulator pass 1 left final. A bound member's {@code pass1} and
+ * {@code preparePass2} are then no-ops and its {@code pass2} is the write, which is how the
+ * destructive finalization those functions perform on their own maps - {@code avg} replacing
+ * the sum slot a {@code sum} projection still needs - stops being needed at all.
+ * <p>
+ * A group is never mixed: {@link WindowMapSpec} carries the pass count, so a whole-partition
+ * function and a cumulative one over the same key and frame are already two groups.
+ *
  * <h2>Why a group belongs to exactly one traversal</h2>
  * A cached factory splits its functions three ways - one bucket per distinct ORDER BY index
  * list, plus the natural-order functions, themselves split by pass-1 scan direction - and each
@@ -80,21 +93,27 @@ public final class CachedWindowMapGroups implements QuietCloseable {
     private final ObjList<WindowMapState> allStates;
     private final ObjList<WindowMapState> backwardUnorderedStates;
     private final ObjList<WindowMapState> forwardUnorderedStates;
+    private final ObjList<ObjList<WindowMapState>> orderedPass2States;
     private final ObjList<ObjList<WindowMapState>> orderedStates;
     private final ObjList<WindowAccumulatorPlan> plans;
+    private final ObjList<WindowMapState> unorderedPass2States;
 
     private CachedWindowMapGroups(
             @NotNull ObjList<WindowAccumulatorPlan> plans,
             @NotNull ObjList<WindowMapState> allStates,
             @Nullable ObjList<ObjList<WindowMapState>> orderedStates,
             @Nullable ObjList<WindowMapState> forwardUnorderedStates,
-            @Nullable ObjList<WindowMapState> backwardUnorderedStates
+            @Nullable ObjList<WindowMapState> backwardUnorderedStates,
+            @Nullable ObjList<ObjList<WindowMapState>> orderedPass2States,
+            @Nullable ObjList<WindowMapState> unorderedPass2States
     ) {
         this.plans = plans;
         this.allStates = allStates;
         this.orderedStates = orderedStates;
         this.forwardUnorderedStates = forwardUnorderedStates;
         this.backwardUnorderedStates = backwardUnorderedStates;
+        this.orderedPass2States = orderedPass2States;
+        this.unorderedPass2States = unorderedPass2States;
     }
 
     /**
@@ -131,8 +150,10 @@ public final class CachedWindowMapGroups implements QuietCloseable {
         final ObjList<WindowMapState> allStates = new ObjList<>();
         ObjList<WindowAccumulatorPlan> plans = null;
         ObjList<ObjList<WindowMapState>> orderedStates = null;
+        ObjList<ObjList<WindowMapState>> orderedPass2States = null;
         ObjList<WindowMapState> forwardUnorderedStates = null;
         ObjList<WindowMapState> backwardUnorderedStates = null;
+        ObjList<WindowMapState> unorderedPass2States = null;
         try {
             for (int i = 0, n = orderedFunctions.size(); i < n; i++) {
                 final ObjList<WindowFunction> bucket = orderedFunctions.getQuick(i);
@@ -152,6 +173,25 @@ public final class CachedWindowMapGroups implements QuietCloseable {
                     orderedStates = new ObjList<>(n);
                 }
                 orderedStates.extendAndSet(i, states);
+                // A bucket is one sort, not one frame: a whole-partition group and a
+                // cumulative one over the same ORDER BY share the traversal that fills
+                // their maps and part company at the end of it.
+                ObjList<WindowMapState> bucketPass2States = null;
+                for (int j = 0, m = states.size(); j < m; j++) {
+                    final WindowMapState state = states.getQuick(j);
+                    if (state.isTwoPass()) {
+                        if (bucketPass2States == null) {
+                            bucketPass2States = new ObjList<>();
+                        }
+                        bucketPass2States.add(state);
+                    }
+                }
+                if (bucketPass2States != null) {
+                    if (orderedPass2States == null) {
+                        orderedPass2States = new ObjList<>(n);
+                    }
+                    orderedPass2States.extendAndSet(i, bucketPass2States);
+                }
             }
             if (unorderedFunctions != null) {
                 final ObjList<WindowAccumulatorPlan> bucketPlans =
@@ -178,6 +218,15 @@ public final class CachedWindowMapGroups implements QuietCloseable {
                                 }
                                 backwardUnorderedStates.add(state);
                             }
+                            if (state.isTwoPass()) {
+                                // One list whichever way pass 1 ran: the natural-order pass-2
+                                // traversal is a single forward walk of the whole chain, which
+                                // is what the functions' own pass2 loop already is.
+                                if (unorderedPass2States == null) {
+                                    unorderedPass2States = new ObjList<>();
+                                }
+                                unorderedPass2States.add(state);
+                            }
                         }
                     }
                 }
@@ -196,7 +245,9 @@ public final class CachedWindowMapGroups implements QuietCloseable {
                 allStates,
                 orderedStates,
                 forwardUnorderedStates,
-                backwardUnorderedStates
+                backwardUnorderedStates,
+                orderedPass2States,
+                unorderedPass2States
         );
     }
 
@@ -219,6 +270,16 @@ public final class CachedWindowMapGroups implements QuietCloseable {
      */
     public @Nullable ObjList<WindowMapState> getForwardUnorderedStates() {
         return forwardUnorderedStates;
+    }
+
+    /**
+     * The two-pass groups of sort group {@code index}, or null when it holds none. They are a
+     * subset of {@link #getOrderedStates(int)} - pass 1 fills every group of the bucket
+     * alike - and what this list adds is that these ones still have their outputs to write
+     * when the factory's own pass-2 traversal of the same sort group runs.
+     */
+    public @Nullable ObjList<WindowMapState> getOrderedPass2States(int index) {
+        return orderedPass2States != null ? orderedPass2States.getQuiet(index) : null;
     }
 
     /**
@@ -247,6 +308,15 @@ public final class CachedWindowMapGroups implements QuietCloseable {
     @TestOnly
     public ObjList<WindowMapState> getStates() {
         return allStates;
+    }
+
+    /**
+     * The two-pass groups of the natural-order bucket, or null when it holds none. One list
+     * whichever way their pass 1 ran, because the pass-2 traversal is a single forward walk of
+     * every row.
+     */
+    public @Nullable ObjList<WindowMapState> getUnorderedPass2States() {
+        return unorderedPass2States;
     }
 
     /**

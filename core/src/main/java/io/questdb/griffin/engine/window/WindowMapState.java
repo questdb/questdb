@@ -61,6 +61,15 @@ import org.jetbrains.annotations.TestOnly;
  * factories run it inside the traversal of the sort bucket its members belong to, ahead of
  * their {@code pass1} - see {@link CachedWindowMapGroups}. The group is the same object in
  * both, and what differs is only which record the row arrives on.
+ * <p>
+ * A cached factory adds one thing the streaming one has no use for. A group whose functions
+ * read the whole partition rather than the rows the traversal has already passed is driven
+ * twice: {@link #computeNext(Record)} absorbs the row in pass 1 and projects nothing, and
+ * {@link #projectPass2(Record)} materializes every output in pass 2 from the accumulator
+ * pass 1 left final. That split is what replaces the destructive finalization those
+ * functions perform on their own maps - {@code avg}'s {@code preparePass2} overwrites the
+ * sum slot a {@code sum} projection still needs - with arithmetic each projection does for
+ * itself, off state the group never rewrites.
  *
  * <h2>Ownership</h2>
  * The group owns its map and its key projection and nothing else. The functions it binds keep
@@ -115,6 +124,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     private final Map map;
     private final WindowAccumulatorPlan plan;
     private final int projectionCount;
+    private final boolean twoPass;
     private final int unorderedMapMaxEntrySize;
     private long lookupCount;
     private long projectionWriteCount;
@@ -135,6 +145,9 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         // fused entry off its own anchor map - and never reaches this constructor.
         final WindowMapSpec spec = plan.getSpec();
         assert spec != null;
+        // Every member of a group agrees with its spec on how many passes the traversal takes,
+        // so this is the group's pass structure and not one function's.
+        this.twoPass = spec.getPassCount() > WindowFunction.ONE_PASS;
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         appendKeyTypes(spec, keyTypes);
         final ListColumnFilter keyColumnFilter = new ListColumnFilter();
@@ -216,8 +229,9 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     }
 
     /**
-     * Absorbs one row into every component of the group and materializes every output from the
-     * result. The one lookup this makes is the whole point of the group.
+     * Absorbs one row into every component of the group and, for a group whose outputs are
+     * final by the end of the traversal, materializes every one of them from the result. The
+     * one lookup this makes is the whole point of the group.
      * <p>
      * Three things about the sequence are load-bearing:
      * <ul>
@@ -231,6 +245,14 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      *     <li><b>the value handle is used and dropped.</b> Nothing here rebuilds or rehashes
      *     the map behind the loops, so the handle stays valid for the whole row.</li>
      * </ul>
+     * <p>
+     * A <b>two-pass group</b> - one whose functions read the whole partition rather than the
+     * rows the traversal has already passed - projects nothing here. Its accumulator is not
+     * final until the last row of pass 1 has been absorbed, so every output it could
+     * materialize now would be overwritten by {@link #projectPass2(Record)}, and the group is
+     * a projection loop a row better off not running one. Which of the two this is follows
+     * from the spec every member shares, so it is the group's shape rather than a caller's
+     * choice.
      */
     public void computeNext(Record record) {
         final MapKey key = map.withKey();
@@ -244,12 +266,14 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         for (int c = 0; c < componentCount; c++) {
             plan.getContributor(c).accumulateWindowState(record, value);
         }
-        for (int p = 0; p < projectionCount; p++) {
-            plan.getProjectionFunction(p).projectWindowState(record, value);
+        if (!twoPass) {
+            for (int p = 0; p < projectionCount; p++) {
+                plan.getProjectionFunction(p).projectWindowState(record, value);
+            }
+            projectionWriteCount += projectionCount;
         }
         lookupCount++;
         updateCount += componentCount;
-        projectionWriteCount += projectionCount;
     }
 
     /**
@@ -264,8 +288,9 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
 
     /**
      * The number of rows this group looked its key up for - one per row, however many outputs
-     * read the value back. Structural rather than timed: a lookup reduction that is only
-     * visible in elapsed time is not a measurement.
+     * read the value back, and two per row for a two-pass group, which probes once in each
+     * traversal. Structural rather than timed: a lookup reduction that is only visible in
+     * elapsed time is not a measurement.
      */
     @TestOnly
     public long getLookupCount() {
@@ -310,6 +335,41 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     @TestOnly
     public boolean isMapOpen() {
         return map.isOpen();
+    }
+
+    /**
+     * Whether this group's outputs are written by a second traversal - which is what makes it
+     * the owner's business, since a two-pass group has to be driven from the pass-2 loop as
+     * well as the pass-1 one. See {@link CachedWindowMapGroups}, the only owner that has both.
+     */
+    public boolean isTwoPass() {
+        return twoPass;
+    }
+
+    /**
+     * Materializes every output of a two-pass group from the accumulator pass 1 left final,
+     * for the row {@code record} is positioned on.
+     * <p>
+     * The lookup is a {@link MapKey#findValue()} rather than a {@code createValue()}: pass 1
+     * created an entry for every row the two passes walk - it creates one unconditionally,
+     * where a function's own {@code pass1} may not - so there is nothing here to insert, and
+     * inserting would grow a key domain that is supposed to be closed by now.
+     * <p>
+     * There is deliberately no accumulation. A projection reads slots and writes no state, so
+     * running this over a row a second time is idempotent, which is what a cached cursor's
+     * random access and its second drain need.
+     */
+    public void projectPass2(Record record) {
+        final MapKey key = map.withKey();
+        key.put(record, keySink);
+        final MapValue value = key.findValue();
+        // Pass 1 walked the same rows and created an entry for each, so the key is there.
+        assert value != null;
+        for (int p = 0; p < projectionCount; p++) {
+            plan.getProjectionFunction(p).projectWindowState(record, value);
+        }
+        lookupCount++;
+        projectionWriteCount += projectionCount;
     }
 
     /**

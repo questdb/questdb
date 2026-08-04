@@ -589,14 +589,25 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     }
                     final WindowSortBuffer group = sortBuffers.getQuick(i);
                     final int functionCount = functions.size();
+                    // This sort group's two-pass Map subgroups, whose accumulators pass 1 left
+                    // final. Driven per row before the pass2 loop, for the same reason the
+                    // pass-1 loops drive theirs first: a bound function's pass2 is the write of
+                    // what the group's projection loop has just materialized.
+                    final ObjList<WindowMapState> states =
+                            windowMapGroups != null ? windowMapGroups.getOrderedPass2States(i) : null;
+                    final int stateCount = states != null ? states.size() : 0;
                     group.toTop();
                     while (group.hasNext()) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
                         long rIdx = group.next();
                         // pass2 reads only base columns through recordA and reads/writes its own
                         // output via spi.getAddress (position-independent), so narrow positioning
-                        // would be wasted work over millions of rows.
+                        // would be wasted work over millions of rows. A group's key projection
+                        // reads base columns too, so the same positioning serves it.
                         positionRecordABaseOnly(rIdx);
+                        for (int g = 0; g < stateCount; g++) {
+                            states.getQuick(g).projectPass2(recordA);
+                        }
                         for (int j = 0; j < functionCount; j++) {
                             functions.getQuick(j).pass2(recordA, rIdx, lightSpi);
                         }
@@ -606,10 +617,16 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
             if (unordered2PassFunctions != null) {
                 final int funcCount = unordered2PassFunctions.size();
+                final ObjList<WindowMapState> pass2States =
+                        windowMapGroups != null ? windowMapGroups.getUnorderedPass2States() : null;
+                final int pass2StateCount = pass2States != null ? pass2States.size() : 0;
                 for (long rIdx = 0; rIdx < size; rIdx++) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     // see the ordered pass2 loop: base-only positioning suffices here too.
                     positionRecordABaseOnly(rIdx);
+                    for (int g = 0; g < pass2StateCount; g++) {
+                        pass2States.getQuick(g).projectPass2(recordA);
+                    }
                     for (int j = 0; j < funcCount; j++) {
                         unordered2PassFunctions.getQuick(j).pass2(recordA, rIdx, lightSpi);
                     }

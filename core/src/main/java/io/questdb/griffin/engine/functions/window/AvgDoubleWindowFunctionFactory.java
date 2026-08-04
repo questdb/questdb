@@ -358,14 +358,33 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // handles avg() over (partition by x)
     // order by is absent so default frame mode includes all rows in partition
     static class AvgOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+        // What this output projects out of the group's shared component, materialized by
+        // projectWindowState in the pass-2 traversal and written to the row by pass2 a moment
+        // later. Untouched while the function owns its own map, where the answer never leaves
+        // the Map value.
+        protected double windowStateResult;
 
         public AvgOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
         }
 
         @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final double d = arg.getDouble(record);
+            if (Numbers.isFinite(d)) {
+                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + d);
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+            }
+        }
+
+        @Override
         public String getName() {
             return NAME;
+        }
+
+        @Override
+        public Map getPartitionMap() {
+            return map;
         }
 
         @Override
@@ -376,6 +395,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator before the bucket's
+                // pass-1 loop reached this function, and nothing reads an output until pass 2.
+                return;
+            }
             double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
                 partitionByRecord.of(record);
@@ -400,6 +424,12 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            if (isWindowStateOwned()) {
+                // The group's projection loop ran over this row's entry immediately before
+                // this call, so the write is all that is left to do.
+                Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), windowStateResult);
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -410,8 +440,19 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), val);
         }
 
+        /**
+         * Replaces the partition's running sum with its average, which is the destructive
+         * finalization a shared component cannot carry: a {@code sum} over the same argument
+         * still needs the sum this would overwrite. A bound function has nothing to finalize -
+         * the group keeps the raw {@code (sum, nonNullCount)} pair and every output computes
+         * its own result from it at projection time - so the whole of it is skipped, and an
+         * unbound one keeps it byte for byte.
+         */
         @Override
         public void preparePass2() {
+            if (isWindowStateOwned()) {
+                return;
+            }
             RecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
@@ -422,6 +463,12 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     value.putDouble(0, sum / count);
                 }
             }
+        }
+
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            final long count = value.getLong(windowStateNonNullCountSlot);
+            windowStateResult = count != 0 ? value.getDouble(windowStateSumSlot) / count : Double.NaN;
         }
 
         @Override
@@ -438,6 +485,28 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 value.putDouble(0, 0.0);
                 value.putLong(1, 0L);
             }
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The same {@code (sum, nonNullCount)} pair the cumulative
+         * {@link AvgOverUnboundedPartitionRowsFrameFunction} keeps, absorbed over the whole
+         * partition rather than up to the current row. The frame is the window's own business
+         * and the traversal's; what the component describes is the arithmetic, and the two
+         * frames run identical arithmetic over different row sets.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_AVG;
         }
     }
 

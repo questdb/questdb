@@ -58,6 +58,12 @@ import org.junit.Test;
  * {@code projectWindowState} last materialized, so the group has to run before the bucket's
  * {@code pass1} loop and not after it.
  * <p>
+ * The third is the whole-partition families, whose outputs are not final until the traversal
+ * has ended. Their group is driven from two loops - {@code computeNext} in pass 1, which
+ * projects nothing, and {@code projectPass2} in pass 2 - and their bound functions'
+ * {@code preparePass2} does nothing at all, which is how {@code avg} stops overwriting the sum
+ * slot a {@code sum} beside it still needs.
+ * <p>
  * Every case runs on both cached factories. They have intentionally parallel pass loops, and
  * the physical plan a query lands on must not decide whether its state fuses.
  */
@@ -78,11 +84,24 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     // one of those in the SELECT list is what the streaming fast path declines on.
     private static final String NATURAL_WINDOW =
             " from t window w as (partition by k order by ts rows between unbounded preceding and current row)";
+    // A whole-partition window that needs a sort of its own, so its two-pass group runs inside
+    // a sort group's traversal rather than in the natural-order loops. The same ORDER BY as
+    // ORDERED_WINDOW, which is what puts the two in one sort bucket.
+    private static final String ORDERED_PARTITION_WINDOW = " from t window p as "
+            + "(partition by k order by ts desc rows between unbounded preceding and unbounded following)";
+    // The whole-partition spelling written inline, so a query needs no window clause at all.
+    // Every call over it is two-pass, which is by itself what declines the streaming fast path.
+    private static final String PARTITION_WINDOW = " from t";
     // Two windows that agree on their ORDER BY and differ in their partition key: one sort
     // group, two Map subgroups.
     private static final String TWO_WINDOWS = " from t "
             + "window w as (partition by k order by ts desc rows between unbounded preceding and current row), "
             + "w2 as (partition by k2 order by ts desc rows between unbounded preceding and current row)";
+    // One sort shared by a cumulative window and a whole-partition one: one sort group, two Map
+    // subgroups, and only the second of them driven by the pass-2 traversal.
+    private static final String TWO_FRAMES = " from t "
+            + "window w as (partition by k order by ts desc rows between unbounded preceding and current row), "
+            + "p as (partition by k order by ts desc rows between unbounded preceding and unbounded following)";
 
     @Test
     public void testAFailedOpenLeavesNoGroupHoldingBacking() throws Exception {
@@ -118,6 +137,103 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertEquals(ROW_COUNT, drain(cursor));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testASortSharedByACumulativeAndAWholePartitionGroup() throws Exception {
+        // One ORDER BY, two frames, two Map subgroups - and only one of them has anything left
+        // to do when the pass-2 traversal of that sort group runs. The cumulative group's
+        // outputs were final row by row and it is absent from the pass-2 list; the
+        // whole-partition one is in both lists and probes twice a row.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertRows();
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                final String sql = "select ts, sum(x) over w, count(y) over w, sum(x) over p, avg(x) over p"
+                        + TWO_FRAMES;
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                    assertFactoryKind(factory, light == 1);
+                    final CachedWindowMapGroups groups = groups(factory);
+                    assertBoundGroupCount(groups, 2);
+                    Assert.assertNotNull(groups.getOrderedStates(0));
+                    Assert.assertEquals(2, groups.getOrderedStates(0).size());
+                    Assert.assertNotNull(groups.getOrderedPass2States(0));
+                    Assert.assertEquals(1, groups.getOrderedPass2States(0).size());
+                    Assert.assertNull(groups.getUnorderedPass2States());
+                    final WindowMapState pass2State = groups.getOrderedPass2States(0).getQuick(0);
+                    Assert.assertTrue(pass2State.isTwoPass());
+                    final WindowMapState cumulative = otherState(groups, pass2State);
+                    Assert.assertFalse(cumulative.isTwoPass());
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final long rows = drain(cursor);
+                        Assert.assertEquals(ROW_COUNT, rows);
+                        Assert.assertEquals(rows, cumulative.getLookupCount());
+                        Assert.assertEquals(2 * rows, pass2State.getLookupCount());
+                    }
+                }
+                assertFusedMatchesUnfused(
+                        TWO_FRAMES,
+                        "",
+                        "sum(x) over w", "count(y) over w", "sum(x) over p", "avg(x) over p"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAWholePartitionGroupIsDrivenFromBothTraversals() throws Exception {
+        // A two-pass group is listed twice, and by the traversal rather than by the function:
+        // once in its bucket's pass-1 list, where computeNext fills it, and once in the pass-2
+        // list, where projectPass2 empties it into the rows. Both spellings of the bucket - a
+        // whole-partition window needing no sort, and one carrying an ORDER BY of its own.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertRows();
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                final String natural = "select ts, sum(x) over (partition by k), count(y) over (partition by k)"
+                        + PARTITION_WINDOW;
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, natural, sqlExecutionContext)) {
+                    assertFactoryKind(factory, light == 1);
+                    final CachedWindowMapGroups groups = groups(factory);
+                    assertBoundGroupCount(groups, 1);
+                    final WindowMapState state = groups.getStates().getQuick(0);
+                    Assert.assertTrue(state.isTwoPass());
+                    Assert.assertNull(groups.getOrderedStates(0));
+                    Assert.assertNull(groups.getOrderedPass2States(0));
+                    Assert.assertNotNull(groups.getForwardUnorderedStates());
+                    Assert.assertEquals(1, groups.getForwardUnorderedStates().size());
+                    Assert.assertSame(state, groups.getForwardUnorderedStates().getQuick(0));
+                    Assert.assertNotNull(groups.getUnorderedPass2States());
+                    Assert.assertEquals(1, groups.getUnorderedPass2States().size());
+                    Assert.assertSame(state, groups.getUnorderedPass2States().getQuick(0));
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertEquals(ROW_COUNT, drain(cursor));
+                        Assert.assertEquals(2 * ROW_COUNT, state.getLookupCount());
+                    }
+                }
+                final String ordered = "select ts, sum(x) over p, count(y) over p" + ORDERED_PARTITION_WINDOW;
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, ordered, sqlExecutionContext)) {
+                    final CachedWindowMapGroups groups = groups(factory);
+                    assertBoundGroupCount(groups, 1);
+                    final WindowMapState state = groups.getStates().getQuick(0);
+                    Assert.assertNotNull(groups.getOrderedStates(0));
+                    Assert.assertSame(state, groups.getOrderedStates(0).getQuick(0));
+                    Assert.assertNotNull(groups.getOrderedPass2States(0));
+                    Assert.assertSame(state, groups.getOrderedPass2States(0).getQuick(0));
+                    Assert.assertNull(groups.getForwardUnorderedStates());
+                    Assert.assertNull(groups.getUnorderedPass2States());
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertEquals(ROW_COUNT, drain(cursor));
+                        Assert.assertEquals(2 * ROW_COUNT, state.getLookupCount());
+                    }
                 }
             }
         });
@@ -161,6 +277,35 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                             "var_pop(x) over w",
                             "count(x) over w"
                     );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testEveryWholePartitionShapeMatchesTheUnfusedPath() throws Exception {
+        // The same differential over the two-pass families, in both bucket spellings and on
+        // both factories. The references are the unfused whole-partition path: asked for on
+        // its own each call keeps its own map, its own two probes a row and - for avg - the
+        // destructive preparePass2 that replaces the sum with the average, which is exactly
+        // the arithmetic the fused arm has to reproduce without performing it.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertRows();
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                for (int ordered = 0; ordered < 2; ordered++) {
+                    final String window = ordered == 0 ? PARTITION_WINDOW : ORDERED_PARTITION_WINDOW;
+                    final String over = ordered == 0 ? " over (partition by k)" : " over p";
+                    assertFusedMatchesUnfused(
+                            window,
+                            "",
+                            "sum(x)" + over,
+                            "avg(x)" + over,
+                            "count(x)" + over
+                    );
+                    assertFusedMatchesUnfused(window, "", "sum(x)" + over, "count(y)" + over);
+                    assertFusedMatchesUnfused(window, "", "count(*)" + over, "count(k)" + over);
                 }
             }
         });
@@ -229,9 +374,11 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     @Test
     public void testNaturalOrderFunctionsFormTheirOwnGroupBesideATwoPassResidual() throws Exception {
         // The natural-order bucket: the group is driven by the base scan that fills the chain,
-        // beside a whole-partition avg that keeps its own map and its own two passes. A
-        // two-pass function is what forces the cached path here, so this is also the shape
-        // that says a residual and a group share a cursor without sharing anything else.
+        // beside a whole-partition avg that keeps its own map and its own two passes - not
+        // because its family is unfusible, which it no longer is, but because it is the only
+        // call over its own window and moving one map is not removing one. A two-pass function
+        // is what forces the cached path here, so this is also the shape that says a residual
+        // and a group share a cursor without sharing anything else.
         assertMemoryLeak(() -> {
             createTable();
             insertRows();
@@ -440,6 +587,112 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTheKillSwitchRestoresTheDestructiveFinalization() throws Exception {
+        // The switch has more to turn back on for a whole-partition shape than for a
+        // cumulative one: with it off, avg's preparePass2 walks its own map again and replaces
+        // every partition's sum slot with the average. That is only safe because each function
+        // is back on a map of its own, which is what the case asserts beside the rows.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertRows();
+            final String sql = "select ts, sum(x) over (partition by k), avg(x) over (partition by k)"
+                    + PARTITION_WINDOW;
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "true");
+                final String fused = render(sql);
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                    final CachedWindowMapGroups groups = groups(factory);
+                    Assert.assertNotNull(groups);
+                    Assert.assertEquals(1, groups.getPlans().size());
+                    Assert.assertEquals(0, groups.getStates().size());
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertEquals(ROW_COUNT, drain(cursor));
+                        final ObjList<WindowFunction> functions = windowFunctions(factory);
+                        Assert.assertEquals(2, functions.size());
+                        for (int i = 0, n = functions.size(); i < n; i++) {
+                            final WindowFunction function = functions.getQuick(i);
+                            Assert.assertFalse("a function stayed bound with fusion off", function.isWindowStateOwned());
+                            Assert.assertTrue(
+                                    "a function's own map never opened",
+                                    function.getPartitionMap().isOpen()
+                            );
+                        }
+                    }
+                }
+                Assert.assertEquals(fused, render(sql));
+            }
+        });
+    }
+
+    @Test
+    public void testWholePartitionSumAvgAndCountShareOneComponent() throws Exception {
+        // The key regression case of this step, and the one the design named years before it
+        // was built: unfused, avg's preparePass2 replaces each partition's sum slot with its
+        // average, which a shared component cannot carry because the sum projection beside it
+        // still needs the sum. Fused, nothing finalizes - the group keeps the raw
+        // (sum, nonNullCount) pair through both passes and each of the three outputs computes
+        // its own answer from it at projection time.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertRows();
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                final String sql = "select ts, sum(x) over (partition by k), avg(x) over (partition by k), "
+                        + "count(x) over (partition by k)" + PARTITION_WINDOW;
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                    assertFactoryKind(factory, light == 1);
+                    final CachedWindowMapGroups groups = groups(factory);
+                    assertBoundGroupCount(groups, 1);
+                    final WindowMapState state = groups.getStates().getQuick(0);
+                    final WindowAccumulatorPlan plan = state.getPlan();
+                    Assert.assertEquals(1, plan.getComponentCount());
+                    Assert.assertEquals(3, plan.getProjectionCount());
+                    Assert.assertEquals(2, plan.getSlotCount());
+                    Assert.assertTrue(plan.getProjection(2).isDerived());
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final long rows = drain(cursor);
+                        Assert.assertEquals(ROW_COUNT, rows);
+                        // Two probes a row rather than one, because the group looks its key up
+                        // once in each traversal - against the six the three unfused functions
+                        // make, each probing in both of its own passes.
+                        Assert.assertEquals(2 * rows, state.getLookupCount());
+                        Assert.assertEquals(rows, state.getContributorUpdateCount());
+                        // Written in pass 2 alone: pass 1 projects nothing, because the
+                        // accumulator is not final until it has absorbed the last row.
+                        Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
+                        // The property the skipped preparePass2 rests on. A bound function's
+                        // own map stays closed for the factory's whole life, so the walk it
+                        // would perform has nothing to walk - and the guard that skips it is
+                        // what says so rather than leaving it to whatever a closed map's
+                        // cursor happens to answer.
+                        final ObjList<WindowFunction> functions = windowFunctions(factory);
+                        Assert.assertEquals(3, functions.size());
+                        for (int i = 0, n = functions.size(); i < n; i++) {
+                            final WindowFunction function = functions.getQuick(i);
+                            Assert.assertTrue("a function was left unbound", function.isWindowStateOwned());
+                            Assert.assertFalse(
+                                    "a bound function's own map opened",
+                                    function.getPartitionMap().isOpen()
+                            );
+                        }
+                    }
+                }
+                assertFusedMatchesUnfused(
+                        PARTITION_WINDOW,
+                        "",
+                        "sum(x) over (partition by k)",
+                        "avg(x) over (partition by k)",
+                        "count(x) over (partition by k)"
+                );
+            }
+        });
+    }
+
     private static void assertBoundGroupCount(CachedWindowMapGroups groups, int expected) {
         Assert.assertNotNull("no window Map group was compiled", groups);
         Assert.assertEquals(expected, groups.getStates().size());
@@ -533,6 +786,16 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         return root instanceof CachedWindowRecordCursorFactory f
                 ? f.getWindowMapGroups()
                 : ((CachedWindowLightRecordCursorFactory) root).getWindowMapGroups();
+    }
+
+    /**
+     * The one bound group that is not {@code state}, for a query that forms exactly two. Found
+     * rather than indexed because which of them is listed first is the compiler's business.
+     */
+    private static WindowMapState otherState(CachedWindowMapGroups groups, WindowMapState state) {
+        final ObjList<WindowMapState> states = groups.getStates();
+        Assert.assertEquals(2, states.size());
+        return states.getQuick(0) == state ? states.getQuick(1) : states.getQuick(0);
     }
 
     private static String plan(String sql) throws SqlException {

@@ -355,6 +355,14 @@ public class CountFunctionFactoryHelper {
     static class CountOverPartitionFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         private final IsRecordNotNull isNotNullFunc;
+        // See CountOverUnboundedPartitionRowsFrameFunction's field of the same name: true while
+        // the plan bound this call onto a row-count component, which happens only for a count
+        // over the window's own partition key.
+        private boolean isWindowStatePartitionKeyGuarded;
+        // What this output projects out of the group's shared component, materialized by
+        // projectWindowState in the pass-2 traversal and written to the row by pass2 a moment
+        // later. Untouched while the function owns its own map.
+        private long windowStateResult;
 
         public CountOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, IsRecordNotNull isNotNullFunc) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -362,8 +370,26 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            if (isWindowStatePartitionKeyGuarded || isNotNullFunc.isNotNull(arg, record)) {
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.isWindowStatePartitionKeyGuarded = projection != null && projection.isPartitionKeyGuarded();
+        }
+
+        @Override
         public String getName() {
             return CountFunctionFactoryHelper.COUNT_NAME;
+        }
+
+        @Override
+        public Map getPartitionMap() {
+            return map;
         }
 
         @Override
@@ -374,6 +400,11 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one counter before the bucket's pass-1
+                // loop reached this function, and nothing reads an output until pass 2.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -392,12 +423,31 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            if (isWindowStateOwned()) {
+                // The group's projection loop ran over this row's entry immediately before
+                // this call, so the write is all that is left to do.
+                Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), windowStateResult);
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.findValue();
             long val = value != null ? value.getLong(0) : 0;
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), val);
+        }
+
+        /**
+         * Reads the counter the group keeps, correcting for a {@code count(k)} over the
+         * window's own partition key exactly as the cumulative reading does - see
+         * {@link CountOverUnboundedPartitionRowsFrameFunction#projectWindowState}. The key is
+         * constant across a partition, so the test on this row answers for the whole of it.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            windowStateResult = isWindowStatePartitionKeyGuarded && !isNotNullFunc.isNotNull(arg, record)
+                    ? 0
+                    : value.getLong(windowStateNonNullCountSlot);
         }
 
         @Override
@@ -409,6 +459,31 @@ public class CountFunctionFactoryHelper {
             if (value != null) {
                 value.putLong(0, 0L);
             }
+        }
+
+        /**
+         * Null for {@code count(*)} over a whole partition, which this class also serves.
+         */
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * One contributing-row counter, under the family that says which rows contribute -
+         * the same split {@link CountOverUnboundedPartitionRowsFrameFunction} makes, over the
+         * whole partition rather than up to the current row.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return arg == null
+                    ? WindowAccumulatorDescriptor.FAMILY_ROW_COUNT
+                    : WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_COUNT;
         }
     }
 
