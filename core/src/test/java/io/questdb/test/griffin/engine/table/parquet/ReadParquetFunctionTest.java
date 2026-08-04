@@ -1701,7 +1701,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     public void testVarcharSliceOrderByLimitMultipleRowGroups() throws Exception {
         // Regression test: the Async Top K path stores a comparator reference
         // pointing to decoded Parquet row group data. Between frames,
-        // releaseParquetBuffers() frees that data, leaving a dangling pointer.
+        // releaseDecodedFrameBuffers() frees that data, leaving a dangling pointer.
         // The comparator then reads freed memory, producing wrong sort results.
         // We use many small row groups and ORDER BY varchar LIMIT to trigger
         // the LimitedSizeLongTreeChain cross-frame comparison path.

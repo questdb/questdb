@@ -2076,7 +2076,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 try (Path walPath = new Path()) {
                     walPath.of(configuration.getDbRoot()).concat(token).slash()
                             .putAscii(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                    writer.commitWalInsertTransactions(walPath, seqTxn, TableWriterPressureControl.EMPTY);
+                    writer.commitWalInsertTransactions(walPath, seqTxn, TableWriterPressureControl.EMPTY, 0);
                 }
                 writer.tick();
 
@@ -2131,7 +2131,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 try (Path walPath = new Path()) {
                     walPath.of(configuration.getDbRoot()).concat(token).slash()
                             .putAscii(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                    writer.commitWalInsertTransactions(walPath, seqTxn, TableWriterPressureControl.EMPTY);
+                    writer.commitWalInsertTransactions(walPath, seqTxn, TableWriterPressureControl.EMPTY, 0);
                 }
                 writer.tick();
 
