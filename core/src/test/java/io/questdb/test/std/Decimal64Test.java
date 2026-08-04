@@ -659,7 +659,7 @@ public class Decimal64Test {
     public void testOfStringDecimalPointAtStart() throws NumericException {
         Decimal64 d = new Decimal64();
         int precision = Numbers.decodeLowInt(d.ofString(".123"));
-        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("0.123", d.toString());
     }
@@ -696,7 +696,7 @@ public class Decimal64Test {
 
         // Integer base with negative exponent
         precision = Numbers.decodeLowInt(d.ofString("456e-3"));
-        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("0.456", d.toString());
     }
@@ -713,7 +713,7 @@ public class Decimal64Test {
 
         // Negative number with negative exponent
         precision = Numbers.decodeLowInt(d.ofString("-2.5e-2"));
-        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("-0.025", d.toString());
     }

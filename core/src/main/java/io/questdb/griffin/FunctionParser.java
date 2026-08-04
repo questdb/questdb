@@ -645,8 +645,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             Misc.freeObjList(args);
             throw SqlException.position(position).put("bad function factory (NULL), check log");
         } else if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
-            Misc.freeObjList(args);
-            throw SqlException.nonDeterministicColumn(node.position, node.token);
+            // Construction succeeded, so the function has taken ownership of args (see the args.clear()
+            // below on the success path). Close the function itself - not just its argument list - so
+            // any native resource it allocated beyond its arguments (e.g. an IN-value set) is released
+            // instead of leaked. Closing the function also frees the args it owns, so do not free them
+            // separately. Preserve the rejection exception if close() were to throw.
+            SqlException e = SqlException.nonDeterministicColumn(node.position, node.token);
+            Misc.free(function, e);
+            throw e;
         }
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
@@ -1413,13 +1419,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof IntConstant) {
                     return function;
                 } else {
-                    int intConst = function.getInt(null);
-                    long longConst = function.getLong(null);
-                    if (intConst == Numbers.INT_NULL || intConst == longConst) {
-                        return IntConstant.newInstance(intConst);
-                    } else {
-                        return new LongConstant(longConst);
-                    }
+                    final int intConst = function.getInt(null);
+                    return intConst == Numbers.INT_NULL ? IntConstant.NULL : IntConstant.newInstance(intConst);
                 }
             case ColumnType.BOOLEAN:
                 if (function instanceof BooleanConstant) {

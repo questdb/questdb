@@ -48,13 +48,18 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
+import io.questdb.std.DoubleList;
 import io.questdb.std.GenericLexer;
+import io.questdb.std.IntList;
 import io.questdb.std.IntStack;
+import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.StringSink;
@@ -119,10 +124,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int EXEC_HINT_MIXED_SIZE_TYPE = 2;
     private static final int EXEC_HINT_SCALAR = 0;
     private static final int EXEC_HINT_SINGLE_SIZE_TYPE = 1;
+    private static final int EXEC_HINT_WIDE_LANE = 3;
+    // 2^24, the magnitude at which a 32-bit float stops holding every integer below it: 2^24 itself
+    // is exact, but 2^24 + 1 rounds down onto it. A comparison bound of smaller magnitude therefore
+    // cannot collide with the rounded image of an int column value, and one of this magnitude or
+    // greater can. See isNarrowIntCmpWideningConst.
+    private static final double FLOAT_EXACT_INT_LIMIT = 16777216.0;
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
     // Maximum number of labels supported by the backend (must match LabelArray::MAX_LABELS in x86.h)
     private static final int MAX_LABELS = 8;
-    // Predicate priority for short-circuit evaluation
+    // Absent-key marker for the arithmetic type caches. UNDEFINED_CODE is a cacheable answer, so it
+    // cannot double as the miss value.
+    private static final int NOT_CACHED = Integer.MIN_VALUE;
+    // Predicate priority for short-circuit evaluation. Every priority getPredicatePriority() returns
+    // falls in [0, PRIORITY_COUNT), which is what lets sortPredicates() order a chain by counting
+    // occurrences per priority instead of comparing.
+    private static final int PRIORITY_COUNT = 11;
     private static final int PRIORITY_I16_EQ = 0;  // highest priority
     private static final int PRIORITY_I16_NEQ = 10; // lowest priority
     private static final int PRIORITY_I4_EQ = 2;
@@ -134,18 +151,68 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int PRIORITY_OTHER_NEQ = 6;
     private static final int PRIORITY_SYM_EQ = 3;
     private static final int PRIORITY_SYM_NEQ = 7;
+    // Node kinds hasWideLaneConversionSource() looks for. See hasWideLaneSourceNode().
+    private static final int WIDE_LANE_SOURCE_FLOAT_LEAF = 0;
+    private static final int WIDE_LANE_SOURCE_FLOAT_WIDENING_CONST = 1;
+    private static final int WIDE_LANE_SOURCE_I8_OPERAND = 3;
+    private static final int WIDE_LANE_SOURCE_NARROW_INT_LEAF = 2;
+    // Memoizes arithExprType() for the current predicate, keyed by node identity. The classification
+    // walks the whole subtree (and folds pure-constant arithmetic), and the marker passes ask for it
+    // repeatedly at every level, so without the cache a deep chain costs O(depth^2) subtree walks and
+    // re-parses the same constant tokens. The tree does not mutate during serialize(), so the answer
+    // is stable, and the entry stays valid for every predicate of the same filter, so clear() is the
+    // only reset point - onNodeDescended() deliberately does NOT clear it (see both).
+    private final ObjIntHashMap<ExpressionNode> arithExprTypeCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    // Memoizes pure-constant long arithmetic folds for the current predicate. Zero records a failed
+    // fold; positive values are one-based indexes into constantArithFoldValues.
+    private final ObjIntHashMap<ExpressionNode> constantArithFoldCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    private final LongList constantArithFoldValues = new LongList();
+    // Memoizes tryFoldConstantArithFloat() for the current predicate. 0 marks a subtree that is
+    // not a pure-constant arithmetic one; positive values are one-based indexes into
+    // constantFloatFoldValues. Without it descend() re-walks each subtree at every node it
+    // contains, which is quadratic in the length of a constant chain. See arithExprTypeCache.
+    private final ObjIntHashMap<ExpressionNode> constantFloatFoldCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    private final DoubleList constantFloatFoldValues = new DoubleList();
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     // List to collect predicates from AND chains for reordering
     private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
-    // Leaf nodes (column / bind variable / constant) the float-suppressed
-    // narrow-i64 widening must sign-extend to i64 for the current predicate.
-    // Holds node references, compared by identity. See markFloatI64WidenLeaves.
-    private final ObjList<ExpressionNode> i64WidenLeaves = new ObjList<>();
+    // Memoizes containsFloatExpression() for the current predicate. See arithExprTypeCache.
+    private final ObjIntHashMap<ExpressionNode> containsFloatCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    // Memoizes containsNarrowIntegerValue() for the current predicate. See arithExprTypeCache.
+    private final ObjIntHashMap<ExpressionNode> containsNarrowIntCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    // Leaf nodes (column / bind variable / constant) a comparison or IN pairing must sign-extend
+    // to i64 for the current predicate. Holds node references, compared by identity.
+    // See markWidthSemantics.
+    private final ObjHashSet<ExpressionNode> i64WidenLeaves = new ObjHashSet<>();
+    // Untyped NULL elements of an IN whose key reads at INT width. The type observer sees the
+    // predicate's narrowest column, so a BYTE operand under an INT-width key (abyte + 1) would type
+    // the NULL at I1 and serializeNull declines - BYTE has no sentinel - taking the whole filter
+    // off the JIT. The key's own width is what the pairing compares at. Compared by identity.
+    private final ObjHashSet<ExpressionNode> intWidthNullElements = new ObjHashSet<>();
+    // Integer CONSTANTS a 64-bit comparison or IN pairing must emit at I8 because the peer is
+    // 8 bytes wide. Separate from i64WidenLeaves on purpose: this only widens an IMM, it emits no
+    // SX_I64, so it must not drag the predicate onto the scalar backend the way a leaf widening
+    // does. Compared by identity.
+    private final ObjHashSet<ExpressionNode> i64WidenConstants = new ObjHashSet<>();
+    // Integer CONSTANT operands of a NARROW arithmetic node. The predicate-wide type observer types
+    // every constant at the widest column it saw, so a coexisting LONG operand elsewhere in the
+    // predicate would emit the 2 in `i32 * 2` as an I8 immediate and promote the product to
+    // int64_mul, which does not wrap where MulInt#getInt does. Compared by identity.
+    private final ObjHashSet<ExpressionNode> narrowKeptConstants = new ObjHashSet<>();
     private final NarrowI64WidenDetector narrowI64WidenDetector = new NarrowI64WidenDetector();
     private final PredicateContext predicateContext = new PredicateContext();
+    // Memoizes requiresWideLaneArithmetic() for the current predicate. See arithExprTypeCache.
+    private final ObjIntHashMap<ExpressionNode> requiresWideLaneArithCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    // Scratch state for sortPredicates(), reused across filters so ordering a chain allocates nothing
+    // on the compile path: the priority of each predicate (getPredicatePriority walks the subtree, so
+    // it is computed once per predicate rather than once per comparison), the per-priority bucket
+    // offsets, and the reordered chain the sort writes back.
+    private final IntList predicatePriorities = new IntList();
+    private final IntList predicatePriorityOffsets = new IntList();
     private final ScalarModeDetector scalarModeDetector = new ScalarModeDetector();
     private final StringSink sink = new StringSink();
+    private final ObjList<ExpressionNode> sortedPredicates = new ObjList<>();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntStack typeStack = new IntStack();
     private ObjList<Function> bindVarFunctions;
@@ -153,6 +220,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private SqlExecutionContext executionContext;
     // internal flag used to forcefully enable scalar mode based on filter's contents
     private boolean forceScalarMode;
+    private boolean hasEmittedWideLaneConversion;
+    private boolean isWideLaneMode;
     private MemoryCARW memory;
     private RecordMetadata metadata;
     private PageFrameCursor pageFrameCursor;
@@ -163,9 +232,27 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         metadata = null;
         pageFrameCursor = null;
         forceScalarMode = false;
+        hasEmittedWideLaneConversion = false;
+        isWideLaneMode = false;
         predicateContext.clear();
         backfillNodes.clear();
         collectedPredicates.clear();
+        // The memo caches below are keyed by ExpressionNode identity and live for a whole filter, so
+        // this is their ONLY reset point - the node pool can hand the same objects to the next
+        // filter, where the cached answers would no longer describe the same subtree. The mark sets
+        // after them are per-predicate state that onNodeDescended also resets before use.
+        arithExprTypeCache.clear();
+        constantArithFoldCache.clear();
+        constantArithFoldValues.clear();
+        constantFloatFoldCache.clear();
+        constantFloatFoldValues.clear();
+        containsFloatCache.clear();
+        containsNarrowIntCache.clear();
+        requiresWideLaneArithCache.clear();
+        i64WidenConstants.clear();
+        intWidthNullElements.clear();
+        i64WidenLeaves.clear();
+        narrowKeptConstants.clear();
     }
 
     @Override
@@ -180,34 +267,84 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return false;
         }
 
-        // Check if we're at the start of an arithmetic expression
+        // Check if we're at the start of an arithmetic expression.
         predicateContext.onNodeDescended(node);
 
-        // Constant integer arithmetic subtree whose long-precision value
-        // overflows INT: emit a single I8 IMM in place of the subtree.
-        // FunctionParser.functionToConstant0 sees intConst != longConst for
-        // such subtrees and folds them to a single LongConstant for the Java
-        // filter; we mirror that fold here so the JIT computes at long
-        // width. The matching I8 observation in NarrowI64WidenDetector
-        // ensures column reads in the same predicate get sign-extended to
-        // I8, so the comparison sees matching operand widths.
+        // Constant integer arithmetic subtree whose long-width fold does not fit INT. Its width
+        // follows its DECLARED type, exactly as FunctionParser#functionToConstant0 folds it: a
+        // pure-INT subtree is an IntConstant holding the wrap, and only a genuine LONG operand
+        // (arithExprType == I8) makes the subtree LONG and keeps the full value.
         if (predicateContext.isActive() && node.type == ExpressionNode.OPERATION) {
             try {
                 long longVal = tryFoldConstantArith(node);
                 if ((int) longVal != longVal) {
-                    // Skipping the OPERATION children means visit() never sees
-                    // their arithmetic tokens or operand types, so the
-                    // existing scalar-mode forcer in serialize() and
-                    // getExecHint()'s mixed-size detection would both
-                    // miscompute. markFoldedI8Imm() flags the fold root as
-                    // arithmetic and observes the emitted I8 so neither
-                    // misses the I8 IMM.
-                    predicateContext.markFoldedI8Imm();
-                    putOperand(IMM, I8_TYPE, longVal);
+                    // Children are skipped, so flag the fold root as arithmetic
+                    // and observe the emitted IMM (markFoldedI4Imm/I8Imm) for the
+                    // scalar-mode forcer and getExecHint() mixed-size detection.
+                    if (arithExprType(node) == I8_TYPE) {
+                        // longVal is the unwrapped 64-bit fold, used above only to DETECT the
+                        // out-of-INT-range root. The emitted immediate must instead mirror the
+                        // Java filter's getLong() recursion, wrapping any narrow (INT-width)
+                        // sub-subtree - e.g. (2e9 + 2e9) + 5e9 emits 4_705_032_704, not the
+                        // unwrapped 9e9. Compute it before markFoldedI8Imm() so a fallback throw
+                        // leaves no state set - the width-aware evaluator has its own reasons to
+                        // decline, e.g. 5_000_000_000 + 7 / (65_536 * 65_536), whose divisor is a
+                        // genuine 2^32 at long width but wraps to a zero divisor at INT width.
+                        final long i8Imm = foldConstantArithWidthAware(node);
+                        predicateContext.markFoldedI8Imm();
+                        putOperand(IMM, I8_TYPE, i8Imm);
+                    } else {
+                        // Replicate the Java filter's per-op INT wrapping (getInt() recurses
+                        // getInt()), which differs from (int) longVal for a non-modular operator
+                        // such as division, e.g. (1000000 * 1000000) / 7.
+                        int intVal = tryFoldConstantArithI4(node);
+                        predicateContext.markFoldedI4Imm();
+                        putOperand(IMM, I4_TYPE, intVal);
+                    }
                     return false;
                 }
             } catch (NumericException ignored) {
                 // Not a pure-constant integer arithmetic subtree; descend normally.
+            }
+        }
+
+        // Constant FLOAT/DOUBLE arithmetic subtree that is not finite. FunctionParser folds
+        // every constant subtree bottom-up through functionToConstant0, whose FLOAT/DOUBLE
+        // arms call FloatConstant#newInstance / DoubleConstant#newInstance - and both map
+        // +/-Infinity and NaN onto the NULL sentinel. So the Java filter compares against
+        // NULL. The IR carries the operations instead and the backend computes them, which
+        // leaves the JIT comparing against a real infinity. The equality opcodes agree
+        // either way (double_cmp_epsilon in jit/impl/x86.h calls any two non-finite values
+        // equal, exactly as Numbers#equals does), but double_lt/le/gt/ge order an infinity
+        // like an ordinary number while the Java filter orders NULL against nothing - so
+        // every ordering operator selects a different row set. Decline and let the Java
+        // filter evaluate the predicate.
+        //
+        // An INTEGER-typed subtree is left alone: the block above already mirrors the Java
+        // filter's getInt()/getLong() recursion exactly, including its deliberate refusal to
+        // fold a zero divisor (tryFoldConstantArith0) so that the native int32_div/int64_div
+        // produces the same NULL sentinel DivInt/DivLong do. Judging "10 / 0" by float rules
+        // would read it as an infinity and needlessly decline a filter that already agrees.
+        //
+        // Anything else is judged by the fold, and the fold is fail-CLOSED, because whether a
+        // subtree even classifies as floating point depends on three token classifiers agreeing
+        // - floatConstantTypeCode/longConstantTypeCode inside arithExprType, the numeric parsers
+        // inside the fold, and createConstant inside the parser - and they do not: parseInt
+        // takes the underscore separator CLAUDE.md mandates while parseDouble rejects it, and
+        // floatConstantTypeCode does not know the 'd' suffix createConstant accepts. A leaf no
+        // classifier recognises leaves the node UNDEFINED rather than F4/F8, so UNDEFINED has to
+        // decline too: there is no evidence the backend would land on the value the parser folds.
+        if (predicateContext.isActive() && node.type == ExpressionNode.OPERATION && isArithmeticOperation(node)) {
+            final int arithType = arithExprType(node);
+            if (arithType != I1_TYPE && arithType != I2_TYPE && arithType != I4_TYPE && arithType != I8_TYPE) {
+                try {
+                    if (!Numbers.isFinite(tryFoldConstantArithFloat(node))) {
+                        throw SqlException.position(node.position)
+                                .put("non-finite constant arithmetic: ").put(node.token);
+                    }
+                } catch (NumericException notConstant) {
+                    // Not a pure-constant arithmetic subtree at all; descend normally.
+                }
             }
         }
 
@@ -239,6 +376,317 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return this;
     }
 
+    private boolean isWideLaneEligible(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.OPERATION
+                && (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token))) {
+            return isWideLaneEligible(node.lhs) && isWideLaneEligible(node.rhs);
+        }
+        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isNotKeyword(node.token)) {
+            return isWideLaneEligible(node.rhs != null ? node.rhs : node.lhs);
+        }
+        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token)) {
+            return isWideLaneInEligible(node);
+        }
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 2 && isComparisonToken(node.token)) {
+            if (isWideLaneIntegerExpression(node.lhs) && isWideLaneIntegerExpression(node.rhs)) {
+                return true;
+            }
+            if (isWideLaneIntCmpFloatConstPair(node.lhs, node.rhs)
+                    || isWideLaneIntCmpFloatConstPair(node.rhs, node.lhs)) {
+                return true;
+            }
+            return isWideLaneFloatComparisonOperand(node.lhs)
+                    && isWideLaneFloatComparisonOperand(node.rhs)
+                    && (containsFloatExpression(node.lhs) || containsFloatExpression(node.rhs));
+        }
+        return false;
+    }
+
+    /**
+     * An INT leaf against a floating-point bound that {@link #markNarrowIntCmpFloatConst} widens.
+     * Without this the shape matched neither branch above - the leaf is not a float expression and
+     * the bound is not an integer constant - so it fell out of wide-lane mode, and the SX_I64 the
+     * widening emits then forced the whole filter down to the SCALAR loop. Admitted here it runs
+     * the four-lane loop instead: SX_I64 sign-extends the leaf into the low 128 bits and the bound
+     * is already a double, which is the ungated (i64, f64) arm of the backend's {@code convert()}.
+     * <p>
+     * Restricted to INT. {@code avx2::sx_i64} widens an i32 lane and declines anything else, so a
+     * BYTE or SHORT leaf has to keep the scalar fallback, where the backend sign-extends i8 and i16
+     * explicitly. An arithmetic subtree is excluded too: it is not sign-extended at all (it has to
+     * keep wrapping at i32), so only its constant widens and the pairing stays (i32, f64).
+     */
+    private boolean isWideLaneIntCmpFloatConstPair(ExpressionNode leaf, ExpressionNode constNode) {
+        return leaf != null
+                && (leaf.type == ExpressionNode.LITERAL || leaf.type == ExpressionNode.BIND_VARIABLE)
+                && arithExprType(leaf) == I4_TYPE
+                && isNarrowIntCmpWideningConst(constNode);
+    }
+
+    private boolean isWideLaneFloatComparisonOperand(ExpressionNode node) {
+        return isWideLaneFloatExpression(node) || isWideLaneNumericConstant(node);
+    }
+
+    private boolean isWideLaneFloatExpression(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+            final int type = arithExprType(node);
+            return type == F4_TYPE || type == F8_TYPE;
+        }
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            return isWideLaneFloatExpression(node.rhs != null ? node.rhs : node.lhs);
+        }
+        if (node.type == ExpressionNode.OPERATION && isArithmeticOperation(node)) {
+            return isWideLaneFloatArithmeticOperand(node.lhs)
+                    && isWideLaneFloatArithmeticOperand(node.rhs)
+                    && (containsFloatExpression(node.lhs) || containsFloatExpression(node.rhs));
+        }
+        return false;
+    }
+
+    private boolean isWideLaneFloatArithmeticOperand(ExpressionNode node) {
+        return isWideLaneFloatExpression(node) || isWideLaneNumericConstant(node);
+    }
+
+    private boolean isWideLaneInEligible(ExpressionNode node) {
+        final ObjList<ExpressionNode> args = node.args;
+        final ExpressionNode key = args.size() > 0 ? args.getLast() : node.lhs;
+        if (isWideLaneIntegerExpression(key)) {
+            if (args.size() > 0) {
+                for (int i = 0, n = args.size() - 1; i < n; i++) {
+                    if (!isWideLaneIntegerInElement(args.getQuick(i))) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            return isWideLaneIntegerInElement(node.rhs);
+        }
+        if (isWideLaneFloatExpression(key)) {
+            if (args.size() > 0) {
+                for (int i = 0, n = args.size() - 1; i < n; i++) {
+                    if (!isWideLaneFloatInElement(args.getQuick(i))) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            return isWideLaneFloatInElement(node.rhs);
+        }
+        return false;
+    }
+
+    private boolean isWideLaneIntegerExpression(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+            final int type = arithExprType(node);
+            return (type == I4_TYPE || type == I8_TYPE) && isGenuineIntegerLeaf(node);
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            return isIntegerConstant(node);
+        }
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            return isWideLaneIntegerExpression(node.rhs != null ? node.rhs : node.lhs);
+        }
+        if (node.type == ExpressionNode.OPERATION && isArithmeticOperation(node)) {
+            return isWideLaneIntegerExpression(node.lhs) && isWideLaneIntegerExpression(node.rhs);
+        }
+        return false;
+    }
+
+    // A genuine fixed-width integer column / bind-variable leaf (INT / LONG / DATE / TIMESTAMP).
+    // SYMBOL, IPv4 and the GEO types share an I4 / I8 arithmetic code but do not compare as plain
+    // integer lanes; SQL type checking already rejects such comparisons, so this only backstops
+    // the wide-lane eligibility check defensively, mirroring isWidthSensitiveInKey.
+    private boolean isGenuineIntegerLeaf(ExpressionNode node) {
+        final int typeTag;
+        if (node.type == ExpressionNode.LITERAL) {
+            final int index = metadata.getColumnIndexQuiet(node.token);
+            if (index == -1) {
+                return false;
+            }
+            typeTag = ColumnType.tagOf(metadata.getColumnType(index));
+        } else if (node.type == ExpressionNode.BIND_VARIABLE) {
+            final Function fn = lookupBindVariable(node.token);
+            if (fn == null) {
+                return false;
+            }
+            typeTag = ColumnType.tagOf(fn.getType());
+        } else {
+            return false;
+        }
+        return typeTag == ColumnType.INT
+                || typeTag == ColumnType.LONG
+                || typeTag == ColumnType.DATE
+                || typeTag == ColumnType.TIMESTAMP;
+    }
+
+    private boolean isWideLaneIntegerInElement(ExpressionNode node) {
+        return isWideLaneIntegerExpression(node) || isNullConstant(node);
+    }
+
+    private boolean isWideLaneFloatInElement(ExpressionNode node) {
+        return isWideLaneNumericConstant(node) || isNullConstant(node);
+    }
+
+    private boolean isWideLaneNumericConstant(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            return isWideLaneNumericConstant(node.rhs != null ? node.rhs : node.lhs);
+        }
+        final int type = arithExprType(node);
+        return node.type == ExpressionNode.CONSTANT
+                && (type == I4_TYPE || type == I8_TYPE || type == F4_TYPE || type == F8_TYPE);
+    }
+
+    private boolean isIntegerConstant(ExpressionNode node) {
+        if (node != null && node.type == ExpressionNode.OPERATION
+                && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            return isIntegerConstant(node.rhs != null ? node.rhs : node.lhs);
+        }
+        return node != null
+                && node.type == ExpressionNode.CONSTANT
+                && (arithExprType(node) == I4_TYPE || arithExprType(node) == I8_TYPE);
+    }
+
+    private boolean containsFloatExpression(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        final int cached = containsFloatCache.get(node);
+        if (cached != NOT_CACHED) {
+            return cached != 0;
+        }
+        final boolean hasFloatExpression = containsFloatExpression0(node);
+        containsFloatCache.put(node, hasFloatExpression ? 1 : 0);
+        return hasFloatExpression;
+    }
+
+    private boolean containsFloatExpression0(ExpressionNode node) {
+        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+            final int type = arithExprType(node);
+            return type == F4_TYPE || type == F8_TYPE;
+        }
+        return containsFloatExpression(node.lhs) || containsFloatExpression(node.rhs);
+    }
+
+    private boolean requiresWideLane(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token)) {
+            return requiresWideLane(node.lhs) || requiresWideLane(node.rhs);
+        }
+        if (SqlKeywords.isNotKeyword(node.token)) {
+            return requiresWideLane(node.rhs != null ? node.rhs : node.lhs);
+        }
+        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token)) {
+            final ObjList<ExpressionNode> args = node.args;
+            final ExpressionNode key = args.size() > 0 ? args.getLast() : node.lhs;
+            if (args.size() > 0) {
+                for (int i = 0, n = args.size() - 1; i < n; i++) {
+                    if (requiresWideLanePair(key, args.getQuick(i))) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            return requiresWideLanePair(key, node.rhs);
+        }
+        return requiresWideLanePair(node.lhs, node.rhs)
+                || requiresWideLaneArithmetic(node.lhs)
+                || requiresWideLaneArithmetic(node.rhs);
+    }
+
+    private boolean requiresWideLaneArithmetic(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        final int cached = requiresWideLaneArithCache.get(node);
+        if (cached != NOT_CACHED) {
+            return cached != 0;
+        }
+        final boolean isWideLaneArithmeticRequired = requiresWideLaneArithmetic0(node);
+        requiresWideLaneArithCache.put(node, isWideLaneArithmeticRequired ? 1 : 0);
+        return isWideLaneArithmeticRequired;
+    }
+
+    private boolean requiresWideLaneArithmetic0(ExpressionNode node) {
+        if (node.type == ExpressionNode.OPERATION && isArithmeticOperation(node)) {
+            if (arithExprType(node) == I8_TYPE && containsNarrowIntegerValue(node)) {
+                return true;
+            }
+            return requiresWideLaneArithmetic(node.lhs) || requiresWideLaneArithmetic(node.rhs);
+        }
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            return requiresWideLaneArithmetic(node.rhs != null ? node.rhs : node.lhs);
+        }
+        return false;
+    }
+
+    private boolean requiresWideLanePair(ExpressionNode lhs, ExpressionNode rhs) {
+        // NOTE: this accepts F8 as well as F4, while the widening is only ever EMITTED for F4
+        // (isFloatLeaf). The asymmetry used to cost two separate things, and only the first of them
+        // is settled here. It no longer costs AND_SC / OR_SC short-circuiting or predicate
+        // reordering: serialize() runs the mixed-size detector whenever hasWideLaneConversionSource()
+        // proves no conversion can be emitted, and that predicate reads the F4 rule this method
+        // deliberately does not. It DOES still demote a filter such as
+        // "adouble > 1.1 AND along > (2000000000 + 2000000000)" out of SINGLE_SIZE, which is the
+        // cost the rest of this comment is about and which needs the visit() terms fixed first.
+        //
+        // Do NOT "fix" this by narrowing the clause to isFloatLeaf. Measured, that turns
+        // "adouble > 1.1 AND along > (2000000000 + 2000000000)" from SINGLE_SIZE into SCALAR with
+        // byte-identical IR, and the third case below from WIDE_LANE into SCALAR. Dropping the F8
+        // trigger un-suppresses the two "!isWideLaneMode &&" terms in visit(), and those fire on
+        // predicates where no widening is emitted at all. Tying those terms to an actually-emitted
+        // widening is the real fix; until then the F8 trigger is load-bearing.
+        if ((containsFloatExpression(lhs) && isFloatWideningConst(rhs))
+                || (containsFloatExpression(rhs) && isFloatWideningConst(lhs))) {
+            return true;
+        }
+        // An INT leaf against a widening floating-point bound emits SX_I64, and the four-lane loop
+        // is the only vectorized one that implements it. Without this the pair was eligible but not
+        // required, so isWideLaneMode stayed false and the emitted SX_I64 forced the filter all the
+        // way down to SCALAR. See isWideLaneIntCmpFloatConstPair.
+        if (isWideLaneIntCmpFloatConstPair(lhs, rhs) || isWideLaneIntCmpFloatConstPair(rhs, lhs)) {
+            return true;
+        }
+        final int lhsType = arithExprType(lhs);
+        final int rhsType = arithExprType(rhs);
+        return (lhsType == I8_TYPE && rhsType == I4_TYPE && containsNarrowIntegerValue(rhs))
+                || (rhsType == I8_TYPE && lhsType == I4_TYPE && containsNarrowIntegerValue(lhs))
+                || requiresWideLaneArithmetic(lhs)
+                || requiresWideLaneArithmetic(rhs);
+    }
+
+    private boolean containsNarrowIntegerValue(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        final int cached = containsNarrowIntCache.get(node);
+        if (cached != NOT_CACHED) {
+            return cached != 0;
+        }
+        final boolean hasNarrowIntegerValue = containsNarrowIntegerValue0(node);
+        containsNarrowIntCache.put(node, hasNarrowIntegerValue ? 1 : 0);
+        return hasNarrowIntegerValue;
+    }
+
+    private boolean containsNarrowIntegerValue0(ExpressionNode node) {
+        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+            return arithExprType(node) == I4_TYPE;
+        }
+        return containsNarrowIntegerValue(node.lhs) || containsNarrowIntegerValue(node.rhs);
+    }
+
     /**
      * Writes IR of the filter described by the given expression tree to memory.
      *
@@ -250,7 +698,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * <ul>
      * <li>1 LSB - debug flag</li>
      * <li>2-4 LSBs - filter's arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B, 4 - 16B</li>
-     * <li>5-6 LSBs - filter's execution hint: 0 - scalar, 1 - single size (SIMD-friendly), 2 - mixed sizes</li>
+     * <li>5-6 LSBs - execution hint: 0 - scalar, 1 - single size (SIMD-friendly),
+     * 2 - mixed sizes, 3 - four-lane SIMD</li>
      * <li>7 LSB - flag to include null checks for column values in compiled filter</li>
      * </ul>
      * <p>
@@ -262,11 +711,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @throws SqlException thrown when IR serialization failed.
      */
     public int serialize(ExpressionNode node, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
+        // Reset the per-element IN-key width override: the serializer instance is reused across
+        // filters, and a throw mid-IN (JIT fallback) could otherwise leave it stale for the next one.
+        hasEmittedWideLaneConversion = false;
+        isWideLaneMode = !forceScalar && isWideLaneEligible(node) && requiresWideLane(node);
         // Detect if scalar mode is guaranteed by checking for mixed column sizes.
         // Short-circuit optimizations (including IN() short-circuit) only work correctly
         // in scalar mode, so we only enable them when scalar mode is certain.
         boolean scalarModeDetected = forceScalar;
-        if (!scalarModeDetected) {
+        // Wide-lane mode suppresses the short-circuit path because AND_SC / OR_SC cannot branch per
+        // SIMD lane. Entering the mode is not the same as emitting a conversion, though, and
+        // requiresWideLane() deliberately over-accepts: when the prediction misses, getExecHint()
+        // falls back to a mixed / single size hint and the backend runs the very same scalar loop
+        // (compiler.cpp takes avx2_loop only for the single-size and wide-lane hints). Suppressing
+        // the short-circuit there buys nothing and costs an evaluation of every conjunct on every
+        // row, so only suppress it once a conversion is actually possible.
+        if (!scalarModeDetected && (!isWideLaneMode || !hasWideLaneConversionSource(node))) {
             scalarModeDetector.clear();
             traverseAlgo.traverse(node, scalarModeDetector);
             scalarModeDetected = scalarModeDetector.hasMixedSizes();
@@ -278,14 +738,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 collectedPredicates.clear();
                 collectAndPredicates(node, collectedPredicates);
                 if (collectedPredicates.size() > 1) {
-                    sortPredicatesByPriority(collectedPredicates);
+                    sortPredicates(collectedPredicates, false);
                     return serializePredicatesAndSc(collectedPredicates, forceScalar, debug, nullChecks);
                 }
             } else if (isPureOrChain(node)) {
                 collectedPredicates.clear();
                 collectOrPredicates(node, collectedPredicates);
                 if (collectedPredicates.size() > 1) {
-                    sortPredicatesByInvertedPriority(collectedPredicates);
+                    sortPredicates(collectedPredicates, true);
                     return serializePredicatesOrSc(collectedPredicates, forceScalar, debug, nullChecks);
                 }
             }
@@ -296,7 +756,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         putOperator(RET);
 
         ensureOnlyVarSizeHeaderChecks();
-        return getOptions(forceScalar, debug, nullChecks);
+        final int options = getOptions(forceScalar, debug, nullChecks);
+        assert areWideLaneWidthsHarmonised(options);
+        return options;
     }
 
     @Override
@@ -333,16 +795,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // (e.g. SHORT * SHORT for c1=200 yields -25536, not 40000); scalar mode upcasts
             // to int. This applies whether the predicate is all-narrow (maxSize <= 2) or
             // mixes narrow with wider operands -- both are unsafe under SIMD.
-            // Also force scalar when narrow-to-i64 widening is in play; SX_I64 is not
-            // implemented on the SIMD path (see avx2.h) and the compiled SIMD filter
-            // would silently miscompare a sign-extended narrow column against an i64
-            // operand. The float-suppressed widen set (i64WidenLeaves) emits SX_I64
-            // too, so it forces scalar as well.
-            forceScalarMode |= predicateContext.hasArithmeticOperations
+            // Also force scalar when leaf promotion emits an i64-widen leaf but the filter will
+            // NOT run the four-lane WIDE_LANE loop, which is the only one that implements SX_I64.
+            // getExecHint() emits WIDE_LANE only when isWideLaneMode AND hasEmittedWideLaneConversion;
+            // gating on isWideLaneMode alone left a hole where a wide-lane filter (e.g. a float
+            // comparison) suppressed the scalar force yet emitted no conversion, so the i64 leaf
+            // rode a SINGLE_SIZE (4-byte-lane) loop as an 8-byte immediate. Gate on the same
+            // condition as the hint so the IR and the hint stay consistent.
+            forceScalarMode |= (predicateContext.hasArithmeticOperations
                     && (predicateContext.localTypesObserver.maxSize() <= 2
-                    || predicateContext.localTypesObserver.hasNarrowInt()
-                    || predicateContext.needsNarrowI64Widening)
-                    || i64WidenLeaves.size() > 0;
+                    || predicateContext.localTypesObserver.hasNarrowInt()))
+                    || (!(isWideLaneMode && hasEmittedWideLaneConversion) && i64WidenLeaves.size() > 0);
 
             // Then backfill constants and symbol bind variables and clean up
             try {
@@ -351,78 +814,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             } catch (SqlWrapperException e) {
                 throw e.wrappedException;
             }
-        }
-    }
-
-    private void addNarrowLeaf(ExpressionNode node) {
-        int typeCode = arithExprType(node);
-        if (typeCode == I1_TYPE || typeCode == I2_TYPE || typeCode == I4_TYPE) {
-            i64WidenLeaves.add(node);
-        }
-    }
-
-    /**
-     * Classifies the arithmetic result type code of a numeric expression
-     * subtree (column / bind variable / numeric constant / + - * / over them),
-     * or {@link #UNDEFINED_CODE} for anything that is not pure numeric
-     * arithmetic. Mirrors the implicit-promotion rules the Java filter applies,
-     * so {@link #markFloatI64WidenLeaves} can find the LONG-width subtrees whose
-     * narrow operands the Java filter reads at 64 bits.
-     */
-    private int arithExprType(ExpressionNode node) {
-        if (node == null) {
-            return UNDEFINED_CODE;
-        }
-        switch (node.type) {
-            case ExpressionNode.LITERAL: {
-                int index = metadata.getColumnIndexQuiet(node.token);
-                if (index == -1) {
-                    return UNDEFINED_CODE;
-                }
-                return columnTypeCode(ColumnType.tagOf(metadata.getColumnType(index)));
-            }
-            case ExpressionNode.BIND_VARIABLE: {
-                Function bindFunction = lookupBindVariable(node.token);
-                return bindFunction != null
-                        ? bindVariableTypeCode(ColumnType.tagOf(bindFunction.getType()))
-                        : UNDEFINED_CODE;
-            }
-            case ExpressionNode.CONSTANT: {
-                int typeCode = floatConstantTypeCode(node.token);
-                if (typeCode != UNDEFINED_CODE) {
-                    return typeCode;
-                }
-                typeCode = longConstantTypeCode(node.token);
-                if (typeCode != UNDEFINED_CODE) {
-                    return typeCode;
-                }
-                // Plain int literal stays I4; non-numeric tokens are not arithmetic.
-                try {
-                    Numbers.parseInt(node.token);
-                    return I4_TYPE;
-                } catch (NumericException notInt) {
-                    return UNDEFINED_CODE;
-                }
-            }
-            case ExpressionNode.OPERATION: {
-                if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
-                    return arithExprType(node.rhs != null ? node.rhs : node.lhs);
-                }
-                if (!isArithmeticOperation(node)) {
-                    return UNDEFINED_CODE;
-                }
-                // A pure-constant subtree folds in descend(), so type it by the
-                // folded value's width; it never wraps at runtime.
-                try {
-                    long folded = tryFoldConstantArith(node);
-                    return (int) folded != folded ? I8_TYPE : I4_TYPE;
-                } catch (NumericException notConstant) {
-                    // Not pure-constant; fall through to operand promotion.
-                }
-                return promoteArithType(arithExprType(node.lhs), arithExprType(node.rhs));
-            }
-            default:
-                return UNDEFINED_CODE;
         }
     }
 
@@ -465,8 +856,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * token as DOUBLE; quoted, prefixed and bind-variable-shaped tokens
      * return {@code UNDEFINED_CODE} so {@link NarrowI64WidenDetector}
      * doesn't mistake a date string or geo-hash literal for a numeric
-     * constant. Used by the narrow-widen pre-pass to suppress widening when
-     * the predicate has a FLOAT/DOUBLE source.
+     * constant.
      */
     private static int floatConstantTypeCode(CharSequence token) {
         int len = token.length();
@@ -507,11 +897,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 || Chars.equals(token, '*') || Chars.equals(token, '/');
     }
 
+    // A binary numeric comparison operator: the shapes where a narrow-int leaf and
+    // an out-of-INT-range constant read at long width in the Java filter.
+    private static boolean isComparisonToken(CharSequence token) {
+        return Chars.equals(token, "=")
+                || Chars.equals(token, "<>") || Chars.equals(token, "!=")
+                || Chars.equals(token, "<") || Chars.equals(token, "<=")
+                || Chars.equals(token, ">") || Chars.equals(token, ">=");
+    }
+
     private static boolean isGeoHash(int columnType) {
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> true;
             default -> false;
         };
+    }
+
+    private static boolean isNullConstant(ExpressionNode node) {
+        return node != null && node.type == ExpressionNode.CONSTANT && SqlKeywords.isNullKeyword(node.token);
     }
 
     // Stands for PredicateType.NUMERIC
@@ -588,10 +991,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * LONG integer constant, {@link #UNDEFINED_CODE} otherwise. Recognises a
      * trailing {@code 'L'/'l'} suffix or a magnitude that overflows
      * {@code int}; non-numeric and float-shaped tokens return
-     * {@code UNDEFINED_CODE}. Used by the narrow-widen pre-pass so a literal
-     * LONG operand alone (e.g. {@code c4 * c8 >= -432577L}) is enough to
-     * pull narrow integer operands up to i64 and match the Java filter's
-     * {@code MulInt.getLong} long-width arithmetic.
+     * {@code UNDEFINED_CODE}. {@link #arithExprType} reads it so a literal LONG operand
+     * (e.g. {@code c4 * c8 >= -432577L}) types its enclosing arithmetic node I8.
      */
     private static int longConstantTypeCode(CharSequence token) {
         int len = token.length();
@@ -601,8 +1002,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // Reserved literal keywords (null / NULL, true, false) end in
         // 'l' / 'e' and would otherwise be folded into a bogus I8
         // observation by the suffix check below. They have their own
-        // dedicated emission paths in serializeConstant and must not
-        // influence the narrow-widen pre-pass.
+        // dedicated emission paths in serializeConstant.
         if (isReservedConstantKeyword(token)) {
             return UNDEFINED_CODE;
         }
@@ -635,6 +1035,56 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
+     * Narrows a folded intermediate to the width the Java filter folds it at and maps a
+     * non-finite result onto NaN, mirroring {@code FloatConstant#newInstance} /
+     * {@code DoubleConstant#newInstance}, which both hand back the NULL constant for
+     * anything {@link Numbers#isFinite(double)} rejects.
+     */
+    private static double normalizeConstantFold(double value, boolean isFloat) {
+        final double v = isFloat ? (float) value : value;
+        return Numbers.isFinite(v) ? v : Double.NaN;
+    }
+
+    /**
+     * Reads a constant leaf of a folded arithmetic subtree as a double, mirroring the ladder
+     * {@code FunctionParser#createConstant} walks: {@code null}/{@code nan} give the NULL
+     * constant, then {@code parseInt}, {@code parseLong}, {@code parseDouble}, {@code parseFloat}
+     * in that order. Going through the same ladder rather than {@code parseDouble} alone is what
+     * lets the fold read the shapes the type classifiers admit but a single parser does not -
+     * {@code parseInt} takes the underscore thousands separator that {@code parseDouble} rejects,
+     * and {@code parseDouble} takes the {@code 'd'} suffix. Throws {@link NumericException} for
+     * every remaining shape (quoted literals, {@code true}/{@code false}, geo hashes, type
+     * constants), which the caller turns into a declined filter.
+     */
+    private static double parseFoldLeaf(CharSequence token) throws NumericException {
+        if (SqlKeywords.isNullKeyword(token) || SqlKeywords.isNanKeyword(token)) {
+            return Double.NaN;
+        }
+        // Skip the integer rungs for a token that is lexically floating point. They could only
+        // throw, and NumericException#instance() allocates and fills in a stack trace under -ea,
+        // which the surefire argLine enables - so two doomed parses per FLOAT/DOUBLE leaf are not
+        // free on the compile path.
+        if (floatConstantTypeCode(token) == UNDEFINED_CODE) {
+            try {
+                return Numbers.parseInt(token);
+            } catch (NumericException notInt) {
+                // fall through to the next width, as createConstant does
+            }
+            try {
+                return Numbers.parseLong(token);
+            } catch (NumericException notLong) {
+                // fall through
+            }
+        }
+        try {
+            return Numbers.parseDouble(token);
+        } catch (NumericException notDouble) {
+            // fall through
+        }
+        return Numbers.parseFloat(token);
+    }
+
+    /**
      * Promotes two arithmetic operand type codes to the result type code of a
      * binary arithmetic operation, following QuestDB's widening rules: a
      * DOUBLE / FLOAT operand makes the result floating point, otherwise the
@@ -657,21 +1107,186 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return Math.max(a, b);
     }
 
+    // Adds a leaf / constant node to the i64-widen set. The set dedups by node identity: the same
+    // node can be reached by more than one marker pass.
+    private void addI64WidenLeaf(ExpressionNode node) {
+        i64WidenLeaves.add(node);
+    }
+
+    /**
+     * Classifies the arithmetic result type code of a numeric expression
+     * subtree (column / bind variable / numeric constant / + - * / over them),
+     * or {@link #UNDEFINED_CODE} for anything that is not pure numeric
+     * arithmetic. Mirrors the implicit-promotion rules the Java filter applies,
+     * so {@link #markWidthSemantics} can find the LONG-width subtrees whose
+     * narrow operands the Java filter reads at 64 bits.
+     */
+    private int arithExprType(ExpressionNode node) {
+        if (node == null) {
+            return UNDEFINED_CODE;
+        }
+        final int cached = arithExprTypeCache.get(node);
+        if (cached != NOT_CACHED) {
+            return cached;
+        }
+        final int typeCode = arithExprType0(node);
+        arithExprTypeCache.put(node, typeCode);
+        return typeCode;
+    }
+
+    private int arithExprType0(ExpressionNode node) {
+        switch (node.type) {
+            case ExpressionNode.LITERAL: {
+                int index = metadata.getColumnIndexQuiet(node.token);
+                if (index == -1) {
+                    return UNDEFINED_CODE;
+                }
+                return columnTypeCode(ColumnType.tagOf(metadata.getColumnType(index)));
+            }
+            case ExpressionNode.BIND_VARIABLE: {
+                Function bindFunction = lookupBindVariable(node.token);
+                return bindFunction != null
+                        ? bindVariableTypeCode(ColumnType.tagOf(bindFunction.getType()))
+                        : UNDEFINED_CODE;
+            }
+            case ExpressionNode.CONSTANT: {
+                int typeCode = floatConstantTypeCode(node.token);
+                if (typeCode != UNDEFINED_CODE) {
+                    return typeCode;
+                }
+                typeCode = longConstantTypeCode(node.token);
+                if (typeCode != UNDEFINED_CODE) {
+                    return typeCode;
+                }
+                // Plain int literal stays I4; non-numeric tokens are not arithmetic.
+                try {
+                    Numbers.parseInt(node.token);
+                    return I4_TYPE;
+                } catch (NumericException notInt) {
+                    return UNDEFINED_CODE;
+                }
+            }
+            case ExpressionNode.OPERATION: {
+                if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
+                    return arithExprType(node.rhs != null ? node.rhs : node.lhs);
+                }
+                if (!isArithmeticOperation(node)) {
+                    return UNDEFINED_CODE;
+                }
+                // Promotion only: an INT arithmetic subtree stays I4 however large its
+                // mathematical result, because it wraps mod 2^32 at runtime and its constant fold
+                // is an IntConstant. Only a genuine 64-bit operand promotes it to I8.
+                return promoteArithType(arithExprType(node.lhs), arithExprType(node.rhs));
+            }
+            default:
+                return UNDEFINED_CODE;
+        }
+    }
+
+    /**
+     * Asserts that no binary operator in a finished wide-lane IR stream mixes a 4-byte and an
+     * 8-byte integer operand.
+     * <p>
+     * The four-lane backend loads a 4-byte column as four packed i32 in the low half of the
+     * register while an 8-byte column spans all four 64-bit lanes, so an unharmonised pairing
+     * compares against adjacent rows. {@code avx2::convert()} widens the i32 side of an i32-with-i64
+     * and an i32-with-f64 pairing, so a miss no longer reaches a user as wrong rows - but the
+     * frontend still owns the answer, because only it knows which width the JAVA filter reads at,
+     * and the two must agree. This assert stays the tripwire that turns a miss into a test failure
+     * rather than a silent reliance on the backstop. Integer-to-float pairings are excluded:
+     * {@code convert()} handles them outright.
+     * <p>
+     * Runs under {@code -ea} only, so it costs nothing in production.
+     */
+    private boolean areWideLaneWidthsHarmonised(int options) {
+        if (((options >> 4) & 3) != EXEC_HINT_WIDE_LANE) {
+            return true;
+        }
+        // Operator instructions pad their options field with zero, and I1_TYPE is zero, so the
+        // stack has to carry widths derived from the opcode rather than the encoded field.
+        // UNDEFINED_CODE marks a value whose width is not a lane width (a comparison mask, or a
+        // type this check does not reason about); pairings involving one are skipped.
+        typeStack.clear();
+        for (long offset = 0; offset < memory.size(); offset += INSTRUCTION_SIZE) {
+            final int opCode = memory.getInt(offset);
+            switch (opCode) {
+                case RET:
+                    return true;
+                case VAR:
+                case MEM:
+                case IMM:
+                    typeStack.push(memory.getInt(offset + Integer.BYTES));
+                    break;
+                case SX_I64:
+                    typeStack.pop();
+                    typeStack.push(I8_TYPE);
+                    break;
+                case NEG:
+                    // Value-preserving: keeps its operand's width.
+                    break;
+                case NOT:
+                    typeStack.pop();
+                    typeStack.push(UNDEFINED_CODE);
+                    break;
+                case AND:
+                case OR:
+                case AND_SC:
+                case OR_SC:
+                    typeStack.pop();
+                    typeStack.pop();
+                    typeStack.push(UNDEFINED_CODE);
+                    break;
+                case BEGIN_SC:
+                case END_SC:
+                    break;
+                case EQ:
+                case NE:
+                case LT:
+                case LE:
+                case GT:
+                case GE:
+                case ADD:
+                case SUB:
+                case MUL:
+                case DIV: {
+                    final int lhsType = typeStack.pop();
+                    final int rhsType = typeStack.pop();
+                    if ((isNarrowIntTypeCode(lhsType) && rhsType == I8_TYPE)
+                            || (isNarrowIntTypeCode(rhsType) && lhsType == I8_TYPE)) {
+                        return false;
+                    }
+                    final boolean isComparison = opCode == EQ || opCode == NE || opCode == LT
+                            || opCode == LE || opCode == GT || opCode == GE;
+                    // A comparison yields a lane mask, not a value of either operand's width.
+                    typeStack.push(isComparison ? UNDEFINED_CODE : Math.max(lhsType, rhsType));
+                    break;
+                }
+                default:
+                    // An opcode this check does not model: drop the width information rather
+                    // than guess at its arity.
+                    typeStack.clear();
+            }
+        }
+        return true;
+    }
+
     private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
         int position = node.position;
         CharSequence token = node.token;
-        boolean negate = false;
+        boolean isNegated = false;
         // Check for the negation case
         if (node.type == ExpressionNode.OPERATION) {
             ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;
             if (nextNode != null) {
                 position = nextNode.position;
                 token = nextNode.token;
-                negate = true;
+                isNegated = true;
             }
         }
 
-        serializeConstant(offset, position, token, negate, isI64WidenLeaf(node));
+        serializeConstant(offset, position, token, isNegated,
+                isI64WidenLeaf(node) || i64WidenConstants.contains(node),
+                narrowKeptConstants.contains(node), intWidthNullElements.contains(node));
     }
 
     private void backfillNode(long key, ExpressionNode value) {
@@ -754,6 +1369,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    /**
+     * Computes the priority of each predicate once, into {@link #predicatePriorities}, so that
+     * {@link #sortPredicates(ObjList, boolean)} reads a pre-computed int per predicate instead of
+     * re-walking its subtree.
+     */
+    private void computePredicatePriorities(ObjList<ExpressionNode> predicates) {
+        predicatePriorities.clear();
+        for (int i = 0, n = predicates.size(); i < n; i++) {
+            final int priority = getPredicatePriority(predicates.getQuick(i));
+            // The counting sort indexes its buckets by priority, so a new PRIORITY_* constant outside
+            // the range has to raise PRIORITY_COUNT with it.
+            assert priority >= 0 && priority < PRIORITY_COUNT;
+            predicatePriorities.add(priority);
+        }
+    }
+
     private void ensureOnlyVarSizeHeaderChecks() throws SqlException {
         typeStack.clear();
         for (long offset = 0; offset < memory.size(); offset += INSTRUCTION_SIZE) {
@@ -820,6 +1451,138 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return findOperandColumnType(node.rhs);
     }
 
+    /**
+     * The exact value of a numeric constant - bare, or under a unary minus - as the double the Java
+     * filter compares against a FLOAT leaf, or {@link Double#NaN} when {@code node} is not one.
+     * parseLong runs first: it accepts the underscore thousands separator (1_000_000) and
+     * parseDouble does not, so a separated integer literal would otherwise read as non-numeric.
+     * parseFloat runs last, for the {@code f}-suffixed spelling (16777216.0f) that parseDouble
+     * rejects: the Java filter reads such a literal as a FLOAT constant and still promotes it to
+     * double, so it needs the same widening analysis as its unsuffixed twin.
+     */
+    private double floatCmpConstValue(ExpressionNode node) {
+        final ExpressionNode constNode;
+        final boolean isNegated;
+        if (node.type == ExpressionNode.CONSTANT) {
+            constNode = node;
+            isNegated = false;
+        } else if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            constNode = node.rhs != null ? node.rhs : node.lhs;
+            isNegated = true;
+        } else {
+            return Double.NaN;
+        }
+        if (constNode == null || constNode.type != ExpressionNode.CONSTANT
+                || constNode.token == null || isReservedConstantKeyword(constNode.token)) {
+            return Double.NaN;
+        }
+        double d;
+        try {
+            d = Numbers.parseLong(constNode.token);
+        } catch (NumericException notLong) {
+            try {
+                d = Numbers.parseDouble(constNode.token);
+            } catch (NumericException notDouble) {
+                try {
+                    d = Numbers.parseFloat(constNode.token);
+                } catch (NumericException notNumeric) {
+                    return Double.NaN;
+                }
+            }
+        }
+        return isNegated ? -d : d;
+    }
+
+    /**
+     * Folds one operand's {@link #arithExprType} into a running
+     * comparison-width accumulator. Unlike {@link #promoteArithType}, a
+     * non-numeric ({@link #UNDEFINED_CODE}) operand is treated as identity
+     * rather than absorbing the result: an IN list keeps its column operand last
+     * in {@code args} (with {@code lhs} / {@code rhs} null in the multi-value
+     * form), so a plain promote seeded from the null operands would stay
+     * UNDEFINED and read a LONG-width fold as a wrapped I4.
+     */
+    private int foldCmpType(int cmpType, ExpressionNode operand) {
+        int operandType = arithExprType(operand);
+        if (operandType == UNDEFINED_CODE) {
+            return cmpType;
+        }
+        if (cmpType == UNDEFINED_CODE) {
+            return operandType;
+        }
+        return promoteArithType(cmpType, operandType);
+    }
+
+    /**
+     * Width-correct long fold, used ONLY to compute the immediate a LONG-width (I8) fold root
+     * emits. It mirrors the Java filter's {@code getLong()} recursion: a narrow (INT-width)
+     * node computes with per-op int wrapping and sign-extends, exactly as
+     * {@code AddInt}/{@code MulInt}#getLong() do ({@code Numbers.intToLong(getInt())}); only a
+     * genuine LONG-width node folds at 64-bit width.
+     * <p>
+     * It is deliberately separate from {@link #tryFoldConstantArith}, which folds every node at
+     * 64-bit width so its {@code (int) v != v} check can DETECT an out-of-INT-range result and
+     * flag a fold root. That detector must stay unwrapped; this evaluator must wrap narrow
+     * sub-subtrees. So {@code (2_000_000_000 + 2_000_000_000) + 5_000_000_000} folds the inner
+     * INT add to {@code -294_967_296} and emits {@code -294_967_296 + 5_000_000_000 =
+     * 4_705_032_704}, where the plain long fold kept the unwrapped {@code 9_000_000_000}.
+     * {@code Numbers.intToLong} maps {@code INT_NULL} onto {@code LONG_NULL}, so a narrow
+     * sub-subtree that collapses onto its sentinel still poisons the enclosing fold to NULL.
+     */
+    private long foldConstantArithWidthAware(ExpressionNode node) throws NumericException {
+        if (node == null) {
+            throw NumericException.INSTANCE;
+        }
+        // A narrow (I1/I2/I4) node wraps at INT width and sign-extends; the whole point of the
+        // separate evaluator is to catch it here rather than fold it at long width.
+        if (isNarrowIntTypeCode(arithExprType(node))) {
+            return Numbers.intToLong(tryFoldConstantArithI4(node));
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            return Numbers.parseLong(node.token);
+        }
+        if (node.type != ExpressionNode.OPERATION) {
+            throw NumericException.INSTANCE;
+        }
+        if (Chars.equals(node.token, '-') && node.lhs == null) {
+            long operand = foldConstantArithWidthAware(node.rhs);
+            return operand == Numbers.LONG_NULL ? Numbers.LONG_NULL : -operand;
+        }
+        // Reject a non-arithmetic token BEFORE folding either child. See tryFoldConstantArith0.
+        // Unreachable while descend() is the only caller - tryFoldConstantArith has already
+        // accepted the subtree by then - but the sentinel propagation below must never be the
+        // first thing a new caller reaches.
+        if (!isArithmeticOperation(node)) {
+            throw NumericException.INSTANCE;
+        }
+        long left = foldConstantArithWidthAware(node.lhs);
+        long right = foldConstantArithWidthAware(node.rhs);
+        if (left == Numbers.LONG_NULL || right == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        if (Chars.equals(node.token, '+')) {
+            return left + right;
+        }
+        if (Chars.equals(node.token, '-')) {
+            return left - right;
+        }
+        if (Chars.equals(node.token, '*')) {
+            return left * right;
+        }
+        // isArithmeticOperation() above leaves only '/' here, and the tail re-checks rather than
+        // asserting: isArithmeticOperation() is shared with a dozen other call sites, so an operator
+        // added to it - QuestDB does have a '%' - would otherwise reach this division. An assert
+        // would catch that under -ea only, and every production JVM runs without it. Declining costs
+        // nothing: descend() emits the subtree as per-op IR instead.
+        if (!Chars.equals(node.token, '/')) {
+            throw NumericException.INSTANCE;
+        }
+        if (right == 0L) {
+            throw NumericException.INSTANCE;
+        }
+        return left / right;
+    }
+
     private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
         Function varFunction;
 
@@ -865,6 +1628,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private int getExecHint(boolean forceScalar) {
         final TypesObserver typesObserver = predicateContext.globalTypesObserver;
         if (!forceScalar && !forceScalarMode) {
+            if (isWideLaneMode && hasEmittedWideLaneConversion) {
+                return EXEC_HINT_WIDE_LANE;
+            }
             return typesObserver.hasMixedSizes() ? EXEC_HINT_MIXED_SIZE_TYPE : EXEC_HINT_SINGLE_SIZE_TYPE;
         }
         return EXEC_HINT_SCALAR;
@@ -925,6 +1691,86 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         };
     }
 
+    /**
+     * Reports whether the tree carries the ingredients a wide-lane conversion is built from, so
+     * {@code false} proves that serializing it cannot set {@link #hasEmittedWideLaneConversion}.
+     * <p>
+     * {@link #requiresWideLane} answers a deliberately broader question - whether to ENTER wide-lane
+     * mode - and over-accepts in two places the emission rules do not follow: it takes any operand
+     * {@link #containsFloatExpression} admits, F8 included, where only an F4 leaf is ever widened
+     * ({@link #isFloatLeaf} excludes F8 because DOUBLE already compares exactly), and it reads an
+     * overflowing constant fold through {@link #arithExprType} where {@link #markWidthSemantics}
+     * reads it through {@link #arithExprType}. A filter that enters the mode and then emits
+     * nothing still gets a correct hint - {@link #getExecHint} needs both the mode and the emission
+     * to return {@link #EXEC_HINT_WIDE_LANE} - but it used to lose the whole short-circuit path,
+     * because {@link #serialize} suppressed the scalar-mode detector on the mode alone.
+     * <p>
+     * Answering per predicate matches the granularity the width machinery works at: AND / OR delimit
+     * predicates ({@link #isTopLevelOperation} accepts NOT, IN and the comparison operators, never
+     * AND / OR), and every mark set is recomputed per predicate.
+     * A NOT subtree is one predicate, so this does not recurse into it.
+     * <p>
+     * Erring towards {@code true} only preserves the previous behaviour, so anything uncertain
+     * belongs on the {@code true} side. Should this ever answer {@code false} for a filter that does
+     * emit a conversion, the wide-lane guard in {@link #serializePredicatesAndSc} /
+     * {@link #serializePredicatesOrSc} declines JIT compilation rather than letting a short-circuit
+     * opcode reach the four-lane backend, which cannot branch per lane.
+     */
+    private boolean hasWideLaneConversionSource(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.OPERATION
+                && (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token))) {
+            return hasWideLaneConversionSource(node.lhs) || hasWideLaneConversionSource(node.rhs);
+        }
+        // Within one predicate a conversion has exactly two sources. markFloatCmpConst fires for an
+        // F4 leaf against a constant that no 32-bit float reproduces, and maybeEmitI64Widening
+        // sign-extends a leaf but returns early unless that leaf is emitted at I1 / I2 / I4 width -
+        // so it needs both a narrow leaf to widen and a 64-bit operand to widen it towards.
+        return (hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_FLOAT_LEAF)
+                && hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_FLOAT_WIDENING_CONST))
+                || (hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_NARROW_INT_LEAF)
+                && hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_I8_OPERAND));
+    }
+
+    /**
+     * Reports whether a subtree holds a node of the given {@code WIDE_LANE_SOURCE_*} kind, walking
+     * both operands and the {@code args} of an n-ary node such as IN.
+     */
+    private boolean hasWideLaneSourceNode(ExpressionNode node, int kind) {
+        if (node == null) {
+            return false;
+        }
+        final boolean isMatch = switch (kind) {
+            case WIDE_LANE_SOURCE_FLOAT_LEAF -> isFloatLeaf(node);
+            case WIDE_LANE_SOURCE_FLOAT_WIDENING_CONST -> isFloatWideningConst(node);
+            case WIDE_LANE_SOURCE_NARROW_INT_LEAF -> isNarrowIntLeaf(node);
+            case WIDE_LANE_SOURCE_I8_OPERAND -> arithExprType(node) == I8_TYPE;
+            default -> {
+                // Unreachable: kind is always one of the four constants above. Answer true rather
+                // than throwing, because true is the conservative side - it only keeps the
+                // short-circuit suppression this method exists to lift - whereas an error raised
+                // here would reach SqlCodeGenerator's catch (Throwable) and fail the query outright,
+                // instead of declining JIT the way every other failure in this serializer does.
+                assert false : "unexpected wide-lane source kind: " + kind;
+                yield true;
+            }
+        };
+        if (isMatch) {
+            return true;
+        }
+        if (hasWideLaneSourceNode(node.lhs, kind) || hasWideLaneSourceNode(node.rhs, kind)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasWideLaneSourceNode(node.args.getQuick(i), kind)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isBooleanColumn(ExpressionNode node) {
         if (node.type != ExpressionNode.LITERAL) {
             return false;
@@ -938,16 +1784,65 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return columnTypeTag == ColumnType.BOOLEAN;
     }
 
-    // Reference (not value) membership: the same node objects are marked and serialized.
-    private boolean isI64WidenLeaf(ExpressionNode node) {
-        for (int i = 0, n = i64WidenLeaves.size(); i < n; i++) {
-            if (i64WidenLeaves.getQuick(i) == node) {
-                return true;
-            }
+    /**
+     * Reports whether {@code node} is a numeric constant - bare, or under a unary minus - whose
+     * value no 32-bit float carries exactly, i.e. one that {@link #serializeNumber}'s F4 arm
+     * would round. A FLOAT column is always compared at DOUBLE width by the Java filter (there
+     * is no (FLOAT, FLOAT) comparison factory - only the double ones, so both operands promote),
+     * so such a constant has to reach the compiled filter as a double or the two paths diverge.
+     * <p>
+     * Round-to-nearest is wrong in both directions, which is why every op is affected rather
+     * than just some: {@code f < 1.00000003} rounds the bound DOWN to 1.0f and drops a row
+     * holding 1.0f that the Java filter keeps, {@code f > 0.99999998} rounds it UP to 1.0f and
+     * drops the same row, and {@code f = 1.00000003} rounds it to 1.0f and MATCHES that row -
+     * a row whose value is not the one asked for. An integer literal is no safer above 2^24
+     * ({@code (float) 16777217} is 16777216).
+     */
+    private boolean isFloatInexactConst(ExpressionNode node) {
+        if (node == null) {
+            return false;
         }
-        return false;
+        final double d = floatCmpConstValue(node);
+        if (Numbers.isNull(d)) {
+            return false; // not a numeric constant
+        }
+        return (double) (float) d != d;
     }
 
+    // A FLOAT-typed operand: a column, a bind variable, or an arithmetic subtree over them. A
+    // constant compared directly against one types down to F4 (INT and FLOAT are both 4 bytes, so
+    // the observer sees no mixed size), and serializeNumber would then emit it as a lossy 32-bit
+    // float, while the Java filter compares both operands at double width - there is no
+    // (FLOAT, FLOAT) comparison factory. markFloatCmpConst puts that right. An arithmetic subtree
+    // counts: "f + 0 < 1.00000003" reads the bound the same way a bare column does. A CONSTANT is
+    // excluded - a constant-vs-constant comparison has no column side to bound. (A negated constant
+    // is an OPERATION and still slips through, but such a predicate has no column at all, so
+    // serializeConstant rejects it and the JIT declines the filter.) DOUBLE (F8) already compares
+    // exactly, so it is intentionally excluded too.
+    private boolean isFloatLeaf(ExpressionNode node) {
+        if (node == null || node.type == ExpressionNode.CONSTANT) {
+            return false;
+        }
+        return arithExprType(node) == F4_TYPE;
+    }
+
+    /**
+     * Reports whether a constant compared against a FLOAT leaf needs the double-width treatment,
+     * i.e. whether the 32-bit float {@link #serializeNumber} would emit for it differs from the
+     * value the Java filter compares at double width. Two spellings reach this: an out-of-INT-range
+     * integer literal (the original rule - {@code (float) 5000000001} is 5000000000), and any other
+     * literal with no exact float, fractional or not (see {@link #isFloatInexactConst}).
+     */
+    private boolean isFloatWideningConst(ExpressionNode node) {
+        return (isIntegerConst(node) && arithExprType(node) == I8_TYPE) || isFloatInexactConst(node);
+    }
+
+    // Reference (not value) membership: the same node objects are marked and serialized.
+    private boolean isI64WidenLeaf(ExpressionNode node) {
+        return i64WidenLeaves.contains(node);
+    }
+
+    // Reference (not value) membership: the same node objects are marked and serialized.
     private boolean isInTimestampPredicate() throws SqlException {
         // visit inOperationNode to get an expression type
         predicateContext.onNodeVisited(predicateContext.inOperationNode.rhs);
@@ -955,6 +1850,95 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         // check predicate type is timestamp
         return ColumnType.isTimestamp(predicateContext.columnType);
+    }
+
+    // A bare or unary-minus-wrapped integer CONSTANT node (I4- or I8-typed). Returns
+    // false for float, keyword, and non-numeric constants, and for columns.
+    private boolean isIntegerConst(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        final ExpressionNode constNode;
+        if (node.type == ExpressionNode.CONSTANT) {
+            constNode = node;
+        } else if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            constNode = node.rhs != null ? node.rhs : node.lhs;
+        } else {
+            return false;
+        }
+        if (constNode == null || constNode.type != ExpressionNode.CONSTANT) {
+            return false;
+        }
+        final int t = arithExprType(node);
+        return t == I4_TYPE || t == I8_TYPE;
+    }
+
+    /**
+     * Reports whether a floating-point constant compared directly against a narrow-int leaf needs
+     * the double-width treatment. The Java filter promotes the int to double -
+     * {@code IntFunction#getDouble} feeds {@code "<(DD)"} - and compares at f64, while the JIT emits
+     * the constant as a 32-bit float and {@code cvt_itof} rounds the column lane to float as well,
+     * so the comparison runs entirely at f32. Either rounding moves rows across the bound:
+     * <ul>
+     *     <li>the CONSTANT has no exact float, so the bound the filter tests is not the one the
+     *     query names - 1.00000003 becomes 1.0f, and "= 1.00000003" then matches a row holding 1;
+     *     </li>
+     *     <li>the constant is exactly representable but the COLUMN is the side that rounds -
+     *     {@code (float) 16777217} is 16777216, so "> 16777216.0" drops the row holding
+     *     16777217.</li>
+     * </ul>
+     * Below {@link #FLOAT_EXACT_INT_LIMIT} with an exact-float constant neither side rounds, so
+     * both filters compare the same two exact values and select the same rows. The tolerance does
+     * not disturb that: for a column value of magnitude 1 or more the nearest distinct float is at
+     * least 6e-8 away, hundreds of times DOUBLE_TOLERANCE, so a constant within the tolerance band
+     * of an integer IS that integer; and against a zero column value the subtraction is exact on
+     * both paths. Those constants keep the vectorized path.
+     * <p>
+     * An integer-spelled literal is excluded: {@link #serializeNumber} emits it as an integer
+     * immediate and both paths compare at integer width. The out-of-INT-range ones are widened by
+     * {@link #markNarrowConstCmpWidenPair}'s I8 arms instead.
+     */
+    private boolean isNarrowIntCmpWideningConst(ExpressionNode node) {
+        if (node == null || isIntegerConst(node)) {
+            return false;
+        }
+        final double d = floatCmpConstValue(node);
+        if (Numbers.isNull(d)) {
+            return false; // not a numeric constant, or non-finite
+        }
+        final double f = (float) d;
+        if (Math.abs(d) >= FLOAT_EXACT_INT_LIMIT) {
+            // The COLUMN can round onto the bound from here, whatever the bound itself does.
+            return true;
+        }
+        if (f == d) {
+            // Neither side rounds: every int below the limit has an exact float.
+            return false;
+        }
+        // The constant rounds, but that only selects different rows if a column value can fall
+        // between the bound the query names and the float the filter would emit - and every column
+        // value here is an integer. Widen the band by the comparison tolerance at both ends, since
+        // a row within DOUBLE_TOLERANCE of the bound compares EQUAL to it rather than below or
+        // above. If no integer lands in that band, every row sits on the same side of both bounds
+        // and further than the tolerance from each, so the f32 comparison keeps its rows - and its
+        // eight-lane loop.
+        final double lo = Math.min(d, f) - Numbers.DOUBLE_TOLERANCE;
+        final double hi = Math.max(d, f) + Numbers.DOUBLE_TOLERANCE;
+        return Math.floor(hi) >= Math.ceil(lo);
+    }
+
+    // A narrow-int (BYTE / SHORT / INT) column or bind-variable leaf. Sign-extending
+    // one to i64 is value-preserving (no arithmetic to wrap).
+    private boolean isNarrowIntLeaf(ExpressionNode node) {
+        if (node == null || (node.type != ExpressionNode.LITERAL && node.type != ExpressionNode.BIND_VARIABLE)) {
+            return false;
+        }
+        final int t = arithExprType(node);
+        return t == I1_TYPE || t == I2_TYPE || t == I4_TYPE;
+    }
+
+    private static boolean isNarrowIntTypeCode(int typeCode) {
+        return typeCode == I1_TYPE || typeCode == I2_TYPE || typeCode == I4_TYPE;
     }
 
     /**
@@ -1004,6 +1988,56 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return false;
     }
 
+    /**
+     * Reports whether an IN key is a genuine narrow INTEGER one (BYTE / SHORT / INT) - a column, a
+     * numeric bind variable, or an arithmetic subtree over them - which is what
+     * {@link #neverMatchingInPairingWidth} needs to know before folding a NULL pairing.
+     * <p>
+     * A SYMBOL / CHAR / GEOHASH / IPv4 / BOOLEAN key maps to the same narrow type
+     * code as a genuine integer (see {@link #columnTypeCode}) but routes through a
+     * different Java IN function (InSymbol / InChar / InIPv4 / ...), not the InLong path, so it
+     * keeps its own IN function's NULL semantics. A genuinely-LONG (I8) key has a real sentinel at
+     * its own width, so its NULL pairing is meaningful.
+     * <p>
+     * An arithmetic OPERATION key is checked by {@link #arithExprType}: the
+     * arithmetic operators (+ - * /) only ever yield a numeric result, so a narrow
+     * genuine type there is a real narrow-int subtree, never a symbol / geo leaf. A
+     * plain LITERAL / BIND_VARIABLE key is checked against its real column type tag,
+     * since {@code columnTypeCode} alone cannot tell an INT column from a SYMBOL one.
+     */
+    private boolean isWidthSensitiveInKey(ExpressionNode inKey) {
+        if (inKey == null) {
+            return false;
+        }
+        if (inKey.type == ExpressionNode.OPERATION || inKey.type == ExpressionNode.CONSTANT) {
+            // A numeric CONSTANT key needs the override for the same reason an arithmetic one does,
+            // and for one more: serializeUntypedNumber emits it at I8 as soon as anything else in
+            // the predicate is I8, so "0 IN (i32, i64)" put an i64 key against the i32 element while
+            // the i64 element paired correctly. arithExprType is UNDEFINED for a non-numeric
+            // constant - a quoted symbol, a char, NULL - so those keep their own IN function's
+            // semantics and take no numeric override, exactly as for a LITERAL key below.
+            final int t = arithExprType(inKey);
+            return t == I1_TYPE || t == I2_TYPE || t == I4_TYPE;
+        }
+        final int typeTag;
+        if (inKey.type == ExpressionNode.LITERAL) {
+            final int index = metadata.getColumnIndexQuiet(inKey.token);
+            if (index == -1) {
+                return false;
+            }
+            typeTag = ColumnType.tagOf(metadata.getColumnType(index));
+        } else if (inKey.type == ExpressionNode.BIND_VARIABLE) {
+            final Function fn = lookupBindVariable(inKey.token);
+            if (fn == null) {
+                return false;
+            }
+            typeTag = ColumnType.tagOf(fn.getType());
+        } else {
+            return false;
+        }
+        return typeTag == ColumnType.BYTE || typeTag == ColumnType.SHORT || typeTag == ColumnType.INT;
+    }
+
     private Function lookupBindVariable(CharSequence token) {
         BindVariableService svc = executionContext.getBindVariableService();
         if (svc == null || token == null || token.isEmpty()) {
@@ -1023,65 +2057,523 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
-     * Sign-extends a narrow integer leaf to i64 so the next arithmetic op
-     * dispatches to int64_*, matching the Java filter's MulInt / AddInt#getLong.
-     * Fires either for the whole predicate (NarrowI64WidenDetector saw
-     * arithmetic + LONG + INT, no float) or, when a float suppresses that, just
-     * for the leaves under a LONG-width subtree that {@code node} belongs to.
+     * Routes a constant with no exact 32-bit float that a comparison puts against a FLOAT leaf (see
+     * {@link #isFloatInexactConst}) onto the double-width path: {@link #serializeConstant} emits it
+     * through the 64-bit arm. The four-lane AVX2 mode promotes the float leaf to double. Both
+     * filters then run the SAME comparison - QuestDB compares floating point
+     * with a tolerance ({@code Numbers.DOUBLE_TOLERANCE}, 1e-10: {@code LtDoubleVVFunctionFactory}
+     * is {@code !Numbers.equals(l, r) && l < r}, and the backend's cmp_lt / cmp_eq apply
+     * DOUBLE_EPSILON the same way) - so this is exact agreement rather than an approximation of it.
+     * <p>
+     * Emitting a float bound instead, rounded in the direction the operator preserves, looks like it
+     * should work and does not: it reproduces the comparison only under EXACT IEEE ordering. The
+     * tolerance is 1e-10 while one float ulp near 1.0 is 1.2e-7, so shifting the bound by an ulp
+     * steps clean over the band. A constant within the tolerance of a float then flips rows in both
+     * directions - {@code f < 1.00000000005} against a row holding 1.0f is a match for the rounded
+     * bound but a tolerance-EQUAL (so excluded) for the Java filter. The bound has to carry the
+     * tolerance to be rounded safely, and at that point the double comparison is what is wanted
+     * anyway. (The parquet pruner cannot widen its stats slot, so it folds the tolerance into the
+     * bound instead - see ParquetRowGroupFilter#tryPutFloatFromDouble.)
+     */
+    private void markFloatCmpConst(ExpressionNode constNode) {
+        addI64WidenLeaf(constNode);
+        if (isWideLaneMode) {
+            hasEmittedWideLaneConversion = true;
+        }
+    }
+
+    /**
+     * Widens a narrow-int leaf and the floating-point constant a comparison puts against it, so the
+     * pair compares at double width exactly as the Java filter does. See
+     * {@link #isNarrowIntCmpWideningConst} for which constants need this.
+     * <p>
+     * Marking the constant is what makes the bound exact; sign-extending the leaf is what makes the
+     * PAIRING one the backend converts unconditionally. Widening the constant alone would leave an
+     * (i32, f64) pair, whose backend arm reads the low 128 bits and so is gated on four-lane mode.
+     * That pair would still be correct today - a non-empty {@code i64WidenLeaves} forces scalar
+     * (see {@link #visit}), and the scalar {@code convert()} handles (i32, f64) ungated - but it
+     * would rest on a gate two passes away rather than on the shape itself. Sign-extending the leaf
+     * routes it through the ungated (i64, f64) arm instead, so the pairing is correct in every
+     * execution mode on its own terms. The sign extension is value-preserving (a bare leaf, no
+     * arithmetic to wrap) and i64 -> f64 is exact over the INT range, so the widened comparison is
+     * the f64 one the Java filter performs.
+     * <p>
+     * An arithmetic subtree cannot take this route - sign-extending it would stop it wrapping at
+     * i32 - so {@link #maybeWidenCmpConstOperand} widens only the constant for that shape and
+     * leans on exactly that scalar gate.
+     */
+    private void markNarrowIntCmpFloatConst(ExpressionNode narrowLeaf, ExpressionNode constNode) {
+        addI64WidenLeaf(narrowLeaf);
+        markFloatCmpConst(constNode);
+    }
+
+    private void markWidthSemantics(ExpressionNode node, WidthCtx w) {
+        if (node == null) {
+            return;
+        }
+        final boolean isFloatActive = w.isFloatActive;
+        final boolean isFloatUnderLong = w.isFloatUnderLong;
+        markNarrowConstCmpWidenNode(node);
+        final boolean isIn = node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token);
+        if (node.type != ExpressionNode.OPERATION && !isIn) {
+            return;
+        }
+
+        final boolean isUnaryMinus = node.paramCount == 1 && Chars.equals(node.token, '-');
+        if (isArithmeticOperation(node) || isUnaryMinus) {
+            final boolean isFloatLong = isFloatActive
+                    && (isFloatUnderLong || arithExprType(node) == I8_TYPE);
+            final WidthCtx childCtx = new WidthCtx(isFloatActive, isFloatLong);
+            final int exprType = arithExprType(node);
+            if (isUnaryMinus) {
+                markWidthSemanticsOperand(node.rhs != null ? node.rhs : node.lhs, exprType, childCtx);
+            } else {
+                markWidthSemanticsOperand(node.lhs, exprType, childCtx);
+                markWidthSemanticsOperand(node.rhs, exprType, childCtx);
+            }
+            return;
+        }
+
+        if (isIn && node.args.size() > 0) {
+            final ExpressionNode key = node.args.getLast();
+            final int keyType = arithExprType(key);
+            // `k IN (e0, e1, ...)` re-serializes the key once per element, but the key is ONE node
+            // and carries one emitted width, so a single 64-bit pairing pulls the whole list to
+            // 64 bits. Decide that first, then harmonise every operand to it: the Java InLong path
+            // reads the key through getLong() and a narrow-int element through
+            // Numbers.intToLong(getInt()), so sign-extending either is value preserving.
+            boolean hasLongPairing = false;
+            for (int i = 0, n = node.args.size() - 1; i < n; i++) {
+                if (foldCmpType(keyType, node.args.getQuick(i)) == I8_TYPE) {
+                    hasLongPairing = true;
+                    break;
+                }
+            }
+            if (hasLongPairing) {
+                markCmpOperandWidenedToI64(key);
+            }
+            for (int i = 0, n = node.args.size() - 1; i < n; i++) {
+                final ExpressionNode element = node.args.getQuick(i);
+                // A NULL element follows the width the LIST settled on. While the list stays at
+                // INT width that is the key's I4 (INT_NULL); once a 64-bit pairing lifts the key to
+                // i64 it is LONG_NULL at I8 - which is what the Java filter compares against, since
+                // Numbers.intToLong(INT_NULL) is LONG_NULL. The predicate-wide observer knows
+                // neither, because it sees the narrowest column anywhere in the predicate.
+                if (isNullConstant(element)) {
+                    if (hasLongPairing) {
+                        i64WidenConstants.add(element);
+                    } else if (keyType == I4_TYPE) {
+                        intWidthNullElements.add(element);
+                    }
+                }
+                final boolean isPairLong = foldCmpType(keyType, element) == I8_TYPE;
+                if (hasLongPairing) {
+                    markCmpOperandWidenedToI64(element);
+                }
+                markWidthSemantics(element, new WidthCtx(isFloatActive, isPairLong));
+            }
+            markWidthSemantics(key, new WidthCtx(isFloatActive, false));
+            return;
+        }
+
+        int cmpType = foldCmpType(UNDEFINED_CODE, node.lhs);
+        cmpType = foldCmpType(cmpType, node.rhs);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            cmpType = foldCmpType(cmpType, node.args.getQuick(i));
+        }
+        final boolean isCmpLong = cmpType == I8_TYPE;
+        // The two-operand IN form (single element, key and element in lhs / rhs) reaches here
+        // instead of the args loop above and needs the same harmonisation.
+        if (isCmpLong && node.paramCount == 2 && (isComparisonToken(node.token) || isIn)) {
+            // A bare narrow-int leaf (column / bind variable) compared at long width against
+            // a LONG operand must sign-extend to i64, so the four-lane AVX2 path compares it
+            // at 64-bit width: the LONG operand loads at full width and cmp_* dispatches on a
+            // single dtype, so an un-widened narrow leaf produces a width-mismatched vector
+            // compare (garbage lanes). markNarrowConstCmpWidenPair covers the narrow-vs-out-of-
+            // range-constant case and the IN path covers IN keys, but neither covers a plain
+            // column-vs-column / column-vs-bind comparison. Outside wide-lane mode the emitted
+            // SX_I64 forces scalar via serialize()'s i64WidenLeaves gate, matching master's
+            // mixed-size scalar path.
+            // Both operands of a 64-bit comparison are read at 64 bits by the Java filter, so
+            // widening either is exact. A narrow LEAF sign-extends (IntColumn#getLong), and an
+            // integer CONSTANT has to follow it: the type observer sees columns only, so an
+            // all-INT-column predicate would emit it at I4 against the peer's i64 lanes.
+            markCmpOperandWidenedToI64(node.lhs);
+            markCmpOperandWidenedToI64(node.rhs);
+        }
+        // Not gated on isFloatActive: an out-of-INT-range constant compared against a narrow
+        // arithmetic subtree has to widen whatever else the predicate contains. markNarrowConstCmp-
+        // WidenPair covers only a bare LITERAL / BIND_VARIABLE leaf, so a unary-minus-wrapped column
+        // (-i < 2147483649) fell through both and the constant was emitted as a lossy F4 immediate.
+        // The scalar and vectorized backends then disagreed with each other, which made the answer
+        // depend on whether the host has AVX2. maybeWidenCmpConstOperand carries its own predicate -
+        // an integer CONSTANT of I8 type against an OPERATION with a narrow arithExprType - so it
+        // is safe to ask unconditionally.
+        if (node.paramCount == 2 && isComparisonToken(node.token)) {
+            maybeWidenCmpConstOperand(node.lhs, node.rhs);
+            maybeWidenCmpConstOperand(node.rhs, node.lhs);
+        }
+        // The single-value IN form keeps its key / element in lhs / rhs, so it needs the same
+        // key-width NULL rule the args loop above applies. See intWidthNullElements.
+        if (isIn && node.paramCount == 2) {
+            final ExpressionNode nullElement = isNullConstant(node.rhs) ? node.rhs
+                    : isNullConstant(node.lhs) ? node.lhs : null;
+            if (nullElement != null) {
+                final int keyWidth = arithExprType(nullElement == node.rhs ? node.lhs : node.rhs);
+                if (keyWidth == I8_TYPE) {
+                    i64WidenConstants.add(nullElement);
+                } else if (keyWidth == I4_TYPE) {
+                    intWidthNullElements.add(nullElement);
+                }
+            }
+        }
+        final WidthCtx cmpCtx = new WidthCtx(isFloatActive, isCmpLong);
+        markWidthSemantics(node.lhs, cmpCtx);
+        markWidthSemantics(node.rhs, cmpCtx);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            markWidthSemantics(node.args.getQuick(i), cmpCtx);
+        }
+    }
+
+    /**
+     * Harmonises one operand of a comparison or {@code IN} pairing that runs at 64 bits: a narrow
+     * leaf and an integer constant both sign-extend, and a narrow arithmetic subtree - which cannot
+     * be sign-extended from the frontend - drops the predicate to the scalar backend.
+     */
+    private void markCmpOperandWidenedToI64(ExpressionNode node) {
+        if (isNarrowIntLeaf(node)) {
+            addI64WidenLeaf(node);
+            return;
+        }
+        if (isIntegerConst(node)) {
+            // Widening an immediate needs no SX_I64 and costs no vectorization, so it goes in the
+            // constant-only set: emitting `0` at I8 against an i64 peer is what the observer would
+            // have done anyway whenever it saw an 8-byte column.
+            i64WidenConstants.add(node);
+            return;
+        }
+        forceScalarOnUnharmonisedNarrowArith(node);
+    }
+
+    /**
+     * Forces the scalar backend when {@code node} is a NARROW-width arithmetic subtree that a
+     * 64-bit comparison peer will read, and the four-lane mode is not selected.
+     * <p>
+     * An INT arithmetic subtree computes at i32 and wraps, exactly as {@code MulInt#getInt} does,
+     * and the comparison sign-extends its RESULT - which is what the Java filter does too, since
+     * {@code IntFunction.getLong()} is {@code Numbers.intToLong(getInt())}. But SX_I64 is emitted
+     * per LEAF, so there is no way to sign-extend a subtree's result from the frontend, and the
+     * pairing reaches the backend as i32-against-i64. Neither vectorized mode reproduces the Java
+     * answer for it: the single-size loop compares a packed i32 half against i64 lanes, and the
+     * four-lane one was measured returning zero rows for {@code -i32 < 2147483649} where Java
+     * returns every row. Only the scalar backend's {@code convert()} carries the complete table,
+     * INT_NULL to LONG_NULL included.
+     * <p>
+     * This costs vectorization on a common shape - {@code WHERE i * j > long_col} now runs scalar -
+     * which is the tradeoff for computing the product at the width the Java filter computes it at.
+     * Master widened the operands instead, so the product ran at 64 bits and vectorized; that is
+     * exactly the behaviour this change removes. Teaching the IR to sign-extend a subtree RESULT
+     * (an SX_I64 after the operator rather than after a leaf) would recover it, and is the obvious
+     * follow-up.
+     */
+    private void forceScalarOnUnharmonisedNarrowArith(ExpressionNode node) {
+        if (node == null || node.type != ExpressionNode.OPERATION) {
+            return;
+        }
+        final boolean isUnaryMinus = node.paramCount == 1 && Chars.equals(node.token, '-');
+        if (!isArithmeticOperation(node) && !isUnaryMinus) {
+            return;
+        }
+        final int type = arithExprType(node);
+        if (type == I1_TYPE || type == I2_TYPE || type == I4_TYPE) {
+            forceScalarMode = true;
+        }
+    }
+
+    private void markWidthSemanticsOperand(ExpressionNode child, int parentType, WidthCtx w) {
+        final boolean isFloatActive = w.isFloatActive;
+        final boolean isFloatUnderLong = w.isFloatUnderLong;
+        if (parentType == I1_TYPE || parentType == I2_TYPE || parentType == I4_TYPE) {
+            // A narrow arithmetic node computes at its own width and wraps, so its integer constant
+            // operands must be emitted at that width whatever else the predicate contains.
+            if (isIntegerConst(child)) {
+                narrowKeptConstants.add(child);
+            }
+        } else if (parentType == I8_TYPE) {
+            // A GENUINELY 64-bit arithmetic node - one with a real LONG operand - resolves the (LL)
+            // factory in Java, which reads a narrow operand through IntColumn#getLong(), an exact
+            // sign extension. Widening the LEAF here matches that and leaves the node's operands at
+            // one width, so the four-lane backend can take it.
+            //
+            // This is leaf promotion, not the arithmetic widening this change removes: the node is
+            // 64 bits because an operand IS 64 bits, never because a narrower one overflowed.
+            //
+            // A narrow arithmetic SUBTREE operand cannot be promoted the same way - it computes at
+            // i32 and wraps, and SX_I64 is emitted per leaf - so the pairing stays mixed-width and
+            // has to run scalar, exactly as at a comparison boundary.
+            if (isNarrowIntLeaf(child)) {
+                addI64WidenLeaf(child);
+            } else {
+                forceScalarOnUnharmonisedNarrowArith(child);
+            }
+        }
+        boolean isFloatChildActive = isFloatActive;
+        // An out-of-INT-range integer constant operand. The predicate-wide type observer sees
+        // columns only, so an all-INT-column predicate types it at I4 and serializeNumber's
+        // parseInt rejects it outright; a co-present FLOAT column types it at F4 and
+        // serializeNumber rounds it. Neither can represent it - emit a full I8 IMM.
+        if (isIntegerConst(child) && arithExprType(child) == I8_TYPE) {
+            addI64WidenLeaf(child);
+            isFloatChildActive = false;
+        }
+        markWidthSemantics(child, new WidthCtx(isFloatChildActive, isFloatUnderLong));
+    }
+
+    /**
+     * Tags a narrow-int column / bind-variable leaf and the out-of-INT-range integer
+     * constant it is compared against for i64 widening.
+     * <p>
+     * The type observer sees only columns, so a predicate whose widest observed type
+     * is an INT column types an out-of-INT-range constant down to I4;
+     * {@link #serializeNumber} then emits it as a 32-bit float on the int-parse
+     * overflow, and floats near 2^31 are spaced 256 apart, so distinct INT rows
+     * collapse onto one float and match spuriously (e.g. {@code i32 = 2147483648}
+     * admits 2147483647 / 2147483646). The Java filter reads the comparison at long
+     * width - the constant is a LONG literal, so overload resolution picks the (LL) comparison and
+     * reads the column through {@code IntColumn#getLong} - so no INT value equals it. Mirror that:
+     * sign-extend the leaf (value-preserving) and emit the constant as a full I8 IMM. The
+     * mark is per node, so a sibling in-range comparison is unaffected; eligible integer
+     * comparisons, arithmetic, and IN shapes use the four-lane AVX2 path.
+     * <p>
+     * For an IN whose key is a narrow-int leaf and any element is out-of-INT-range, the Java
+     * InLong path reads the key at long width, so widen the key and every integer-constant element
+     * (all value-preserving) to keep each pairing at one width. The single-value form keeps
+     * key / element in lhs / rhs.
+     * <p>
+     * A FLOAT leaf compared directly against an out-of-INT-range integer constant
+     * diverges the same way (INT and FLOAT are both 4 bytes, so the constant types
+     * down to F4 and rounds to the nearest float, e.g. 3000000200 -> 3000000256f).
+     * Here only the constant widens to I8; the FLOAT column is not sign-extended but
+     * promoted to double by the scalar convert(), matching the Java filter which
+     * compares both operands at double width. See {@link #isFloatLeaf}. DOUBLE columns
+     * already compare exactly and are left vectorized.
+     */
+    private void markNarrowConstCmpWidenNode(ExpressionNode node) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token)) {
+            if (node.args.size() > 0) {
+                final ExpressionNode key = node.args.getLast();
+                if (isNarrowIntLeaf(key)) {
+                    boolean hasOutOfRange = false;
+                    for (int i = 0, n = node.args.size() - 1; i < n; i++) {
+                        if (isIntegerConst(node.args.getQuick(i)) && arithExprType(node.args.getQuick(i)) == I8_TYPE) {
+                            hasOutOfRange = true;
+                            break;
+                        }
+                    }
+                    if (hasOutOfRange) {
+                        addI64WidenLeaf(key);
+                        for (int i = 0, n = node.args.size() - 1; i < n; i++) {
+                            final ExpressionNode element = node.args.getQuick(i);
+                            if (isIntegerConst(element)) {
+                                addI64WidenLeaf(element);
+                            }
+                        }
+                    }
+                } else if (isFloatLeaf(key)) {
+                    // IN over a FLOAT key is an OR of equalities, and equality against a constant
+                    // with no exact float has no float bound that reproduces it: any float emitted
+                    // would match the rows that round to it, so the JIT returned rows whose value is
+                    // not the one asked for (and NOT IN dropped them). Widen every such element to
+                    // double - four-lane AVX2 promotes the float key alongside it. The
+                    // single-value form keeps key / element in lhs / rhs and takes the pair path
+                    // below, which routes to the same rule via markFloatCmpConst.
+                    for (int i = 0, n = node.args.size() - 1; i < n; i++) {
+                        final ExpressionNode element = node.args.getQuick(i);
+                        if (isFloatWideningConst(element)) {
+                            markFloatCmpConst(element);
+                        }
+                    }
+                }
+                // An out-of-INT-range constant element against a narrow ARITHMETIC key needs the
+                // same compensation the comparison arm gets, or it types down to a lossy F4.
+                for (int i = 0, n = node.args.size() - 1; i < n; i++) {
+                    maybeWidenCmpConstOperand(node.args.getQuick(i), key);
+                }
+            } else {
+                markNarrowConstCmpWidenPair(node);
+                // The single-value form keeps key / element in lhs / rhs, so it needs the
+                // arithmetic-operand compensation the comparison arm gets: an out-of-INT-range
+                // constant against a narrow arithmetic key types down to a lossy F4 otherwise.
+                maybeWidenCmpConstOperand(node.lhs, node.rhs);
+                maybeWidenCmpConstOperand(node.rhs, node.lhs);
+            }
+            return;
+        }
+        if (node.type == ExpressionNode.OPERATION
+                && node.paramCount == 2
+                && isComparisonToken(node.token)) {
+            markNarrowConstCmpWidenPair(node);
+        }
+    }
+
+    private void markNarrowConstCmpWidenPair(ExpressionNode cmp) {
+        final ExpressionNode a = cmp.lhs;
+        final ExpressionNode b = cmp.rhs;
+        final ExpressionNode narrowLeaf;
+        final ExpressionNode constNode;
+        if (isNarrowIntLeaf(a) && isIntegerConst(b)) {
+            narrowLeaf = a;
+            constNode = b;
+        } else if (isNarrowIntLeaf(b) && isIntegerConst(a)) {
+            narrowLeaf = b;
+            constNode = a;
+        } else if (isFloatLeaf(a) && isFloatWideningConst(b)) {
+            markFloatCmpConst(b);
+            return;
+        } else if (isFloatLeaf(b) && isFloatWideningConst(a)) {
+            markFloatCmpConst(a);
+            return;
+        } else if (isNarrowIntLeaf(a) && isNarrowIntCmpWideningConst(b)) {
+            markNarrowIntCmpFloatConst(a, b);
+            return;
+        } else if (isNarrowIntLeaf(b) && isNarrowIntCmpWideningConst(a)) {
+            markNarrowIntCmpFloatConst(b, a);
+            return;
+        } else {
+            return;
+        }
+        // Only an out-of-INT-range constant diverges against a narrow-int leaf; an in-range one
+        // already compares at int width on both paths, and widening it would needlessly force
+        // scalar mode.
+        if (arithExprType(constNode) != I8_TYPE) {
+            return;
+        }
+        // The narrow-int leaf sign-extends alongside the constant (value-preserving).
+        addI64WidenLeaf(narrowLeaf);
+        addI64WidenLeaf(constNode);
+    }
+
+    /**
+     * Sign-extends a narrow integer leaf to i64, for the leaves the marker passes tagged: a narrow
+     * column or bind variable that a comparison puts directly against a 64-bit peer, and the
+     * out-of-INT-range constant on the other side of it. The Java filter reads such a leaf through
+     * {@code IntColumn#getLong}, which is {@code Numbers.intToLong(getInt())}, so the widening is
+     * exact. Arithmetic is NOT widened: an INT subtree computes at 32 bits and wraps, and the
+     * backend's {@code convert()} promotes its i32 result at the comparison.
      */
     private void maybeEmitI64Widening(ExpressionNode node, int typeCode) {
         if (typeCode != I1_TYPE && typeCode != I2_TYPE && typeCode != I4_TYPE) {
             return;
         }
-        if (predicateContext.needsNarrowI64Widening || isI64WidenLeaf(node)) {
+        if (isI64WidenLeaf(node)) {
             putOperator(SX_I64);
+            // SX_I64 is supported only by the conservatively selected four-lane AVX2 mode, so every
+            // other shape that emits it must retain the scalar correctness fallback. Tying
+            // forceScalarMode to the emission itself keeps that a hard invariant rather than a
+            // coincidence of the current width rules.
+            hasEmittedWideLaneConversion = true;
+            if (!isWideLaneMode) {
+                forceScalarMode = true;
+            }
         }
     }
 
     /**
-     * Marks the narrow-int leaves that need i64 widening when a float source
-     * suppresses the global widening. The Java filter computes a LONG-width
-     * arithmetic subtree at 64 bits (operands flow through #getLong), so an
-     * INT-width op inside it must not wrap mod 2^32. Only the operands of a
-     * narrow-width op computed at 64 bits need sign-extending: a wide (I8) op
-     * already promotes its narrow operand through convert().
+     * Widens a bare out-of-INT-range integer constant that a comparison puts against a narrow-int
+     * arithmetic operand (e.g. {@code (a*b) = 4999999999}). The type observer sees only INT and
+     * FLOAT columns (both 4 bytes, so {@link TypesObserver#hasMixedSizes()} is false) and types the
+     * constant down to a lossy F4. Left as F4, {@link #serializeNumber} rounds it to the nearest
+     * float (4999999999 -> 5.0e9f, floats near 2^32 are 512 apart) and the JIT float-compares,
+     * admitting rows the Java filter rejects. Adding it to {@code i64WidenLeaves} makes
+     * {@link #serializeConstant} emit a full I8 IMM. Only the CONSTANT widens - the narrow product
+     * itself keeps computing at i32, exactly as {@code MulInt#getInt} does, and the backend's
+     * {@code convert()} promotes its result at the comparison.
+     * <p>
+     * A narrow-int LEAF compared against such a constant is already covered by
+     * {@link #markNarrowConstCmpWidenPair}; this covers the arithmetic-operand
+     * (product / sum) gap it misses, so {@code other} is restricted to an OPERATION.
+     * An in-range (I4) constant keeps its narrow width.
+     * <p>
+     * A FLOATING-POINT bound needs the same treatment for the same reason, and
+     * {@link #isNarrowIntCmpWideningConst} says which ones: {@code i + 0 > 16777216.0} reads the
+     * bound exactly as {@code i > 16777216.0} does, but only the bare leaf is a
+     * {@link #markNarrowConstCmpWidenPair} shape, so the subtree spelling kept emitting a rounded
+     * F4 while {@code cvt_itof} rounded the i32 result alongside it. Only the CONSTANT widens here
+     * too - sign-extending the subtree would stop it wrapping at i32, which is the one thing an INT
+     * expression must keep doing.
      */
-    private void markFloatI64WidenLeaves(ExpressionNode node) {
-        markI64Widen(node, false);
-    }
-
-    // underLong: whether the parent reads `node` at 64-bit width.
-    private void markI64Widen(ExpressionNode node, boolean underLong) {
-        if (node == null || node.type != ExpressionNode.OPERATION) {
-            return; // a bare leaf is widened, if needed, by its parent below
-        }
-        if (isArithmeticOperation(node)) {
-            int type = arithExprType(node);
-            boolean thisLong = underLong || type == I8_TYPE;
-            markI64WidenOperand(node.lhs, type, thisLong);
-            markI64WidenOperand(node.rhs, type, thisLong);
+    private void maybeWidenCmpConstOperand(ExpressionNode constNode, ExpressionNode other) {
+        if (constNode == null) {
             return;
         }
-        if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
-            markI64Widen(node.rhs != null ? node.rhs : node.lhs, underLong);
+        // The integer arm keeps its CONSTANT-only shape. The floating-point one carries its own
+        // guard - floatCmpConstValue accepts a bare or unary-minus-wrapped CONSTANT and nothing
+        // else - so a negated bound (-i < -16777216.0) reaches it without relaxing that shape.
+        final boolean isWideningConst = (constNode.type == ExpressionNode.CONSTANT
+                && isIntegerConst(constNode) && arithExprType(constNode) == I8_TYPE)
+                || isNarrowIntCmpWideningConst(constNode);
+        if (!isWideningConst) {
             return;
         }
-        // Comparison / boolean / IN / NOT: a narrow operand is read at 32 bits
-        // (via getInt) unless it is itself I8-typed.
-        markI64Widen(node.lhs, arithExprType(node.lhs) == I8_TYPE);
-        markI64Widen(node.rhs, arithExprType(node.rhs) == I8_TYPE);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            ExpressionNode arg = node.args.getQuick(i);
-            markI64Widen(arg, arithExprType(arg) == I8_TYPE);
+        if (other == null || other.type != ExpressionNode.OPERATION) {
+            return;
+        }
+        final int otherType = arithExprType(other);
+        if (otherType == I1_TYPE || otherType == I2_TYPE || otherType == I4_TYPE) {
+            addI64WidenLeaf(constNode);
         }
     }
 
-    private void markI64WidenOperand(ExpressionNode child, int parentType, boolean parentLong) {
-        if (parentLong && parentType != I8_TYPE && isWidenableLeaf(child)) {
-            addNarrowLeaf(child);
-        } else {
-            markI64Widen(child, parentLong);
+    /**
+     * Returns the width to emit a never-matching IN pairing at when this pairing can never match, so
+     * it must not reach the backend at all; {@link #UNDEFINED_CODE} when it is an ordinary pairing.
+     * <p>
+     * A NULL element only becomes a hazard once the key is width-sensitive, because that is what
+     * drives the element to I4: {@link #serializeConstant} then
+     * keeps the NULL at I4 and {@link #serializeNull}'s "byte/short type is not nullable" decline
+     * never fires. The element reaches the backend as an I4 immediate while the key loads as a
+     * size-1 or size-2 lane, and the comparison runs at the key's width against a register holding
+     * the other one - three of every four BYTE lanes then compare the key against 0. So the fold is
+     * gated on exactly {@link #isWidthSensitiveInKey}, and from there two independent reasons make
+     * the pairing impossible:
+     * <ul>
+     * <li>a numeric CONSTANT key is never NULL, whatever width it ends up emitted at;</li>
+     * <li>any other key read at BYTE or SHORT width has no NULL sentinel - every bit pattern is a
+     * legal value - so no row can make it NULL. That covers a column, a bind variable and any
+     * arithmetic over them, including a unary minus, which {@code arithExprType} deliberately
+     * sees through.</li>
+     * </ul>
+     * A key that widens to INT keeps the ordinary pairing: INT has a real sentinel, so the pairing is
+     * meaningful, and both sides are already I4 - except a narrow BINARY arithmetic key such as
+     * {@code abyte + 1}, which reads at INT width but emits at the observer's narrow one. That shape
+     * is safe for a different reason: {@code isArithmeticOperation} accepts it ({@code paramCount >= 2}),
+     * so it sets {@code hasArithmeticOperations} and {@code forceScalarMode} routes it to the scalar
+     * backend, whose {@code convert()} has the complete integer table. A UNARY minus does not set
+     * that flag, which is why it needs the fold rather than the forcer.
+     * <p>
+     * GEOHASH, CHAR and BOOLEAN keys share the narrow type codes but {@code isWidthSensitiveInKey}
+     * excludes them, which is what this needs: a GEOHASH has a NULL at every width, CHAR reads
+     * {@code (char) 0} as NULL, and BOOLEAN keeps the decline {@code serializeNull} always gave it.
+     * <p>
+     * The width returned is I4 rather than the key's own. The key's emitted width is not knowable
+     * here - for {@code 0 IN (null, abyte)} this pairing is serialized before {@code abyte} is
+     * observed - and it does not need to be: the fold is an all-zero FULL register, which reads the
+     * same at every lane width.
+     */
+    private int neverMatchingInPairingWidth(ExpressionNode element, ExpressionNode key, boolean isWidthSensitiveKey) {
+        // isWidthSensitiveKey is serializeIn's cached isWidthSensitiveInKey(key), so a non-null key
+        // is implied whenever it is true.
+        if (!isNullConstant(element) || !isWidthSensitiveKey) {
+            return UNDEFINED_CODE;
         }
+        if (key.type == ExpressionNode.CONSTANT) {
+            return I4_TYPE;
+        }
+        final int keyArithType = arithExprType(key);
+        return keyArithType == I1_TYPE || keyArithType == I2_TYPE ? I4_TYPE : UNDEFINED_CODE;
     }
 
     private void putDoubleOperand(long offset, int type, double payload) {
@@ -1089,6 +2581,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         memory.putInt(offset + Integer.BYTES, type);
         memory.putDouble(offset + 2 * Integer.BYTES, payload);
         memory.putLong(offset + 2 * Integer.BYTES + Double.BYTES, 0L);
+    }
+
+    /**
+     * Emits a pairing that is false on every row. The mask is an all-zero full register, so the
+     * width only has to be one the backend can compare at, not the key's own. See
+     * {@link #neverMatchingInPairingWidth}.
+     */
+    private void putNeverMatchingInPairing(int typeCode) {
+        putOperand(IMM, typeCode, 0);
+        putOperand(IMM, typeCode, 1);
+        putOperator(EQ);
     }
 
     private void putOperand(int opcode, int type, long payload) {
@@ -1209,7 +2712,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeConstant(long offset, int position, final CharSequence token, boolean negated, boolean widenToI64) throws SqlException {
+    private void serializeConstant(
+            long offset,
+            int position,
+            final CharSequence token,
+            boolean negated,
+            boolean isWidenedToI64,
+            boolean isNarrowKept,
+            boolean isIntWidthNull
+    ) throws SqlException {
         final int len = token.length();
         final int typeCode = predicateContext.localTypesObserver.constantTypeCode();
         if (typeCode == UNDEFINED_CODE) {
@@ -1217,7 +2728,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isNullKeyword(token)) {
-            serializeNull(offset, position, typeCode, predicateContext.columnType);
+            // An IN pairing compares at its KEY's width, which the predicate-wide observer does not
+            // report: it sees the narrowest column anywhere in the predicate. See
+            // intWidthNullElements and i64WidenConstants.
+            final int nullTypeCode;
+            if (isIntWidthNull) {
+                nullTypeCode = I4_TYPE;
+            } else if (isWidenedToI64 && (typeCode == I1_TYPE || typeCode == I2_TYPE || typeCode == I4_TYPE)) {
+                nullTypeCode = I8_TYPE;
+            } else {
+                nullTypeCode = typeCode;
+            }
+            serializeNull(offset, position, nullTypeCode, predicateContext.columnType);
             return;
         }
 
@@ -1303,9 +2825,49 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             throw SqlException.position(position).put("numeric constant in non-numeric expression: ").put(token);
         }
         if (predicateContext.localTypesObserver.hasMixedSizes()) {
-            serializeUntypedNumber(offset, position, token, negated, widenToI64);
+            serializeUntypedNumber(offset, position, token, negated, isWidenedToI64, isNarrowKept);
         } else {
-            serializeNumber(offset, position, token, typeCode, negated);
+            // isWidenedToI64 covers a plain out-of-INT-range constant compared against a narrow-int
+            // leaf: the observer typed it down to I4, so serializeNumber would emit a lossy float on
+            // overflow. markNarrowConstCmpWidenNode tags both sides to widen to i64.
+            int numberTypeCode = typeCode;
+            if (isNarrowKept && typeCode == I8_TYPE) {
+                // A narrow arithmetic operand: keep the constant's own INT width so int32_* wraps
+                // with the narrow column, however wide the rest of the predicate is. Only the I8
+                // observation is overridden - a FLOAT / DOUBLE one is the promotion the Java filter
+                // performs too (IntFunction#getDouble), and forcing I4 there would turn a float
+                // division into an integer one.
+                numberTypeCode = I4_TYPE;
+            } else if (isWidenedToI64
+                    && (numberTypeCode == I1_TYPE || numberTypeCode == I2_TYPE || numberTypeCode == I4_TYPE)) {
+                numberTypeCode = I8_TYPE;
+            } else if (isWidenedToI64
+                    && (numberTypeCode == F4_TYPE || numberTypeCode == F8_TYPE)
+                    && longConstantTypeCode(token) == I8_TYPE) {
+                // A FLOAT/DOUBLE column co-present with a narrow-int leaf types this
+                // out-of-INT-range integer constant down to F4/F8 (both 4 bytes as INT, so
+                // hasMixedSizes() is false), but a marker flagged it to widen: the Java filter
+                // reads it at long width - as an operand of a genuinely 64-bit arithmetic node, or
+                // as a direct comparison operand (markNarrowConstCmpWidenPair, getLong). Emitting a
+                // lossy 32-bit float here would make the JIT do a float multiply/compare and drop
+                // rows the Java filter keeps. Emit a full I8 IMM instead. Flagging forces scalar
+                // mode, where the scalar convert() widens the narrow operand to i64 and
+                // int32*int64 stays exact.
+                numberTypeCode = I8_TYPE;
+            } else if (isWidenedToI64 && numberTypeCode == F4_TYPE) {
+                // A constant with no exact 32-bit float that a comparison puts against a FLOAT leaf
+                // (markFloatCmpConst marks every operator, ordering and equality alike). The F4 arm
+                // below would round it to the nearest float - which the Java filter never does,
+                // since a FLOAT column always compares at double width - so the two paths would
+                // select different rows, and '=' would even match a row holding a different value.
+                // Route it through the 64-bit arm, which emits an exact I8 IMM for an integer
+                // literal (above 2^24 a float cannot hold one) and a full F8 double otherwise.
+                // The four-lane AVX2 convert() promotes the float leaf to double for both
+                // (f32, i64) and (f32, f64), so both filters run the same tolerance-aware
+                // double comparison.
+                numberTypeCode = F8_TYPE;
+            }
+            serializeNumber(offset, position, token, numberTypeCode, negated);
         }
     }
 
@@ -1349,6 +2911,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         final ObjList<ExpressionNode> args = predicateContext.inOperationNode.args;
 
+        // A multi-value IN list keeps its operands as [elements..., key]; the single-value form
+        // keeps its key / element in lhs / rhs (args empty). The key is read once per row at one
+        // width - the Java InLong path reads it through getLong(), which for a narrow key is an
+        // exact sign extension - so the only classification left is for a NULL element against a
+        // BYTE / SHORT key, whose pairing can never match. See neverMatchingInPairingWidth.
+        final ExpressionNode inKey = args.size() > 0 ? args.getLast() : predicateContext.inOperationNode.lhs;
+        final boolean isWidthSensitiveKey = isWidthSensitiveInKey(inKey);
+
         if (args.size() > executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold()) {
             throw SqlException.$(args.getQuick(0).position, "exceeded JIT IN list threshold [threshold=")
                     .put(executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold())
@@ -1364,9 +2934,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             if (args.size() < 3) {
                 // Single value: short-circuit, unrolled version of the below loop
                 // Two values: short-circuit, unrolled version of the below loop
-                traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
-                traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
-                putOperator(EQ);
+                final int scNeverMatchingWidth = neverMatchingInPairingWidth(predicateContext.inOperationNode.rhs, inKey, isWidthSensitiveKey);
+                if (scNeverMatchingWidth != UNDEFINED_CODE) {
+                    putNeverMatchingInPairing(scNeverMatchingWidth);
+                } else {
+                    traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
+                    traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
+                    putOperator(EQ);
+                }
                 putOperatorWithLabel(AND_SC, 0); // if false, jump to next_row
             } else {
                 // Multiple values: BEGIN_SC(2), [EQ, OR_SC(2)]*, EQ, AND_SC(0), END_SC(2)
@@ -1375,9 +2950,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // Label 2 = success (at least one IN match)
                 putOperatorWithLabel(BEGIN_SC, 2); // create success label
                 for (int i = 0, n = predicateContext.inOperationNode.args.size() - 1; i < n; i++) {
-                    traverseAlgo.traverse(args.get(i), this);
-                    traverseAlgo.traverse(args.getLast(), this);
-                    putOperator(EQ);
+                    final int neverMatchingWidth = neverMatchingInPairingWidth(args.get(i), inKey, isWidthSensitiveKey);
+                    if (neverMatchingWidth != UNDEFINED_CODE) {
+                        putNeverMatchingInPairing(neverMatchingWidth);
+                    } else {
+                        traverseAlgo.traverse(args.get(i), this);
+                        traverseAlgo.traverse(args.getLast(), this);
+                        putOperator(EQ);
+                    }
                     if (i < n - 1) {
                         putOperatorWithLabel(OR_SC, 2); // if true, jump to success
                     } else {
@@ -1394,16 +2974,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         // Non-short-circuit mode: use traditional boolean ORs
         if (args.size() < 3) {
-            traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
-            traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
-            putOperator(EQ);
+            final int singleNeverMatchingWidth = neverMatchingInPairingWidth(predicateContext.inOperationNode.rhs, inKey, isWidthSensitiveKey);
+            if (singleNeverMatchingWidth != UNDEFINED_CODE) {
+                putNeverMatchingInPairing(singleNeverMatchingWidth);
+            } else {
+                traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
+                traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
+                putOperator(EQ);
+            }
         }
 
         int orCount = -1;
         for (int i = 0, n = predicateContext.inOperationNode.args.size() - 1; i < n; i++) {
-            traverseAlgo.traverse(args.get(i), this);
-            traverseAlgo.traverse(args.getLast(), this);
-            putOperator(EQ);
+            final int neverMatchingWidth = neverMatchingInPairingWidth(args.get(i), inKey, isWidthSensitiveKey);
+            if (neverMatchingWidth != UNDEFINED_CODE) {
+                putNeverMatchingInPairing(neverMatchingWidth);
+            } else {
+                traverseAlgo.traverse(args.get(i), this);
+                traverseAlgo.traverse(args.getLast(), this);
+                putOperator(EQ);
+            }
             orCount++;
         }
 
@@ -1555,9 +3145,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     try {
                         final long l = Numbers.parseLong(token);
                         putOperand(offset, IMM, I8_TYPE, sign * l);
-                    } catch (NumericException e) {
-                        final double dl = Numbers.parseDouble(token);
-                        putDoubleOperand(offset, F8_TYPE, sign * dl);
+                    } catch (NumericException notLong) {
+                        try {
+                            final double dl = Numbers.parseDouble(token);
+                            putDoubleOperand(offset, F8_TYPE, sign * dl);
+                        } catch (NumericException notDouble) {
+                            // An f-suffixed literal (16777216.0f), which parseDouble rejects. The
+                            // Java filter reads it as a FLOAT constant and widens it through
+                            // FloatConstant#getDouble, so the exact double of the float it names is
+                            // the bound both paths compare against. Without this the widening
+                            // analysis would ask for a 64-bit immediate the arm could not produce,
+                            // and the JIT would decline a filter it can compile correctly.
+                            final float fl = Numbers.parseFloat(token);
+                            putDoubleOperand(offset, F8_TYPE, sign * (double) fl);
+                        }
                     }
                     break;
                 default:
@@ -1677,10 +3278,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
             // Check if the backend is going to use SIMD, although we expected scalar mode.
             final int execHint = getExecHint(forceScalar);
-            if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE) {
+            if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE || execHint == EXEC_HINT_WIDE_LANE) {
                 // We could handle this via the non-short-circuit code path, but if we get here,
-                // it means that scalarModeDetector did a false-positive scalar mode detection.
-                // In such case, it's a bug we should fix, so let's fail JIT compilation to flag that.
+                // it means that scalarModeDetector did a false-positive scalar mode detection, or
+                // that hasWideLaneConversionSource() cleared a filter that went on to emit a
+                // conversion after all. In such case, it's a bug we should fix, so let's fail JIT
+                // compilation to flag that - a short-circuit opcode cannot branch per SIMD lane and
+                // must never reach the four-lane backend.
                 throw SqlException.position(0).put("expected scalar compilation mode, got: ").put(execHint);
             }
 
@@ -1719,10 +3323,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
             // Check if the backend is going to use SIMD, although we expected scalar mode.
             final int execHint = getExecHint(forceScalar);
-            if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE) {
+            if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE || execHint == EXEC_HINT_WIDE_LANE) {
                 // We could handle this via the non-short-circuit code path, but if we get here,
-                // it means that scalarModeDetector did a false-positive scalar mode detection.
-                // In such case, it's a bug we should fix, so let's fail JIT compilation to flag that.
+                // it means that scalarModeDetector did a false-positive scalar mode detection, or
+                // that hasWideLaneConversionSource() cleared a filter that went on to emit a
+                // conversion after all. In such case, it's a bug we should fix, so let's fail JIT
+                // compilation to flag that - a short-circuit opcode cannot branch per SIMD lane and
+                // must never reach the four-lane backend.
                 throw SqlException.position(0).put("expected scalar compilation mode, got: ").put(execHint);
             }
 
@@ -1767,17 +3374,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         putOperand(offset, VAR, typeCode, index);
     }
 
-    private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated, boolean widenToI64) throws SqlException {
+    private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated, boolean isWidenedToI64, boolean isNarrowKept) throws SqlException {
         long sign = negated ? -1 : 1;
 
-        // Emit the constant as I8 when the predicate computes at long width and
-        // has no float (SubLong / AddLong reach into MulInt.getLong), or when
-        // markFloatI64WidenLeaves tagged this constant as living under a
-        // LONG-width subtree despite a float elsewhere. Otherwise keep it I4 so
-        // int32_mul wraps mod 2^32 on both the JIT and Java sides.
-        boolean keepI4 = (!predicateContext.localTypesObserver.hasI8() || predicateContext.hasFloatInPredicate)
-                && !widenToI64;
-        if (keepI4) {
+        // Emit the constant as I8 when the predicate has a 64-bit operand and no float, or when
+        // markWidthSemantics tagged this constant as living under a LONG-width subtree despite a
+        // float elsewhere. Otherwise keep it I4 so int32_* wraps mod 2^32 on both the JIT and the
+        // Java sides.
+        boolean isI4Kept = isNarrowKept
+                || (!predicateContext.localTypesObserver.hasI8() || predicateContext.hasFloatInPredicate)
+                && !isWidenedToI64;
+        if (isI4Kept) {
             try {
                 final int i = Numbers.parseInt(token);
                 putOperand(offset, IMM, I4_TYPE, sign * i);
@@ -1811,37 +3418,55 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
-     * Sorts predicates by inverted priority using simple insertion sort.
-     * Stable sort to preserve original order for equal priorities.
+     * Orders the predicates of an AND ({@code isInverted == false}) or OR ({@code isInverted == true})
+     * chain for short-circuit evaluation: the AND chain runs its cheapest, most selective predicates
+     * first (ascending priority), the OR chain the other way round (descending), so the chain exits
+     * as early as it can.
+     * <p>
+     * Every priority falls in the fixed {@code [0, PRIORITY_COUNT)} range, so the order comes out of a
+     * counting sort in theta(k) rather than the theta(k^2) of a comparison sort. Walking the input
+     * front to back and appending each predicate to its bucket keeps the sort stable, i.e. predicates
+     * of equal priority keep the order the user wrote them in - a chain reordered by anything else
+     * would change which predicate the backend short-circuits on. The scratch lists are fields, so
+     * ordering a chain allocates nothing.
      */
-    private void sortPredicatesByInvertedPriority(ObjList<ExpressionNode> predicates) {
-        for (int i = 1, n = predicates.size(); i < n; i++) {
-            final ExpressionNode key = predicates.getQuick(i);
-            final int keyPriority = getPredicatePriority(key);
-            int j = i - 1;
-            while (j >= 0 && getPredicatePriority(predicates.getQuick(j)) < keyPriority) {
-                predicates.setQuick(j + 1, predicates.getQuick(j));
-                j--;
-            }
-            predicates.setQuick(j + 1, key);
-        }
-    }
+    private void sortPredicates(ObjList<ExpressionNode> predicates, boolean isInverted) {
+        final int n = predicates.size();
+        computePredicatePriorities(predicates);
 
-    /**
-     * Sorts predicates by priority using simple insertion sort.
-     * Stable sort to preserve original order for equal priorities.
-     */
-    private void sortPredicatesByPriority(ObjList<ExpressionNode> predicates) {
-        for (int i = 1, n = predicates.size(); i < n; i++) {
-            final ExpressionNode key = predicates.getQuick(i);
-            final int keyPriority = getPredicatePriority(key);
-            int j = i - 1;
-            while (j >= 0 && getPredicatePriority(predicates.getQuick(j)) > keyPriority) {
-                predicates.setQuick(j + 1, predicates.getQuick(j));
-                j--;
-            }
-            predicates.setQuick(j + 1, key);
+        // Count the predicates per priority, then turn the counts into the offset at which each
+        // bucket starts. Buckets run in ascending priority, or descending when inverted.
+        predicatePriorityOffsets.setAll(PRIORITY_COUNT, 0);
+        for (int i = 0; i < n; i++) {
+            final int priority = predicatePriorities.getQuick(i);
+            predicatePriorityOffsets.increment(priority);
         }
+        int offset = 0;
+        if (isInverted) {
+            for (int priority = PRIORITY_COUNT - 1; priority >= 0; priority--) {
+                final int count = predicatePriorityOffsets.getQuick(priority);
+                predicatePriorityOffsets.setQuick(priority, offset);
+                offset += count;
+            }
+        } else {
+            for (int priority = 0; priority < PRIORITY_COUNT; priority++) {
+                final int count = predicatePriorityOffsets.getQuick(priority);
+                predicatePriorityOffsets.setQuick(priority, offset);
+                offset += count;
+            }
+        }
+
+        sortedPredicates.setPos(n);
+        for (int i = 0; i < n; i++) {
+            final int priority = predicatePriorities.getQuick(i);
+            final int slot = predicatePriorityOffsets.getQuick(priority);
+            predicatePriorityOffsets.setQuick(priority, slot + 1);
+            sortedPredicates.setQuick(slot, predicates.getQuick(i));
+        }
+        for (int i = 0; i < n; i++) {
+            predicates.setQuick(i, sortedPredicates.getQuick(i));
+        }
+        sortedPredicates.clear();
     }
 
     /**
@@ -1858,18 +3483,60 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (node == null) {
             throw NumericException.INSTANCE;
         }
+        final int cached = constantArithFoldCache.get(node);
+        if (cached == 0) {
+            throw NumericException.INSTANCE;
+        }
+        if (cached != NOT_CACHED) {
+            return constantArithFoldValues.getQuick(cached - 1);
+        }
+        try {
+            final long value = tryFoldConstantArith0(node);
+            constantArithFoldValues.add(value);
+            constantArithFoldCache.put(node, constantArithFoldValues.size());
+            return value;
+        } catch (NumericException e) {
+            constantArithFoldCache.put(node, 0);
+            throw e;
+        }
+    }
+
+    private long tryFoldConstantArith0(ExpressionNode node) throws NumericException {
+        if (node == null) {
+            throw NumericException.INSTANCE;
+        }
         if (node.type == ExpressionNode.CONSTANT) {
             return Numbers.parseLong(node.token);
         }
         if (node.type != ExpressionNode.OPERATION) {
             throw NumericException.INSTANCE;
         }
-        // Unary minus: parser builds OPERATION "-" with rhs only.
+        // Unary minus: parser builds OPERATION "-" with rhs only. NegLong#getLong
+        // propagates LONG_NULL instead of negating the sentinel.
         if (Chars.equals(node.token, '-') && node.lhs == null) {
-            return -tryFoldConstantArith(node.rhs);
+            long operand = tryFoldConstantArith(node.rhs);
+            return operand == Numbers.LONG_NULL ? Numbers.LONG_NULL : -operand;
+        }
+        // Reject a non-arithmetic token BEFORE folding either child, exactly as the
+        // floating-point folder does. The sentinel propagation below answers LONG_NULL for the
+        // CURRENT node, so validating the token after it let descend() mistake a comparison or
+        // boolean predicate over two constant subtrees for an arithmetic fold root and replace
+        // the whole predicate with an IMM - non-zero, which the IR reads as TRUE.
+        if (!isArithmeticOperation(node)) {
+            throw NumericException.INSTANCE;
         }
         long left = tryFoldConstantArith(node.lhs);
         long right = tryFoldConstantArith(node.rhs);
+        // MulLong / AddLong / SubLong / DivLong#getLong return LONG_NULL when
+        // either operand is Long.MIN_VALUE (the LONG null sentinel), so an inner
+        // product that lands exactly on -2^63 poisons the rest of the fold to
+        // NULL instead of feeding a wrapped value. Without this the JIT kept
+        // computing full-width arithmetic (e.g. (2^62 * -2) + 5 = Long.MIN + 5)
+        // while the Java filter collapsed to NULL. Mirrors the INT_NULL guard in
+        // tryFoldConstantArithI4.
+        if (left == Numbers.LONG_NULL || right == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
         if (Chars.equals(node.token, '+')) {
             return left + right;
         }
@@ -1879,13 +3546,170 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (Chars.equals(node.token, '*')) {
             return left * right;
         }
-        if (Chars.equals(node.token, '/')) {
-            if (right == 0L) {
-                throw NumericException.INSTANCE;
-            }
-            return left / right;
+        // isArithmeticOperation() above leaves only '/' here; see foldConstantArithWidthAware.
+        if (!Chars.equals(node.token, '/')) {
+            throw NumericException.INSTANCE;
         }
-        throw NumericException.INSTANCE;
+        if (right == 0L) {
+            // Decline the fold and let descend() emit the division as IR: the native
+            // int64_div (impl/x86.h) returns LONG_NULL for a zero divisor, which is what
+            // the Java filter's DivLong#getLong produces. ExpressionNode#applyLongFold
+            // models the same operator table and folds this case straight to LONG_NULL -
+            // a different spelling of the same result, not a disagreement.
+            throw NumericException.INSTANCE;
+        }
+        return left / right;
+    }
+
+    /**
+     * FLOAT/DOUBLE counterpart of {@link #tryFoldConstantArith}: evaluates a pure-constant
+     * floating point arithmetic subtree the way {@code FunctionParser} folds it, and throws
+     * {@link NumericException} if any descendant is non-constant, is not a numeric literal,
+     * or the subtree uses an operator other than {@code + - * /}. Callers use it only to
+     * find out whether the fold is finite, so a declined fold is always safe: it costs a
+     * pass over a subtree the caller then serializes as IR.
+     * <p>
+     * The NaN normalisation runs after EVERY operation rather than once at the end because
+     * that is what the function parser does - it folds bottom-up and runs each intermediate
+     * through {@code DoubleConstant#newInstance}. {@code 1e308 * 10.0} is therefore already
+     * NULL by the time an enclosing operator sees it, which makes
+     * {@code 1.0 / (1e308 * 10.0)} NULL as well, where raw IEEE hands back a perfectly
+     * finite {@code 0.0}. NaN is absorbing under all four operators, so a finite result
+     * proves every intermediate was finite too - exactly the case where the backend
+     * computing the subtree agrees with the Java filter folding it.
+     *
+     * @param isFloat fold at FLOAT width, mirroring the {@code FloatConstant} arm of
+     *                {@code functionToConstant0}. Rounding each double result back to float
+     *                is exact for {@code + - * /}: double carries more than twice the
+     *                significand bits a float needs, so no double rounding error survives.
+     */
+    private double tryFoldConstantArithFloat(ExpressionNode node) throws NumericException {
+        if (node == null) {
+            throw NumericException.INSTANCE;
+        }
+        final int cached = constantFloatFoldCache.get(node);
+        if (cached == 0) {
+            throw NumericException.INSTANCE;
+        }
+        if (cached != NOT_CACHED) {
+            return constantFloatFoldValues.getQuick(cached - 1);
+        }
+        try {
+            final double value = tryFoldConstantArithFloat0(node);
+            constantFloatFoldValues.add(value);
+            constantFloatFoldCache.put(node, constantFloatFoldValues.size());
+            return value;
+        } catch (NumericException e) {
+            constantFloatFoldCache.put(node, 0);
+            throw e;
+        }
+    }
+
+    private double tryFoldConstantArithFloat0(ExpressionNode node) throws NumericException {
+        // Each node narrows at its OWN width, which is what the parser does: it builds a
+        // FloatConstant for an all-FLOAT operation and a DoubleConstant as soon as one operand is
+        // DOUBLE, so (3.4e38f + 3.4e38f) * 1.0 overflows to NULL inside the float add even though
+        // the enclosing multiply is evaluated at double width.
+        final boolean isFloat = arithExprType(node) == F4_TYPE;
+        if (node.type == ExpressionNode.CONSTANT) {
+            // A leaf no parser accepts (a quoted literal, true/false, a geo hash, a type
+            // constant) folds to NULL rather than throwing: the subtree IS a constant one, so
+            // declining the filter is the honest answer - see descend().
+            double leaf;
+            try {
+                leaf = parseFoldLeaf(node.token);
+            } catch (NumericException notNumeric) {
+                leaf = Double.NaN;
+            }
+            return normalizeConstantFold(leaf, isFloat);
+        }
+        if (node.type != ExpressionNode.OPERATION) {
+            throw NumericException.INSTANCE;
+        }
+        // Unary minus: parser builds OPERATION "-" with rhs only.
+        if (Chars.equals(node.token, '-') && node.lhs == null) {
+            return normalizeConstantFold(-tryFoldConstantArithFloat(node.rhs), isFloat);
+        }
+        if (!isArithmeticOperation(node)) {
+            throw NumericException.INSTANCE;
+        }
+        final double left = tryFoldConstantArithFloat(node.lhs);
+        final double right = tryFoldConstantArithFloat(node.rhs);
+        if (Chars.equals(node.token, '+')) {
+            return normalizeConstantFold(left + right, isFloat);
+        }
+        if (Chars.equals(node.token, '-')) {
+            return normalizeConstantFold(left - right, isFloat);
+        }
+        if (Chars.equals(node.token, '*')) {
+            return normalizeConstantFold(left * right, isFloat);
+        }
+        return normalizeConstantFold(left / right, isFloat);
+    }
+
+    /**
+     * INT-width counterpart of {@link #tryFoldConstantArith}: evaluates the
+     * pure-constant integer arithmetic subtree with per-operation {@code int}
+     * wrapping, matching the Java filter's getInt() recursion (each MulInt /
+     * DivInt / AddInt computes at i32 and wraps mod 2^32). Used for the I4 IMM a
+     * fold root emits at an INT-width comparison, where {@code (int) longVal}
+     * from the long fold would diverge for a non-modular operator such as
+     * division. Throws {@link NumericException} on the same conditions as
+     * {@link #tryFoldConstantArith} (plus an int-width division by zero), so the
+     * caller cleanly falls back to descending the subtree as per-op IR.
+     */
+    private int tryFoldConstantArithI4(ExpressionNode node) throws NumericException {
+        if (node == null) {
+            throw NumericException.INSTANCE;
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            // A leaf constant here is always in INT range: an out-of-INT leaf routes
+            // to the I8/widen branch instead of the I4 fold. parseInt throws on an
+            // out-of-range token rather than silently truncating a LONG-range literal,
+            // so if that invariant is ever violated the caller cleanly falls back to
+            // descending the subtree as per-op IR.
+            return Numbers.parseInt(node.token);
+        }
+        if (node.type != ExpressionNode.OPERATION) {
+            throw NumericException.INSTANCE;
+        }
+        // Unary minus: parser builds OPERATION "-" with rhs only. NegInt#getInt
+        // propagates INT_NULL instead of negating the sentinel.
+        if (Chars.equals(node.token, '-') && node.lhs == null) {
+            int operand = tryFoldConstantArithI4(node.rhs);
+            return operand == Numbers.INT_NULL ? Numbers.INT_NULL : -operand;
+        }
+        // Reject a non-arithmetic token BEFORE folding either child. See tryFoldConstantArith0.
+        if (!isArithmeticOperation(node)) {
+            throw NumericException.INSTANCE;
+        }
+        int left = tryFoldConstantArithI4(node.lhs);
+        int right = tryFoldConstantArithI4(node.rhs);
+        // MulInt / AddInt / SubInt / DivInt#getInt return INT_NULL when either
+        // operand is INT_NULL, so an inner product that wraps exactly onto the
+        // -2^31 sentinel poisons the rest of the fold to NULL instead of feeding
+        // a wrapped value. Without this the JIT kept computing modular arithmetic
+        // (e.g. (65536 * 32768) * 2 = 0) while the Java filter collapsed to NULL.
+        if (left == Numbers.INT_NULL || right == Numbers.INT_NULL) {
+            return Numbers.INT_NULL;
+        }
+        if (Chars.equals(node.token, '+')) {
+            return left + right;
+        }
+        if (Chars.equals(node.token, '-')) {
+            return left - right;
+        }
+        if (Chars.equals(node.token, '*')) {
+            return left * right;
+        }
+        // isArithmeticOperation() above leaves only '/' here; see foldConstantArithWidthAware.
+        if (!Chars.equals(node.token, '/')) {
+            throw NumericException.INSTANCE;
+        }
+        if (right == 0) {
+            throw NumericException.INSTANCE;
+        }
+        return left / right;
     }
 
     private static class SqlWrapperException extends RuntimeException {
@@ -2037,35 +3861,21 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
-     * Per-predicate pre-pass that decides whether the JIT IR emitter should
-     * widen narrow integer operands to i64 before arithmetic ops. Triggers when
-     * the predicate has integer arithmetic AND an I8 operand AND an I4 operand
-     * (BYTE / SHORT alone never overflow int32 and stay correct under int32
-     * arithmetic; INT can overflow). When triggered, the IR emitter wraps each
-     * narrow column / bind variable with `IMM I8 0 + ADD`, which makes the C++
-     * convert() promote the value to i64 before mul / add / sub / div
-     * dispatches to int64_*. This matches the Java filter's
-     * MulInt.getLong / AddInt.getLong, which compute via ((long) l) OP r.
+     * Per-predicate pre-pass that reports whether the predicate has a FLOAT or DOUBLE source
+     * anywhere - column, bind variable or numeric literal.
      * <p>
-     * A FLOAT or DOUBLE operand anywhere in the predicate suppresses the
-     * widening: in that case the int-arithmetic subtree gets consumed by
-     * IntFunction#getDouble / IntFunction#getFloat, which call
-     * {@link io.questdb.cairo.sql.Function#getInt}, so the Java filter
-     * computes at int32 width and wraps modulo 2^32 on overflow. Widening
-     * here would let the JIT preserve the full long product and diverge
-     * from the Java filter -- the inverse of the bug the pre-pass was
-     * introduced to fix. Note that {@link #serializeUntypedNumber} also
-     * keeps integer constants at I4 in that case, otherwise the constant
-     * widening alone would re-introduce the divergence via convert().
+     * {@link #serializeUntypedNumber} reads it to keep an integer constant at I4 in that case: the
+     * int-arithmetic subtree is consumed by {@code IntFunction#getDouble} / {@code #getFloat},
+     * which call {@link io.questdb.cairo.sql.Function#getInt}, so the Java filter computes it at
+     * int32 width and wraps modulo 2^32 on overflow. Widening the constant alone would let the JIT
+     * preserve the full long product and diverge.
      */
     private class NarrowI64WidenDetector implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
         private final TypesObserver typesObserver = new TypesObserver();
-        private boolean hasArithmetic;
 
         @Override
         public void clear() {
             typesObserver.clear();
-            hasArithmetic = false;
         }
 
         @Override
@@ -2079,18 +3889,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case ExpressionNode.LITERAL: {
                     int columnIndex = metadata.getColumnIndexQuiet(node.token);
                     if (columnIndex != -1) {
-                        int typeCode = columnTypeCode(ColumnType.tagOf(metadata.getColumnType(columnIndex)));
-                        typesObserver.observe(typeCode);
+                        typesObserver.observe(columnTypeCode(ColumnType.tagOf(metadata.getColumnType(columnIndex))));
                     }
                     break;
                 }
                 case ExpressionNode.BIND_VARIABLE: {
-                    // An unbound or UNDEFINED-typed bind variable is safe to
-                    // skip here because serializeBindVariable consults the
-                    // same BindVariableService in the same serialize() call
-                    // and throws on either condition, aborting JIT compile
-                    // and falling back to the Java filter -- so the IR is
-                    // never emitted with a missing widening signal.
+                    // An unbound or UNDEFINED-typed bind variable is safe to skip here because
+                    // serializeBindVariable consults the same BindVariableService in the same
+                    // serialize() call and throws on either condition, aborting JIT compile and
+                    // falling back to the Java filter.
                     Function bindFunction = lookupBindVariable(node.token);
                     if (bindFunction != null) {
                         int typeCode = bindVariableTypeCode(ColumnType.tagOf(bindFunction.getType()));
@@ -2101,50 +3908,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     break;
                 }
                 case ExpressionNode.CONSTANT: {
-                    // Observe FLOAT / DOUBLE numeric constants so a predicate
-                    // whose only float source is a literal (e.g. c7 + 0.5)
-                    // suppresses narrow-int widening, matching the Java
-                    // filter's IntFunction#getDouble path that wraps at int32.
-                    // Also observe LONG integer constants (L/l suffix or
-                    // magnitude that overflows int) so a predicate whose only
-                    // long source is a literal (e.g. c4 * c8 >= -432577L) is
-                    // enough to pull narrow operands up to i64, matching the
-                    // Java filter's MulInt.getLong long-width arithmetic.
+                    // Observe FLOAT / DOUBLE numeric constants so a predicate whose only float
+                    // source is a literal (e.g. c7 + 0.5) reports one.
                     int typeCode = floatConstantTypeCode(node.token);
-                    if (typeCode == UNDEFINED_CODE) {
-                        typeCode = longConstantTypeCode(node.token);
-                    }
                     if (typeCode != UNDEFINED_CODE) {
                         typesObserver.observe(typeCode);
                     }
                     break;
                 }
-                case ExpressionNode.OPERATION:
-                    hasArithmetic |= isArithmeticOperation(node);
-                    // Pure-constant integer arithmetic subtree whose long
-                    // value overflows INT will be folded to a single I8 IMM
-                    // by descend(); observe I8 here to pull narrow column
-                    // reads in the same predicate up to I8 so the comparison
-                    // sees matching operand widths.
-                    try {
-                        long longVal = tryFoldConstantArith(node);
-                        if ((int) longVal != longVal) {
-                            typesObserver.observe(I8_TYPE);
-                        }
-                    } catch (NumericException ignored) {
-                        // Not a pure-constant integer arithmetic subtree; nothing to observe.
-                    }
-                    break;
             }
         }
 
         boolean hasFloat() {
             return typesObserver.hasFloat();
-        }
-
-        boolean shouldWiden() {
-            return hasArithmetic && typesObserver.hasI4() && typesObserver.hasI8()
-                    && !typesObserver.hasFloat();
         }
     }
 
@@ -2183,11 +3959,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // when the int-arithmetic subtree is consumed by IntFunction's
         // getDouble / getFloat, which call getInt() and wrap mod 2^32.
         boolean hasFloatInPredicate;
-        // True when the predicate has integer arithmetic mixed with a LONG
-        // operand. The IR emitter widens narrow operands to i64 in this case
-        // so the JIT computes at long width, matching MulInt.getLong /
-        // AddInt.getLong (which promote via ((long) l) OP r).
-        boolean needsNarrowI64Widening;
         int shortCircuitMode = SC_NONE; // short-circuit evaluation mode
         boolean singleBooleanColumn;
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
@@ -2215,29 +3986,28 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // We entered a predicate.
                     reset();
                     rootNode = node;
-                    // Pre-pass: decide whether to widen narrow integer operands
-                    // to i64 at IR emission time, and remember whether any
-                    // FLOAT / DOUBLE source is present anywhere in the
-                    // predicate. See NarrowI64WidenDetector.
+                    // Pre-pass: remember whether any FLOAT / DOUBLE source is present anywhere in
+                    // the predicate. See NarrowI64WidenDetector.
+                    i64WidenConstants.clear();
+                    intWidthNullElements.clear();
                     i64WidenLeaves.clear();
+                    narrowKeptConstants.clear();
+                    // The type and wide-lane memo caches are NOT cleared here. They are pure
+                    // functions of a node's subtree keyed by node identity, so an entry stays valid
+                    // for every predicate of the same filter, and serialize()'s whole-tree wide-lane
+                    // pre-pass has already filled them. Dropping them per predicate re-ran the type
+                    // and fold analysis from scratch for each one. The node pool can hand the same
+                    // objects to a LATER filter, and clear() already covers that boundary.
                     try {
                         narrowI64WidenDetector.clear();
                         traverseAlgo.traverse(node, narrowI64WidenDetector);
-                        needsNarrowI64Widening = narrowI64WidenDetector.shouldWiden();
                         hasFloatInPredicate = narrowI64WidenDetector.hasFloat();
                     } catch (SqlException ignore) {
                         // Detector does not throw; defensive only.
-                        needsNarrowI64Widening = false;
                         hasFloatInPredicate = false;
                     }
-                    // A float suppresses the global narrow-i64 widening, but a
-                    // LONG-width arithmetic subtree still computes at 64 bits in
-                    // the Java filter. Tag the narrow leaves under such subtrees
-                    // so the IR sign-extends exactly them, keeping a nested INT
-                    // product from wrapping mod 2^32.
-                    if (hasFloatInPredicate) {
-                        markFloatI64WidenLeaves(node);
-                    }
+                    // One top-down pass installs every per-comparison leaf-promotion mark.
+                    markWidthSemantics(node, new WidthCtx(hasFloatInPredicate, false));
                 }
                 if (topLevelBooleanColumn) {
                     columnType = ColumnType.BOOLEAN;
@@ -2330,7 +4100,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             singleBooleanColumn = false;
             hasArithmeticOperations = false;
             hasFloatInPredicate = false;
-            needsNarrowI64Widening = false;
             localTypesObserver.clear();
             currentInSerialization = false;
             handledShortCircuitExit = false;
@@ -2421,6 +4190,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         /**
+         * I4 counterpart of {@link #markFoldedI8Imm} for an overflowing constant
+         * folded to a wrapped I4 IMM (INT-width comparison): flags arithmetic and
+         * observes I4 so getExecHint() and the scalar-mode forcer see the operand.
+         */
+        void markFoldedI4Imm() {
+            hasArithmeticOperations = true;
+            localTypesObserver.observe(I4_TYPE);
+            globalTypesObserver.observe(I4_TYPE);
+        }
+
+        /**
          * Records the side effects of emitting a single I8 IMM in place of a
          * folded integer-arithmetic subtree. Sets hasArithmeticOperations
          * unconditionally because the fold root may be a unary minus, which
@@ -2481,6 +4261,23 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         boolean hasMixedSizes() {
             return typesObserver.hasMixedSizes();
+        }
+    }
+
+    /**
+     * Immutable bundle of the width-semantics flags {@link #markWidthSemantics} threads down the
+     * predicate tree. Each of the three rewrite passes carries an {@code active} flag plus an
+     * {@code underLong} flag (whether the subtree already sits under a LONG-width parent), and the
+     * wrap pass additionally tracks whether a narrower width has already been resolved. Grouping them
+     * in one value keeps the recursive signatures to two parameters instead of eight adjacent booleans.
+     */
+    private static final class WidthCtx {
+        final boolean isFloatActive;
+        final boolean isFloatUnderLong;
+
+        WidthCtx(boolean isFloatActive, boolean isFloatUnderLong) {
+            this.isFloatActive = isFloatActive;
+            this.isFloatUnderLong = isFloatUnderLong;
         }
     }
 }

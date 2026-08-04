@@ -347,9 +347,30 @@ namespace questdb::aarch64 {
         return r;
     }
 
+    // QuestDB reads any non-finite floating point value as NULL - Numbers#isNull is an
+    // exponent-bits test, so it covers +/-Infinity as well as NaN - and
+    // DivFloatFunctionFactory / DivDoubleFunctionFactory fold a non-finite quotient to NaN
+    // ("Numbers.isFinite(f) ? f : Float.NaN") so the comparison treats it as NULL rather than
+    // as a very large number. The division has to fold the same way here, or a zero divisor
+    // makes the two filters select different rows: the Java filter reads NaN > 0 as false and
+    // drops the row while a propagated +Infinity > 0 keeps it. Same fold as impl/x86.h and
+    // impl/avx2.h, using the exponent test float_cmp_epsilon below already relies on.
+    //
+    // Only division folds. Mul/Add/Sub deliberately do NOT fold in the Java factories either,
+    // so overflowing to an infinity there already agrees on both paths and must stay that way.
     inline Vec float_div(Compiler &c, const Vec &lhs, const Vec &rhs) {
         Vec r = c.new_vec_s();
         c.fdiv(r, lhs, rhs);
+        Label l_exit = c.new_label();
+        Gp int_r = c.new_gp32();
+        c.fmov(int_r, r);
+        c.and_(int_r, int_r, imm(0x7F800000));
+        cmp_imm32(c, int_r, 0x7F800000);
+        c.b_ne(l_exit);
+        Gp nan_bits = c.new_gp32();
+        c.mov(nan_bits, 0x7fc00000); // float NaN
+        c.fmov(r, nan_bits);
+        c.bind(l_exit);
         return r;
     }
 
@@ -371,9 +392,23 @@ namespace questdb::aarch64 {
         return r;
     }
 
+    // See float_div: a non-finite quotient folds to NaN so it orders as NULL, matching
+    // DivDoubleFunctionFactory.
     inline Vec double_div(Compiler &c, const Vec &lhs, const Vec &rhs) {
         Vec r = c.new_vec_d();
         c.fdiv(r, lhs, rhs);
+        Label l_exit = c.new_label();
+        Gp int_r = c.new_gp64();
+        c.fmov(int_r, r);
+        Gp inf_bits = c.new_gp64();
+        c.mov(inf_bits, int64_t(0x7FF0000000000000LL));
+        c.and_(int_r, int_r, inf_bits);
+        c.cmp(int_r, inf_bits);
+        c.b_ne(l_exit);
+        Gp nan_bits = c.new_gp64();
+        c.mov(nan_bits, int64_t(0x7ff8000000000000LL)); // double NaN
+        c.fmov(r, nan_bits);
+        c.bind(l_exit);
         return r;
     }
 

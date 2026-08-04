@@ -42,6 +42,7 @@ import io.questdb.std.ObjList;
 
 public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ObjList<CharSequence> columnNames;
+    private final int columnSplit;
     private final boolean hasOrdinality;
     private RecordCursorFactory baseFactory;
     private UnnestRecordCursor cursor;
@@ -61,6 +62,7 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         this.baseFactory = baseFactory;
         this.functions = functions;
         this.sources = sources;
+        this.columnSplit = columnSplit;
         this.hasOrdinality = hasOrdinality;
         this.columnNames = columnNames;
         if (hasOrdinality) {

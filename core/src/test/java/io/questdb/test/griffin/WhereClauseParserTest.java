@@ -55,6 +55,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -95,6 +96,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private static TableReader unindexedReader;
     private static TableReader unindexedReaderNanos;
     private final WhereClauseParser e = new WhereClauseParser();
+    private final ObjectPool<ExpressionNode> expressionNodePool = new ObjectPool<>(ExpressionNode.FACTORY, 128);
     private final FunctionParser functionParser = new FunctionParser(
             configuration,
             engine.getFunctionFactoryCache()
@@ -4640,7 +4642,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? reader : readerNanos,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4660,7 +4663,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? reader : readerNanos,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4680,7 +4684,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? noDesignatedTimestampNorIdxReader : noDesignatedTimestampNorIdxReaderNanos,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4699,7 +4704,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     noTimestampReader,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4719,7 +4725,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? nonEmptyReader : nonEmptyReaderNanos,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4847,7 +4854,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     unindexedReader,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }

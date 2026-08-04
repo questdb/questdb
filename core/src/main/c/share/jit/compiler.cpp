@@ -365,18 +365,19 @@ struct Function
         {
             scalar = 0,
             single_size = 1,
-            mixed_size = 3,
+            mixed_size = 2,
+            wide_lane = 3,
         };
 
         uint32_t type_size = (options >> 1) & 7; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B, 4 - 16B
-        uint32_t exec_hint = (options >> 4) & 3; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
+        uint32_t exec_hint = (options >> 4) & 3; // 0 - scalar, 1 - single size, 2 - mixed size, 3 - wide lane
         bool null_check = (options >> 6) & 1;    // 1 - with null check
         int unroll_factor = 1;
-        if (exec_hint == single_size && features.has_avx2())
+        if ((exec_hint == single_size || exec_hint == wide_lane) && features.has_avx2())
         {
-            auto step = 256 / ((1 << type_size) * 8);
+            auto step = exec_hint == wide_lane ? 4 : 256 / ((1 << type_size) * 8);
             c.func()->frame().set_avx_enabled();
-            avx2_loop(istream, size, step, null_check, unroll_factor);
+            avx2_loop(istream, size, step, null_check, exec_hint == wide_lane, unroll_factor);
         }
         else
         {
@@ -458,7 +459,7 @@ struct Function
         c.ret(output_index);
     }
 
-    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, int unroll_factor = 1)
+    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, bool wide_lane, int unroll_factor = 1)
     {
         using namespace asmjit::x86;
 
@@ -502,7 +503,7 @@ struct Function
 
         for (int i = 0; i < unroll_factor; ++i)
         {
-            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
+            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, wide_lane, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
                                      addr_cache, const_cache_ymm);
 
             auto mask = values.pop();
@@ -624,18 +625,19 @@ struct CountOnlyFunction
         {
             scalar = 0,
             single_size = 1,
-            mixed_size = 3,
+            mixed_size = 2,
+            wide_lane = 3,
         };
 
         uint32_t type_size = (options >> 1) & 7; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B, 4 - 16B
-        uint32_t exec_hint = (options >> 4) & 3; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
+        uint32_t exec_hint = (options >> 4) & 3; // 0 - scalar, 1 - single size, 2 - mixed size, 3 - wide lane
         bool null_check = (options >> 6) & 1;    // 1 - with null check
         int unroll_factor = 1;
-        if (exec_hint == single_size && features.has_avx2())
+        if ((exec_hint == single_size || exec_hint == wide_lane) && features.has_avx2())
         {
-            auto step = 256 / ((1 << type_size) * 8);
+            auto step = exec_hint == wide_lane ? 4 : 256 / ((1 << type_size) * 8);
             c.func()->frame().set_avx_enabled();
-            avx2_loop(istream, size, step, null_check, unroll_factor);
+            avx2_loop(istream, size, step, null_check, exec_hint == wide_lane, unroll_factor);
         }
         else
         {
@@ -716,7 +718,7 @@ struct CountOnlyFunction
         c.ret(output_index);
     }
 
-    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, int unroll_factor = 1)
+    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, bool wide_lane, int unroll_factor = 1)
     {
         using namespace asmjit::x86;
 
@@ -756,7 +758,7 @@ struct CountOnlyFunction
 
         for (int i = 0; i < unroll_factor; ++i)
         {
-            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
+            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, wide_lane, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
                                      addr_cache, const_cache_ymm);
 
             auto mask = values.pop();

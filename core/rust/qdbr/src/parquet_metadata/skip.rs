@@ -78,23 +78,36 @@ pub fn can_skip_row_group(
 
         let chunk = rg_block.column_chunk(column_idx)?;
         let stat_flags = StatFlags(chunk.stat_flags);
+        // `_pm` records the null count unsigned. A corrupt one past i64::MAX must read as "no
+        // information" rather than wrap to a negative count, which has_nulls below would then
+        // report as null-free and let a NULL-sentinel filter prune a row group holding nulls. The
+        // parquet-file path drops a negative count for the same reason - see
+        // ParquetDecoder::can_skip_row_group.
         let null_count = if stat_flags.has_null_count() {
-            Some(chunk.null_count as i64)
+            i64::try_from(chunk.null_count).ok()
         } else {
             None
         };
         let num_values = Some(chunk.num_values as i64);
+        let qdb_column_type = packed_filter.qdb_column_type();
 
         if op == FILTER_OP_IS_NULL {
-            if null_count == Some(0) {
+            // See ParquetDecoder::writer_undercounts_nulls: a row group can hold a null the writer
+            // did not count - an infinity in a FLOAT or DOUBLE, a (char) 0 in a CHAR.
+            if null_count == Some(0) && !ParquetDecoder::writer_undercounts_nulls(qdb_column_type) {
                 return Ok(true);
             }
             continue;
         }
         if op == FILTER_OP_IS_NOT_NULL {
-            if let (Some(nc), Some(nv)) = (null_count, num_values) {
-                if nc == nv {
-                    return Ok(true);
+            // See ParquetDecoder::is_null_free_type: a row group wholly inside a BYTE or SHORT
+            // column top reports every value null, but those rows decode to 0 and IS NOT NULL is a
+            // constant TRUE over them.
+            if !ParquetDecoder::is_null_free_type(qdb_column_type) {
+                if let (Some(nc), Some(nv)) = (null_count, num_values) {
+                    if nc == nv {
+                        return Ok(true);
+                    }
                 }
             }
             continue;
@@ -118,8 +131,12 @@ pub fn can_skip_row_group(
             7 => PhysicalType::FixedLenByteArray(col_desc.fixed_byte_len as usize),
             _ => continue,
         };
-        let has_nulls = null_count.is_none_or(|c| c > 0);
-        let qdb_column_type = packed_filter.qdb_column_type();
+        // Paired with the identical composition in ParquetDecoder::filter_row_group: a type whose
+        // NULLs the statistics cannot identify as NULL never reports has_nulls == false, or a value
+        // loop would prune a group on the very null the writer failed to count. Narrower than the
+        // writer_undercounts_nulls gate on IS NULL above - see nulls_hidden_from_stats.
+        let has_nulls = null_count.is_none_or(|c| c > 0)
+            || ParquetDecoder::nulls_hidden_from_stats(qdb_column_type);
         let col_type_tag = qdb_column_type & 0xFF;
 
         let is_decimal = matches!(
@@ -208,6 +225,23 @@ pub fn can_skip_row_group(
             None
         };
 
+        // See ParquetDecoder::has_matchable_zero_nulls: a BYTE, SHORT or CHAR column top decodes
+        // back to a plain 0 that neither the statistics nor the bloom set record.
+        let has_implicit_zeros =
+            ParquetDecoder::has_matchable_zero_nulls(qdb_column_type, has_nulls);
+        let mut zero_widened_min = [0u8; 4];
+        let mut zero_widened_max = [0u8; 4];
+        let (min_bytes, max_bytes) = if has_implicit_zeros {
+            ParquetDecoder::widen_int32_stats_to_include_zero(
+                min_bytes,
+                max_bytes,
+                &mut zero_widened_min,
+                &mut zero_widened_max,
+            )
+        } else {
+            (min_bytes, max_bytes)
+        };
+
         match op {
             FILTER_OP_EQ => {
                 // Bloom filter bitset lookup via footer feature section.
@@ -225,11 +259,20 @@ pub fn can_skip_row_group(
                                 let bf_data = &reader.data()[off as usize..];
                                 let bf_len_raw =
                                     i32::from_le_bytes(bf_data[..4].try_into().unwrap_or_default());
-                                if bf_len_raw <= 0 {
-                                    &[]
-                                } else {
-                                    let bf_len = bf_len_raw as usize;
-                                    bf_data.get(4..4 + bf_len).unwrap_or(&[])
+                                // A split-block bloom filter is a whole number of 32-byte blocks,
+                                // and `is_in_set` indexes one whole block without bounds checks -
+                                // a shorter or unaligned bitset panics, which aborts the JVM
+                                // through JNI. parquet2's `read_from_slice_at_offset` rejects the
+                                // same lengths on the parquet-file path; a `_pm` sidecar reaches
+                                // the probe without passing through it, and its writer records
+                                // whatever length it was handed. Decline the bloom for this row
+                                // group instead: pruning is an optimisation, so dropping it only
+                                // costs a scan.
+                                match usize::try_from(bf_len_raw) {
+                                    Ok(bf_len) if bf_len >= 32 && bf_len.is_multiple_of(32) => {
+                                        bf_data.get(4..4 + bf_len).unwrap_or(&[])
+                                    }
+                                    _ => &[],
                                 }
                             } else {
                                 &[]
@@ -247,6 +290,7 @@ pub fn can_skip_row_group(
                         &physical_type,
                         &filter_desc,
                         has_nulls,
+                        has_implicit_zeros,
                         is_decimal,
                         qdb_column_type,
                     )?;
@@ -404,6 +448,100 @@ mod tests {
         }
 
         Ok(writer.finish()?)
+    }
+
+    /// Build a `_pm` file with one Int64 column, wide stats and an inlined bloom filter over
+    /// `values`. `bitset_len` sets the length of the bitset handed to the writer, so a caller can
+    /// reproduce a structurally invalid one. `insert` addresses a whole 32-byte block, so a bitset
+    /// below that size is written empty rather than partially filled.
+    fn build_long_parquet_meta_with_bloom(
+        values: &[i64],
+        bitset_len: usize,
+    ) -> ParquetResult<(Vec<u8>, u64)> {
+        let mut bitset = vec![0u8; bitset_len];
+        if bitset_len >= 32 {
+            // insert() indexes a whole block, so only feed it a block-aligned prefix.
+            let aligned = bitset_len - bitset_len % 32;
+            let blocks = &mut bitset[..aligned];
+            for &v in values {
+                parquet2::bloom_filter::insert(blocks, parquet2::bloom_filter::hash_native(v));
+            }
+        }
+
+        let mut writer = ParquetMetaWriter::new();
+        writer
+            .designated_timestamp(-1)
+            .add_column(
+                "val",
+                0,
+                ColumnTypeTag::Long as i32,
+                ColumnFlags::new().with_repetition(FieldRepetition::Optional),
+                0,
+                PHYS_INT64,
+                0,
+                1, // max_def_level = 1 for optional
+            )
+            .parquet_footer(0, 0);
+
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(1000);
+        let mut chunk = ColumnChunkRaw::zeroed();
+        chunk.codec = Codec::Uncompressed as u8;
+        chunk.num_values = 1000;
+        chunk.null_count = 0;
+        // Stats span every probe below, so only the bloom filter can prune.
+        chunk.stat_flags = StatFlags::new()
+            .with_min(true, true)
+            .with_max(true, true)
+            .with_null_count()
+            .0;
+        chunk.stat_sizes = encode_stat_sizes(8, 8);
+        chunk.min_stat = 0u64;
+        chunk.max_stat = 1000u64;
+        rg.set_column_chunk(0, chunk)?;
+        writer.add_row_group(rg);
+        writer.add_bloom_filter_to_last_row_group(0, &bitset)?;
+
+        Ok(writer.finish()?)
+    }
+
+    /// Overwrite the 4-byte length prefix of the inlined bloom bitset of row group 0.
+    fn patch_bloom_length(
+        parquet_meta: &mut [u8],
+        file_offset: u64,
+        bf_len: i32,
+    ) -> ParquetResult<()> {
+        let reader = ParquetMetaReader::from_file_size(parquet_meta, file_offset)?;
+        let pos = reader
+            .bloom_filter_position(0)
+            .expect("column 0 has a bloom filter");
+        let off = reader.bloom_filter_offset_in_pm(0, pos)? as usize;
+        parquet_meta[off..off + 4].copy_from_slice(&bf_len.to_le_bytes());
+        Ok(())
+    }
+
+    fn assert_eq_probe(
+        parquet_meta: &[u8],
+        file_offset: u64,
+        value: i64,
+        expected_skip: bool,
+        message: &str,
+    ) -> ParquetResult<()> {
+        let reader = ParquetMetaReader::from_file_size(parquet_meta, file_offset)?;
+        let filter = make_filter(
+            0,
+            1,
+            FILTER_OP_EQ,
+            &value as *const i64 as u64,
+            ColumnTypeTag::Long as i32,
+        );
+        let buf_end = unsafe { (&value as *const i64).add(1) } as u64;
+        assert_eq!(
+            can_skip_row_group(&reader, 0, &[filter], buf_end)?,
+            expected_skip,
+            "{message}"
+        );
+        Ok(())
     }
 
     fn make_filter(
@@ -588,6 +726,133 @@ mod tests {
         let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         assert!(!can_skip_row_group(&reader, 0, &[], 0)?);
+        Ok(())
+    }
+
+    #[test]
+    fn no_skip_eq_null_when_pm_null_count_wraps() -> ParquetResult<()> {
+        // `_pm` holds the null count unsigned. Reading it as a wrapped i64 made every count past
+        // i64::MAX look negative, so has_nulls reported null-free and the NULL sentinel - which
+        // has no statistic of its own - was pruned against [10, 200]. The row group may well hold
+        // nulls, so those rows would simply disappear.
+        for null_count in [u64::MAX, 1u64 << 63, (i64::MAX as u64) + 1] {
+            let (parquet_meta, fo) = build_long_parquet_meta(&[(100, null_count, 10, 200, true)])?;
+            let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
+
+            let value: i64 = i64::MIN; // the LONG null sentinel
+            let filter = make_filter(
+                0,
+                1,
+                FILTER_OP_EQ,
+                &value as *const i64 as u64,
+                ColumnTypeTag::Long as i32,
+            );
+            let buf_end = unsafe { (&value as *const i64).add(1) } as u64;
+            assert!(
+                !can_skip_row_group(&reader, 0, &[filter], buf_end)?,
+                "an unreadable null count must not read as null-free [null_count={null_count}]"
+            );
+            // IS NULL and IS NOT NULL take the same count and must stay conservative too.
+            let filter = make_filter(0, 0, FILTER_OP_IS_NULL, 0, ColumnTypeTag::Long as i32);
+            assert!(!can_skip_row_group(&reader, 0, &[filter], 0)?);
+            let filter = make_filter(0, 0, FILTER_OP_IS_NOT_NULL, 0, ColumnTypeTag::Long as i32);
+            assert!(!can_skip_row_group(&reader, 0, &[filter], 0)?);
+        }
+
+        // Control: an honest zero count really is null-free, so the sentinel still prunes.
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(100, 0, 10, 200, true)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
+        let value: i64 = i64::MIN;
+        let filter = make_filter(
+            0,
+            1,
+            FILTER_OP_EQ,
+            &value as *const i64 as u64,
+            ColumnTypeTag::Long as i32,
+        );
+        let buf_end = unsafe { (&value as *const i64).add(1) } as u64;
+        assert!(
+            can_skip_row_group(&reader, 0, &[filter], buf_end)?,
+            "a zero null count must keep pruning the NULL sentinel"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn skip_eq_absent_from_pm_bloom() -> ParquetResult<()> {
+        // One 32-byte block holding 100, 101 and 102. Statistics span [0, 1000], so only the
+        // bloom filter can answer, which keeps every case below about the bloom path.
+        let (parquet_meta, fo) = build_long_parquet_meta_with_bloom(&[100, 101, 102], 32)?;
+        assert_eq_probe(
+            &parquet_meta,
+            fo,
+            300,
+            true,
+            "a value absent from the bloom set must prune the row group",
+        )?;
+        assert_eq_probe(
+            &parquet_meta,
+            fo,
+            101,
+            false,
+            "a value present in the bloom set must not prune the row group",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn no_skip_pm_bloom_shorter_than_one_block() -> ParquetResult<()> {
+        // `is_in_set` reads a whole 32-byte block, so lengths 1..31 indexed out of bounds and
+        // panicked - and a Rust panic across JNI aborts the JVM. The `_pm` writer records any
+        // length it is handed, so this needs no on-disk corruption to reach.
+        for len in [1usize, 8, 16, 31] {
+            let (parquet_meta, fo) = build_long_parquet_meta_with_bloom(&[100], len)?;
+            assert_eq_probe(
+                &parquet_meta,
+                fo,
+                300,
+                false,
+                "a bitset shorter than one block must decline the bloom, not prune",
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn no_skip_pm_bloom_not_block_aligned() -> ParquetResult<()> {
+        // 33 and 63 bytes hold one whole block plus a partial one. Indexing stayed in bounds by
+        // luck (the trailing bytes are simply never addressed), but the probe read a set the
+        // writer never filled that way, so the answer is not trustworthy either.
+        for len in [33usize, 63] {
+            let (parquet_meta, fo) = build_long_parquet_meta_with_bloom(&[100], len)?;
+            assert_eq_probe(
+                &parquet_meta,
+                fo,
+                300,
+                false,
+                "an unaligned bitset must decline the bloom, not prune",
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn no_skip_pm_bloom_length_past_end_of_sidecar() -> ParquetResult<()> {
+        // A declared length that runs past the sidecar, and a negative one, both have to decline.
+        // A no-regression pin rather than a regression test: the checked range lookup and the old
+        // `bf_len_raw <= 0` guard already answered "no prune" for every length here. It is the two
+        // tests above that redden without the block-alignment guard.
+        for bf_len in [i32::MAX, 1 << 20, -32, -1, 0] {
+            let (mut parquet_meta, fo) = build_long_parquet_meta_with_bloom(&[100], 32)?;
+            patch_bloom_length(&mut parquet_meta, fo, bf_len)?;
+            assert_eq_probe(
+                &parquet_meta,
+                fo,
+                300,
+                false,
+                "a corrupt bloom length must decline the bloom, not prune",
+            )?;
+        }
         Ok(())
     }
 

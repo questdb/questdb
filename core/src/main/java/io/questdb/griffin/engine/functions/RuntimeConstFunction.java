@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Numbers;
 
 /**
  * Wraps a runtime-constant subtree of a fixed-width scalar type, evaluates it once per cursor in
@@ -46,6 +47,9 @@ import io.questdb.griffin.SqlExecutionContext;
  * through the native getter, so every conversion - including NULL handling - matches what a real
  * function of that type would return. A flat hand-rolled getter table would have to reproduce all
  * of that by hand, which is exactly where a wrong-field read can sneak in.
+ * <p>
+ * Every subclass is read-only after init(), so it inherits the argument's thread-safety
+ * ({@link UnaryFunction#isThreadSafe()}) and a single instance serves every parallel worker.
  * <p>
  * Transparent in plans ({@link #toPlan(PlanSink)} delegates to the argument).
  */
@@ -471,6 +475,11 @@ public interface RuntimeConstFunction extends UnaryFunction {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
+            // The cached int determines every other width: this class inherits
+            // IntFunction.getLong(), which is Numbers.intToLong(getInt()), so one evaluation of the
+            // runtime-constant subtree suffices. The field is written only here, preserving the
+            // thread safety the interface javadoc relies on. NULL flows through unchanged, since
+            // Numbers.intToLong maps INT_NULL to LONG_NULL.
             value = arg.getInt(null);
         }
     }

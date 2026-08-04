@@ -122,6 +122,40 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstArgumentIsReadOncePerRow() throws Exception {
+        // nullif compared one read of its first argument and returned another. A second read of a
+        // non-deterministic argument is a fresh draw, so nullif returned the very value it was
+        // asked to exclude - roughly one row in four for a two-valued draw. Each count below is
+        // zero only while the argument is read once per row.
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT count() AS c FROM (SELECT nullif(rnd_int(1, 2, 0), 1) AS v FROM long_sequence(10_000)) WHERE v = 1")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+            assertQuery("SELECT count() AS c FROM (SELECT nullif(rnd_long(1, 2, 0), 1) AS v FROM long_sequence(10_000)) WHERE v = 1")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+            assertQuery("SELECT count() AS c FROM (SELECT nullif(rnd_int(1, 2, 0)::DOUBLE, 1.0) AS v FROM long_sequence(10_000)) WHERE v = 1.0")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+            // 'B', not 'A': Rnd.nextChar() draws from 'B'..'Z', so excluding 'A' can never null a
+            // row out and the assertion would hold however many times the argument is read.
+            assertQuery("SELECT count() AS c FROM (SELECT nullif(rnd_char(), 'B') AS v FROM long_sequence(10_000)) WHERE v = 'B'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+            assertQuery("SELECT count() AS c FROM (SELECT nullif(rnd_int(1, 2, 0)::IPV4, '0.0.0.1') AS v FROM long_sequence(10_000)) WHERE v = '0.0.0.1'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+
+            // An INT argument that is neither width stable nor row stable cannot be read at both
+            // widths at all, so getLong() moves the comparison to long width and reads once there.
+            assertQuery("SELECT count() AS c FROM (SELECT nullif(rnd_int(1, 2, 0) * 2, 2)::LONG AS v FROM long_sequence(10_000)) WHERE v = 2")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+
+            // BOTH arguments have to move to long width together. p + q is 2147483648 there and the
+            // INT_NULL sentinel when it wraps, so comparing the 64-bit first argument against the
+            // wrapped second one misses the equal pair and hands back the excluded value.
+            execute("CREATE TABLE nw AS (SELECT 2_147_483_647 p, 1 q FROM long_sequence(1_000))");
+            assertQuery("SELECT count() AS c FROM (SELECT nullif(rnd_int(0, 1, 0) + 2_147_483_647, p + q)::LONG AS v FROM nw) WHERE v = 2_147_483_648")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+        });
+    }
+
+    @Test
     public void testIntConstNull() throws Exception {
         assertQuery("select nullif(null,5) nullif1, nullif(5,null) nullif2")
                 .expectSize()

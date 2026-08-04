@@ -31,12 +31,14 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Objects;
 
@@ -74,6 +76,14 @@ public class ExpressionNode implements Mutable, Sinkable {
     public CharSequence token;
     public int type;
     public WindowExpression windowExpression;
+    // Cached constant-fold results for reassociateConstants, valid only while
+    // isConstantExpression is true. cacheConstantFold populates them bottom-up the
+    // moment a node is marked constant, so isReassociationSafe reads a subtree's fold
+    // in O(1) instead of re-walking the accumulating constant chain at every level
+    // (which is O(n^2) overall).
+    private long constFoldLongValue;  // LONG-width fold, meaningful iff isConstFoldLongValid
+    private boolean isConstFoldLongValid;
+    private boolean isConstFoldWidening;
 
     // IMPORTANT: update deepClone method after adding a new field
     private ExpressionNode() {
@@ -203,6 +213,10 @@ public class ExpressionNode implements Mutable, Sinkable {
         copy.innerPredicate = node.innerPredicate;
         copy.implemented = node.implemented;
         copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
+        copy.lateralDepth = node.lateralDepth;
+        copy.constFoldLongValue = node.constFoldLongValue;
+        copy.isConstFoldLongValid = node.isConstFoldLongValid;
+        copy.isConstFoldWidening = node.isConstFoldWidening;
         return copy;
     }
 
@@ -289,6 +303,9 @@ public class ExpressionNode implements Mutable, Sinkable {
         implemented = false;
         windowExpression = null;
         lateralDepth = 0;
+        constFoldLongValue = 0;
+        isConstFoldLongValid = false;
+        isConstFoldWidening = false;
     }
 
     public ExpressionNode copyFrom(final ExpressionNode other) {
@@ -309,7 +326,34 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.innerPredicate = other.innerPredicate;
         this.windowExpression = other.windowExpression;
         this.lateralDepth = other.lateralDepth;
+        this.constFoldLongValue = other.constFoldLongValue;
+        this.isConstFoldLongValid = other.isConstFoldLongValid;
+        this.isConstFoldWidening = other.isConstFoldWidening;
         return this;
+    }
+
+    /**
+     * Whether {@link #cacheConstantFold} built this node's LONG-width fold - for a CONSTANT leaf,
+     * whether it parsed the token; for a binary pair, whether it combined its children's folds.
+     * Meaningful only once {@link #isConstantExpression} is set. Exposed because the one
+     * optimization in {@link #reassociateConstants} that a rendered tree cannot show - marking a
+     * CONSTANT argument of an n-ary node without parsing its token - is observable only through the
+     * fold cache.
+     */
+    @TestOnly
+    public boolean isConstFoldLongValid() {
+        return isConstFoldLongValid;
+    }
+
+    /**
+     * Whether this node is marked widening, which closes {@link #isReassociationSafe}'s guard for
+     * every operator except concatenation - {@code ||} short-circuits to safe before reading this.
+     * Meaningful only once {@link #isConstantExpression} is set. An n-ary argument that skipped the
+     * fold reads {@code true} because {@link #reassociateConstants} fails it closed.
+     */
+    @TestOnly
+    public boolean isConstFoldWidening() {
+        return isConstFoldWidening;
     }
 
     public boolean isWildcard() {
@@ -365,6 +409,13 @@ public class ExpressionNode implements Mutable, Sinkable {
      * <p>The rewrite is purely structural: it relinks existing {@link ExpressionNode}
      * instances without allocating new nodes.</p>
      *
+     * <p>Numeric reassociation is deliberately conservative. Floating-point and DECIMAL
+     * arithmetic is not associative under rounding, overflow, precision, and scale rules.
+     * Integer arithmetic is also non-associative in QuestDB because wrapped intermediate values
+     * can equal the reserved INT_NULL or LONG_NULL sentinel for row values unavailable to this
+     * pre-type-resolution pass. Consequently, only non-numeric associative operators are eligible
+     * for reassociation.</p>
+     *
      * @return {@code true} if this subtree is entirely constant (every leaf is a
      * constant and every interior node is a binary operation on constants),
      * {@code false} otherwise
@@ -372,6 +423,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public boolean reassociateConstants(boolean cairoSqlLegacyOperatorPrecedence) {
         if (type == CONSTANT) {
             isConstantExpression = true;
+            cacheConstantFold();
             return true;
         }
 
@@ -380,13 +432,35 @@ public class ExpressionNode implements Mutable, Sinkable {
             for (int i = 0; i < paramCount; i++) {
                 // Every args child is guaranteed non-null by the expression parser (ExpressionParser.onNode)
                 // and no later transformation violates this invariant.
-                args.getQuick(i).reassociateConstants(cairoSqlLegacyOperatorPrecedence);
+                final ExpressionNode arg = args.getQuick(i);
+                if (arg.type == CONSTANT) {
+                    // A CONSTANT argument of an n-ary node needs the constancy mark but not the fold
+                    // cache. isReassociationSafe is the only reader of that cache, and it only ever
+                    // receives a node reachable as lhs / rhs (or a grandchild of one) of a node this
+                    // pass has recursed into as a BINARY pair - which always re-caches through the
+                    // CONSTANT arm above. An args slot is never on that route. IN (1, ..., 10_000)
+                    // therefore parsed ten thousand tokens for a fold nothing reads, and a LONG-range
+                    // element paid a guaranteed-failing parseInt first: NumericException.instance()
+                    // allocates and fills a stack trace under -ea, which is how QuestDB runs its
+                    // tests.
+                    arg.isConstantExpression = true;
+                    // Fail closed rather than merely unread. The cleared defaults spell "no widening,
+                    // no valid long fold", which isReassociationSafe answers "safe to regroup" for -
+                    // the opposite of what a real integer or quoted leaf gets. Marking it widening
+                    // keeps the guard shut if a future caller ever does read it.
+                    // ConstantReassociationTest#testNaryConstantArgsSkipFoldParsing pins this arm;
+                    // restoring the cacheConstantFold() call here turns it red.
+                    arg.isConstFoldWidening = true;
+                } else {
+                    arg.reassociateConstants(cairoSqlLegacyOperatorPrecedence);
+                }
             }
             return false;
         }
 
-        // Recurse bottom-up. Each child caches its result in isConstantExpression,
-        // so grandchild constancy checks below are O(1) field reads.
+        // Recurse bottom-up. Each child caches its result in isConstantExpression (and its
+        // fold triple via cacheConstantFold), so grandchild constancy checks and the
+        // reassociation-safety guard below are O(1) field reads.
         boolean lhsConst = lhs != null && lhs.reassociateConstants(cairoSqlLegacyOperatorPrecedence);
         boolean rhsConst = rhs != null && rhs.reassociateConstants(cairoSqlLegacyOperatorPrecedence);
 
@@ -396,6 +470,7 @@ public class ExpressionNode implements Mutable, Sinkable {
 
         if (lhsConst && rhsConst) {
             isConstantExpression = true;
+            cacheConstantFold();
             return true;
         }
 
@@ -417,26 +492,32 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && lhs.token.equals(token)) {
             if (lhs.rhs.isConstantExpression) {
                 // Pattern A: (A op C1) op C2 → A op (C1 op C2)
-                ExpressionNode inner = lhs;
-                ExpressionNode a = inner.lhs;
-                ExpressionNode c1 = inner.rhs;
-                ExpressionNode c2 = rhs;
-                this.lhs = a;
-                this.rhs = inner;
-                inner.lhs = c1;
-                inner.rhs = c2;
-                inner.isConstantExpression = true;
+                if (isReassociationSafe(op, lhs.rhs, rhs)) {
+                    ExpressionNode inner = lhs;
+                    ExpressionNode a = inner.lhs;
+                    ExpressionNode c1 = inner.rhs;
+                    ExpressionNode c2 = rhs;
+                    this.lhs = a;
+                    this.rhs = inner;
+                    inner.lhs = c1;
+                    inner.rhs = c2;
+                    inner.isConstantExpression = true;
+                    inner.cacheConstantFold();
+                }
             } else if (op.isCommutative() && lhs.lhs.isConstantExpression) {
                 // Pattern B: (C1 op A) op C2 → A op (C1 op C2)
-                ExpressionNode inner = lhs;
-                ExpressionNode c1 = inner.lhs;
-                ExpressionNode a = inner.rhs;
-                ExpressionNode c2 = rhs;
-                this.lhs = a;
-                this.rhs = inner;
-                inner.lhs = c1;
-                inner.rhs = c2;
-                inner.isConstantExpression = true;
+                if (isReassociationSafe(op, lhs.lhs, rhs)) {
+                    ExpressionNode inner = lhs;
+                    ExpressionNode c1 = inner.lhs;
+                    ExpressionNode a = inner.rhs;
+                    ExpressionNode c2 = rhs;
+                    this.lhs = a;
+                    this.rhs = inner;
+                    inner.lhs = c1;
+                    inner.rhs = c2;
+                    inner.isConstantExpression = true;
+                    inner.cacheConstantFold();
+                }
             }
 
             return false;
@@ -447,21 +528,27 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && rhs.token.equals(token)) {
             if (op.isCommutative() && rhs.rhs.isConstantExpression) {
                 // Mirror A: C2 op (A op C1) → A op (C2 op C1)
-                ExpressionNode inner = rhs;
-                ExpressionNode c2 = lhs;
-                this.lhs = inner.lhs;
-                inner.lhs = c2;
-                inner.isConstantExpression = true;
+                if (isReassociationSafe(op, lhs, rhs.rhs)) {
+                    ExpressionNode inner = rhs;
+                    ExpressionNode c2 = lhs;
+                    this.lhs = inner.lhs;
+                    inner.lhs = c2;
+                    inner.isConstantExpression = true;
+                    inner.cacheConstantFold();
+                }
             } else if (rhs.lhs.isConstantExpression) {
                 // Mirror B: C2 op (C1 op A) → (C2 op C1) op A
-                ExpressionNode inner = rhs;
-                ExpressionNode c2 = lhs;
-                ExpressionNode c1 = inner.lhs;
-                this.rhs = inner.rhs;
-                this.lhs = inner;
-                inner.lhs = c2;
-                inner.rhs = c1;
-                inner.isConstantExpression = true;
+                if (isReassociationSafe(op, lhs, rhs.lhs)) {
+                    ExpressionNode inner = rhs;
+                    ExpressionNode c2 = lhs;
+                    ExpressionNode c1 = inner.lhs;
+                    this.rhs = inner.rhs;
+                    this.lhs = inner;
+                    inner.lhs = c2;
+                    inner.rhs = c1;
+                    inner.isConstantExpression = true;
+                    inner.cacheConstantFold();
+                }
             }
         }
 
@@ -609,6 +696,50 @@ public class ExpressionNode implements Mutable, Sinkable {
         return Objects.toString(token);
     }
 
+    /**
+     * Applies one LONG arithmetic operator at LONG width, wrapping mod 2^64 and
+     * propagating the LONG_NULL sentinel exactly as the runtime AddLong / SubLong /
+     * MulLong / DivLong / RemLong / Bitwise{And,Or,Xor}Long functions do. A zero
+     * divisor folds to LONG_NULL, matching DivLong / RemLong getLong(). Throws
+     * {@link NumericException} for an operator outside that set so the LONG-width
+     * fold in {@link #cacheConstantFold} bails like a non-constant operand.
+     * <p>
+     * The JIT models the same operator table in {@code CompiledFilterIRSerializer#tryFoldConstantArith},
+     * and the two look like they disagree on division by zero: this one folds to LONG_NULL,
+     * that one throws. They agree observably - the throw means "decline to fold", so the JIT
+     * emits the division as IR instead, and the native int64_div (see impl/x86.h) returns
+     * LONG_NULL for a zero divisor. Keep both arms as they are: neither is a bug to fix by
+     * copying the other.
+     */
+    private static long applyLongFold(CharSequence opToken, long a, long b) {
+        if (a == Numbers.LONG_NULL || b == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        if (opToken.length() != 1) {
+            throw NumericException.INSTANCE;
+        }
+        switch (opToken.charAt(0)) {
+            case '+':
+                return a + b;
+            case '-':
+                return a - b;
+            case '*':
+                return a * b;
+            case '/':
+                return b == 0 ? Numbers.LONG_NULL : a / b;
+            case '%':
+                return b == 0 ? Numbers.LONG_NULL : a % b;
+            case '&':
+                return a & b;
+            case '|':
+                return a | b;
+            case '^':
+                return a ^ b;
+            default:
+                throw NumericException.INSTANCE;
+        }
+    }
+
     private static boolean compareArgs(
             ExpressionNode groupByExpr,
             ExpressionNode columnExpr,
@@ -654,11 +785,182 @@ public class ExpressionNode implements Mutable, Sinkable {
         return true;
     }
 
+    /**
+     * Reports whether a numeric-looking {@code token} (one {@link #isNumericConstantToken} accepted)
+     * carries a shape that {@link Numbers#parseInt} and {@link Numbers#parseLong} both reject: a
+     * fractional/exponent character ({@code .}, {@code e}, {@code E}), an {@code f}/{@code F}/{@code m}/
+     * {@code M} suffix (FLOAT / DECIMAL), or a {@code 0x} hex prefix (LONG256). Every such token would
+     * make both integer parses throw, so callers can classify it directly instead of paying for the
+     * doomed throws. It is a strict subset of "not an integer literal": no {@code parseInt}/{@code
+     * parseLong}-acceptable token (digits, underscores, a leading sign, an {@code L} suffix) matches.
+     */
+    private static boolean hasNonIntegerNumericShape(CharSequence token) {
+        final int len = token.length();
+        final char last = token.charAt(len - 1);
+        if (len > 1 && (last == 'f' || last == 'F' || last == 'm' || last == 'M')) {
+            return true;
+        }
+        if (len > 1 && token.charAt(0) == '0' && (token.charAt(1) == 'x' || token.charAt(1) == 'X')) {
+            return true;
+        }
+        for (int i = 0; i < len; i++) {
+            final char c = token.charAt(i);
+            if (c == '.' || c == 'e' || c == 'E') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Screens out a constant token that no numeric parse can accept. Every numeric literal starts
+     * with a digit, a sign or a decimal point (see {@link Numbers#parseInt} / {@link Numbers#parseLong}
+     * / {@link Numbers#parseDouble}), so a token that starts with anything else - a quoted string, a
+     * geohash, a type keyword, {@code null} / {@code true} / {@code false} - folds to nothing and must
+     * not pay for the parses. A failed parse is not free: {@link NumericException} formats a message
+     * into a sink, and under {@code -ea} it also allocates a fresh exception and fills in its stack
+     * trace. {@link #reassociateConstants} runs over every expression of every compiled query, so a
+     * long IN list of string literals would otherwise throw thousands of them per compile.
+     */
+    private static boolean isNumericConstantToken(CharSequence token) {
+        if (token == null || token.length() == 0) {
+            return false;
+        }
+        final char first = token.charAt(0);
+        return (first >= '0' && first <= '9') || first == '-' || first == '+' || first == '.';
+    }
+
+    /**
+     * Reports whether regrouping the constant pair is safe without resolved operand types or row
+     * value ranges. Numeric pairs are excluded: floating-point and DECIMAL operations may change
+     * through rounding or scale, while integer intermediates may wrap onto NULL sentinels.
+     */
+    private static boolean isReassociationSafe(OperatorExpression op, ExpressionNode a, ExpressionNode b) {
+        if (op.isConcatenation()) {
+            // Concatenation resolves to concat(V), which renders each operand through the type
+            // adapter of that operand alone and appends the characters to a sink. No operand's
+            // rendering depends on its neighbours, and no overload resolution can turn one into
+            // a number the way it does for the arithmetic operators. So (A || B) || C and
+            // A || (B || C) emit the same characters for every operand type, and neither the
+            // widening guard nor the integer-sentinel guard below applies.
+            return true;
+        }
+        if (a.isConstFoldWidening || b.isConstFoldWidening) {
+            return false;
+        }
+        // Integer arithmetic is not associative in QuestDB because INT_NULL and LONG_NULL are
+        // reserved sentinel values. The original intermediate can hit a sentinel for a row value
+        // that is unavailable to this pre-type-resolution pass, even when the constant pair does
+        // not fold to NULL. Only non-integer operators, such as boolean logic, remain eligible
+        // here; concatenation already returned above.
+        return !(a.isConstFoldLongValid && b.isConstFoldLongValid);
+    }
+
     private static void toSink(CharSink<?> sink, ExpressionNode e) {
         if (e == null) {
             sink.putAscii("null");
         } else {
             e.toSink(sink);
+        }
+    }
+
+    /**
+     * Caches this constant node's fold results into the primitive {@code constFold*} /
+     * {@code isConstFold*} fields, so {@link #isReassociationSafe} reads a constant
+     * subtree's fold in O(1) rather than re-walking it. Runs the moment
+     * {@link #isConstantExpression} is set, bottom-up: a CONSTANT leaf parses its token; a
+     * binary-operation constant pair combines its children's already-cached folds. The
+     * cached values mirror the runtime function semantics that the deleted recursive folds
+     * modeled:
+     * <ul>
+     *   <li>{@code constFoldLongValue} / {@code isConstFoldLongValid} - the LONG-width fold
+     *   (wrapping mod 2^64, as LongFunction getLong()) for an INT / LONG integer subtree;
+     *   invalid for a floating-point / DECIMAL / non-numeric leaf or an unmodeled
+     *   operator.</li>
+     *   <li>{@code isConstFoldWidening} - set for any non-integer numeric-looking leaf that is not
+     *   reassociation-safe: a floating-point or DECIMAL leaf (which widens an INT operation, since
+     *   +, -, *, / promote to the wider type when either operand is wider) as well as a LONG256
+     *   (0x...) hex leaf (whose '+' is non-associative under the NULL_LONG256 sentinel). A widening
+     *   leaf anywhere in the subtree marks the whole subtree.</li>
+     * </ul>
+     */
+    private void cacheConstantFold() {
+        if (type == CONSTANT) {
+            if (!isNumericConstantToken(token)) {
+                isConstFoldLongValid = false;
+                // A quoted literal is not numeric-looking, but overload resolution still casts it
+                // to a number when the other operand is one, so l * '02' * 4 is integer arithmetic
+                // whose regrouping changes the result exactly as l * 2 * 4 would. Marking it
+                // widening keeps the guard closed, so the two spellings agree. It also keeps
+                // d + '0.1' + 1 evaluating left to right, where '0.1' resolves against the DOUBLE
+                // column, rather than regrouping to d + ('0.1' + 1) and failing to cast '0.1' to
+                // INT. Unquoted non-numeric tokens - null, true, false, a geohash, a type keyword -
+                // cannot become an arithmetic operand this way and stay reassociable.
+                isConstFoldWidening = Chars.isQuoted(token);
+                return;
+            }
+            if (hasNonIntegerNumericShape(token)) {
+                // A lexically floating-point / DECIMAL / LONG256 literal - one carrying a '.', an
+                // 'e'/'E' exponent, an 'f'/'F'/'m'/'M' suffix, or a '0x' hex prefix - satisfies
+                // NEITHER parseInt nor parseLong, so the two parses below would only throw. Under -ea
+                // NumericException#instance() allocates and fills a stack trace, and this runs over
+                // every constant of every compiled query, so a constant-heavy filter would throw
+                // thousands of doomed exceptions per compile. Classify it directly as the widening,
+                // non-reassociable leaf the doomed parses would have produced (see the fall-through
+                // block below). Mirrors parseFoldLeaf's floatConstantTypeCode gate on the JIT side.
+                isConstFoldLongValid = false;
+                isConstFoldWidening = true;
+                return;
+            }
+            try {
+                // parseInt rejects an 'L' suffix, a decimal/exponent, and out-of-INT-range
+                // literals, so only genuine INT constants land here; wider ones fall through to
+                // the parseLong below. The two accept overlapping but INCOMPARABLE token sets -
+                // parseInt takes a leading '+' that parseLong rejects, parseLong takes an 'L'
+                // suffix and the out-of-INT-range literals that parseInt rejects - so a token is
+                // an integer literal when EITHER accepts it, and both are asked. An INT literal
+                // is trivially a LONG one, so this value is already the long-width fold.
+                constFoldLongValue = Numbers.parseInt(token);
+                isConstFoldLongValid = true;
+                // An integer literal never widens; integer pairs are excluded from reassociation.
+                isConstFoldWidening = false;
+                return;
+            } catch (NumericException notIntLiteral) {
+                // not an INT literal; the long-width parse below may still take it
+            }
+            try {
+                // parseLong rejects a decimal/exponent and a DECIMAL 'm' suffix, so only
+                // genuine LONG constants fold at long width; wider types are invalid.
+                constFoldLongValue = Numbers.parseLong(token);
+                isConstFoldLongValid = true;
+                isConstFoldWidening = false;
+                return;
+            } catch (NumericException notLongLiteral) {
+                isConstFoldLongValid = false;
+            }
+            // Neither integer parse took the token, so what remains is a non-integer numeric-looking
+            // constant: a floating-point or DECIMAL literal, or a LONG256 (0x...) hex literal. None is
+            // reassociation-safe - float/decimal folds can change through rounding or scale, and
+            // LONG256 '+' is non-associative under NULL_LONG256 sentinel propagation (a hex pair
+            // summing mod 2^256 to the sentinel would fold to a NULL operand) - so mark the leaf
+            // non-reassociable. isReassociationSafe gates purely on this flag and isConstFoldLongValid,
+            // so treating every such leaf as widening keeps the guard closed without a second parse.
+            isConstFoldWidening = true;
+            return;
+        }
+        // Binary OPERATION constant pair: combine the children's caches at O(1). Both
+        // children are already constant (their isConstantExpression is set), so their
+        // caches are populated. A widening leaf anywhere makes the pair widening.
+        isConstFoldWidening = lhs.isConstFoldWidening || rhs.isConstFoldWidening;
+        if (token != null && lhs.isConstFoldLongValid && rhs.isConstFoldLongValid) {
+            try {
+                constFoldLongValue = applyLongFold(token, lhs.constFoldLongValue, rhs.constFoldLongValue);
+                isConstFoldLongValid = true;
+            } catch (NumericException unmodeledOperator) {
+                isConstFoldLongValid = false;
+            }
+        } else {
+            isConstFoldLongValid = false;
         }
     }
 

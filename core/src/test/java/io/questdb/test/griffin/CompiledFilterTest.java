@@ -561,17 +561,13 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntColumnArithmeticWidenedToLongInLongContext() throws Exception {
+    public void testIntColumnArithmeticWrapsInLongContext() throws Exception {
         assertMemoryLeak(() -> {
-            // INT-INT arithmetic compared to a LONG column would compute at int32
-            // width on the JIT path (load_registers third branch + int32_*),
-            // wrapping for inputs that exceed INT_MAX. The Java filter promotes
-            // the inner expression via AddInt.getLong / MulInt.getLong /
-            // SubInt.getLong, computing at long width with no overflow. To match,
-            // the IR emitter inserts a SX_I64 opcode after each narrow operand
-            // when the predicate has both integer arithmetic and a LONG operand,
-            // so convert() promotes to i64 before the arithmetic dispatches to
-            // int64_*.
+            // INT-INT arithmetic compared against a LONG column carries one value: the one its
+            // four bytes hold. Both filters wrap it modulo 2^32 and only then sign-extend for
+            // the comparison, so the JIT computes int32_* and the Java filter reads
+            // AddInt / MulInt / SubInt at INT width, which is what IntFunction.getLong()
+            // sign-extends. What this pins is that the two agree on the wrapped value.
             execute("CREATE TABLE x (a INT, b INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "(2147483640, 1, 0, '2024-01-01T00:00:00.000000Z')," +
@@ -594,14 +590,15 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("count\n2\n");
-            // a * b: 2147483640*1=positive, -2147483640*-1=positive long,
-            // 46341*46341=2_147_488_281L (positive long, overflows int32),
-            // 10*5=50 -> four rows match.
+            // a * b: 2147483640*1=positive, -2147483640*-1=positive,
+            // 46341*46341 overflows int32 and wraps to -2_147_479_015 (not > 0),
+            // 10*5=50 -> three rows match. The wrapping row is the discriminating one:
+            // computing the product at long width would give 2_147_488_281 and a fourth row.
             assertQuery("SELECT count(*) FROM x WHERE (a * b) > l")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n4\n");
+                    .returns("count\n3\n");
 
             try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (a + b) > l")) {
                 Assert.assertTrue("INT-INT arithmetic in LONG context must still JIT",
@@ -953,14 +950,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
     public void testNarrowIntArithmeticWithIntLiteralInLongContext() throws Exception {
         assertMemoryLeak(() -> {
             // Predicate (s * 78941) > l mixes a SHORT column with an INT literal
-            // and a LONG column. The Java filter's MulInt.getLong promotes via
-            // ((long) l) * r and computes the product at long width; the JIT
-            // used to emit 78941 as an I4 IMM (serializeUntypedNumber's first
-            // try is parseInt) so load_registers normalised both operands to
-            // i32 and dispatched int32_mul, overflowing for s = +-30000-ish.
-            // After the fix, the IMM is emitted at I8 when the predicate has a
-            // LONG operand, so convert() widens s to i64 and mul dispatches to
-            // int64_mul, matching the Java filter.
+            // and a LONG column. SHORT promotes to INT, so the product is an INT
+            // expression and wraps modulo 2^32 on both paths: the JIT emits 78941
+            // as an I4 IMM and dispatches int32_mul, and the Java filter reads
+            // MulInt at INT width. The LONG peer decides the width of the
+            // COMPARISON, never of the operand, so it does not promote the product.
             execute("CREATE TABLE x (s SHORT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "(32767, 0, '2024-01-01T00:00:00.000000Z')," +
@@ -969,14 +963,16 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " (10, 0, '2024-01-01T00:00:00.000003Z')");
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            // s = 32767, 30000, 10 all yield positive long products; s = -32768
-            // yields negative -2_586_738_688L. So three rows match.
+            // Wrapped: s = 32767 gives -1_708_307_549 and s = 30000 gives -1_926_737_296,
+            // both negative; s = -32768 wraps the other way onto +1_708_228_608 and s = 10
+            // stays at 789_410. So two rows match. Computing at long width would flip every
+            // one of the four rows, which is what makes this discriminating.
             assertQuery("SELECT count(*) FROM x WHERE (s * 78941) > l")
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
                     .noLeakCheck()
-                    .returns("count\n3\n");
+                    .returns("count\n2\n");
 
             try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (s * 78941) > l")) {
                 Assert.assertTrue("narrow * int literal vs long must still JIT",
@@ -1100,31 +1096,24 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNestedIntArithmeticWidenedToLongInLongContext() throws Exception {
+    public void testNestedIntArithmeticWrapsInLongContext() throws Exception {
         assertMemoryLeak(() -> {
-            // The fuzzer hit a JIT/Java divergence on a predicate of shape
-            //   c0 <= ((-732674 * c5) + -238927)
-            // where c0 is LONG and c5 is INT. The Java filter computed
-            // AddInt.getLong as ((long) MulInt.getInt()) + rightInt, so the
-            // inner -732674 * c5 wrapped at int32 before the outer cast
-            // widened the sum to long. The JIT pre-pass widens every narrow
-            // operand to i64 up front and computes at long width throughout,
-            // so the two paths disagreed for c5 large enough that the inner
-            // product overflowed int32. After the fix MulInt / AddInt /
-            // SubInt / NegInt's getLong recurse via .getLong on their
-            // subtrees, keeping nested INT arithmetic at long width too.
+            // Predicate of shape c0 <= ((-732674 * c5) + -238927), c0 LONG and c5 INT. The
+            // whole right-hand side is an INT expression, so the inner product wraps at int32
+            // and the outer sum is taken on the wrapped value; only the finished INT result
+            // sign-extends for the comparison against c0. Both filters have to agree on that,
+            // which is why the test runs the same SQL with the JIT off and then on.
             execute("CREATE TABLE x (c0 LONG, c5 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "(1_000_000_000, 10000, '2024-01-01T00:00:00.000000Z')," +
                     " (-7_326_979_000, 10000, '2024-01-01T00:00:00.000001Z')," +
                     " (2_000_000_000, 10000, '2024-01-01T00:00:00.000002Z')");
 
-            // -732674 * 10000 = -7_326_740_000L (overflows int32). Adding
-            // -238927 yields -7_326_978_927L. Only c0 = -7_326_979_000
-            // satisfies c0 <= rhs at long width. Pre-fix the inner mul
-            // wrapped to 1_263_194_592 at int32, so rhs became 1_262_955_665
-            // and the c0 = 1_000_000_000 row also matched, giving a count
-            // of 2 on the Java filter while JIT (with widening) returned 1.
+            // -732674 * 10000 is -7_326_740_000, which overflows int32 and wraps onto
+            // 1_263_194_592; adding -238927 gives an rhs of 1_262_955_665. So both
+            // c0 = -7_326_979_000 and c0 = 1_000_000_000 match, and c0 = 2_000_000_000 does
+            // not: count 2. Computing at long width would give an rhs of -7_326_978_927 and
+            // a count of 1, so the two rules are told apart by this table.
             String sql = "SELECT count(*) FROM x WHERE c0 <= ((-732674 * c5) + -238927)";
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
@@ -1132,90 +1121,84 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n1\n");
+                    .returns("count\n2\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             assertQuery(sql)
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n1\n");
+                    .returns("count\n2\n");
 
             try (RecordCursorFactory factory = select(sql)) {
                 Assert.assertTrue("nested INT arithmetic in LONG context must still JIT",
                         factory.usesCompiledFilter());
             }
 
-            // Same shape with subtraction: (-732674 * c5) - 238927 reaches
-            // SubInt.getLong, which must recurse through MulInt as well.
+            // Same shape with subtraction, which reaches SubInt rather than AddInt. The rhs is
+            // the same 1_262_955_665, so the count is the same 2; at long width it would be 1.
             String subSql = "SELECT count(*) FROM x WHERE c0 <= ((-732674 * c5) - 238927)";
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             assertQuery(subSql)
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n1\n");
+                    .returns("count\n2\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             assertQuery(subSql)
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n1\n");
+                    .returns("count\n2\n");
 
-            // Same shape under unary minus: -((-732674 * c5) + 238927)
-            // reaches NegInt.getLong, which must also recurse. At long width
-            // rhs = 7_326_501_073L and all three rows satisfy c0 <= rhs.
-            // Pre-fix the inner mul wrapped to 1_263_194_592 at int32, so
-            // rhs became -1_263_433_519 and only c0 = -7_326_979_000
-            // matched, giving a count of 1 on the Java filter while JIT
-            // returned 3.
+            // Same shape under unary minus, which reaches NegInt. The wrapped inner sum is
+            // 1_263_433_519, so rhs = -1_263_433_519 and only c0 = -7_326_979_000 matches ->
+            // count 1. At long width rhs would be 7_326_501_073 and all three rows would match.
             String negSql = "SELECT count(*) FROM x WHERE c0 <= -((-732674 * c5) + 238927)";
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             assertQuery(negSql)
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n3\n");
+                    .returns("count\n1\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             assertQuery(negSql)
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n3\n");
+                    .returns("count\n1\n");
         });
     }
 
     @Test
-    public void testNestedIntArithmeticWidenedToLongInLongContextViaDivision() throws Exception {
+    public void testNestedIntArithmeticWrapsInLongContextViaDivision() throws Exception {
         assertMemoryLeak(() -> {
-            // Division sibling of testNestedIntArithmeticWidenedToLongInLongContext.
-            // DivInt.getLong inherited IntFunction.getLong = intToLong(getInt()), so the
-            // inner 732674 * c5 wrapped at int32 before the outer divide and cast widened
-            // to long, while the JIT widens every narrow operand up front. After the fix
-            // DivInt.getLong recurses via .getLong, keeping the product at long width.
+            // Division sibling of testNestedIntArithmeticWrapsInLongContext, and the operator
+            // that makes the width visible: the low 32 bits of a long-width quotient are NOT
+            // the wrapped quotient, so a divide cannot be recovered after the fact. Both
+            // filters therefore have to wrap the inner product BEFORE dividing.
             execute("CREATE TABLE x (c0 LONG, c5 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "(0, 10000, '2024-01-01T00:00:00.000000Z')," +
                     " (-200_000_000, 10000, '2024-01-01T00:00:00.000001Z')," +
                     " (2_000_000_000, 10000, '2024-01-01T00:00:00.000002Z')");
 
-            // 732674 * 10000 = 7_326_740_000L (overflows int32); / 7 = 1_046_677_142L.
-            // c0 = 0 and c0 = -200_000_000 satisfy c0 <= rhs -> count 2. Pre-fix the inner
-            // mul wrapped to -1_263_194_592 at int32, so rhs became -180_456_370 and only
-            // c0 = -200_000_000 matched, giving count 1 on the Java filter while JIT
-            // (with widening) returned 2.
+            // 732674 * 10000 is 7_326_740_000, which overflows int32 and wraps onto
+            // -1_263_194_592; dividing by 7 gives an rhs of -180_456_370, so only
+            // c0 = -200_000_000 matches -> count 1. At long width the quotient would be
+            // 1_046_677_142 and c0 = 0 would match too, giving 2.
             String sql = "SELECT count(*) FROM x WHERE c0 <= ((732674 * c5) / 7)";
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             assertQuery(sql)
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n2\n");
+                    .returns("count\n1\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             assertQuery(sql)
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n2\n");
+                    .returns("count\n1\n");
 
             try (RecordCursorFactory factory = select(sql)) {
                 Assert.assertTrue("nested INT division in LONG context must still JIT",
@@ -1225,21 +1208,22 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNestedIntArithmeticWidenedToLongOnLhsAgainstLongRhs() throws Exception {
+    public void testNestedIntArithmeticWrapsOnLhsAgainstLongRhs() throws Exception {
         assertMemoryLeak(() -> {
-            // Regression: (c4 INT * (536728 * c8 BYTE)) >= ((-432577L - c8) + c7).
-            // Java's LtLong calls MulInt.getLong which widens; the JIT widen pre-pass
-            // observed only FLOAT constants, so -432577L did not flip
-            // needsNarrowI64Widening and the LHS ran at int32 (wrapping). Fix: observe
-            // LONG constants (L/l suffix or magnitude > INT_MAX) too.
+            // (c4 INT * (536728 * c8 BYTE)) >= ((-432577L - c8) + c7). BYTE promotes to INT,
+            // so the whole left-hand side is an INT expression and wraps at int32 on both
+            // paths; the LONG constant on the right decides the width of the comparison
+            // alone. The right-hand side is genuinely LONG and stays so.
             execute("CREATE TABLE x (c4 INT, c7 BYTE, c8 BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "(-1000000, 0, 127, '2024-01-01T00:00:00.000000Z')," +
                     "  (100000, 0, 100, '2024-01-01T00:00:00.000001Z')," +
                     "      (10, 0,   5, '2024-01-01T00:00:00.000002Z')");
 
-            // long-correct LHS: -6.8e13, 5.4e12, 2.7e7; rhs ~= -4.3e5. Rows 2 and 3 match.
-            // Pre-fix the wrapped int LHS was 9.7e8, -1.4e9, 2.7e7, flipping rows 1 and 2.
+            // Wrapped LHS: 9.7e8, -1.4e9, 2.7e7; rhs ~= -4.3e5, so rows 1 and 3 match. At
+            // long width the LHS would be -6.8e13, 5.4e12, 2.7e7 and rows 2 and 3 would match
+            // instead - the same count from a different row set, which is why the bigSql case
+            // below carries the count that tells the two rules apart.
             String sql = "SELECT count(*) FROM x WHERE (c4 * (536728 * c8)) >= ((-432577L - c8) + c7)";
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
@@ -1277,7 +1261,9 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("count\n2\n");
 
-            // Magnitude-only LONG (no L suffix, > INT_MAX): only row 2's 5.4e12 clears 5e9.
+            // Magnitude-only LONG (no L suffix, > INT_MAX). Every wrapped LHS fits in int32,
+            // so none of the three clears 5e9 -> count 0. At long width row 2's 5.4e12 would
+            // clear it and the count would be 1.
             String bigSql = "SELECT count(*) FROM x WHERE (c4 * (536728 * c8)) >= (5000000000 - c8 + c7)";
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             assertQuery(bigSql)
@@ -1285,14 +1271,14 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     .inferRandomAccess()
                     .sizeMayVary()
                     .noLeakCheck()
-                    .returns("count\n1\n");
+                    .returns("count\n0\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             assertQuery(bigSql)
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
                     .noLeakCheck()
-                    .returns("count\n1\n");
+                    .returns("count\n0\n");
         });
     }
 

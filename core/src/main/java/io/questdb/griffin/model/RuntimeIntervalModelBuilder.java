@@ -30,7 +30,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -38,6 +40,8 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+
+import java.time.temporal.ChronoUnit;
 
 /**
  * Collects intervals during query parsing and records them in two phases within the shared
@@ -61,11 +65,17 @@ import io.questdb.std.str.StringSink;
  * functions need a position for error reporting.
  */
 public class RuntimeIntervalModelBuilder implements Mutable {
+    // The widest day-of-month clamp: Jan 31, 30 and 29 all fold onto Feb 28, so a shifted upper
+    // bound can hide at most three days of timestamps that still satisfy the predicate. 'y' clamps
+    // only Feb 29 onto Feb 28 and needs a single day, so this covers both non-injective units.
+    private static final int MAX_DAY_CLAMP_STALL_DAYS = 3;
     // Parse positions of cursor functions, in cursor encounter order. Other dynamic intervals do
     // not need an error position, so keeping this list sparse avoids O(D) storage when C is zero.
     private final IntList cursorFunctionPositions = new IntList();
     private final ObjList<Function> dynamicRangeList = new ObjList<>();
     private final LongList parsedIntervals = new LongList();
+    // Scratch for the and_offset shift inversion, reused across source intervals and calls.
+    private final Interval shiftedInterval = new Interval();
     private final StringSink sink = new StringSink();
     // All data needed to re-evaluate intervals is stored in 2 lists - a LongList and a list of
     // functions. The LongList starts with plain [lo, hi] static interval pairs and ends with
@@ -79,6 +89,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private CairoConfiguration configuration;
     private boolean intervalApplied = false;
     private boolean isBetweenBoundaryFunctionConsumed;
+    // Set by applyOffset when shifting a boundary wraps past the end of the timestamp range in
+    // the direction the open sentinels cannot absorb. Read and reset per source interval by the
+    // shift loop, which declines the whole pushdown when it sees it.
+    private boolean isOffsetOutOfRange;
     private boolean isOwnershipTransferred;
     private int partitionBy;
     private TimestampDriver timestampDriver;
@@ -96,7 +110,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     public void clear() {
         if (isOwnershipTransferred) {
             // build() handed the dynamic functions to a RuntimeIntervalModel, which now owns them.
-            // Only a still-pending BETWEEN endpoint remains builder-owned.
+            // An unpaired boundary function never reached that list, so it is still ours to free.
             isOwnershipTransferred = false;
             final Throwable failure = clearBetweenParsing(null);
             staticIntervals.clear();
@@ -766,35 +780,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return result;
     }
 
-    /**
-     * Applies the add method with overflow checking.
-     * Throws SqlException if the addition would cause timestamp overflow.
-     */
-    private static long addWithOverflowCheck(TimestampDriver.TimestampAddMethod addMethod, long timestamp, int offset) throws SqlException {
-        // For zero offset, no change needed
-        if (offset == 0) {
-            return timestamp;
-        }
-
-        long result = addMethod.add(timestamp, offset);
-
-        // Detect overflow: if offset is positive but result is less than original,
-        // or if offset is negative but result is greater than original, overflow occurred.
-        if (offset > 0 && result < timestamp) {
-            throw SqlException.position(0)
-                    .put("timestamp overflow: applying offset ")
-                    .put(offset)
-                    .put(" to timestamp would exceed maximum value");
-        } else if (offset < 0 && result > timestamp) {
-            throw SqlException.position(0)
-                    .put("timestamp overflow: applying offset ")
-                    .put(offset)
-                    .put(" to timestamp would exceed minimum value");
-        }
-
-        return result;
-    }
-
     private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
         for (int i = lo; i < lim - 1; i++) {
             if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
@@ -847,8 +832,56 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
     }
 
+    /**
+     * Applies the CALENDAR offset ({@code 'M'}, {@code 'y'}) to one source interval boundary already
+     * expressed in this builder's resolution, leaving the open-ended sentinels untouched. The
+     * fixed-tick units do not come here - {@link #mergeWithAddMethod} inverts those through
+     * {@link io.questdb.griffin.engine.functions.MonotonicTimestampFunction#invertConstantShift
+     * invertConstantShift}, the same entry point the row-filter spelling uses.
+     * <p>
+     * A wrap in EITHER direction declines the whole pushdown. The check detects a WRAP, not a
+     * mathematical excursion, and the forward {@code dateadd} wraps too, so for a stride large enough
+     * to wrap the projection lands back inside the range and rows really do satisfy the predicate.
+     * Declaring the scan empty there would silently drop them.
+     * <p>
+     * Collapsing the wrapped boundary to the open sentinel instead does not work either, because the
+     * preimage of a wrapped shift is not an interval: it is the two pieces the wrap splits it into.
+     * {@code [lo - D, hi - D]} with only {@code lo - D} wrapping covers the piece below {@code hi - D}
+     * and loses the one above {@code lo - D} entirely. That is not a superset, so no residual filter
+     * can repair it - a filter only ever removes rows. Only when the OTHER boundary is already open
+     * does the collapse produce a superset, and distinguishing that case buys nothing over declining.
+     * <p>
+     * So this raises {@code isOffsetOutOfRange} for every wrap and the caller declines, leaving the
+     * {@code dateadd} as a residual row filter that re-checks every row with the same wrapping
+     * arithmetic. Throwing, which is what this used to do, made the optimiser's own arithmetic a
+     * user-visible error on a perfectly valid query.
+     * <p>
+     * The wrap handling is deliberately side-agnostic - it raises {@code isOffsetOutOfRange} for
+     * either boundary wrapping - so the caller need not tell {@code applyOffset} which side it holds.
+     */
+    private long applyOffset(long base, TimestampDriver.TimestampAddMethod addMethod, int offset) {
+        if (base == Numbers.LONG_NULL || base == Long.MAX_VALUE || offset == 0) {
+            return base;
+        }
+        final long result = addMethod.add(base, offset);
+        // A positive offset that lowers the value has overflowed; a negative one that raises it has
+        // underflowed.
+        if (offset > 0 && result < base) {
+            // The boundary wrapped past the end of the range, whichever side it guards.
+            isOffsetOutOfRange = true;
+            return Long.MAX_VALUE;
+        }
+        if (offset < 0 && result > base) {
+            // The boundary wrapped below the start of the range, whichever side it guards.
+            isOffsetOutOfRange = true;
+            return Numbers.LONG_NULL;
+        }
+        return result;
+    }
+
     private Throwable freeAndClearBestEffort() {
         isOwnershipTransferred = false;
+        isOffsetOutOfRange = false;
         // Detach the pending endpoint and every adopted slot before invoking user close methods.
         Throwable failure = clearBetweenParsing(null);
         failure = Misc.freeObjListBestEffort(failure, dynamicRangeList);
@@ -927,6 +960,18 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return subtractSaturating(lo, loOffset);
     }
 
+    /**
+     * Converts one source interval boundary from the source driver's resolution into this builder's,
+     * leaving the open-ended sentinels alone: both are domain markers rather than timestamps, and
+     * rescaling them would turn an open end into a finite one.
+     */
+    private long rescale(long value, TimestampDriver otherDriver) {
+        if (value == Numbers.LONG_NULL || value == Long.MAX_VALUE) {
+            return value;
+        }
+        return timestampDriver.from(value, otherDriver.getTimestampType());
+    }
+
     private void resetBetweenParsingState() {
         betweenBoundarySet = false;
         betweenBoundaryFunc = null;
@@ -965,53 +1010,196 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     /**
-     * Merges a static interval union from another builder with calendar-aware offset adjustment.
-     * This avoids allocating an intermediate RuntimeIntervalModel.
+     * Merges intervals from another builder with calendar-aware offset adjustment. This is the
+     * and_offset timestamp-pushdown counterpart of {@link #merge(RuntimeIntervalModel, long, long)}
+     * and avoids allocating an intermediate RuntimeIntervalModel.
+     * <p>
+     * The source predicate may extract multiple disjoint intervals (e.g. {@code tt != <lit>} -> two
+     * ranges). The offset shift must map to the UNION of the shifted ranges, then intersect that union
+     * with this builder's own intervals once - not the per-interval intersection, which collapses to
+     * empty for 2+ disjoint ranges. The caller consumes the and_offset predicate (sets
+     * {@code node.intrinsicValue = TRUE}) only when this method reports success, so a case that cannot
+     * be represented here - a runtime/dynamic source bound, or a boundary whose shift wraps out of
+     * the timestamp range - returns {@code false} and stays a residual filter rather than a wrong
+     * (empty or unconstrained) interval scan.
      *
-     * @param other     the builder to merge from
-     * @param addMethod the timestamp add method (from TimestampDriver)
-     * @param offset    the offset value to apply
-     * @throws SqlException if applying the offset would cause timestamp overflow
+     * @param other        the builder to merge from
+     * @param addMethod    the timestamp add method (from TimestampDriver)
+     * @param offset       the offset value to apply, i.e. the NEGATED {@code dateadd} stride
+     * @param isInjective  false for the calendar units ('M', 'y'), whose day-of-month clamp folds
+     *                     several source timestamps onto one shifted value
+     * @param maxTimestamp the ceiling on the forward shift's input, the counterpart of
+     *                     {@link io.questdb.griffin.engine.functions.MonotonicTimestampFunction#shiftInputCeiling
+     *                     shiftInputCeiling}: the driver's designated-timestamp ceiling when this
+     *                     shift sits directly on the column, {@code Long.MAX_VALUE} when an inner
+     *                     {@code and_offset} has already shifted it
+     * @return true if the offset predicate was fully represented (the caller may consume it); false if
+     * it must be left as a residual filter
      */
-    void mergeWithAddMethod(RuntimeIntervalModelBuilder other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
+    boolean mergeWithAddMethod(
+            RuntimeIntervalModelBuilder other,
+            TimestampDriver.TimestampAddMethod addMethod,
+            int offset,
+            boolean isInjective,
+            long maxTimestamp
+    ) throws SqlException {
         if (other == null || isEmptySet() || addMethod == null || !other.intervalApplied) {
-            return;
-        }
-        if (other.dynamicRangeList.size() > 0) {
-            // The optimizer keeps runtime-bound predicates above the virtual record. Do not use a
-            // partial static prefix as pruning: a later runtime UNION may expand beyond that prefix.
-            return;
+            // A source predicate the analysis consumed without applying an interval constrains nothing,
+            // so the caller may consume the and_offset predicate too. The one shape that reaches here is
+            // a tautology (self-comparison in analyzeEquals0), which every row satisfies. A source
+            // contradiction also applies no interval, but it must NOT be consumed unconstrained - it is
+            // intercepted a level up, in IntrinsicModel.mergeIntervalModelWithAddMethod, which can see
+            // the FALSE intrinsicValue this builder cannot.
+            //
+            // Nothing merges into this builder, and the caller only clears other on the residual path,
+            // so free whatever other still owns rather than leaving it until the pool slot is reused.
+            // A hand-written and_offset bypasses SqlOptimiser's isStaticTimestampPredicate() gate
+            // entirely - intrinsicOps dispatches on the token alone - so a dynamic bound does reach
+            // here. See testHandWrittenAndOffsetEmptyModelFreesBound, which leaks 1 KiB without this.
+            if (other != null) {
+                other.freeAndClear();
+            }
+            return true;
         }
 
         final LongList otherIntervals = other.staticIntervals;
         if (otherIntervals.size() == 0) {
+            // We already passed the !other.intervalApplied guard, so a zero-length source interval list
+            // means other is an empty set (e.g. the inner predicate compared the timestamp to a NULL
+            // bound and reached intersectEmpty()). The offset shift of an empty set is still empty, so
+            // this model must intersect to empty rather than stay unconstrained - otherwise the caller
+            // consumes the predicate and the scan returns every row instead of none.
             intersectEmpty();
-            return;
+            return true;
+        }
+
+        if (other.dynamicRangeList.size() > 0) {
+            // The source carries runtime (dynamic) interval bounds whose values are unknown at parse
+            // time, so the calendar offset cannot be baked into them here. A partial static prefix is
+            // not a safe substitute either: a later runtime UNION may expand beyond it. Leave the
+            // predicate as a residual filter instead of consuming it and returning unconstrained
+            // results.
+            //
+            // SqlOptimiser's isStaticTimestampPredicate() gate keeps every OPTIMISER-built wrapper
+            // purely static, but it is not the only door: and_offset is registered in intrinsicOps by
+            // token, so a hand-written one reaches analyzeAndOffset ungated and can carry a bind
+            // variable, a runtime-constant function or a '$'-prefixed date-variable string (which
+            // compiles through intersectCompiledTickExpr into dynamicRangeList). Dropping this guard
+            // returns every row instead of the matching ones - see
+            // testHandWrittenAndOffsetDynamicBoundStaysResidual.
+            return false;
         }
 
         final TimestampDriver otherDriver = other.timestampDriver;
+        // A non-injective unit ('M' and 'y' clamp the day of month) stalls: several source timestamps
+        // collapse onto one shifted value. Shifting the LOWER boundary lands on the first timestamp of
+        // its stall, so that side is already a superset. The UPPER boundary lands on the FIRST
+        // timestamp of its stall - and every later one satisfies the predicate as well, so they must
+        // stay inside the scan and the bound has to widen past the stall. The interval is then a
+        // superset, which the caller keeps re-checking with a residual filter instead of consuming
+        // the predicate.
+        //
+        // The stall is a day-of-month clamp, so it spans at most three days - Jan 31 and the two days
+        // after it all fold onto Feb 28. Widening by a whole extra unit also clears it, but at a
+        // wildly disproportionate cost: it doubled a one-year scan to two years. Widen by the stall
+        // itself instead. Note that the shift is NOT monotone across a clamp - addMonths('03-28
+        // 00:00:00.000001', -1) exceeds addMonths('03-29 00:00:00', -1) - so the stall cannot be
+        // detected by probing the neighbouring tick, and this bound is applied unconditionally.
+        final long stallTicks = isInjective ? 0 : timestampDriver.from(MAX_DAY_CLAMP_STALL_DAYS, ChronoUnit.DAYS);
+        // The stored offset is the inverse of the dateadd stride, so the forward shift negates it.
+        // Integer.MIN_VALUE has no positive counterpart, which is also why TimestampAddFunctionFactory
+        // declines that stride outright.
+        if (offset == Integer.MIN_VALUE) {
+            return false;
+        }
+        final int stride = -offset;
+        // A fixed-duration unit adds the same constant to every timestamp, so the forward shift is
+        // whatever the add method produces from zero - including the wrap, since the forward dateadd
+        // computes the very same product. Nanos.addDays is a plain nanos + days * DAY_NANOS.
+        final long shift = isInjective ? addMethod.add(0, stride) : 0;
         try {
             parsedIntervals.clear();
             for (int i = 0, n = otherIntervals.size(); i < n; i += 2) {
-                long lo = otherIntervals.getQuick(i);
-                if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
-                    lo = timestampDriver.from(lo, otherDriver.getTimestampType());
-                    lo = addWithOverflowCheck(addMethod, lo, offset);
+                final long srcLo = rescale(otherIntervals.getQuick(i), otherDriver);
+                final long srcHi = rescale(otherIntervals.getQuick(i + 1), otherDriver);
+                long lo;
+                long hi;
+                if (isInjective) {
+                    // Invert the constant shift through the SAME entry point the un-pushed spelling
+                    // uses, so the two agree on which shapes are soundly invertible. It answers three
+                    // questions this loop used to get wrong on its own: whether the forward shift can
+                    // wrap some OTHER timestamp INTO [lo, hi] (splitting the preimage into two ring
+                    // arcs a single interval cannot carry), whether shifting a boundary back leaves
+                    // the range, and where the OPEN sentinels land - an open upper bound over a
+                    // positive shift becomes the finite Long.MAX_VALUE - shift, because the
+                    // timestamps above that wrap to the bottom of the range instead of staying above
+                    // the bound. Leaving the sentinel open there returned every row for
+                    // "t > bound"; leaving the lower one open returned none for "t < bound".
+                    shiftedInterval.of(srcLo, srcHi);
+                    if (MonotonicTimestampFunction.invertConstantShift(shiftedInterval, shift, maxTimestamp) == MonotonicTimestampFunction.NONE) {
+                        // Decline the whole pushdown: the caller frees the temp model and rebuilds the
+                        // dateadd as a residual row filter, which re-checks each row with the same
+                        // wrapping arithmetic the projection uses. Nothing has been merged into this
+                        // builder yet - parsedIntervals is scratch that the finally clears - so an early
+                        // return leaves it untouched. Declining one interval means declining all of
+                        // them, because the surviving intervals alone would be a narrower scan than the
+                        // predicate admits.
+                        return false;
+                    }
+                    lo = shiftedInterval.getLo();
+                    hi = shiftedInterval.getHi();
+                    // The inverse maps each OPEN sentinel onto the exact domain endpoint it shifts
+                    // to. Restore the marker whenever the finite bound it produced excludes no
+                    // STORABLE timestamp - a designated timestamp lives in [0, maxTimestamp] - so
+                    // the scan keeps its open end, the plan keeps reading MIN/MAX, and the "spans
+                    // the whole range" shortcut below stays reachable.
+                    //
+                    // The lower end always qualifies: a negative shift lands it on
+                    // Long.MIN_VALUE + |shift|, which is still negative, and a non-negative shift
+                    // leaves the sentinel alone. The upper end qualifies only when the shift cannot
+                    // carry a storable timestamp past Long.MAX_VALUE - shift, i.e. when that bound
+                    // already sits at or above the ceiling. On TIMESTAMP_NS the ceiling IS
+                    // Long.MAX_VALUE, so it never does - and there the finite bound is load-bearing,
+                    // because the timestamps above it wrap to the bottom of the range instead of
+                    // staying above the source bound.
+                    if (srcLo == Numbers.LONG_NULL) {
+                        lo = Numbers.LONG_NULL;
+                    }
+                    if (srcHi == Long.MAX_VALUE && hi >= maxTimestamp) {
+                        hi = Long.MAX_VALUE;
+                    }
+                } else {
+                    // A calendar shift is not a constant, so it cannot be measured against the
+                    // ceiling; the shared guard tests the shape of the bounds instead.
+                    if (MonotonicTimestampFunction.calendarShiftWrapsIntoRange(stride, srcLo, srcHi)) {
+                        return false;
+                    }
+                    isOffsetOutOfRange = false;
+                    lo = applyOffset(srcLo, addMethod, offset);
+                    hi = applyOffset(srcHi, addMethod, offset);
+                    if (isOffsetOutOfRange) {
+                        return false;
+                    }
                 }
-                long hi = otherIntervals.getQuick(i + 1);
-                if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
-                    hi = timestampDriver.from(hi, otherDriver.getTimestampType());
-                    hi = addWithOverflowCheck(addMethod, hi, offset);
+                if (stallTicks > 0 && hi != Long.MAX_VALUE && hi != Numbers.LONG_NULL) {
+                    // An open or absent bound has no stall to clear; anything else saturates rather
+                    // than wrapping past the end of the range.
+                    hi = addSaturating(hi, stallTicks);
                 }
                 if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
-                    return;
+                    // A shifted interval spans the entire range, so the union does too: the offset
+                    // predicate constrains nothing. Keep this builder's own intervals and consume
+                    // it. A wrapped boundary cannot reach here - both branches decline above.
+                    return true;
                 }
                 if (lo > hi) {
-                    continue;
+                    continue; // empty interval, contributes nothing to the union
                 }
-
-                // Offset the complete source union before intersecting it with this builder.
-                // Calendar shifts remain monotonic but may collapse adjacent dates, so coalesce.
+                // Source intervals are sorted ascending and non-overlapping. A calendar shift is not
+                // strictly order-preserving - a clamp can invert two timestamps less than a day apart
+                // - but it cannot reorder whole intervals: any span this drops sits below the
+                // interval's own minimum preimage. So a single forward pass still merges any overlaps
+                // the shift introduces.
                 if (parsedIntervals.size() > 0 && lo <= parsedIntervals.getLast()) {
                     if (hi > parsedIntervals.getLast()) {
                         parsedIntervals.setQuick(parsedIntervals.size() - 1, hi);
@@ -1022,6 +1210,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             }
 
             if (parsedIntervals.size() == 0) {
+                // Every shifted interval was empty, so their union is empty too.
                 intersectEmpty();
             } else if (dynamicRangeList.size() > 0) {
                 // Keep the complete existing expression in evaluation order and intersect the
@@ -1037,6 +1226,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                     intervalApplied = true;
                 }
             }
+            return true;
         } finally {
             parsedIntervals.clear();
         }
