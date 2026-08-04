@@ -41,7 +41,7 @@ import io.questdb.std.Uuid;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
-class PGUtils {
+public final class PGUtils {
     private static final int MAX_BYTE_TEXT_LEN = String.valueOf(Byte.MIN_VALUE).length();
     private static final int MAX_CHAR_TEXT_LEN = 3;
     private static final int MAX_DATE_TEXT_LEN = 28; // "292278994-08-17 07:12:55.807"
