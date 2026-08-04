@@ -35,6 +35,99 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
     };
 
     @Test
+    public void testCastCharColumn() throws Exception {
+        // a CHAR column widens to STRING to reach this factory, so the error names CHAR
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ch (c CHAR)");
+            execute("INSERT INTO ch VALUES ('7'), (null), ('0')");
+
+            // DECIMAL16 -> Func64
+            assertQuery("SELECT c, cast(c AS DECIMAL(4,2)) d FROM ch")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c\td
+                            7\t7.00
+                            \t
+                            0\t0.00
+                            """);
+
+            // DECIMAL128 -> Func128
+            assertQuery("SELECT c, cast(c AS DECIMAL(38,2)) d FROM ch")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c\td
+                            7\t7.00
+                            \t
+                            0\t0.00
+                            """);
+
+            // DECIMAL256 -> Func256
+            assertQuery("SELECT c, cast(c AS DECIMAL(40,2)) d FROM ch")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c\td
+                            7\t7.00
+                            \t
+                            0\t0.00
+                            """);
+
+            execute("CREATE TABLE ch_bad (c CHAR)");
+            execute("INSERT INTO ch_bad VALUES ('a')");
+
+            assertQuery("SELECT cast(c AS DECIMAL(4,2)) FROM ch_bad")
+                    .fails(12, "inconvertible value: `a` [CHAR -> DECIMAL(4,2)]");
+
+            assertQuery("SELECT cast(c AS DECIMAL(38,2)) FROM ch_bad")
+                    .fails(12, "inconvertible value: `a` [CHAR -> DECIMAL(38,2)]");
+
+            assertQuery("SELECT cast(c AS DECIMAL(40,2)) FROM ch_bad")
+                    .fails(12, "inconvertible value: `a` [CHAR -> DECIMAL(40,2)]");
+
+            // a digit that does not fit the target
+            assertQuery("SELECT cast(c AS DECIMAL(1,1)) FROM ch")
+                    .fails(12, "inconvertible value: `7` [CHAR -> DECIMAL(1,1)]");
+        });
+    }
+
+    @Test
+    public void testCastCharConstant() throws Exception {
+        // a one-character quoted literal types as CHAR, so the constant folder names CHAR
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT cast('7' AS DECIMAL(4,2)) d16, cast('7' AS DECIMAL(38,2)) d128, cast('7' AS DECIMAL(40,2)) d256")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d16\td128\td256
+                            7.00\t7.00\t7.00
+                            """);
+
+            assertQuery("SELECT cast(cast(null AS CHAR) AS DECIMAL(4,2)) d16, cast(cast(null AS CHAR) AS DECIMAL(40,2)) d256")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d16\td256
+                            \t
+                            """);
+
+            assertQuery("SELECT cast('a' AS DECIMAL(4,2))")
+                    .fails(12, "inconvertible value: `a` [CHAR -> DECIMAL(4,2)]");
+
+            assertQuery("SELECT cast('a' AS DECIMAL(38,2))")
+                    .fails(12, "inconvertible value: `a` [CHAR -> DECIMAL(38,2)]");
+
+            assertQuery("SELECT cast('a' AS DECIMAL(40,2))")
+                    .fails(12, "inconvertible value: `a` [CHAR -> DECIMAL(40,2)]");
+
+            // a digit that does not fit the target
+            assertQuery("SELECT cast('7' AS DECIMAL(1,1))")
+                    .fails(12, "inconvertible value: `7` [CHAR -> DECIMAL(1,1)]");
+        });
+    }
+
+    @Test
     public void testCastExplains() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -202,9 +295,9 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     0.00
                                     """);
 
-                    // Any non-zero value should overflow
+                    // Any non-zero value should overflow; a one-character literal types as CHAR
                     assertQuery("select cast('1' as DECIMAL(2,2))")
-                            .fails(12, "inconvertible value: `1` [STRING -> DECIMAL(2,2)]");
+                            .fails(12, "inconvertible value: `1` [CHAR -> DECIMAL(2,2)]");
 
                     assertQuery("select cast('-1' as DECIMAL(2,2))")
                             .fails(12, "inconvertible value: `-1` [STRING -> DECIMAL(2,2)]");
@@ -479,6 +572,30 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     """);
                 }
         );
+    }
+
+    @Test
+    public void testCastSymbolColumn() throws Exception {
+        // a SYMBOL column widens to STRING to reach this factory, so the error names SYMBOL
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sym (s SYMBOL)");
+            execute("INSERT INTO sym VALUES ('12.34'), (null)");
+
+            assertQuery("SELECT s, cast(s AS DECIMAL(4,2)) d FROM sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\td
+                            12.34\t12.34
+                            \t
+                            """);
+
+            execute("CREATE TABLE sym_bad (s SYMBOL)");
+            execute("INSERT INTO sym_bad VALUES ('abc')");
+
+            assertQuery("SELECT cast(s AS DECIMAL(4,2)) FROM sym_bad")
+                    .fails(12, "inconvertible value: `abc` [SYMBOL -> DECIMAL(4,2)]");
+        });
     }
 
     @Test

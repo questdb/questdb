@@ -100,7 +100,7 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
         try {
             decimal.ofString(cs, targetPrecision, targetScale);
         } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, targetType).position(position);
+            throw ImplicitCastException.inconvertibleValue(cs, value.getType(), targetType).position(position);
         }
         // NaN and Infinity parse to null
         if (decimal.isNull()) {
@@ -138,7 +138,7 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
             try {
                 sink.ofString(cs, precision, scale);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, type).position(position);
+                throw ImplicitCastException.inconvertibleValue(cs, arg.getType(), type).position(position);
             }
         }
 
@@ -177,7 +177,7 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
             try {
                 sink.ofString(cs, precision, scale);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, type).position(position);
+                throw ImplicitCastException.inconvertibleValue(cs, arg.getType(), type).position(position);
             }
         }
 
@@ -201,7 +201,7 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
             try {
                 decimal.ofString(cs, precision, scale);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, type).position(position);
+                throw ImplicitCastException.inconvertibleValue(cs, arg.getType(), type).position(position);
             }
             // NaN and Infinity parse to null
             return !decimal.isNull();
