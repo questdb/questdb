@@ -108,7 +108,7 @@ public class WriterRowUtils {
         } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(decimalValue, ColumnType.STRING, columnType);
         }
-        putDecimal0(index, decimalSink, ColumnType.tagOf(columnType), row);
+        putDecimalQuick(index, decimalSink, ColumnType.tagOf(columnType), row);
     }
 
     public static void putDecimalVarchar(int index, Decimal256 decimalSink, Utf8Sequence decimalValue, int columnType, TableWriter.Row row) {
@@ -125,7 +125,7 @@ public class WriterRowUtils {
         } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(decimalValue, ColumnType.VARCHAR, columnType);
         }
-        putDecimal0(index, decimalSink, ColumnType.tagOf(columnType), row);
+        putDecimalQuick(index, decimalSink, ColumnType.tagOf(columnType), row);
     }
 
     public static void putGeoHash(int index, long value, int columnType, TableWriter.Row row) {
