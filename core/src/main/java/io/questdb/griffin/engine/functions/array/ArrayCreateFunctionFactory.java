@@ -178,10 +178,13 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
     /**
      * Element functions are read via {@code getDouble()} without a cast wrapper, so a type that
      * doesn't implicitly convert to DOUBLE would throw {@code UnsupportedOperationException} at run time.
+     * BOOLEAN is the exception: it carries no DOUBLE overload, yet {@code BooleanFunction.getDouble()}
+     * is implemented and yields 1 or 0.
      */
     private static void validateElemType(int elemType, int elemPos) throws SqlException {
         short tag = ColumnType.tagOf(elemType);
         if (tag != ColumnType.UNDEFINED
+                && tag != ColumnType.BOOLEAN
                 && ColumnType.overloadDistance(tag, ColumnType.DOUBLE) == ColumnType.OVERLOAD_NONE
         ) {
             throw SqlException.position(elemPos)

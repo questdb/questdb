@@ -36,6 +36,22 @@ public class ArrayCreateFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBooleanColumnElement() throws Exception {
+        assertQuery("SELECT ARRAY[b, true] arr FROM tango")
+                .ddl("CREATE TABLE tango (b BOOLEAN)", "INSERT INTO tango VALUES (false), (true)")
+                .expectSize()
+                .returns("arr\n[0.0,1.0]\n[1.0,1.0]\n");
+    }
+
+    @Test
+    public void testBooleanElementsStillWork() throws Exception {
+        // BOOLEAN has no DOUBLE overload but BooleanFunction.getDouble() is implemented
+        assertQuery("SELECT ARRAY[true, false] arr")
+                .expectSize()
+                .returns("arr\n[1.0,0.0]\n");
+    }
+
+    @Test
     public void testDecimalBindVariableElement() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.setDecimal(0, 0, 0, 0, 125, ColumnType.getDecimalType(10, 2));
@@ -71,10 +87,10 @@ public class ArrayCreateFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleElementsStillWork() throws Exception {
-        assertMemoryLeak(() -> assertSqlWithTypes(
-                "ARRAY\n[[1.0,2.0],[3.0,4.5]]:DOUBLE[][]\n",
-                "SELECT ARRAY[[1.0, 2], [3, 4.5]]"
-        ));
+        assertQuery("SELECT ARRAY[[1.0, 2], [3, 4.5]] arr")
+                .expectSize()
+                .columnType(0, ColumnType.encodeArrayType(ColumnType.DOUBLE, 2))
+                .returns("arr\n[[1.0,2.0],[3.0,4.5]]\n");
     }
 
     @Test
@@ -90,8 +106,8 @@ public class ArrayCreateFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNonNumericElements() throws Exception {
-        assertException("SELECT ARRAY[true, false]", 13, "unsupported array element type [type=BOOLEAN]");
         assertException("SELECT ARRAY[rnd_uuid4()]", 13, "unsupported array element type [type=UUID]");
+        assertException("SELECT ARRAY[rnd_long256()]", 13, "unsupported array element type [type=LONG256]");
     }
 
     @Test
