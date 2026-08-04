@@ -336,10 +336,12 @@ import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
+import io.questdb.griffin.engine.window.WindowAccumulatorPlan;
 import io.questdb.griffin.engine.window.WindowAccumulatorPlanBuilder;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowMapSpec;
+import io.questdb.griffin.engine.window.WindowMapState;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
@@ -9824,6 +9826,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<WindowFunction> naturalOrderFunctions = null;
         ObjList<Function> partitionByFunctions = null;
         LiveViewCheckpointRowsPlan checkpointRowsPlan = null;
+        // The bound window Map groups own a map each, so they are built into a local the
+        // outer catch can free: the factory takes ownership only once its constructor has
+        // returned.
+        ObjList<WindowMapState> windowMapStates = null;
         try {
             // if all window function don't require sorting or more than one pass then use streaming factory
             boolean isFastPath = true;
@@ -10108,6 +10114,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             executionContext
                     );
                 }
+                // The groups this query's functions form. Non-owning references into
+                // `functions`, so the plans themselves need no cleanup; what does is the
+                // runtime built from them below.
+                final ObjList<WindowAccumulatorPlan> windowAccumulatorPlans = windowMapSpecs != null
+                        ? WindowAccumulatorPlanBuilder.compileGroups(functions, windowMapSpecs, baseMetadata)
+                        : null;
+                // Binds the plans this build gives a runtime, leaving the rest compiled. A
+                // bound function's private map stays closed from here on, so this must not
+                // run twice over one function - and it cannot: it runs once per compile.
+                windowMapStates = WindowMapState.createGroups(configuration, asm, windowAccumulatorPlans, baseMetadata);
                 final WindowRecordCursorFactory windowFactory = new WindowRecordCursorFactory(
                         base,
                         factoryMetadata,
@@ -10125,14 +10141,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 baseMetadata
                         )
                                 : null,
-                        // Compiled but not adopted: the groups name their components and
-                        // bindings, and nothing allocates a map or binds a slot off them
-                        // yet. Non-owning references into `functions`, like the plan above.
-                        windowMapSpecs != null
-                                ? WindowAccumulatorPlanBuilder.compileGroups(functions, windowMapSpecs, baseMetadata)
-                                : null
+                        windowAccumulatorPlans,
+                        windowMapStates
                 );
                 checkpointRowsPlan = null;
+                windowMapStates = null;
                 return windowFactory;
             } else {
                 factoryMetadata.clear();
@@ -10485,6 +10498,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             Misc.free(base);
             Misc.free(checkpointRowsPlan);
+            Misc.freeObjList(windowMapStates);
             Misc.freeObjList(functions);
             Misc.freeObjList(naturalOrderFunctions);
             Misc.freeObjList(partitionByFunctions);
