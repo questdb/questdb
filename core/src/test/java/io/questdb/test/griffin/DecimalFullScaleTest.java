@@ -48,13 +48,50 @@ public class DecimalFullScaleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullScaleLiteralPersistsInCtas() throws Exception {
+        assertQuery("select \"column\", type from table_columns('ct')")
+                .ddl("create table ct as (select 0." + "9".repeat(76) + "m v)")
+                .noRandomAccess()
+                .returns("column\ttype\nv\tDECIMAL(76,76)\n");
+    }
+
+    @Test
+    public void testInferredTypeOfExpressionOverLiteralBelowOne() throws Exception {
+        // the narrower literal type narrows what is built from it: these were DECIMAL(3,1) before
+        assertQuery("select typeOf(0.5m + 0.5m) a, 0.5m + 0.5m b, typeOf(0.5m - 0.125m) c, 0.5m - 0.125m d")
+                .expectSize()
+                .returns("a\tb\tc\td\nDECIMAL(2,1)\t1.0\tDECIMAL(4,3)\t0.375\n");
+    }
+
+    @Test
     public void testInferredTypeOfLiteralBelowOne() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
+        assertQuery(
                 "select typeOf(0.5m) a, typeOf(0.125m) b, typeOf(-0.125m) c, typeOf(0.00001m) d, typeOf(1.5m) e, typeOf(123.45m) f"
         )
-                .noLeakCheck()
                 .expectSize()
-                .returns("a\tb\tc\td\te\tf\nDECIMAL(1,1)\tDECIMAL(3,3)\tDECIMAL(3,3)\tDECIMAL(5,5)\tDECIMAL(2,1)\tDECIMAL(5,2)\n"));
+                .returns("a\tb\tc\td\te\tf\nDECIMAL(1,1)\tDECIMAL(3,3)\tDECIMAL(3,3)\tDECIMAL(5,5)\tDECIMAL(2,1)\tDECIMAL(5,2)\n");
+    }
+
+    @Test
+    public void testInferredTypeOfLiteralBelowOnePersistsInCtas() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table ct as (select 0.5m v, 0.125m w)");
+            assertQuery("select \"column\", type from table_columns('ct')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype
+                            v\tDECIMAL(1,1)
+                            w\tDECIMAL(3,3)
+                            """);
+
+            // the persisted type is tight, so a value the wider one held no longer fits
+            assertExceptionNoLeakCheck(
+                    "insert into ct values (1.5m, 0.125m)",
+                    0,
+                    "inconvertible value: `1.5` [DECIMAL(2,1) -> DECIMAL(1,1)]"
+            );
+        });
     }
 
     @Test
@@ -78,6 +115,14 @@ public class DecimalFullScaleTest extends AbstractCairoTest {
                     "inconvertible value: `999999999.99` [DECIMAL(11,2) -> DECIMAL(10,2)]"
             );
         });
+    }
+
+    @Test
+    public void testSumOfFullScaleLiteralsOverflows() throws Exception {
+        // DECIMAL(76,76) leaves no integer digit, so the sum has nowhere to go
+        final String nines = "0." + "9".repeat(76) + "m";
+        assertQuery("select " + nines + " + " + nines)
+                .failsWith("Overflow in addition: result exceeds maximum precision");
     }
 
     @Test
@@ -135,7 +180,7 @@ public class DecimalFullScaleTest extends AbstractCairoTest {
 
     @Test
     public void testZeroTextCastsToEveryWidth() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
+        assertQuery(
                 """
                         SELECT '0'::varchar::decimal(3,3) a,
                                '0.0'::varchar::decimal(3,3) b,
@@ -144,9 +189,8 @@ public class DecimalFullScaleTest extends AbstractCairoTest {
                                '0'::decimal(38,38) e,
                                '0'::decimal(76,76) f"""
         )
-                .noLeakCheck()
                 .expectSize()
-                .returns("a\tb\tc\td\te\tf\n0.000\t0.000\t0.000\t0.0\t0." + "0".repeat(38) + "\t0." + "0".repeat(76) + "\n"));
+                .returns("a\tb\tc\td\te\tf\n0.000\t0.000\t0.000\t0.0\t0." + "0".repeat(38) + "\t0." + "0".repeat(76) + "\n");
     }
 
     @Test
