@@ -2353,6 +2353,23 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testUtf8ToUtf16OrThrowRejectsMalformedInput() {
+        Utf8String malformed = new Utf8String(new byte[]{'1', (byte) 0xC3}, false);
+        try {
+            Utf8s.utf8ToUtf16OrThrow(malformed, new StringSink());
+            Assert.fail("expected the malformed value to be rejected");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+        }
+
+        // well-formed input still returns the same views utf8ToUtf16OrView would
+        Utf8String ascii = new Utf8String("abc".getBytes(StandardCharsets.UTF_8), false);
+        TestUtils.assertEquals("abc", Utf8s.utf8ToUtf16OrThrow(ascii, new StringSink()));
+        Utf8String nonAscii = new Utf8String("héllo".getBytes(StandardCharsets.UTF_8), false);
+        TestUtils.assertEquals("héllo", Utf8s.utf8ToUtf16OrThrow(nonAscii, new StringSink()));
+    }
+
+    @Test
     public void testUtf8ToUtf16OrViewRejectsMalformedInput() {
         Utf8String malformed = new Utf8String(new byte[]{'1', (byte) 0xC3}, false);
         Assert.assertNull(Utf8s.utf8ToUtf16OrView(malformed, new StringSink()));

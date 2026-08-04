@@ -1853,6 +1853,16 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDesignatedTimestampIncludesSegmentRowNumber_NotOOO() throws Exception {
+        testDesignatedTimestampIncludesSegmentRowNumber(new int[]{1000, 1200}, false);
+    }
+
+    @Test
+    public void testDesignatedTimestampIncludesSegmentRowNumber_OOO() throws Exception {
+        testDesignatedTimestampIncludesSegmentRowNumber(new int[]{1500, 1200}, true);
+    }
+
+    @Test
     public void testDirectUtf8UsesPointerDecoder() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1891,16 +1901,6 @@ public class WalWriterTest extends AbstractCairoTest {
                             é
                             """);
         });
-    }
-
-    @Test
-    public void testDesignatedTimestampIncludesSegmentRowNumber_NotOOO() throws Exception {
-        testDesignatedTimestampIncludesSegmentRowNumber(new int[]{1000, 1200}, false);
-    }
-
-    @Test
-    public void testDesignatedTimestampIncludesSegmentRowNumber_OOO() throws Exception {
-        testDesignatedTimestampIncludesSegmentRowNumber(new int[]{1500, 1200}, true);
     }
 
     @Test
@@ -2365,7 +2365,7 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMalformedDirectUtf8WritesNull() throws Exception {
+    public void testMalformedDirectUtf8IsRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final TableToken tableToken = engine.verifyTableName("x");
@@ -2376,7 +2376,17 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 try (WalWriter writer = engine.getWalWriter(tableToken)) {
                     TableWriter.Row row = writer.newRow(1);
-                    row.putStrUtf8(0, new DirectUtf8String().of(ptr, ptr + 2));
+                    try {
+                        row.putStrUtf8(0, new DirectUtf8String().of(ptr, ptr + 2));
+                        Assert.fail("expected the malformed value to be rejected");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+                    }
+                    row.cancel();
+
+                    // the segment stays usable, and the rejected value left no trace
+                    row = writer.newRow(2);
+                    row.putStr(0, "ok");
                     row.append();
                     writer.commit();
                 }
@@ -2385,36 +2395,45 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertQuery("SELECT s IS NULL AS is_null FROM x ORDER BY ts")
+            assertQuery("SELECT s FROM x ORDER BY ts")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            is_null
-                            true
+                            s
+                            ok
                             """);
         });
     }
 
     @Test
-    public void testMalformedUtf8WritesNull() throws Exception {
+    public void testMalformedUtf8IsRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final TableToken tableToken = engine.verifyTableName("x");
 
             try (WalWriter writer = engine.getWalWriter(tableToken)) {
                 TableWriter.Row row = writer.newRow(1);
-                row.putStrUtf8(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                try {
+                    row.putStrUtf8(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                    Assert.fail("expected the malformed value to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+                }
+                row.cancel();
+
+                row = writer.newRow(2);
+                row.putStr(0, "ok");
                 row.append();
                 writer.commit();
             }
 
             drainWalQueue();
-            assertQuery("SELECT s IS NULL AS is_null FROM x")
+            assertQuery("SELECT s FROM x ORDER BY ts")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            is_null
-                            true
+                            s
+                            ok
                             """);
         });
     }

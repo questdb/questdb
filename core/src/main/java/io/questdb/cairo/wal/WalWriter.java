@@ -2914,7 +2914,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 putStrUtf8(columnIndex, directValue);
                 return;
             }
-            putStr(columnIndex, value != null ? Utf8s.utf8ToUtf16OrView(value, tempSink) : null);
+            putStr(columnIndex, value != null ? Utf8s.utf8ToUtf16OrThrow(value, tempSink) : null);
         }
 
         @Override

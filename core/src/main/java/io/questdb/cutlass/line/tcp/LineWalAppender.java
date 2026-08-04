@@ -567,6 +567,13 @@ public class LineWalAppender implements QuietCloseable {
             if (r != null) {
                 r.cancel();
             }
+            if (th.isMalformedUtf8()) {
+                // Bad input, not a broken writer. As a bare CairoException this hits the
+                // scheduler's catch-all, which drops the writer -- one bad byte would churn the
+                // writer per line. LineProtocolException skips the line instead, as castError()
+                // already does. Other CairoExceptions still propagate, so real faults surface.
+                throw LineProtocolException.malformedUtf8(tud.getTableNameUtf16(), th.getFlyweightMessage());
+            }
             throw th;
         } catch (Throwable th) {
             LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$safe(th.getMessage()).$(", trace: ").$(th).I$();

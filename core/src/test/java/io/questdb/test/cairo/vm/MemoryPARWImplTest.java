@@ -892,9 +892,10 @@ public class MemoryPARWImplTest {
     }
 
     @Test
-    public void testMalformedUtf8WritesNullAtomically() {
-        assertMalformedUtf8WritesNull(64, 0);
-        assertMalformedUtf8WritesNull(8, 1);
+    public void testMalformedUtf8IsRejectedAtomically() {
+        // 64/0 takes the floating-sink path, 8/1 the split-page path
+        assertMalformedUtf8IsRejected(64, 0);
+        assertMalformedUtf8IsRejected(8, 1);
     }
 
     @Test
@@ -1051,7 +1052,7 @@ public class MemoryPARWImplTest {
         assertEquals(4, Vm.getStorageLength(null));
     }
 
-    private static void assertMalformedUtf8WritesNull(int pageSize, int prefixSize) {
+    private static void assertMalformedUtf8IsRejected(int pageSize, int prefixSize) {
         final long ptr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
         try {
             Unsafe.putByte(ptr, (byte) '1');
@@ -1062,14 +1063,18 @@ public class MemoryPARWImplTest {
                     mem.putByte((byte) 0);
                 }
 
-                final long nullOffset = mem.getAppendOffset();
-                Assert.assertEquals(nullOffset + Integer.BYTES, mem.putStrUtf8(new DirectUtf8String().of(ptr, ptr + 2)));
-                Assert.assertEquals(nullOffset + Integer.BYTES, mem.getAppendOffset());
-                Assert.assertNull(mem.getStrA(nullOffset));
+                final long rejectedOffset = mem.getAppendOffset();
+                try {
+                    mem.putStrUtf8(new DirectUtf8String().of(ptr, ptr + 2));
+                    Assert.fail("expected the malformed value to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+                }
+                // the rejected value consumed no space, so the next write lands where it would have
+                Assert.assertEquals(rejectedOffset, mem.getAppendOffset());
 
-                final long nextOffset = mem.getAppendOffset();
                 mem.putStr("next");
-                TestUtils.assertEquals("next", mem.getStrA(nextOffset));
+                TestUtils.assertEquals("next", mem.getStrA(rejectedOffset));
             }
         } finally {
             Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);

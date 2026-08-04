@@ -15200,19 +15200,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         /**
          * Writes a direct UTF8-encoded string to a UTF16 STRING column.
-         * Malformed UTF8 is stored as null.
          *
          * @param columnIndex index of the column we are writing to
          * @param value       direct UTF8 sequence to write
+         * @throws CairoException if the value contains malformed UTF8; storing null instead would
+         *                        discard what the caller sent and still report success
          */
         void putStrUtf8(int columnIndex, DirectUtf8Sequence value);
 
         /**
          * Writes a UTF8-encoded string to a UTF16 STRING column.
-         * Malformed UTF8 is stored as null.
          *
          * @param columnIndex index of the column we are writing to
          * @param value       UTF8 sequence to write
+         * @throws CairoException if the value contains malformed UTF8; storing null instead would
+         *                        discard what the caller sent and still report success
          */
         void putStrUtf8(int columnIndex, Utf8Sequence value);
 
@@ -15727,7 +15729,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 putStrUtf8(columnIndex, directValue);
                 return;
             }
-            putStr(columnIndex, value != null ? Utf8s.utf8ToUtf16OrView(value, utf16Sink) : null);
+            putStr(columnIndex, value != null ? Utf8s.utf8ToUtf16OrThrow(value, utf16Sink) : null);
         }
 
         @Override

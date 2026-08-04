@@ -1473,6 +1473,24 @@ public final class Utf8s {
     }
 
     /**
+     * Same as {@link #utf8ToUtf16OrView(Utf8Sequence, MutableUtf16Sink)}, except that malformed
+     * UTF-8 raises an error instead of reading as null. Write paths call this one: a reader can
+     * only choose between null and garbage, but a writer would be discarding a value it was given.
+     *
+     * @param seq        source UTF-8 sequence; must be non-null
+     * @param decodeSink scratch UTF-16 sink used only on the non-ASCII path
+     * @return a CharSequence exposing {@code seq} as UTF-16 code points
+     * @throws CairoException if {@code seq} contains malformed UTF-8
+     */
+    public static @NotNull CharSequence utf8ToUtf16OrThrow(@NotNull Utf8Sequence seq, @NotNull MutableUtf16Sink decodeSink) {
+        final CharSequence utf16 = utf8ToUtf16OrView(seq, decodeSink);
+        if (utf16 == null) {
+            throw CairoException.malformedUtf8(seq);
+        }
+        return utf16;
+    }
+
+    /**
      * Returns a CharSequence view of {@code seq} whose chars are real UTF-16 code
      * points. If {@link #isAscii(Utf8Sequence)} reports true, the raw bytes are
      * already valid code points one-to-one and the zero-allocation
@@ -1481,6 +1499,9 @@ public final class Utf8s {
      * <p>
      * Callers must not mutate {@code decodeSink} until they finish reading the
      * returned CharSequence, since the returned reference may alias it.
+     * <p>
+     * Read-path conversion: malformed UTF-8 reads as null. Write paths call
+     * {@link #utf8ToUtf16OrThrow(Utf8Sequence, MutableUtf16Sink)} instead.
      *
      * @param seq        source UTF-8 sequence; must be non-null
      * @param decodeSink scratch UTF-16 sink used only on the non-ASCII path

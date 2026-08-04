@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.vm.api.MemoryARW;
@@ -1256,18 +1257,20 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     private long putStrUtf8AsUtf160(DirectUtf8Sequence value) {
+        // Rejection is atomic: neither branch has moved appendPointer or written a length prefix
+        // yet, and the floating sink's partial decode sits in space the next write reclaims.
         int estimatedLen = value.size() * 2;
         if (pageHi - appendPointer < estimatedLen + 4) {
             utf16Sink.clear();
             if (!Utf8s.utf8ToUtf16(value.lo(), value.hi(), utf16Sink)) {
-                return putNullStr();
+                throw CairoException.malformedUtf8(value);
             }
             putInt(utf16Sink.length());
             putStrSplit(utf16Sink, 0, utf16Sink.length());
         } else {
             utf8FloatingSink.of(appendPointer + 4, appendPointer + estimatedLen + 4); // shifted by 4 bytes of length
             if (!Utf8s.utf8ToUtf16(value.lo(), value.hi(), utf8FloatingSink)) {
-                return putNullStr();
+                throw CairoException.malformedUtf8(value);
             }
             putInt(utf8FloatingSink.length());
             appendPointer = utf8FloatingSink.appendPtr();

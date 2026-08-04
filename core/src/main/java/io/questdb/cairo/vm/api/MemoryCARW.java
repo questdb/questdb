@@ -324,7 +324,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     @Override
     default long putStrUtf8(DirectUtf8Sequence value) {
-        return putStr(value != null ? Utf8s.utf8ToUtf16OrView(value, Misc.getThreadLocalSink()) : null);
+        return putStr(value != null ? Utf8s.utf8ToUtf16OrThrow(value, Misc.getThreadLocalSink()) : null);
     }
 
     @Override

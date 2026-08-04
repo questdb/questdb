@@ -25,12 +25,14 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.network.NetworkFacade;
+import io.questdb.test.tools.LogCapture;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
 
 public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTest {
+    private static final LogCapture capture = new LogCapture();
 
     @Test
     public void testBrokenUTF8Encoding() throws Exception {
@@ -43,22 +45,64 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
     }
 
     @Test
-    public void testMalformedUtf8StringBecomesNull() throws Exception {
+    public void testMalformedUtf8StringIsRejected() throws Exception {
         final String table = "malformedUtf8String";
         runInContext(() -> {
             execute("CREATE TABLE " + table + " (value STRING, timestamp TIMESTAMP) " +
                     "TIMESTAMP(timestamp) PARTITION BY DAY WAL");
-            recvBuffer = table + " value=\"1" + (char) 0xC3 + "\" 1465839830100400200\n";
+            // a malformed field value is rejected like malformed bytes anywhere else in the line
+            // (see testBrokenUTF8Encoding); storing null in its place would drop the value the
+            // client sent while still acknowledging the write
+            recvBuffer = table + " value=\"1" + (char) 0xC3 + "\" 1465839830100400200\n" +
+                    table + " value=\"ok\" 1465839830100400300\n";
             handleContextIO0();
             closeContext();
             drainWalQueue();
 
-            assertQuery("SELECT value IS NULL AS is_null FROM " + table)
+            assertQuery("SELECT value FROM " + table + " ORDER BY timestamp")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            is_null
-                            true
+                            value
+                            ok
+                            """);
+        });
+    }
+
+    @Test
+    public void testMalformedUtf8StringLeavesWriterHealthy() throws Exception {
+        final String table = "malformedUtf8Lifecycle";
+        runInContext(() -> {
+            execute("CREATE TABLE " + table + " (value STRING, timestamp TIMESTAMP) " +
+                    "TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            // Rejecting the value must not cost the table its writer. Routed as a bare
+            // CairoException the malformed line reaches the scheduler's catch-all, which calls
+            // setWriterInError() and drops the writer -- a client looping bad bytes would then
+            // tear down and rebuild the writer once per line. Asserting on rows alone cannot see
+            // that, because the surviving lines still land either way.
+            recvBuffer = table + " value=\"1" + (char) 0xC3 + "\" 1465839830100400200\n" +
+                    table + " value=\"2" + (char) 0xC3 + "\" 1465839830100400300\n" +
+                    table + " value=\"ok\" 1465839830100400400\n";
+            capture.start();
+            try {
+                handleContextIO0();
+                Assert.assertFalse("malformed value must not disconnect the client", disconnected);
+                // handleWriterException() logs this immediately before setWriterInError() drops
+                // the writer, so its absence is the assertion that the writer survived
+                capture.assertNotLogged("closing writer because of error");
+            } finally {
+                capture.stop();
+            }
+
+            closeContext();
+            drainWalQueue();
+
+            assertQuery("SELECT value FROM " + table + " ORDER BY timestamp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            value
+                            ok
                             """);
         });
     }
