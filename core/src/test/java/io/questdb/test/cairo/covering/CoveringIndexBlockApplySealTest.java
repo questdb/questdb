@@ -762,11 +762,88 @@ public class CoveringIndexBlockApplySealTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Variable-size columns on the block-apply fast path. The shared append body
+     * copies EVERY column, and a var-size one carries an aux vector whose offsets
+     * must be rebased against the source. The fast path feeds that body two
+     * different sources -- the WAL-mapped columns at a non-zero block row offset
+     * (in-order block) and the O3 gather buffer at row 0 (sorted block) -- so both
+     * are driven here. Widths vary per row and NULLs are scattered, so a
+     * mis-rebased aux vector shifts payloads instead of silently matching.
+     */
+    @Test
+    public void testFastPathCopiesVarSizeColumns() throws Exception {
+        configureForBlockApply();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE blk (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (value),"
+                    + " value DOUBLE, txt VARCHAR, str STRING) TIMESTAMP(ts) PARTITION BY YEAR WAL");
+            execute("CREATE TABLE ctl (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING,"
+                    + " value DOUBLE, txt VARCHAR, str STRING) TIMESTAMP(ts) PARTITION BY YEAR WAL");
+
+            final String seed = " VALUES ('2024-06-01T00:00:00Z', 'S0', -1.0, 'seed', 'seed')";
+            execute("INSERT INTO blk" + seed);
+            execute("INSERT INTO ctl" + seed);
+            drainWalQueue();
+
+            // Two ascending, non-overlapping transactions batched into one block
+            // -> the IN-ORDER fast path (single segment, no sort).
+            PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.set(0);
+            insertVarSizeRows(" SELECT dateadd('s', x::INT, '2024-06-01T01:00:00Z'::TIMESTAMP),");
+            insertVarSizeRows(" SELECT dateadd('s', x::INT, '2024-06-01T01:30:00Z'::TIMESTAMP),");
+            drainWalQueue();
+            Assert.assertTrue(
+                    "in-order block must take the fast path",
+                    PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.get() > 0
+            );
+            assertVarSizeMatchesControl();
+
+            // Interleaved even/odd timestamps -> the block needs sorting, so the
+            // SORTED fast path runs and its source is the O3 gather buffer.
+            PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.set(0);
+            insertVarSizeRows(" SELECT dateadd('s', (2 * x)::INT, '2024-06-01T02:00:00Z'::TIMESTAMP),");
+            insertVarSizeRows(" SELECT dateadd('s', (2 * x - 1)::INT, '2024-06-01T02:00:00Z'::TIMESTAMP),");
+            drainWalQueue();
+            Assert.assertTrue(
+                    "sorted block must take the fast path",
+                    PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.get() > 0
+            );
+            assertVarSizeMatchesControl();
+        });
+    }
+
     private void appendRow(WalWriter w, long tsMicros, long value) {
         final TableWriter.Row row = w.newRow(tsMicros);
         row.putSym(1, "S" + Math.floorMod(value, 8));
         row.putDouble(2, (double) value);
         row.append();
+    }
+
+    // Full-row compare including both var-size columns, plus a covered lookup per
+    // symbol so the covering cursor -- not just a table scan -- returns them.
+    private void assertVarSizeMatchesControl() throws Exception {
+        assertSqlCursors(
+                "SELECT ts, sym, value, txt, str FROM ctl ORDER BY ts, sym",
+                "SELECT ts, sym, value, txt, str FROM blk ORDER BY ts, sym"
+        );
+        for (int s = 0; s < 8; s++) {
+            final String sym = "S" + s;
+            assertSqlCursors(
+                    "SELECT ts, sym, value, txt, str FROM ctl WHERE sym = '" + sym + "' ORDER BY ts",
+                    "SELECT ts, sym, value, txt, str FROM blk WHERE sym = '" + sym + "' ORDER BY ts"
+            );
+        }
+    }
+
+    // Rows whose VARCHAR / STRING widths vary per row, with NULLs on different
+    // cycles so the two aux vectors cannot mask each other.
+    private void insertVarSizeRows(String tsExpr) throws Exception {
+        final String tail = tsExpr
+                + " 'S' || (x % 8), x::DOUBLE,"
+                + " CASE WHEN x % 7 = 0 THEN NULL ELSE rpad(x::VARCHAR, ((x % 13) + 1)::INT, 'v') END,"
+                + " CASE WHEN x % 5 = 0 THEN NULL ELSE rpad(x::STRING, ((x % 11) + 1)::INT, 's') END"
+                + " FROM long_sequence(400)";
+        execute("INSERT INTO blk" + tail);
+        execute("INSERT INTO ctl" + tail);
     }
 
     private void assertCoveredMatchesControl() throws Exception {

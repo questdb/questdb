@@ -523,7 +523,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * SAME {@code packCacheEntry(gen, start)} values. {@code putCacheEntries} itself is idempotent and
      * budget-guarded, so a redundant call (or one over budget) is a safe no-op.
      *
-     * @param key             column key (>= 0)
+     * @param key column key (>= 0)
      */
     public void populateCacheForKey(int key) {
         if (key < 0 || !genLookup.anySparseGen()) {
