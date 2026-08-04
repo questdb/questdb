@@ -83,8 +83,8 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int windowFunctionsCount;
     // The runtime owners of the groups above that this build binds: one map and one lookup
     // per group, with every member's private map left closed. A subset of
-    // windowAccumulatorPlans rather than all of it, since a plan that merged two outputs onto
-    // one accumulator is compiled and left unbound for now. Owned by this factory, which
+    // windowAccumulatorPlans rather than all of it, since the kill switch and the
+    // Map-implementation decline rule both answer per plan. Owned by this factory, which
     // frees them; the functions they bind are owned as they always were.
     private final ObjList<WindowMapState> windowMapStates;
     private final int windowMapStatesCount;
@@ -238,9 +238,10 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
      * Returns the window Map groups this factory's functions form, or null when none does.
      * <p>
      * A compiled group is not necessarily a bound one: {@link #getWindowMapStates()} is the
-     * subset this build gives a runtime, and the rest stay compiled so their identity,
-     * ordering and sharing decisions can be asserted ahead of the runtime that will read
-     * them. A live-view compile never produces one at all -
+     * subset this build gives a runtime, and a plan the kill switch or the
+     * Map-implementation rule turned away stays compiled - which is what lets a test assert
+     * that such a group was worked out and simply given to nobody, rather than assert an
+     * absence. A live-view compile never produces one at all -
      * {@link #getCheckpointWindowStatePlan()} is that factory's group, and one accumulator
      * may have one owner.
      */

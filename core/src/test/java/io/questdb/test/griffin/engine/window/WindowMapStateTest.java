@@ -46,19 +46,18 @@ import org.junit.Test;
  * The bound window Map group: one map, one key projection and one lookup per row serving
  * several outputs of one window on the streaming cursor.
  * <p>
- * What this build binds is physical co-location alone - a group whose plan lays out one
- * accumulator component per output. Every member still keeps a state slice of its own,
- * maintains it itself and reads it back itself, so the answers are the unfused ones by
- * construction and a difference could only be the co-location's doing. That is what the
- * differential cases below check, and they check it against a reference this tree already
- * runs: a window carrying <b>one</b> fusible function forms no group, so the same output
- * asked for on its own is the unfused path.
+ * What this build binds is both halves of the optimization: physical co-location, where every
+ * output keeps a state slice of its own behind one shared key, and the merge, where several
+ * outputs read one accumulator that one of them maintains. The differential cases below check
+ * both against a reference this tree already runs: a window carrying <b>one</b> fusible
+ * function forms no group, so the same output asked for on its own is the unfused path.
  * <p>
  * The group's compile-time decisions - which functions join, in what order, sharing what -
  * are {@code WindowAccumulatorPlanTest}'s and are not repeated here.
  */
 public class WindowMapStateTest extends AbstractCairoTest {
 
+    private static final int KEY_SHAPE_ROW_COUNT = 9;
     private static final int ORDINARY_ROW_COUNT = 9;
     private static final String SUM_AND_COUNT_PLAN = """
             Window
@@ -148,30 +147,56 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAMergedGroupIsCompiledButNotBound() throws Exception {
-        // sum(x) + avg(x) + count(x) is one component and three outputs. The merge and the
-        // fold are proved and a live view runs them, but they are not what this slice binds:
-        // an output that changed when the group bound would then have two suspects instead of
-        // one. The plan is compiled all the same, so the next step turns it on rather than
-        // discovering it.
+    public void testAWelfordComponentNeverLendsItsMeanToASum() throws Exception {
+        // The negative control for the merge. stddev_samp(x) and sum(x) are two accumulators
+        // over one argument that agree on which rows contribute and on nothing else, and both
+        // carry a DOUBLE in their first slot - Welford's running mean and the running sum. The
+        // fold table admits neither into the other, so the group keeps two components, and the
+        // count folds onto the sum rather than onto Welford because the sum's identity is the
+        // smaller of the two hosts that could serve it.
         assertMemoryLeak(() -> {
             createTable();
-            insertOrdinaryRows();
-            final String sql = "select ts, sum(x) over w, avg(x) over w, count(x) over w from t " + WINDOW;
+            insertKeyShapes();
+            // Five slots behind a 4-byte key is 44, which the Map-implementation rule declines
+            // at both settings that ship - every member of this group would have stayed on an
+            // unordered map. 64 is what fuses it, and the point here is the arithmetic rather
+            // than the map, so the rule is stepped around by giving it room instead of by
+            // being disabled.
+            setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 64);
+            final String sql = "select ts, stddev_samp(x) over w, sum(x) over w, avg(x) over w, "
+                    + "count(x) over w from t " + WINDOW;
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
                 final WindowRecordCursorFactory windowFactory = windowFactory(factory);
-                final ObjList<WindowAccumulatorPlan> plans = windowFactory.getWindowAccumulatorPlans();
-                Assert.assertNotNull(plans);
-                Assert.assertEquals(1, plans.size());
-                Assert.assertEquals(1, plans.getQuick(0).getComponentCount());
-                Assert.assertEquals(3, plans.getQuick(0).getProjectionCount());
-                Assert.assertFalse(WindowMapState.isPhysicalCoLocationOnly(plans.getQuick(0)));
-                Assert.assertNull(windowFactory.getWindowMapStates());
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(2, plan.getComponentCount());
+                Assert.assertEquals(4, plan.getProjectionCount());
+                // [sum, count] then [mean, m2, count] - components sort by identity, and the
+                // sum family's id is the lower of the two.
+                Assert.assertEquals(5, plan.getSlotCount());
+                Assert.assertEquals(0, plan.getComponentSlotBase(0));
+                Assert.assertEquals(2, plan.getComponentSlotBase(1));
+                // The count reads the sum's counter at slot 1, not Welford's at slot 4.
+                Assert.assertTrue(plan.getProjection(3).isDerived());
+                Assert.assertEquals(1, plan.getProjection(3).getNonNullCountSlot());
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Assert.assertEquals(ORDINARY_ROW_COUNT, drain(cursor));
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    // Two accumulators, four outputs: x is read once per component and not
+                    // once per call.
+                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(4 * rows, state.getProjectionWriteCount());
                 }
             }
+            assertFusedMatchesUnfused(
+                    "stddev_samp(x) over w",
+                    "sum(x) over w",
+                    "avg(x) over w",
+                    "count(x) over w"
+            );
         });
     }
 
@@ -263,6 +288,40 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountStarRowNumberAndAKeyCountShareOneCounter() throws Exception {
+        // The row-count family, and the one projection whose value is not a function of the
+        // state alone: count(k) over the very column its window partitions by emits the
+        // partition's row count where k is present and zero where it is not. The three share
+        // one LONG, and the guarded call is never the one that maintains it - its own counter
+        // would be zero for the whole NULL-key partition, which the data below has.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, count(*) over w, row_number() over w, count(k) over w from t " + WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(1, plan.getComponentCount());
+                Assert.assertEquals(3, plan.getProjectionCount());
+                Assert.assertEquals(1, plan.getSlotCount());
+                Assert.assertTrue(plan.getProjection(2).isPartitionKeyGuarded());
+                Assert.assertNotEquals(2, plan.getContributorIndex(0));
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    Assert.assertEquals(rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfused("count(*) over w", "row_number() over w", "count(k) over w");
+        });
+    }
+
+    @Test
     public void testExplainOutputIsUnchanged() throws Exception {
         // A group is an internal decision about how the same rows are computed, and window plan
         // text is asserted across a large number of existing tests. Pinned here so a group line
@@ -337,6 +396,85 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumAvgAndCountShareOneComponentAndOneArgumentEvaluation() throws Exception {
+        // The acceptance shape of the whole design: three maps, three probes, three components,
+        // five value slots, three updates and three evaluations of x a row become one of each -
+        // except the projections, which are three reads of two slots and cost no state at all.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, sum(x) over w, avg(x) over w, count(x) over w from t " + WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(1, plan.getComponentCount());
+                Assert.assertEquals(3, plan.getProjectionCount());
+                Assert.assertEquals(2, plan.getSlotCount());
+                // sum and avg read the component their own function would have kept; the count
+                // reads a counter it no longer maintains, which is what the fold bought.
+                Assert.assertFalse(plan.getProjection(0).isDerived());
+                Assert.assertFalse(plan.getProjection(1).isDerived());
+                Assert.assertTrue(plan.getProjection(2).isDerived());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    // One update a row for three outputs - and one evaluation of x with it.
+                    // accumulateWindowState is the only place any of these families reads its
+                    // argument, and only the component's one contributor is asked to run it,
+                    // so the update count is the argument-evaluation count for this shape.
+                    Assert.assertEquals(rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfused("sum(x) over w", "avg(x) over w", "count(x) over w");
+        });
+    }
+
+    @Test
+    public void testTheFourDispersionProjectionsShareOneComponent() throws Exception {
+        // stddev_samp, stddev_pop, var_samp and var_pop are one Welford accumulator read four
+        // ways, and count(x) reads the counter behind it. One three-slot component serves all
+        // five, and the data carries the two partitions where the readings part company: one
+        // with a single contributing row, where a sample dispersion is NULL and a population
+        // one is 0, and one with no finite x at all.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, stddev_samp(x) over w, stddev_pop(x) over w, "
+                    + "var_samp(x) over w, var_pop(x) over w, count(x) over w from t " + WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                final WindowAccumulatorPlan plan = state.getPlan();
+                Assert.assertEquals(1, plan.getComponentCount());
+                Assert.assertEquals(5, plan.getProjectionCount());
+                Assert.assertEquals(3, plan.getSlotCount());
+                Assert.assertTrue(plan.getProjection(4).isDerived());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    Assert.assertEquals(rows, state.getContributorUpdateCount());
+                    Assert.assertEquals(5 * rows, state.getProjectionWriteCount());
+                }
+            }
+            assertFusedMatchesUnfused(
+                    "stddev_samp(x) over w",
+                    "stddev_pop(x) over w",
+                    "var_samp(x) over w",
+                    "var_pop(x) over w",
+                    "count(x) over w"
+            );
+        });
+    }
+
+    @Test
     public void testSumAndCountShareOneMapAndOneLookup() throws Exception {
         // The headline shape. sum(x) counts finite x values and count(y) counts non-null y
         // values, so the two disagree on every row where exactly one is absent and keep
@@ -392,7 +530,8 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 final ObjList<WindowAccumulatorPlan> plans = windowFactory.getWindowAccumulatorPlans();
                 Assert.assertNotNull(plans);
                 Assert.assertEquals(1, plans.size());
-                Assert.assertTrue(WindowMapState.isPhysicalCoLocationOnly(plans.getQuick(0)));
+                Assert.assertEquals(2, plans.getQuick(0).getComponentCount());
+                Assert.assertEquals(2, plans.getQuick(0).getProjectionCount());
                 Assert.assertNull(windowFactory.getWindowMapStates());
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertEquals(ORDINARY_ROW_COUNT, drain(cursor));
@@ -461,13 +600,14 @@ public class WindowMapStateTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
                 final WindowRecordCursorFactory windowFactory = windowFactory(factory);
-                // Compiled, and compiled as the shape this build binds - so what declined it is
-                // the Map-implementation rule and not the merge rule that leaves
-                // sum(x) + avg(x) + count(x) unbound.
+                // Compiled, and compiled with a component per output - the two counters count
+                // different rows and never merge - so what declined it is the
+                // Map-implementation rule, which is asked directly beside the absence.
                 final ObjList<WindowAccumulatorPlan> plans = windowFactory.getWindowAccumulatorPlans();
                 Assert.assertNotNull(plans);
                 Assert.assertEquals(1, plans.size());
-                Assert.assertTrue(WindowMapState.isPhysicalCoLocationOnly(plans.getQuick(0)));
+                Assert.assertEquals(2, plans.getQuick(0).getComponentCount());
+                Assert.assertEquals(2, plans.getQuick(0).getProjectionCount());
                 Assert.assertTrue(WindowMapState.declinesForMapImplementation(configuration, plans.getQuick(0)));
                 Assert.assertNull(windowFactory.getWindowMapStates());
             }
@@ -522,26 +662,34 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     /**
-     * Requires the fused two-output query to produce, row for row, what the same two outputs
-     * produce one at a time.
+     * Requires the fused query to produce, row for row, what the same outputs produce one at a
+     * time.
      * <p>
      * The references are genuinely the unfused path rather than a second fused one: a window
      * carrying a single fusible function forms no group at all - moving a map is not removing
      * one - so each of them runs exactly the per-function map and per-function probe this
-     * build had before the group existed.
+     * build had before the group existed. That holds for a merged shape too: asked for on its
+     * own, a {@code count(x)} that reads a {@code sum(x)}'s counter in the fused query keeps
+     * and maintains a counter of its own here.
      */
-    private static void assertFusedMatchesUnfused(String outputA, String outputB) throws SqlException {
-        final String fused = "select ts, " + outputA + ", " + outputB + " from t " + WINDOW;
-        final String referenceA = "select ts, " + outputA + " from t " + WINDOW;
-        final String referenceB = "select ts, " + outputB + " from t " + WINDOW;
-        assertIsBound(fused, true);
-        assertIsBound(referenceA, false);
-        assertIsBound(referenceB, false);
-        final String expected = zipLastColumn(body(render(referenceA)), body(render(referenceB)));
+    private static void assertFusedMatchesUnfused(String... outputs) throws SqlException {
+        final StringBuilder fused = new StringBuilder("select ts");
+        for (int i = 0; i < outputs.length; i++) {
+            fused.append(", ").append(outputs[i]);
+        }
+        fused.append(" from t ").append(WINDOW);
+        assertIsBound(fused.toString(), true);
+        final String[] references = new String[outputs.length];
+        for (int i = 0; i < outputs.length; i++) {
+            final String reference = "select ts, " + outputs[i] + " from t " + WINDOW;
+            assertIsBound(reference, false);
+            references[i] = body(render(reference));
+        }
+        final String expected = zipLastColumns(references);
         // A comparison of two empty renderings would pass and prove nothing, and every way the
         // helpers above could go wrong ends in one.
         Assert.assertFalse("the references produced no rows", expected.trim().isEmpty());
-        Assert.assertEquals(expected, body(render(fused)));
+        Assert.assertEquals(expected, body(render(fused.toString())));
     }
 
     private static void assertIsBound(String sql, boolean bound) throws SqlException {
@@ -598,31 +746,38 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     /**
-     * Glues the last column of {@code right} onto every row of {@code left}, which is the fused
-     * query's row when both references carry the same leading columns - asserted here rather
-     * than assumed, since a mismatch there would silently weaken every comparison.
+     * Glues the last column of every reference onto the first one's rows, which is the fused
+     * query's row when they all carry the same leading columns - asserted here rather than
+     * assumed, since a mismatch there would silently weaken every comparison.
      */
-    private static String zipLastColumn(String left, String right) {
-        final String[] leftRows = left.split("\n", -1);
-        final String[] rightRows = right.split("\n", -1);
-        Assert.assertEquals("reference row counts differ", leftRows.length, rightRows.length);
+    private static String zipLastColumns(String[] bodies) {
+        final String[][] rows = new String[bodies.length][];
+        for (int i = 0; i < bodies.length; i++) {
+            rows[i] = bodies[i].split("\n", -1);
+            Assert.assertEquals("reference row counts differ", rows[0].length, rows[i].length);
+        }
         final StringBuilder out = new StringBuilder();
-        for (int i = 0; i < leftRows.length; i++) {
-            if (i > 0) {
+        for (int r = 0; r < rows[0].length; r++) {
+            if (r > 0) {
                 out.append('\n');
             }
-            if (leftRows[i].isEmpty()) {
-                Assert.assertTrue(rightRows[i].isEmpty());
+            final int split = rows[0][r].lastIndexOf('\t');
+            if (rows[0][r].isEmpty()) {
+                for (int i = 1; i < rows.length; i++) {
+                    Assert.assertTrue(rows[i][r].isEmpty());
+                }
                 continue;
             }
-            final int leftSplit = leftRows[i].lastIndexOf('\t');
-            final int rightSplit = rightRows[i].lastIndexOf('\t');
-            Assert.assertEquals(
-                    "reference rows are not aligned",
-                    leftRows[i].substring(0, leftSplit),
-                    rightRows[i].substring(0, rightSplit)
-            );
-            out.append(leftRows[i]).append('\t').append(rightRows[i], rightSplit + 1, rightRows[i].length());
+            out.append(rows[0][r]);
+            for (int i = 1; i < rows.length; i++) {
+                final int otherSplit = rows[i][r].lastIndexOf('\t');
+                Assert.assertEquals(
+                        "reference rows are not aligned",
+                        rows[0][r].substring(0, split),
+                        rows[i][r].substring(0, otherSplit)
+                );
+                out.append('\t').append(rows[i][r], otherSplit + 1, rows[i][r].length());
+            }
         }
         return out.toString();
     }
@@ -630,6 +785,25 @@ public class WindowMapStateTest extends AbstractCairoTest {
     private void createTable() throws SqlException {
         execute("create table t (ts timestamp, k symbol, k2 symbol, x double, y double) "
                 + "timestamp(ts) partition by day");
+    }
+
+    /**
+     * The partition shapes the merged families part company on: a NULL key, whose
+     * {@code count(k)} is zero while its row count is not; a partition of one row, where a
+     * sample dispersion is NULL and a population one is 0; and one whose only non-null
+     * {@code x} is an infinity, so it has rows, a non-null count and no finite value.
+     */
+    private void insertKeyShapes() throws SqlException {
+        execute("insert into t values " +
+                "('2024-01-01T00:00:00.000000Z', 'a', 'p', 1.0, 10.0), " +
+                "('2024-01-01T00:00:01.000000Z', null, 'p', 2.0, 20.0), " +
+                "('2024-01-01T00:00:02.000000Z', 'a', 'q', 4.0, null), " +
+                "('2024-01-01T00:00:03.000000Z', null, 'q', null, 40.0), " +
+                "('2024-01-01T00:00:04.000000Z', 'one', 'p', 5.0, 50.0), " +
+                "('2024-01-01T00:00:05.000000Z', 'nx', 'q', null, 60.0), " +
+                "('2024-01-01T00:00:06.000000Z', 'nx', 'p', 'Infinity'::double, 70.0), " +
+                "('2024-01-01T00:00:07.000000Z', 'a', 'q', 8.0, 80.0), " +
+                "('2024-01-01T00:00:08.000000Z', null, 'p', 9.0, null)");
     }
 
     private void insertNullsAndInfinities() throws SqlException {

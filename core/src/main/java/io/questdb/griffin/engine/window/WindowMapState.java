@@ -72,15 +72,21 @@ import org.jetbrains.annotations.TestOnly;
  * to bind to a symbol source. The first slice admits only direct-column partition keys (see
  * {@link WindowMapSpec}), so there is nothing else such a sink could need.
  *
- * <h2>What this slice binds</h2>
- * Only a plan that lays out <b>one component per output</b> - see
- * {@link #isPhysicalCoLocationOnly}. A group that merged two outputs onto one accumulator, or
- * folded one into another, is compiled and left unbound: the merge is a separate optimization
- * with its own proof obligations, and keeping it out of this slice means an output that
- * changes when the group binds can only be the co-location's doing.
+ * <h2>What this binds</h2>
+ * Every plan the compiler produces, whether its outputs each keep a component of their own -
+ * {@code sum(x)} beside {@code count(y)} - or share one. A shared component is the second half
+ * of the optimization and the larger one: {@code sum(x) + avg(x) + count(x)} is one running
+ * {@code (sum, nonNullCount)} pair that one contributor maintains, so the group removes two
+ * accumulator updates and one argument evaluation a row on top of the two maps and two probes.
+ * The relations it may share through are the plan's - see
+ * {@link WindowAccumulatorDescriptor#derivedSlotOffset} - and are never inferred here.
+ * <p>
+ * What a shared component costs the row sequence below is nothing: a projection reads slots and
+ * writes no state, so it does not matter to it whether the slots it reads are its own function's
+ * or a host's.
  *
  * <h2>What declines</h2>
- * Beyond the shape above, two things stop a compiled plan from getting a runtime:
+ * Two things stop a compiled plan from getting a runtime:
  * {@code cairo.sql.window.map.fusion.enabled}, the operational escape hatch, and the
  * Map-implementation rule in {@link #declinesForMapImplementation} - a group that would trade
  * several narrow unordered maps for one {@link io.questdb.cairo.map.OrderedMap} buys a probe at
@@ -158,9 +164,6 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         try {
             for (int i = 0, n = plans.size(); i < n; i++) {
                 final WindowAccumulatorPlan plan = plans.getQuick(i);
-                if (!isPhysicalCoLocationOnly(plan)) {
-                    continue;
-                }
                 if (declinesForMapImplementation(configuration, plan)) {
                     continue;
                 }
@@ -200,10 +203,12 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * deterministic and cheap at compile time, which is why it is a rule here rather than a note
      * in a benchmark.
      * <p>
-     * A component is read as one member's whole private value, which holds because this slice
-     * binds only {@link #isPhysicalCoLocationOnly} plans. Admitting a merged plan means asking
-     * each output for its own standalone image instead, since the merged component is by then
-     * nobody's private value.
+     * A member is each <b>output's</b> own standalone image rather than each component, which
+     * are two different things once a plan merges: the component {@code sum(x)} and
+     * {@code count(x)} share is nobody's private map value, while what each of them would have
+     * allocated on its own still is. Reading the components instead would understate a merged
+     * group's members - it would weigh a {@code count(x)} folded into a {@code sum(x)} as the
+     * sum's whole {@code [DOUBLE, LONG]} - and so decline groups that lose nothing.
      */
     public static boolean declinesForMapImplementation(
             @NotNull CairoConfiguration configuration,
@@ -221,11 +226,11 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         if (MapFactory.selectUnorderedMapImplementation(keyTypes, fusedValueSize, maxEntrySize) != MapFactory.MAP_IMPL_ORDERED) {
             return false;
         }
-        for (int i = 0, n = plan.getComponentCount(); i < n; i++) {
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
             valueTypes.clear();
-            final WindowAccumulatorDescriptor component = plan.getComponent(i);
-            for (int slot = 0, slots = component.getSlotCount(); slot < slots; slot++) {
-                valueTypes.add(component.getSlotColumnType(slot));
+            final WindowAccumulatorDescriptor member = plan.getProjection(i).getFunctionComponent();
+            for (int slot = 0, slots = member.getSlotCount(); slot < slots; slot++) {
+                valueTypes.add(member.getSlotColumnType(slot));
             }
             final int memberValueSize = ColumnTypes.sizeInBytes(valueTypes);
             if (MapFactory.selectUnorderedMapImplementation(keyTypes, memberValueSize, maxEntrySize) == MapFactory.MAP_IMPL_ORDERED) {
@@ -235,31 +240,12 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         LOG.debug()
                 .$("declined window map co-location, the fused entry leaves the unordered map [components=")
                 .$(plan.getComponentCount())
+                .$(", projections=").$(plan.getProjectionCount())
                 .$(", keyColumns=").$(keyTypes.getColumnCount())
                 .$(", fusedValueSize=").$(fusedValueSize)
                 .$(", maxEntrySize=").$(maxEntrySize)
                 .I$();
         return true;
-    }
-
-    /**
-     * Whether {@code plan} lays out exactly one accumulator component per output, which is the
-     * only shape this slice binds.
-     * <p>
-     * Such a group shares the key domain, the hash table and the per-row lookup, and shares
-     * nothing else: every output still keeps a state slice of its own, still maintains it
-     * itself, and still reads it back itself. So the answers it produces are the unfused ones
-     * by construction, and the co-location is what a difference in them would have to be.
-     * <p>
-     * A plan whose outputs merged onto one component - {@code sum(x)} beside {@code avg(x)} -
-     * or folded into one - {@code count(x)} reading the counter a {@code sum(x)} keeps - is
-     * compiled and left unbound here. Those relations are proved and are already running in a
-     * live view; what they are not yet is a thing this cursor does, and admitting them is the
-     * next step's, with its own assertions on the component count and the argument
-     * evaluations.
-     */
-    public static boolean isPhysicalCoLocationOnly(@NotNull WindowAccumulatorPlan plan) {
-        return plan.getComponentCount() == plan.getProjectionCount();
     }
 
     /**
