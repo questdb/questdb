@@ -59,6 +59,7 @@ import org.junit.Test;
  */
 public class WindowMapStateTest extends AbstractCairoTest {
 
+    private static final int CAPTURE_SHAPE_ROW_COUNT = 9;
     private static final int DECIMAL_KEY_SHAPE_ROW_COUNT = 9;
     private static final int KEY_SHAPE_ROW_COUNT = 9;
     private static final int ORDINARY_ROW_COUNT = 9;
@@ -825,12 +826,13 @@ public class WindowMapStateTest extends AbstractCairoTest {
         // first value needs no flag, since it only ever writes a value its own predicate admits
         // and so reads its emptiness off the slot.
         //
-        // The data is the nulls-and-infinities one on purpose. Partition 'b' opens on -Infinity,
-        // which is a value the predicate refuses and the respect-nulls capture keeps, and 'a'
-        // carries a NULL in the middle - between them they separate all three answers.
+        // The data is the capture-shape one, whose partition 'a' opens on an absent value and
+        // carries a finite one after it. That is the partition the flag exists for: a
+        // respect-nulls capture has to answer NULL for every one of its rows, where a flagless
+        // reading would take it as empty and capture the 5.0 behind it.
         assertMemoryLeak(() -> {
             createTable();
-            insertNullsAndInfinities();
+            insertCaptureShapes();
             final String sql = "select ts, first_value(x) over w, first_value(x) ignore nulls over w, "
                     + "last_value(x) ignore nulls over w from t " + WINDOW;
             try (SqlCompiler compiler = engine.getSqlCompiler();
@@ -866,16 +868,33 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 }
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
-                    Assert.assertEquals(7, rows);
+                    Assert.assertEquals(CAPTURE_SHAPE_ROW_COUNT, rows);
                     Assert.assertEquals(rows, state.getLookupCount());
                     Assert.assertEquals(3 * rows, state.getContributorUpdateCount());
                     Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
                 }
             }
+            // The differential, and then the one answer it is worth naming outright: partition
+            // 'a' opens on an absent value, so its respect-nulls capture is NULL for all four of
+            // its rows while the IGNORE NULLS one is 5.0 from the second row on.
             assertFusedMatchesUnfused(
                     "first_value(x) over w",
                     "first_value(x) ignore nulls over w",
                     "last_value(x) ignore nulls over w"
+            );
+            Assert.assertEquals(
+                    "ts\tfirst_value\tfirst_value_ignore_nulls\n"
+                            + "2024-01-01T00:00:00.000000Z\tnull\tnull\n"
+                            + "2024-01-01T00:00:01.000000Z\tnull\t5.0\n"
+                            + "2024-01-01T00:00:02.000000Z\tnull\t5.0\n"
+                            + "2024-01-01T00:00:03.000000Z\tnull\t5.0\n"
+                            + "2024-01-01T00:00:04.000000Z\tnull\tnull\n"
+                            + "2024-01-01T00:00:05.000000Z\tnull\t2.5\n"
+                            + "2024-01-01T00:00:06.000000Z\t3.0\t3.0\n"
+                            + "2024-01-01T00:00:07.000000Z\t7.0\t7.0\n"
+                            + "2024-01-01T00:00:08.000000Z\t7.0\t7.0\n",
+                    render("select ts, first_value(x) over w, first_value(x) ignore nulls over w from t "
+                            + WINDOW)
             );
         });
     }
@@ -923,10 +942,14 @@ public class WindowMapStateTest extends AbstractCairoTest {
         // The capture families at both of the state widths they are split by, and the three
         // implementations behind them: x through the DOUBLE factory, l through the LONG one and
         // ts through the timestamp one, which is a separate class over the shared helper base.
-        // Six maps and six probes unfused; six slots behind one key here.
+        // Four maps and four probes unfused; seven slots behind one key here.
+        //
+        // The capture-shape data is what makes the 64-bit flag do work: partition 'a' opens on an
+        // absent l and carries a present one after it, so a respect-nulls capture that read its
+        // emptiness off LONG_NULL would answer the second row's payload for the whole partition.
         assertMemoryLeak(() -> {
             createTable();
-            insertKeyShapes();
+            insertCaptureShapes();
             final String sql = "select ts, first_value(x) over w, first_value(l) over w, "
                     + "first_value(ts) ignore nulls over w, last_value(l) ignore nulls over w from t " + WINDOW;
             try (SqlCompiler compiler = engine.getSqlCompiler();
@@ -941,7 +964,7 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 Assert.assertEquals(7, plan.getSlotCount());
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
-                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(CAPTURE_SHAPE_ROW_COUNT, rows);
                     Assert.assertEquals(rows, state.getLookupCount());
                     Assert.assertEquals(4 * rows, state.getContributorUpdateCount());
                     Assert.assertEquals(4 * rows, state.getProjectionWriteCount());
@@ -1759,6 +1782,26 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 "('2024-01-01T00:00:06.000000Z', 'nn', null, null, null, null, null, null), " +
                 "('2024-01-01T00:00:07.000000Z', 'a', " + decimals("-1", "-1", "-1", "-1", "-1", "-1") + "), " +
                 "('2024-01-01T00:00:08.000000Z', null, " + decimals("9", "90", "90", "90", "90", "90") + ")");
+    }
+
+    /**
+     * The partition shapes the capture families part company on, which none of the sets above
+     * makes: a partition whose <b>first</b> row is absent and whose second is not - where a
+     * respect-nulls capture emits NULL for every row and an IGNORE NULLS one emits the second
+     * row's value - one that opens on an infinity, one of a single row, and a NULL key. The
+     * {@code l} column carries the same shape at the 64-bit state width.
+     */
+    private void insertCaptureShapes() throws SqlException {
+        execute("insert into t values " +
+                "('2024-01-01T00:00:00.000000Z', 'a', 'p', null, 1.0, null), " +
+                "('2024-01-01T00:00:01.000000Z', 'a', 'q', 5.0, 2.0, 5), " +
+                "('2024-01-01T00:00:02.000000Z', 'a', 'p', null, 3.0, null), " +
+                "('2024-01-01T00:00:03.000000Z', 'a', 'q', '-Infinity'::double, 4.0, -1), " +
+                "('2024-01-01T00:00:04.000000Z', 'b', 'p', '-Infinity'::double, 5.0, null), " +
+                "('2024-01-01T00:00:05.000000Z', 'b', 'q', 2.5, 6.0, 2), " +
+                "('2024-01-01T00:00:06.000000Z', 'c', 'p', 3.0, 7.0, 3), " +
+                "('2024-01-01T00:00:07.000000Z', null, 'q', 7.0, 8.0, null), " +
+                "('2024-01-01T00:00:08.000000Z', null, 'p', null, 9.0, 9)");
     }
 
     private void insertNullsAndInfinities() throws SqlException {
