@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Files;
@@ -57,6 +58,8 @@ import static io.questdb.std.Files.DT_FILE;
 public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     private static final Log LOG = LogFactory.getLog(TableNameRegistryStore.class);
     private final CairoConfiguration configuration;
+    // directory names already reported by reloadFromRootDirectory(), which runs repeatedly
+    private final CharSequenceHashSet loggedOrphanDirs = new CharSequenceHashSet();
     private final StringSink nameSink = new StringSink();
     private final TableFlagResolver tableFlagResolver;
     private final MemoryCMR tableNameRoMemory = Vm.getCMRInstance();
@@ -309,6 +312,23 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         return findLastTablesFileVersion(ff, path, nameSink);
     }
 
+    /**
+     * Whether a directory name belongs to a system table. Deliberately avoids
+     * {@link TableUtils#getTableNameFromDirName(CharSequence)}, which allocates two Strings for a
+     * mangled name: this is called for every directory the root scan skips, and on a read-only
+     * instance the scan repeats for the life of the process.
+     */
+    private boolean isSystemTableDir(CharSequence dirName) {
+        final int suffixIndex = Chars.indexOf(dirName, TableUtils.SYSTEM_TABLE_NAME_SUFFIX);
+        if (suffixIndex == -1) {
+            return tableFlagResolver.isSystem(dirName);
+        }
+        final StringSink tableName = Misc.getThreadLocalSink();
+        tableName.clear();
+        tableName.put(dirName, 0, suffixIndex);
+        return tableFlagResolver.isSystem(tableName);
+    }
+
     private int readTableId(Path path, CharSequence dirName, FilesFacade ff) {
         path.of(configuration.getDbRoot()).concat(dirName);
         int pathLen = path.size();
@@ -351,10 +371,25 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             do {
                 if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), dirNameSink)) {
                     String dirName = Utf8s.toString(dirNameSink);
-                    if (
-                            !dirNameToTableTokenMap.containsKey(dirName)
-                                    && TableUtils.exists(ff, path, configuration.getDbRoot(), dirNameSink) == TableUtils.TABLE_EXISTS
-                    ) {
+                    boolean isRegistered = dirNameToTableTokenMap.containsKey(dirName);
+                    int status = isRegistered
+                            ? TableUtils.TABLE_DOES_NOT_EXIST
+                            : TableUtils.exists(ff, path, configuration.getDbRoot(), dirNameSink);
+                    if (status == TableUtils.TABLE_RESERVED
+                            && isSystemTableDir(dirName)
+                            && loggedOrphanDirs.add(dirName)) {
+                        // a directory with no _txn is never adopted here, so it stays invisible to
+                        // the registry while still blocking every create under the same name. that
+                        // is only worth reporting for a system table, which the server creates by
+                        // itself and cannot be told to skip - for anything else the create path
+                        // reports it, with the path and the reason, at the moment someone asks.
+                        // an ordinary table is briefly TABLE_RESERVED while being created or
+                        // dropped, so reporting those would be pure noise. reload() runs
+                        // repeatedly, hence report each directory once
+                        LOG.advisory().$("orphan system table directory ignored, not in table name registry [dir=")
+                                .$(dirNameSink).$(", reason=no _txn file]").$();
+                    }
+                    if (status == TableUtils.TABLE_EXISTS) {
                         int tableId;
                         boolean isWal;
                         String tableName;

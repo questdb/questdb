@@ -35,12 +35,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Misc;
 import io.questdb.std.ValueHolderList;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class QueryTracingJob extends SynchronizedJob implements Closeable {
     public static final String COLUMN_EXECUTION_MICROS = "execution_micros";
@@ -50,33 +51,37 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
     public static final String TABLE_NAME = "_query_trace";
     // Writer lock reason used when the query-tracing job acquires its own table writer.
     public static final String WRITER_LOCK_REASON = "query_tracing";
+    private static final long BACKOFF_MAX_MICROS = 5 * Micros.MINUTE_MICROS;
+    private static final long BACKOFF_MIN_MICROS = Micros.SECOND_MICROS;
     private static final int BATCH_LIMIT = 1024;
     private static final int INITIAL_CAPACITY = 128;
     private static final Log LOG = LogFactory.getLog(QueryTracingJob.class.getName());
     private final ValueHolderList<QueryTrace> buffer;
+    private final MicrosecondClock clock;
     private final CairoEngine engine;
     private final ConcurrentQueue<QueryTrace> queue;
     private final SqlExecutionContextImpl sqlExecutionContext;
-    private final TableWriter tableWriter;
     private final QueryTrace trace = new QueryTrace();
     private final Utf8StringSink utf8sink = new Utf8StringSink();
+    private long backoffMicros = BACKOFF_MIN_MICROS;
+    private long nextAttemptMicros = Long.MIN_VALUE;
+    private TableWriter tableWriter;
 
-
-    public QueryTracingJob(CairoEngine engine) throws SqlException {
+    public QueryTracingJob(CairoEngine engine) {
         this.queue = engine.getMessageBus().getQueryTraceQueue();
         this.buffer = new ValueHolderList<>(QueryTrace.ITEM_FACTORY, INITIAL_CAPACITY);
         this.engine = engine;
+        this.clock = engine.getConfiguration().getMicrosecondClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
                 engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
                 null,
                 null
         );
-        this.tableWriter = acquireTableWriter();
     }
 
     @Override
-    public void close() throws IOException {
-        tableWriter.close();
+    public void close() {
+        tableWriter = Misc.free(tableWriter);
     }
 
     private TableWriter acquireTableWriter() throws SqlException {
@@ -100,6 +105,11 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
         return engine.getWriter(tableToken, WRITER_LOCK_REASON);
     }
 
+    private void armBackoff() {
+        nextAttemptMicros = clock.getTicks() + backoffMicros;
+        backoffMicros = Math.min(backoffMicros * 2, BACKOFF_MAX_MICROS);
+    }
+
     private void putVarchar(TableWriter.Row row, int column, String value) {
         utf8sink.clear();
         utf8sink.put(value);
@@ -115,6 +125,23 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
         if (buffer.size() <= 0) {
             return false;
         }
+        if (tableWriter == null) {
+            // the batch drained above is dropped on every path that has no writer: the trace
+            // queue is unbounded, so the job has to consume whether or not it can write
+            if (clock.getTicks() < nextAttemptMicros) {
+                return false;
+            }
+            try {
+                tableWriter = acquireTableWriter();
+                backoffMicros = BACKOFF_MIN_MICROS;
+            } catch (Throwable th) {
+                armBackoff();
+                LOG.error().$("could not open query trace table, dropping traces [table=").$(TABLE_NAME)
+                        .$(", nextAttemptMicros=").$(nextAttemptMicros)
+                        .$(", error=").$(th).I$();
+                return false;
+            }
+        }
         try {
             for (int n = buffer.size(), i = 0; i < n; i++) {
                 buffer.moveQuick(i, trace);
@@ -126,8 +153,12 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
             }
             tableWriter.commit();
             trace.clear();
-        } catch (Exception e) {
-            LOG.error().$("Failed to save query trace").$(e).$();
+        } catch (Throwable th) {
+            LOG.error().$("Failed to save query trace").$(th).$();
+            // drop the writer so one that has gone bad is reopened rather than failing
+            // every batch from here on
+            tableWriter = Misc.free(tableWriter);
+            armBackoff();
         }
         return false;
     }

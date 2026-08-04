@@ -2342,6 +2342,57 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Verifies that the directory a table is about to be created in is free. An orphan directory -
+     * one that exists on disk while the table name registry has no entry for it - otherwise blocks
+     * the create forever, because {@link TableNameRegistryStore} only adopts a directory that has
+     * a _txn file, and every retry hits the same directory on disk.
+     * <p>
+     * A system table directory with no _txn holds nothing a reader could open, so it is moved
+     * aside. It is never deleted, and a soft link is never touched. Anything else, including any
+     * user table, is reported with the path and the reason.
+     * <p>
+     * The caller holds the name lock, the create lock and lockAll(), so nothing else can be
+     * reading this directory. {@code tableDir} must point at the table directory itself:
+     * {@link TableUtils#exists(FilesFacade, Path, CharSequence, CharSequence)} leaves the path it
+     * is given pointing at the _txn file below it.
+     */
+    private void checkTableDirAvailable(int status, Path tableDir, TableToken tableToken) {
+        if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
+            return;
+        }
+        final FilesFacade ff = configuration.getFilesFacade();
+        if (status == TableUtils.TABLE_RESERVED && tableToken.isSystem() && !ff.isSoftLink(tableDir.$())) {
+            // a dedicated Path rather than a thread-local one: tableDir belongs to the caller, and
+            // a caller that passed the same thread-local would alias it, silently turning the
+            // rename below into a one-buffer no-op. this runs at most once per orphan directory,
+            // so the allocation does not matter
+            try (Path quarantine = new Path()) {
+                final StringSink quarantineName = Misc.getThreadLocalSink();
+                for (int i = 0; i < TableUtils.MAX_ORPHAN_DIRS; i++) {
+                    quarantineName.clear();
+                    quarantineName.put(tableToken.getDirName()).put(TableUtils.ORPHAN_DIR_SUFFIX).put(i);
+                    quarantine.of(configuration.getDbRoot()).concat(quarantineName);
+                    if (ff.exists(quarantine.$())) {
+                        continue;
+                    }
+                    if (ff.rename(tableDir.$(), quarantine.$()) == Files.FILES_RENAME_OK) {
+                        LOG.advisory().$("quarantined orphan system table directory [table=").$(tableToken)
+                                .$(", from=").$(tableDir)
+                                .$(", to=").$(quarantine).I$();
+                        return;
+                    }
+                    break;
+                }
+            }
+        }
+        throw CairoException.nonCritical().put("name is reserved [table=")
+                .put(tableToken.getTableName())
+                .put(", path=").put(tableDir)
+                .put(", txn=").put(status == TableUtils.TABLE_EXISTS ? "present" : "missing")
+                .put("]; directory exists on disk but has no table name registry entry");
+    }
+
     // caller has to acquire the lock before this method is called and release the lock after the call
     private void createTableOrMatViewInVolumeUnsafe(MemoryMARW mem, @Nullable BlockFileWriter blockFileWriter, Path path, TableStructure struct, TableToken tableToken) {
         if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.existsInVolume(configuration.getFilesFacade(), path, tableToken.getDirName())) {
@@ -2366,9 +2417,9 @@ public class CairoEngine implements Closeable, WriterSource {
 
     // caller has to acquire the lock before this method is called and release the lock after the call
     private void createTableOrViewOrMatViewUnsafe(MemoryMARW mem, @Nullable BlockFileWriter blockFileWriter, Path path, TableStructure struct, TableToken tableToken) {
-        if (TableUtils.exists(configuration.getFilesFacade(), path, configuration.getDbRoot(), tableToken.getDirName()) != TableUtils.TABLE_DOES_NOT_EXIST) {
-            throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
-        }
+        final int status = TableUtils.exists(configuration.getFilesFacade(), path, configuration.getDbRoot(), tableToken.getDirName());
+        // exists() appends _txn to the path it is given, rebuild the directory path
+        checkTableDirAvailable(status, path.of(configuration.getDbRoot()).concat(tableToken.getDirName()), tableToken);
 
         // only create the table after it has been registered
         TableUtils.createTableOrViewOrMatView(
