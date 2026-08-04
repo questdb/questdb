@@ -96,6 +96,15 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'd';
     }
 
+    public static boolean isApplyKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'a'
+                && (tok.charAt(1) | 32) == 'p'
+                && (tok.charAt(2) | 32) == 'p'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 'y';
+    }
+
     public static boolean isArrayKeyword(CharSequence tok) {
         return tok.length() == 5
                 && (tok.charAt(0) | 32) == 'a'
@@ -2552,6 +2561,15 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'h'
                 && (tok.charAt(4) | 32) == 'i'
                 && (tok.charAt(5) | 32) == 'n';
+    }
+
+    public static boolean isWriteKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'w'
+                && (tok.charAt(1) | 32) == 'r'
+                && (tok.charAt(2) | 32) == 'i'
+                && (tok.charAt(3) | 32) == 't'
+                && (tok.charAt(4) | 32) == 'e';
     }
 
     public static boolean isYearKeyword(CharSequence tok) {

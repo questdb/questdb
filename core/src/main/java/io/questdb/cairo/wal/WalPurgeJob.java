@@ -183,6 +183,21 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             // on this worker.
             return;
         }
+        if (engine.isWalPurgeLocked(tableToken)) {
+            // Skip a table whose on-disk sequencer files are being replaced out-of-band. The
+            // WAL-purge lock is the narrow SeqTxnTracker bit RECONCILE TABLE apply holds only
+            // while it swaps _meta/_meta.0/_txnlog* non-atomically -- touching
+            // fetchSequencerPairs() during that swap would re-open the sequencer and read a
+            // half-swapped view, tripping an assertion. This gate is deliberately NOT the broad
+            // isWalApplySuspended predicate: that also fires for ALTER TABLE ... SUSPEND WAL and
+            // the cairo.wal.apply.suspended.tables config list -- long-lived operator states
+            // whose applied segments must keep getting reclaimed. The next purge pass picks the
+            // table back up once the flag clears (a few hundred ms), so the skip defers nothing
+            // beyond the swap window.
+            LOG.debug().$("skipping wal-purge-locked table during broad sweep [table=")
+                    .$(tableToken).I$();
+            return;
+        }
         try {
             this.tableToken = tableToken;
             this.logic.reset(tableToken);

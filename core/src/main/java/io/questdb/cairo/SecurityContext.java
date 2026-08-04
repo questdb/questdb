@@ -127,6 +127,18 @@ public interface SecurityContext extends Mutable {
         authorizeSystemAdmin();
     }
 
+    /**
+     * Authorizes {@code RECONCILE TABLE}. RECONCILE is destructive: it disables runtime replication,
+     * hard-suspends WAL apply and (on the apply side) overwrites {@code _meta}/{@code _txn}/{@code _cv}
+     * plus partition files from the primary. It is therefore gated behind system-admin privilege, so by
+     * default it delegates to {@link #authorizeSystemAdmin()}. {@code tableToken} may be null when the
+     * caller specifies an on-disk directory name that no longer resolves to a local table (ghost-table
+     * SHIP path); the default gate is a database-level check and does not consult the token.
+     */
+    default void authorizeReconcileTable(TableToken tableToken) {
+        authorizeSystemAdmin();
+    }
+
     void authorizeResumeWal(TableToken tableToken);
 
     void authorizeSelect(ViewDefinition viewDefinition);

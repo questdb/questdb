@@ -57,6 +57,16 @@ public class LogCapture {
         Assert.assertEquals("Message '" + regex + "' was not more than once", 0, m.groupCount());
     }
 
+    /**
+     * Snapshot of the captured log lines. Read-only view — the underlying
+     * sink keeps accumulating after this call, so tests that scan for
+     * "which of these events fired" should either call {@link #stop()}
+     * first or filter the returned text themselves.
+     */
+    public String captured() {
+        return sink.toString();
+    }
+
     public void start() {
         sink.clear();
         consoleWriter.setInterceptor(interceptor);
