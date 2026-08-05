@@ -104,6 +104,11 @@ public final class PostingIndexChainHeader {
      *
      * @param keyMem             the .pk memory mapping (writable)
      * @param activePageOffset   current active page offset (PAGE_A_OFFSET or PAGE_B_OFFSET)
+     * @param formatVersion      FORMAT_VERSION to write. The caller owns this value
+     *                           and must never lower it for a given file: once the
+     *                           file holds a de-aliased covering entry, an older
+     *                           build must keep failing to open it. See
+     *                           {@link PostingIndexUtils#V3_FORMAT_VERSION}.
      * @param newHeadEntryOffset byte offset of the latest entry (V2_NO_HEAD if empty)
      * @param newEntryCount      number of live entries in the chain
      * @param newRegionBase      byte offset of the oldest live entry's start
@@ -114,6 +119,7 @@ public final class PostingIndexChainHeader {
     public static long publish(
             MemoryARW keyMem,
             long activePageOffset,
+            long formatVersion,
             long newHeadEntryOffset,
             long newEntryCount,
             long newRegionBase,
@@ -138,7 +144,7 @@ public final class PostingIndexChainHeader {
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END, stagingSeq);
 
         // Phase 2: write payload.
-        keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_FORMAT_VERSION, PostingIndexUtils.V2_FORMAT_VERSION);
+        keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_FORMAT_VERSION, formatVersion);
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET, newHeadEntryOffset);
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_ENTRY_COUNT, newEntryCount);
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_BASE, newRegionBase);
