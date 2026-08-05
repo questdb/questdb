@@ -150,8 +150,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
      * Raised when a value cannot be stored because its UTF-8 is malformed. Every such site uses
      * this factory, so {@link #isMalformedUtf8()} is correct by construction.
      */
+    public static CairoException malformedUtf8() {
+        return nonCritical().setMalformedUtf8();
+    }
+
     public static CairoException malformedUtf8(@NotNull Utf8Sequence value) {
-        return nonCritical().setMalformedUtf8().put("invalid UTF8 in value for ").put(value);
+        return malformedUtf8().put("invalid UTF8 in value for ").put(value);
     }
 
     public static CairoException matViewDoesNotExist(CharSequence matViewName) {

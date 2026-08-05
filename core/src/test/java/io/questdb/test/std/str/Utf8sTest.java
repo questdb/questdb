@@ -140,6 +140,7 @@ public class Utf8sTest {
             Utf8s.stringFromUtf8Bytes(mem, mem + len);
             Assert.fail();
         } catch (CairoException ex) {
+            Assert.assertTrue(ex.isMalformedUtf8());
             TestUtils.assertContains(ex.getFlyweightMessage(), "cannot convert invalid UTF-8 sequence " +
                     "to UTF-16 [seq=Opt.PvPnl start_time=1757568600000000t,duration_ms==\\x10\\x00\\x00\\x00\\x00@w+A," +
                     "pnl_id=\"investments-eva|caladan_tia_usdt_c_3.85_20250908\",leg_idx==\\x10\\x00\\x00\\x00\\x00\\x00\\x84\\x92@," +
@@ -175,6 +176,7 @@ public class Utf8sTest {
                 Utf8s.stringFromUtf8Bytes(sequence);
                 Assert.fail();
             } catch (CairoException ex1) {
+                Assert.assertTrue(ex1.isMalformedUtf8());
                 TestUtils.assertContains(ex1.getFlyweightMessage(), "cannot convert invalid UTF-8 sequence " +
                         "to UTF-16 [seq=Opt.PvPnl start_time=1757568600000000t,duration_ms==\\x10\\x00\\x00\\x00\\x00@w+A," +
                         "pnl_id=\"investments-eva|caladan_tia_usdt_c_3.85_20250908\",leg_idx==\\x10\\x00\\x00\\x00\\x00\\x00\\x84\\x92@," +
@@ -1923,6 +1925,7 @@ public class Utf8sTest {
             Utf8s.stringFromUtf8Bytes(invalid);
             Assert.fail("expected CairoException");
         } catch (CairoException e) {
+            Assert.assertTrue(e.isMalformedUtf8());
             TestUtils.assertContains(e.getFlyweightMessage(), "cannot convert invalid UTF-8 sequence to UTF-16");
         }
     }

@@ -1176,7 +1176,7 @@ public final class Utf8s {
         Utf16Sink r = getThreadLocalSink();
         if (!utf8ToUtf16(lo, hi, r)) {
             Utf8StringSink sink = getThreadLocalUtf8Sink();
-            CairoException ex = CairoException.nonCritical().put("cannot convert invalid UTF-8 sequence to UTF-16 [seq=");
+            CairoException ex = CairoException.malformedUtf8().put("cannot convert invalid UTF-8 sequence to UTF-16 [seq=");
             putSafe(lo, hi, sink);
             ex.put(sink).put(']');
             throw ex;
@@ -1192,12 +1192,12 @@ public final class Utf8s {
         if (!utf8ToUtf16(seq, b)) {
             if (seq instanceof DirectUtf8Sequence) {
                 Utf8StringSink sink = getThreadLocalUtf8Sink();
-                CairoException ex = CairoException.nonCritical().put("cannot convert invalid UTF-8 sequence to UTF-16 [seq=");
+                CairoException ex = CairoException.malformedUtf8().put("cannot convert invalid UTF-8 sequence to UTF-16 [seq=");
                 putSafe(seq.ptr(), seq.ptr() + seq.size(), sink);
                 ex.put(sink).put(']');
                 throw ex;
             }
-            throw CairoException.nonCritical().put("cannot convert invalid UTF-8 sequence to UTF-16 [seq=").put(seq).put(']');
+            throw CairoException.malformedUtf8().put("cannot convert invalid UTF-8 sequence to UTF-16 [seq=").put(seq).put(']');
         }
         return b.toString();
     }

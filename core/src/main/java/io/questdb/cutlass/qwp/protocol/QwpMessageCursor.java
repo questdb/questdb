@@ -280,7 +280,10 @@ public class QwpMessageCursor implements Mutable {
             try {
                 symbol = Utf8s.stringFromUtf8Bytes(address, address + symbolLen);
             } catch (CairoException e) {
-                throw QwpParseException.create(QwpParseException.ErrorCode.INVALID_UTF8, e.getFlyweightMessage());
+                if (e.isMalformedUtf8()) {
+                    throw QwpParseException.create(QwpParseException.ErrorCode.INVALID_UTF8, e.getFlyweightMessage());
+                }
+                throw e;
             }
             address += symbolLen;
 
