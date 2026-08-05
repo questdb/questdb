@@ -1558,10 +1558,27 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
         final MemoryMA primaryColumn = columns.getAndSetQuick(pi, null);
         final MemoryMA secondaryColumn = columns.getAndSetQuick(si, null);
-        primaryColumn.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
-        if (secondaryColumn != null) {
-            secondaryColumn.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
+        // Both slots are detached from `columns` BEFORE either close, so a close that throws part-way makes
+        // the other half unreachable -- freeColumns() can no longer see it, and nothing else ever will. Under
+        // adaptive commit these closes carry a real durability barrier (MemoryPMARImpl.close -> msync), so a
+        // simulated crash or a genuine EIO here would strand the secondary column's mapping and its fd.
+        // Close BOTH, then surface the first fault, exactly as freeColumns does.
+        Throwable closeError = null;
+        try {
+            primaryColumn.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
+        } catch (Throwable th) {
+            closeError = th;
         }
+        if (secondaryColumn != null) {
+            try {
+                secondaryColumn.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
+            } catch (Throwable th) {
+                if (closeError == null) {
+                    closeError = th;
+                }
+            }
+        }
+        throwFirstCloseError(closeError);
     }
 
     private void freeColumns(boolean truncate) {
@@ -2230,6 +2247,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
+    /**
+     * MS_ASYNC vs MS_SYNC for the structural null-backfill, using the same rule as
+     * {@link #syncIfRequired0()}: ASYNC mode is async by definition, and under ADAPTIVE the group-commit
+     * window (W&gt;0) defers the device flush, so the msync only has to order the pages -- the explicit
+     * fdatasync that follows is the barrier.
+     */
+    private boolean adaptiveMsyncAsync(int commitMode) {
+        return commitMode == CommitMode.ASYNC
+                || (commitMode == CommitMode.ADAPTIVE && deferDeviceFlush());
+    }
+
     private void setColumnNull(int columnType, int columnIndex, long rowCount, int commitMode) {
         if (ColumnType.isVarSize(columnType)) {
             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
@@ -2274,10 +2302,21 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             try {
                 columnTypeDriver.setFullAuxVectorNull(auxMemAddr, rowCount);
                 if (commitMode != CommitMode.NOSYNC) {
-                    ff.msync(auxMemAddr, auxMemSize, commitMode == CommitMode.ASYNC);
+                    ff.msync(auxMemAddr, auxMemSize, adaptiveMsyncAsync(commitMode));
                 }
             } finally {
                 ff.munmap(auxMemAddr, auxMemSize, MEM_TAG);
+            }
+            // ADAPTIVE handshake, matching syncIfRequired0 and syncAdaptiveEventsBeforeSequencing: the
+            // msync ORDERS the bytes (MS_ASYNC when the group-commit window defers the device flush,
+            // MS_SYNC otherwise) and an EXPLICIT fdatasync provides the device barrier. Relying on
+            // msync(MS_SYNC) alone would make this path's durability grade depend on the kernel treating
+            // msync as a range-fsync, and under W>0 it would force a synchronous device flush on the
+            // structural path that the group-commit design deliberately defers. This backfill is written
+            // on the STRUCTURAL path, which sequences via events-only barriers and never runs
+            // syncIfRequired0's per-column loop, so it must carry its own.
+            if (commitMode == CommitMode.ADAPTIVE) {
+                ff.fdatasync(auxMem.getFd());
             }
         }
     }
@@ -2291,10 +2330,21 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             try {
                 columnTypeDriver.setDataVectorEntriesToNull(dataMemAddr, rowCount);
                 if (commitMode != CommitMode.NOSYNC) {
-                    ff.msync(dataMemAddr, varColSize, commitMode == CommitMode.ASYNC);
+                    ff.msync(dataMemAddr, varColSize, adaptiveMsyncAsync(commitMode));
                 }
             } finally {
                 ff.munmap(dataMemAddr, varColSize, MEM_TAG);
+            }
+            // ADAPTIVE handshake, matching syncIfRequired0 and syncAdaptiveEventsBeforeSequencing: the
+            // msync ORDERS the bytes (MS_ASYNC when the group-commit window defers the device flush,
+            // MS_SYNC otherwise) and an EXPLICIT fdatasync provides the device barrier. Relying on
+            // msync(MS_SYNC) alone would make this path's durability grade depend on the kernel treating
+            // msync as a range-fsync, and under W>0 it would force a synchronous device flush on the
+            // structural path that the group-commit design deliberately defers. This backfill is written
+            // on the STRUCTURAL path, which sequences via events-only barriers and never runs
+            // syncIfRequired0's per-column loop, so it must carry its own.
+            if (commitMode == CommitMode.ADAPTIVE) {
+                ff.fdatasync(dataMem.getFd());
             }
         }
     }
@@ -3028,8 +3078,23 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // we should switch metadata to this new segment
                         path.trimTo(pathSize).slash().put(segmentId);
                         // this will close old _meta file and create the new one
-                        metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
-                        openColumnFiles(columnName, columnType, columnIndex, path.size());
+                        // DATA BEFORE POINTER. The segment _meta published by switchTo DECLARES this column;
+                        // apply then requires the column's file to exist for the committed row range. Doing
+                        // the switch first left a window where the durable metadata named a file that had
+                        // not been created yet -- a crash in it (the _meta.swp barrier) left the segment
+                        // permanently unappliable, and recovery suspended the table with "WAL segment column
+                        // too short for committed row range [... actual=-1]" (actual=-1 being a MISSING
+                        // file, not a short one). So: create the files, make their names durable by fsyncing
+                        // the segment directory (openNewSegment does the same for the files IT creates; a
+                        // column added to an already-open segment needs it too), and only then publish the
+                        // metadata that points at them.
+                        final int segPathLen = path.size();
+                        openColumnFiles(columnName, columnType, columnIndex, segPathLen);
+                        if (walCommitMode() != CommitMode.NOSYNC) {
+                            final long segDirFd = TableUtils.openRONoCache(ff, path.trimTo(segPathLen).$(), LOG);
+                            ff.fsyncAndClose(segDirFd);
+                        }
+                        metadata.switchTo(path.trimTo(segPathLen), segPathLen, isTruncateFilesOnClose());
                         path.trimTo(pathSize);
                     }
 
@@ -3265,9 +3330,22 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             // this means we have rolled uncommitted rows to a new segment already
                             // we should switch metadata to this new segment
                             path.trimTo(pathSize).slash().put(segmentId);
-                            // this will close old _meta file and create the new one
-                            metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
+                            // RENAME BEFORE PUBLISH. The segment _meta written by switchTo names the column
+                            // by its NEW name, and apply resolves that name to a file. Switching first left
+                            // a window where durable metadata named new_col_N.d while the file on disk was
+                            // still old_name.d: a crash in it (the _meta.swp barrier) made the segment
+                            // permanently unappliable and suspended the table with "WAL segment column too
+                            // short for committed row range [... actual=-1]" -- actual=-1 being a MISSING
+                            // file. Move the names into place first, fsync the segment directory so those
+                            // names are durable (a rename publishes a dentry in the PARENT, which needs its
+                            // own barrier), and only then publish the metadata that points at them.
+                            final int segPathLen = path.size();
                             renameColumnFiles(columnType, columnName, newColumnName);
+                            if (walCommitMode() != CommitMode.NOSYNC) {
+                                final long segDirFd = TableUtils.openRONoCache(ff, path.trimTo(segPathLen).$(), LOG);
+                                ff.fsyncAndClose(segDirFd);
+                            }
+                            metadata.switchTo(path.trimTo(segPathLen), segPathLen, isTruncateFilesOnClose());
                         }
                         // if we did not have to roll uncommitted rows to a new segment
                         // it will switch metadata file on next row write

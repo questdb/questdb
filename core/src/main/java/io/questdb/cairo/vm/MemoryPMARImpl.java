@@ -76,14 +76,39 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     public final void close(boolean truncate, byte truncateMode) {
         long sz = truncate ? getAppendOffset() : -1L;
-        releaseCurrentPage();
-        super.close();
-        if (fd != -1) {
-            try {
-                Vm.bestEffortClose(ff, LOG, fd, sz, truncateMode);
-            } finally {
-                fd = -1;
+        // releaseCurrentPage() carries a durability barrier (msync) under any non-NOSYNC commit mode, so it
+        // can fail -- on a simulated crash, or a genuine EIO. Its own finallys already unmap the page, but the
+        // rest of this close must still complete: without it `fd` stays set on an object the caller has
+        // already detached, so the descriptor is either leaked outright or closed a second time by a later
+        // cleanup path. Fail-stop is preserved -- the fault is rethrown -- but only after the frees are done.
+        Throwable closeError = null;
+        try {
+            releaseCurrentPage();
+        } catch (Throwable th) {
+            closeError = th;
+        }
+        try {
+            super.close();
+            if (fd != -1) {
+                try {
+                    Vm.bestEffortClose(ff, LOG, fd, sz, truncateMode);
+                } finally {
+                    fd = -1;
+                }
             }
+        } catch (Throwable th) {
+            if (closeError == null) {
+                closeError = th;
+            }
+        }
+        if (closeError != null) {
+            if (closeError instanceof Error) {
+                throw (Error) closeError;
+            }
+            if (closeError instanceof RuntimeException) {
+                throw (RuntimeException) closeError;
+            }
+            throw new CairoException().put("could not close memory [msg=").put(closeError.getMessage()).put(']');
         }
     }
 
