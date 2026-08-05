@@ -109,6 +109,24 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         appendAddress = 0;
     }
 
+    /**
+     * Hands this buffer's outstanding tracker charge to the tracker's covered-bytes ledger and
+     * switches to global-only accounting. For a buffer whose native free is DEFERRED past the
+     * lifetime of its per-query tracker (e.g. a live-view tier slot a reader pins across a DROP or
+     * invalidate): {@link MemoryTracker#reconcileCovered()} removes the charge from the pooled
+     * tracker's {@code used} at its release, so it recycles clean, and the later global-only free
+     * debits no recycled tracker block. A no-op when no tracker is bound. After this call the buffer
+     * accounts globally only, so it must not be used to grow further under a per-query cap.
+     */
+    public void detachMemoryTracker() {
+        if (memoryTracker != null) {
+            if (pageAddress != 0) {
+                memoryTracker.addCoveredBytes(lim - pageAddress);
+            }
+            memoryTracker = null;
+        }
+    }
+
     @Override
     public void extend(long size) {
         checkAndExtend(pageAddress + size);
