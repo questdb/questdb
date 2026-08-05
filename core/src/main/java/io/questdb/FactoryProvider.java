@@ -28,6 +28,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.cairo.sql.async.WorkStealingStrategy;
+import io.questdb.cairo.sql.async.WorkStealingStrategyFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultRejectProcessorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
@@ -113,4 +116,19 @@ public interface FactoryProvider extends QuietCloseable {
 
     @NotNull
     WalJobFactory getWalJobFactory();
+
+    /**
+     * Supplies the work stealing strategy a page frame sequence binds for the given atom. The
+     * default is the one {@link WorkStealingStrategyFactory} picks from the configured threshold;
+     * overriding it lets a test wrap the owner's stealing decision, which is otherwise unreachable
+     * because the sequence builds its own strategy in its constructor.
+     */
+    @NotNull
+    default WorkStealingStrategy getWorkStealingStrategy(
+            @NotNull CairoConfiguration configuration,
+            int workerCount,
+            @NotNull StatefulAtom atom
+    ) {
+        return WorkStealingStrategyFactory.getInstance(configuration, workerCount);
+    }
 }

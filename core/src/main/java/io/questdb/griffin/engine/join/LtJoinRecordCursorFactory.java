@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -52,13 +53,13 @@ import io.questdb.std.Transient;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
 public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final LtJoinRecordCursor cursor;
     private final int mapEvacuationThreshold;
     private final RecordSink masterKeySink;
     private final IntList slaveColumnIndex; // maps columns after the split to columns in the slave cursor
     private final RecordSink slaveKeySink;
     private final int slaveValueTimestampIndex;
     private final long toleranceInterval;
+    private LtJoinRecordCursor cursor;
 
     public LtJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -153,10 +154,11 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
+        final LtJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class LtJoinRecordCursor extends AbstractSymbolWrapOverCursor {

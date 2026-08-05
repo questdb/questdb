@@ -209,6 +209,51 @@ public class PushdownFilterExtractor implements Mutable {
     }
 
     /**
+     * Reports whether a null predicate over this column type may drive row group pruning.
+     * <p>
+     * Pruning is exact only where the parquet null bit and the SQL NULL denote the same rows.
+     * The parquet writer marks column-top rows - rows that predate the ADD COLUMN - with
+     * definition level 0, and decides every other row's null bit through its {@code Nullable}
+     * impl in {@code core/rust/qdbr/src/parquet_write/mod.rs}. Two type groups break the
+     * correspondence, in opposite directions:
+     * <ul>
+     * <li>BOOLEAN, BYTE and SHORT carry no null sentinel, so {@code EqBooleanFunctionFactory},
+     * {@code EqByteFunctionFactory} and {@code EqShortFunctionFactory} fold a null constant to
+     * {@code BooleanConstant.FALSE} and every stored row is non-null - a column-top row reads
+     * back as 0/false, a legitimate value. A row group built entirely from column-top rows
+     * reports {@code null_count == num_values}, which {@link ParquetRowGroupFilter} would
+     * discard for IS NOT NULL even though every one of its rows matches. Neither direction may
+     * consult the file's null bit.</li>
+     * <li>CHAR, FLOAT and DOUBLE call more values NULL than the writer marks null, so parquet
+     * nulls are a strict subset of SQL NULLs. IS NOT NULL still prunes exactly - a row group
+     * with {@code null_count == num_values} holds only NULLs, so no row matches - but IS NULL
+     * does not: {@code null_count == 0} no longer implies the group holds no NULL. CHAR's null
+     * is {@code Numbers.CHAR_NULL} while the writer's {@code Nullable} impl for {@code u16}
+     * reports every stored value non-null; {@code Numbers.isNull(double)} masks
+     * {@code EXP_BIT_MASK} and {@code isNull(float)} tests {@code isInfinite}, so both count
+     * +/-Infinity as NULL, while the writer's impls for {@code f32}/{@code f64} test only
+     * {@code is_nan()} and {@code simd.rs} compares strictly greater than the infinity bits.
+     * A stored CHAR_NULL or infinity therefore reaches the file as a non-null value, and a row
+     * group of them reports {@code null_count == 0} while every row matches IS NULL.</li>
+     * </ul>
+     * Every other type's null detection - a {@code Nullable} impl for the fixed-size types, a
+     * length or key check for the variable-size ones, which do not implement that trait -
+     * recognises the same values SQL does, so both directions stay exact. That includes IPv4,
+     * whose in-band 0 the writer does map to a parquet null.
+     * <p>
+     * This gates on the column's <em>metadata</em> type; soundness also needs the file's stored
+     * type to agree, which {@link ParquetRowGroupFilter} enforces separately by dropping any
+     * condition whose parquet column type differs, before it reaches the null-op branch.
+     */
+    private static boolean isNullOpPushable(int columnType, int opType) {
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT -> false;
+            case ColumnType.CHAR, ColumnType.FLOAT, ColumnType.DOUBLE -> opType == OP_IS_NOT_NULL;
+            default -> true;
+        };
+    }
+
+    /**
      * Rebuilds a constant DECIMAL function so its storage tag and scale match the
      * column's, which is what {@link ParquetRowGroupFilter#prepareFilterList} relies
      * on when it dispatches {@code getDecimal<N>} based on the column tag and pushes
@@ -375,7 +420,9 @@ public class PushdownFilterExtractor implements Mutable {
         int columnType = metadata.getColumnType(columnIndex);
 
         if (isNullConstant(valueNode)) {
-            conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NULL));
+            if (isNullOpPushable(columnType, OP_IS_NULL)) {
+                conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NULL));
+            }
             return;
         }
 
@@ -449,6 +496,9 @@ public class PushdownFilterExtractor implements Mutable {
         }
 
         int columnType = metadata.getColumnType(columnIndex);
+        if (!isNullOpPushable(columnType, OP_IS_NOT_NULL)) {
+            return;
+        }
         conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NOT_NULL));
     }
 

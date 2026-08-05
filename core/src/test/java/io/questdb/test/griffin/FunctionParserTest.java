@@ -1531,6 +1531,9 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
             if (type == ColumnType.STRING || type == ColumnType.SYMBOL) {
                 assertEquals(msg, -1, ColumnType.overloadDistance(ColumnType.NULL, type));
+            } else if (type == ColumnType.CURSOR) {
+                // a NULL literal is a scalar, never a cursor (scalar sub-query), so it must not overload to CURSOR
+                assertEquals(msg, OVERLOAD_NONE, ColumnType.overloadDistance(ColumnType.NULL, type));
             } else {
                 assertEquals(msg, 0, ColumnType.overloadDistance(ColumnType.NULL, type));
             }

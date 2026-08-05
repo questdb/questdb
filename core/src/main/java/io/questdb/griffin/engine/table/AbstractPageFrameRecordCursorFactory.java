@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -54,13 +55,13 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
      */
     protected final IntList columnSizeShifts;
     /**
-     * The partition frame cursor factory.
-     */
-    protected final PartitionFrameCursorFactory partitionFrameCursorFactory;
-    /**
      * The page frame cursor.
      */
     protected TablePageFrameCursor pageFrameCursor;
+    /**
+     * The partition frame cursor factory.
+     */
+    protected PartitionFrameCursorFactory partitionFrameCursorFactory;
 
     /**
      * Constructs a new page frame record cursor factory.
@@ -128,8 +129,13 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     protected void _close() {
-        Misc.free(pageFrameCursor);
-        Misc.free(partitionFrameCursorFactory);
+        final TablePageFrameCursor pageFrameCursor = this.pageFrameCursor;
+        this.pageFrameCursor = null;
+        final PartitionFrameCursorFactory partitionFrameCursorFactory = this.partitionFrameCursorFactory;
+        this.partitionFrameCursorFactory = null;
+        Throwable failure = Misc.freeBestEffort(null, pageFrameCursor);
+        failure = Misc.freeBestEffort(failure, partitionFrameCursorFactory);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     /**

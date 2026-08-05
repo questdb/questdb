@@ -2284,6 +2284,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testFastJoinWithJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
+            final boolean isMixedTimestampPrecision = leftTableTimestampType.getTimestampType() != rightTableTimestampType.getTimestampType();
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, avg(p.price) window_price " +
                         "from trades t " +
@@ -2537,7 +2538,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "1970-01-01T00:00:00.001001Z" : "1970-01-01T00:00:00.000001001Z") + "\",\"MAX\")]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            (includePrevailing ? "            Frame forward scan on: prices\n" :
+                            (includePrevailing || isMixedTimestampPrecision ? "            Frame forward scan on: prices\n" :
                                     "            Interval forward scan on: prices\n" +
                                     "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "1969-12-31T23:58:00.001001Z" : "1969-12-31T23:58:00.001001000Z")
                                                                        : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "1969-12-31T23:58:00.000001Z" : "1969-12-31T23:58:00.000001001Z")) + "\",\"MAX\")]\n"))
@@ -3320,6 +3321,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testMasterHasIntervalFilter() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
+            final boolean isMixedTimestampPrecision = leftTableTimestampType.getTimestampType() != rightTableTimestampType.getTimestampType();
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
                         "from (select * from trades where ts <= '2023-01-01T09:04:00.000000Z') t " +
@@ -3369,8 +3371,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "              intervals: [(\"MIN\",\"2023-01-01T09:04:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000000Z" : "000000000Z") + "\")]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Interval forward scan on: prices\n" +
-                            "              intervals: [(\"MIN\",\"" + (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:05:00.000000Z" : "2023-01-01T09:05:00.000000000Z") + "\")]\n")
+                            (isMixedTimestampPrecision
+                                    ? "            Frame forward scan on: prices\n"
+                                    : "            Interval forward scan on: prices\n" +
+                                      "              intervals: [(\"MIN\",\"" + (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:05:00.000000Z" : "2023-01-01T09:05:00.000000000Z") + "\")]\n"))
                     .timestamp("ts")
                     .returns(sink);
 
@@ -3394,8 +3398,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "              intervals: [(\"MIN\",\"2023-01-01T09:04:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000000Z" : "000000000Z") + "\")]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Interval forward scan on: prices\n" +
-                            "              intervals: [(\"MIN\",\"" + (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:05:00.000000Z" : "2023-01-01T09:05:00.000000000Z") + "\")]\n")
+                            (isMixedTimestampPrecision
+                                    ? "            Frame forward scan on: prices\n"
+                                    : "            Interval forward scan on: prices\n" +
+                                      "              intervals: [(\"MIN\",\"" + (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:05:00.000000Z" : "2023-01-01T09:05:00.000000000Z") + "\")]\n"))
                     .timestamp("ts")
                     .returns(sink);
 
@@ -3448,7 +3454,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "              intervals: [(\"2023-01-01T09:04:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000001Z" : "000000001Z") + "\",\"MAX\")]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            (includePrevailing ?
+                            (includePrevailing || isMixedTimestampPrecision ?
                                     "            Frame forward scan on: prices\n"
                                     : "            Interval forward scan on: prices\n" +
                                       "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:03:00.000001Z" : "2023-01-01T09:03:00.000001000Z")
@@ -4527,6 +4533,59 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinFailsOnOutOfRangeStaticBound() throws Exception {
+        // TimestampDriver.from(long, char) narrows to int for m/h/d/w and multiplies unchecked,
+        // so a bound wider than the designated timestamp's units can carry came back as a
+        // different width and the join then evaluated a frame nobody wrote. SqlOptimiser stores a
+        // WINDOW JOIN PRECEDING bound positive, so on nanoseconds 300_000 days wraps past
+        // Long.MAX_VALUE to +86_496 days rather than to a negative span (the negated form, and
+        // with it the negative span, belongs to the plain RANGE frame); 4_294_967_296 days
+        // narrows to exactly 0.
+        //
+        // WindowContextImpl.toTimestampUnits already refused this for a plain RANGE frame; the
+        // four WINDOW JOIN conversion sites now share that one guard rather than carrying a
+        // fourth copy of the arithmetic. The interval-pruning site is the worse of the two: its
+        // converted bounds feed intrinsicModel.mergeIntervalModel, so a wrapped bound narrows
+        // the slave scan interval and drops rows before evaluation.
+        //
+        // 300_000 days is in range for microseconds (ceiling 106_751_991 days), so pin the
+        // nanosecond pairing to keep the assertion about the bound and not the parameterisation.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.NANO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.NANO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO master VALUES ('2024-01-01T02:00:00.000000000Z')");
+            execute("INSERT INTO slave VALUES (1.0, '2024-01-01T01:00:00.000000000Z')");
+
+            assertQuery("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 300_000 day PRECEDING AND 0 second FOLLOWING
+                    EXCLUDE PREVAILING
+                    """)
+                    .noLeakCheck()
+                    .fails(79, "RANGE frame start is out of range for the designated timestamp [width=300000 day, max=106751 day]");
+
+            // Without a WHERE there is no pushed interval model, so the interval-pruning
+            // conversion never runs and only the join site is covered. This variant pushes one,
+            // which is the site whose bounds feed mergeIntervalModel and so narrow the slave
+            // scan. It throws first, before the join site.
+            assertQuery("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 300_000 day PRECEDING AND 0 second FOLLOWING
+                    EXCLUDE PREVAILING
+                    WHERE m.ts > '2024-01-01T00:00:00.000000000Z'
+                    """)
+                    .noLeakCheck()
+                    .fails(79, "RANGE frame start is out of range for the designated timestamp [width=300000 day, max=106751 day]");
+        });
+    }
+
+    @Test
     public void testWindowJoinFailsOnSlaveColumnsInFilter() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -4756,6 +4815,45 @@ public class WindowJoinTest extends AbstractCairoTest {
                             AX	100.0	1970-01-01T00:00:05.000000Z	30.0
                             AX	200.0	1970-01-02T00:00:05.000000Z	90.0
                             AX	200.0	1970-01-02T00:00:05.000000Z	90.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowJoinMixedPrecisionBoundSurvivesIntervalPruning() throws Exception {
+        // The interval-pruning conversion used to run even when
+        // RuntimeIntervalModelBuilder.merge() would discard its result, which it does whenever
+        // the master model's timestamp type differs from the slave builder's. 110_000 days sits
+        // inside the microsecond ceiling of 106_751_991 that governs this frame but past the
+        // nanosecond one of 106_751, so range-checking the pruning site against the slave's type
+        // rejected a frame the join evaluates correctly - and only when a WHERE created a pushed
+        // interval model, so the very same query compiled fine without one. The block now
+        // applies merge()'s own type precondition and skips instead.
+        //
+        // Timestamp types come from the DDL here, so run this once rather than per parameter.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO master VALUES ('2024-01-02T02:00:00.000000Z')");
+            execute("INSERT INTO slave VALUES (1.5, '2024-01-02T01:00:00.000000000Z')");
+
+            assertQuery("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 110_000 day PRECEDING AND 0 second FOLLOWING
+                    EXCLUDE PREVAILING
+                    WHERE m.ts > '2024-01-01T00:00:00.000000Z'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            ts\tagg
+                            2024-01-02T02:00:00.000000Z\t1.5
                             """);
         });
     }
@@ -5881,7 +5979,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
             boolean isLeftMicroTs = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType());
             boolean isRightMicroTs = ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType());
-            String planFragment = includePrevailing
+            String planFragment = includePrevailing || isLeftMicroTs != isRightMicroTs
                     ? "Frame forward scan on: prices"
                     : String.format("""
                             Interval forward scan on: prices

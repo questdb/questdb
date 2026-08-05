@@ -62,7 +62,7 @@ import org.jetbrains.annotations.NotNull;
  *        \/              row 4 ] <- frame 1 end             |
  * </pre>
  */
-class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
+class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCursorFactory.RecordFreer, RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFilteredNegativeLimitRecordCursor.class);
     private final int dispatchLimit;
     // Used for random access: we may have to deserialize Parquet page frame.
@@ -89,7 +89,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         PageFrameMemoryPool frameMemoryPool = null;
         try {
             record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-            frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
+            frameMemoryPool = new PageFrameMemoryPool(configuration);
         } catch (Throwable th) {
             Misc.free(record);
             Misc.free(frameMemoryPool);
@@ -123,6 +123,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         }
     }
 
+    @Override
     public void freeRecords() {
         Misc.free(record);
         Misc.free(recordB);

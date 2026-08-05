@@ -52,6 +52,18 @@ final class WindowLightRecord implements Record {
     }
 
     @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        int encoded = sourceMap.getQuick(col);
+        return encoded >= 0 ? base.getArrayDimLen(encoded, columnType, dim) : narrow.getArrayDimLen(-encoded - 1, columnType, dim);
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        int encoded = sourceMap.getQuick(col);
+        return encoded >= 0 ? base.getArrayDouble1d2d(encoded, columnType, idx0, idx1) : narrow.getArrayDouble1d2d(-encoded - 1, columnType, idx0, idx1);
+    }
+
+    @Override
     public BinarySequence getBin(int col) {
         int encoded = sourceMap.getQuick(col);
         return encoded >= 0 ? base.getBin(encoded) : narrow.getBin(-encoded - 1);

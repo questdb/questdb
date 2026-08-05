@@ -28,6 +28,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.NullRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
@@ -46,7 +47,22 @@ public class ExtraNullColumnRecord implements Record {
 
     @Override
     public ArrayView getArray(int col, int columnType) {
-        return col < columnSplit ? base.getArray(col, columnType) : null;
+        if (col < columnSplit) {
+            return base.getArray(col, columnType);
+        }
+        // A spliced column has no array behind it. Hand out a NULL ArrayView, not a Java null, as
+        // the sibling join records do, so every caller sees a NULL array rather than nothing.
+        return ArrayConstant.NULL;
+    }
+
+    @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        return col < columnSplit ? base.getArrayDimLen(col, columnType, dim) : Numbers.INT_NULL;
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        return col < columnSplit ? base.getArrayDouble1d2d(col, columnType, idx0, idx1) : Double.NaN;
     }
 
     public Record getBaseRecord() {

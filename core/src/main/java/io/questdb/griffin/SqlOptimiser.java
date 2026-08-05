@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
@@ -595,6 +596,32 @@ public class SqlOptimiser implements Mutable {
         return model.getTimestamp() != null
                 && model.getOrderBy().size() == 1
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
+    }
+
+    private static boolean isStaticTimestampPredicate(ExpressionNode node) {
+        if (node == null) {
+            return true;
+        }
+        if (node.type == CONSTANT) {
+            return node.token == null || Chars.indexOf(node.token, '$') < 0;
+        }
+        if (node.type == LITERAL) {
+            return true;
+        }
+        if (node.type != OPERATION
+                && node.type != SET_OPERATION
+                && (node.type != FUNCTION
+                || !(isInKeyword(node.token)
+                || isBetweenKeyword(node.token)
+                || Chars.equalsIgnoreCase(node.token, "and_offset")))) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!isStaticTimestampPredicate(node.args.getQuick(i))) {
+                return false;
+            }
+        }
+        return isStaticTimestampPredicate(node.lhs) && isStaticTimestampPredicate(node.rhs);
     }
 
     private static boolean isSymbolColumn(ExpressionNode countDistinctExpr, IQueryModel nested) {
@@ -5728,6 +5755,7 @@ public class SqlOptimiser implements Mutable {
                             if (parent.hasTimestampOffset()
                                     && isTimestampPredicate(node, parent)
                                     && referencesOnlyTimestampAlias(node, parent)
+                                    && isStaticTimestampPredicate(node)
                                     && !containsDisallowedFunction(node, timestampCol)) {
                                 // Rewrite column references from virtual timestamp to source column
                                 rewriteTimestampColumnForOffset(node, parent);
@@ -5883,6 +5911,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         final TableToken tableToken = executionContext.getTableTokenIfExists(tableName, lo, hi);
+
         int status = executionContext.getTableStatus(path, tableToken);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
@@ -5908,6 +5937,12 @@ public class SqlOptimiser implements Mutable {
                     throw e;
                 }
                 throw SqlException.position(tableNamePosition).put(e);
+            }
+        } else if (tableToken.isLiveView()) {
+            // live views have _meta but no column data files — read metadata directly
+            try (TableReaderMetadata metadata = new TableReaderMetadata(executionContext.getCairoEngine().getConfiguration(), tableToken)) {
+                metadata.loadMetadata();
+                enumerateColumns(model, metadata);
             }
         } else {
             try (TableReader reader = executionContext.getReader(tableToken)) {
@@ -6322,6 +6357,9 @@ public class SqlOptimiser implements Mutable {
                     break;
                 case IQueryModel.SHOW_CREATE_TABLE:
                     tableFactory = sqlParserCallback.generateShowCreateTableFactory(model, executionContext, path);
+                    break;
+                case IQueryModel.SHOW_CREATE_LIVE_VIEW:
+                    tableFactory = sqlParserCallback.generateShowCreateLiveViewFactory(model, executionContext, path);
                     break;
                 case IQueryModel.SHOW_CREATE_MAT_VIEW:
                     tableFactory = sqlParserCallback.generateShowCreateMatViewFactory(model, executionContext, path);
@@ -7608,6 +7646,7 @@ public class SqlOptimiser implements Mutable {
             throw SqlException.$(ac.getWindowNamePosition(), "window '").put(windowName).put("' is not defined");
         }
         ac.copySpecFrom(namedWindow, expressionNodePool);
+        ac.setResolvedWindow(windowName, namedWindow.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE);
     }
 
     /**
