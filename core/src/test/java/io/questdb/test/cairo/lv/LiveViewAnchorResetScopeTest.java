@@ -519,10 +519,10 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                         d64 DECIMAL(18, 1), d128 DECIMAL(38, 1), d256 DECIMAL(75, 1)
                     ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
             execute("INSERT INTO base (ts, sym, y, n, dt, d8, d16, d32, d64, d128, d256) VALUES "
-                    + firstValueRow("2026-01-01T11:00:00.000000Z", "a", "1") + ", "
-                    + firstValueRow("2026-01-01T11:00:01.000000Z", "b", "2") + ", "
-                    + firstValueRow("2026-01-01T11:00:02.000000Z", "c", "3") + ", "
-                    + firstValueRow("2026-01-01T11:00:03.000000Z", "d", "4"));
+                    + positionalValueRow("2026-01-01T11:00:00.000000Z", "a", "1") + ", "
+                    + positionalValueRow("2026-01-01T11:00:01.000000Z", "b", "2") + ", "
+                    + positionalValueRow("2026-01-01T11:00:02.000000Z", "c", "3") + ", "
+                    + positionalValueRow("2026-01-01T11:00:03.000000Z", "d", "4"));
             drainWalQueue();
             execute("""
                     CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
@@ -555,9 +555,9 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 Assert.assertNotNull("the view must carry an anchored window", window);
                 Assert.assertEquals(4, window.getAnchorMapSize());
 
-                commitFirstValues(firstValueRow("2026-01-02T01:00:00.000000Z", "a", "5"), job);
-                commitFirstValues(firstValueRow("2026-01-03T01:00:00.000000Z", "a", "6") + ", "
-                        + firstValueRow("2026-01-03T02:00:00.000000Z", "a", "8"), job);
+                commitPositionalValues(positionalValueRow("2026-01-02T01:00:00.000000Z", "a", "5"), job);
+                commitPositionalValues(positionalValueRow("2026-01-03T01:00:00.000000Z", "a", "6") + ", "
+                        + positionalValueRow("2026-01-03T02:00:00.000000Z", "a", "8"), job);
 
                 Assert.assertEquals(1, window.getCompactionCount());
                 Assert.assertEquals(
@@ -567,7 +567,7 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 );
                 assertRingArenasReclaimed(anchorable, fourPartitionArenaBytes);
 
-                commitFirstValues(firstValueRow("2026-01-03T03:00:00.000000Z", "a", "9"), job);
+                commitPositionalValues(positionalValueRow("2026-01-03T03:00:00.000000Z", "a", "9"), job);
 
                 assertNoRefreshFaults("lv");
                 // The anchor resets every ring at each bucket crossing, so the first row of each
@@ -588,6 +588,110 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                                 2026-01-03T01:00:00.000000Z\ta\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
                                 2026-01-03T02:00:00.000000Z\ta\t6.0\t6.0\t6\t6\t2026-01-03T01:00:00.000Z\t2026-01-03T01:00:00.000Z\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0
                                 2026-01-03T03:00:00.000000Z\ta\t6.0\t6.0\t6\t6\t2026-01-03T01:00:00.000Z\t2026-01-03T01:00:00.000Z\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0
+                                2026-01-01T11:00:01.000000Z\tb\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-01T11:00:02.000000Z\tc\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-01T11:00:03.000000Z\td\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                """);
+            }
+        });
+    }
+
+    /**
+     * The same sweep over the {@code last_value} family: 9 classes declaring the hooks plus 9
+     * IGNORE NULLS subclasses that inherit them whole.
+     * <p>
+     * This family is where the parent/child hazard C2.2 met does NOT bite, and the case exists
+     * to hold that reading. {@code last_value} keeps no frame-size slot for IGNORE NULLS to
+     * drop, so parent and child both put the ring geometry at slots 0 and 2 and the child
+     * inherits its parent's pair rather than declaring one. Reading every column both ways is
+     * what makes that inheritance a tested claim rather than an assumption: a child whose
+     * layout had in fact shifted would read {@code size} as a start offset, and the range check
+     * in {@code AbstractWindowFunctionFactory.copyRingSlab} would fail the refresh.
+     */
+    @Test
+    public void testFrontierSweepReclaimsEveryLastValueRingArena() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            // One column per implementation family: DOUBLE and LONG carry their own classes,
+            // DATE routes through the shared helper bases, and the six decimal widths pick six
+            // more pairs (precision 2 -> DECIMAL8, 4 -> DECIMAL16, 9 -> DECIMAL32,
+            // 18 -> DECIMAL64, 38 -> DECIMAL128, 75 -> DECIMAL256).
+            execute("""
+                    CREATE TABLE base (
+                        ts TIMESTAMP, sym SYMBOL, y DOUBLE, n LONG, dt DATE,
+                        d8 DECIMAL(2, 1), d16 DECIMAL(4, 1), d32 DECIMAL(9, 1),
+                        d64 DECIMAL(18, 1), d128 DECIMAL(38, 1), d256 DECIMAL(75, 1)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("INSERT INTO base (ts, sym, y, n, dt, d8, d16, d32, d64, d128, d256) VALUES "
+                    + positionalValueRow("2026-01-01T11:00:00.000000Z", "a", "1") + ", "
+                    + positionalValueRow("2026-01-01T11:00:01.000000Z", "b", "2") + ", "
+                    + positionalValueRow("2026-01-01T11:00:02.000000Z", "c", "3") + ", "
+                    + positionalValueRow("2026-01-01T11:00:03.000000Z", "d", "4"));
+            drainWalQueue();
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, sym,
+                           last_value(y) OVER w AS ly, last_value(y) IGNORE NULLS OVER w AS my,
+                           last_value(n) OVER w AS ln, last_value(n) IGNORE NULLS OVER w AS mn,
+                           last_value(dt) OVER w AS lt, last_value(dt) IGNORE NULLS OVER w AS mt,
+                           last_value(d8) OVER w AS l8, last_value(d8) IGNORE NULLS OVER w AS m8,
+                           last_value(d16) OVER w AS l16, last_value(d16) IGNORE NULLS OVER w AS m16,
+                           last_value(d32) OVER w AS l32, last_value(d32) IGNORE NULLS OVER w AS m32,
+                           last_value(d64) OVER w AS l64, last_value(d64) IGNORE NULLS OVER w AS m64,
+                           last_value(d128) OVER w AS l128, last_value(d128) IGNORE NULLS OVER w AS m128,
+                           last_value(d256) OVER w AS l256, last_value(d256) IGNORE NULLS OVER w AS m256
+                    FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts
+                                 RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW
+                                 ANCHOR DAILY '00:00')""");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' must be registered", instance);
+                final ObjList<WindowFunction> anchorable = anchorableFunctions(instance);
+                Assert.assertEquals("the anchored window carries all 18 last_value calls", 18, anchorable.size());
+                final long[] fourPartitionArenaBytes = captureRingArenas(anchorable, 4);
+
+                final LiveViewWindow window = instance.getAnchorWindow();
+                Assert.assertNotNull("the view must carry an anchored window", window);
+                Assert.assertEquals(4, window.getAnchorMapSize());
+
+                commitPositionalValues(positionalValueRow("2026-01-02T01:00:00.000000Z", "a", "5"), job);
+                commitPositionalValues(positionalValueRow("2026-01-03T01:00:00.000000Z", "a", "6") + ", "
+                        + positionalValueRow("2026-01-03T02:00:00.000000Z", "a", "8"), job);
+
+                Assert.assertEquals(1, window.getCompactionCount());
+                Assert.assertEquals(
+                        "only the account that followed the frontier survives in the anchor map",
+                        1,
+                        window.getAnchorMapSize()
+                );
+                assertRingArenasReclaimed(anchorable, fourPartitionArenaBytes);
+
+                commitPositionalValues(positionalValueRow("2026-01-03T03:00:00.000000Z", "a", "9"), job);
+
+                assertNoRefreshFaults("lv");
+                // The anchor resets every ring at each bucket crossing, so the first row of each
+                // of a's three buckets sees an empty frame and every later row reports its own
+                // immediate predecessor - which is what tells this expected table apart from the
+                // first_value one over the same fixture, where both later rows report the
+                // bucket's opening row instead. The two spellings must agree column for column.
+                assertQuery("""
+                        SELECT ts, sym, ly, my, ln, mn, lt, mt, l8, m8, l16, m16,
+                               l32, m32, l64, m64, l128, m128, l256, m256
+                        FROM lv ORDER BY sym, ts""")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tly\tmy\tln\tmn\tlt\tmt\tl8\tm8\tl16\tm16\tl32\tm32\tl64\tm64\tl128\tm128\tl256\tm256
+                                2026-01-01T11:00:00.000000Z\ta\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-02T01:00:00.000000Z\ta\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-03T01:00:00.000000Z\ta\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-03T02:00:00.000000Z\ta\t6.0\t6.0\t6\t6\t2026-01-03T01:00:00.000Z\t2026-01-03T01:00:00.000Z\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0
+                                2026-01-03T03:00:00.000000Z\ta\t8.0\t8.0\t8\t8\t2026-01-03T02:00:00.000Z\t2026-01-03T02:00:00.000Z\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0
                                 2026-01-01T11:00:01.000000Z\tb\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
                                 2026-01-01T11:00:02.000000Z\tc\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
                                 2026-01-01T11:00:03.000000Z\td\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
@@ -742,12 +846,12 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
     }
 
     /**
-     * One row carrying the same magnitude in every type {@code first_value} has its own RANGE
-     * implementation for. The DATE column takes the row's own timestamp at millisecond
-     * resolution, so the expected table reads the opening row of a bucket back rather than an
-     * opaque epoch offset.
+     * One row carrying the same magnitude in every type {@code first_value} and
+     * {@code last_value} each have their own RANGE implementation for. The DATE column takes
+     * the row's own timestamp at millisecond resolution, so the expected tables read a row of
+     * the bucket back rather than an opaque epoch offset.
      */
-    private static String firstValueRow(String ts, String sym, String value) {
+    private static String positionalValueRow(String ts, String sym, String value) {
         return "('" + ts + "', '" + sym + "', " + value + ".0, " + value
                 + ", '" + ts.substring(0, ts.length() - 4) + "Z'::date"
                 + (", " + value + ".0m").repeat(6)
@@ -774,7 +878,7 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
         driveRefreshToQuiescence(job);
     }
 
-    private void commitFirstValues(String row, LiveViewRefreshJob job) throws Exception {
+    private void commitPositionalValues(String row, LiveViewRefreshJob job) throws Exception {
         execute("INSERT INTO base (ts, sym, y, n, dt, d8, d16, d32, d64, d128, d256) VALUES " + row);
         drainWalQueue();
         driveRefreshToQuiescence(job);

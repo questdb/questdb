@@ -182,7 +182,8 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                             initialBufferSize,
                             timestampIndex,
                             partitionByKeyTypes,
-                            liveView
+                            liveView,
+                            configuration
                     );
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
@@ -382,7 +383,8 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                             initialBufferSize,
                             timestampIndex,
                             partitionByKeyTypes,
-                            liveView
+                            liveView,
+                            configuration
                     );
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
@@ -681,10 +683,11 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx,
-                    partitionByKeyTypes, liveView);
+                    partitionByKeyTypes, liveView, configuration);
             frameIncludesCurrentValue = rangeHi == 0;
         }
 
@@ -1749,6 +1752,9 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
     public static class LastValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
         protected final LongList freeList = new LongList();
@@ -1776,7 +1782,8 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -1785,6 +1792,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             this.memory = memory;
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
+            this.configuration = configuration;
 
             this.liveView = liveView;
             if (liveView) {
@@ -1811,6 +1819,44 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 0 is the ring's start offset,
+         * slot 2 its capacity. The IGNORE NULLS subclass keeps every slot where this class puts
+         * it - unlike {@code first_value}, {@code last_value} carries no frame-size slot for
+         * IGNORE NULLS to drop - so it inherits this pair rather than declaring its own.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 0, 2, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override

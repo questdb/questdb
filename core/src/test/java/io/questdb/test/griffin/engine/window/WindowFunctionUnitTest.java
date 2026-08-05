@@ -418,7 +418,8 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                             2,
                             0,
                             null,
-                            false
+                            false,
+                            configuration
                     );
                 },
                 (a, b) -> a
@@ -539,7 +540,8 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                             2,
                             0,
                             null,
-                            false
+                            false,
+                            configuration
                     );
                 },
                 (a, b) -> a
