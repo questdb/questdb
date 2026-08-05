@@ -210,6 +210,20 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
      * to the assertion message so the diff is readable at the point of failure. Valid only after the count
      * pass has run.
      */
+    /**
+     * The single durability op armed at crash point {@code k}, as {@code <n> <kind> <path>}. A failure at a
+     * crash point is far easier to act on when it names the barrier it crashed at rather than just an index.
+     * Valid only after the count pass has run.
+     */
+    protected String phaseDurabilityOp(int k) {
+        if (phaseFirstOp < 1) {
+            return "<count pass has not run>";
+        }
+        final java.util.List<String> log = crashFf.durabilityOpLog();
+        final int idx = phaseFirstOp - 1 + k - 1;
+        return idx >= 0 && idx < log.size() ? log.get(idx) : "<op index out of range>";
+    }
+
     protected String phaseDurabilityOps() {
         if (phaseFirstOp < 1) {
             return "<count pass has not run>";
@@ -218,6 +232,35 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         final int from = Math.min(phaseFirstOp - 1, log.size());
         final int to = Math.min(from + phaseOpCount, log.size());
         return String.join("\n", log.subList(from, to));
+    }
+
+    /**
+     * COUNT PASS ONLY: run {@code workload}'s commit phase with no fault armed and return {@code N}, the
+     * number of durability ops it performs — without paying for the sweep.
+     * <p>
+     * A randomized workload's N is not known until it has been generated and committed once, but the sweep's
+     * cap has to be chosen BEFORE the sweep: pick it too low and the run dies on the truncation bar rather
+     * than on a durability defect. This lets a caller size the cap to the workload it actually drew (or
+     * reject a pathologically large one) instead of pinning a constant that only suits one fixed seed.
+     * <p>
+     * Uses the same setup/commit/teardown/reclaim sequence as the sweep's own count pass, so calling this
+     * first and then {@link #forEachAdaptiveCrashPoint(AdaptiveCrashWorkload, int)} on the SAME workload
+     * instance is safe — the sweep re-runs its own count pass from an equivalent baseline.
+     */
+    protected int probeCommitDurabilityOps(AdaptiveCrashWorkload workload) throws Exception {
+        if (crashFf == null) {
+            throw new IllegalStateException("call runWithCrashFacade(...) first");
+        }
+        final java.util.Set<Long> nonCacheFdBaseline = new java.util.HashSet<>(crashFf.noCacheOpenFdsSnapshot());
+        workload.setup(0);
+        final int opsBeforeCommit = crashFf.durabilityOpCount();
+        workload.commit();
+        final int n = crashFf.durabilityOpCount() - opsBeforeCommit;
+        workload.teardown();
+        releaseEngineHandles();
+        reclaimLingeringNonCacheFds(nonCacheFdBaseline);
+        Assert.assertTrue("probe: workload commit phase must perform >= 1 durability op (N=" + n + ")", n > 0);
+        return n;
     }
 
     protected SweepResult forEachAdaptiveCrashPoint(AdaptiveCrashWorkload workload, int cap) throws Exception {

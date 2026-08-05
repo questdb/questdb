@@ -64,9 +64,11 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
     private final FuzzRunner fuzzer = new FuzzRunner();
 
-    // testFullLibraryW0 sweeps the full op library at N≈648 durability ops/seed; a full untruncated crash
-    // sweep (assertW0Bars requires cap≥N) is ~85 min/seed, so it is NIGHTLY-only and gets a longer ceiling
-    // than the 20-min default. CI runs the lean testLeanLibraryW0 instead (small N, same op library).
+    // testFullLibraryW0 sweeps the full op library — N=768 durability ops and 3m51s for the legacy fixed seed,
+    // measured on the soak agent 2026-08-05. Soak-only, on a longer ceiling than the 20-min default: one
+    // fresh seed per run, and the soak pipeline re-runs the class back-to-back for continuous coverage.
+    // (Earlier revisions of this comment claimed "N≈648 ... ~85 min/seed" and that CI ran a lean
+    // testLeanLibraryW0 — no such test exists; PR CI covers this family via testConvertPartitionCrashSafeW0.)
     private static final String NIGHTLY_PROP = "questdb.fuzz.nightly";
 
     @Rule
@@ -89,6 +91,11 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     // Default = full destructive op library; the machinery self-check (Task 3) flips this to run a
     // minimal insert/O3 profile. Field lives here; Task 3 only toggles it.
     private boolean fuzzOverrideMinimal = false;
+
+    // Inserts + column RENAME only. Isolates the structural path whose segment _meta publish must follow the
+    // file rename (see testRenameColumnCrashSafeW0); the full library reaches it too, but only for seeds that
+    // happen to emit a rename, which is exactly how it stayed hidden behind the old hard-coded seed.
+    private boolean fuzzOverrideRenameOnly = false;
 
     // Canonical committed-state fingerprint: full ordered dump to a String.
     private String fingerprint(String table) throws SqlException {
@@ -119,6 +126,12 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         return -1;
     }
 
+    private String suspendReason(TableToken token) {
+        final SeqTxnTracker t = engine.getTableSequencerAPI().getTxnTracker(token);
+        return "[errorTag=" + t.getErrorTag() + ", errorMessage=" + t.getErrorMessage()
+                + ", writerTxn=" + t.getWriterTxn() + ", seqTxn=" + t.getSeqTxn() + "]";
+    }
+
     private long tableSeqTxn(String table) {
         final TableToken token = engine.verifyTableName(table);
         return engine.getTableSequencerAPI().getTxnTracker(token).getWriterTxn();
@@ -132,6 +145,10 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             //   cancel notSet null  rollbk cAdd cRem cRen cTyp  data eqTs pDrop pPq  pNat trunc tDrop ttl  repl symV qry  pEnc tFmt cIdx
             fuzzer.setFuzzProbabilities(
                     0.05, 0.2, 0.05, 0.0, 0, 0, 0, 0, 0.6, 0.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        } else if (fuzzOverrideRenameOnly) {
+            //   cancel notSet null  rollbk cAdd cRem cRen cTyp  data eqTs pDrop pPq  pNat trunc tDrop ttl  repl symV qry  pEnc tFmt cIdx
+            fuzzer.setFuzzProbabilities(
+                    0.05, 0.2, 0.05, 0.0, 0.1, 0, 0.15, 0, 0.6, 0.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         } else {
             fuzzer.setFuzzProbabilities(
                     0.05, 0.2, 0.05, 0.0,       // cancelRows, notSet, nullSet, rollback(=0: clean seqTxn map)
@@ -221,7 +238,10 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
         @Override
         public int oracle(int k, int n) throws Exception {
-            Assert.assertFalse("table left suspended after recovery at k=" + k, anyTableSuspended(walToken)); // bar 2
+            // bar 2 — name the barrier and the sequencer's own reason; "suspended at k=661" alone says
+            // nothing about which op failed to roll forward or why.
+            Assert.assertFalse("table left suspended after recovery at k=" + k
+                    + " [op=" + phaseDurabilityOp(k) + "] " + suspendReason(walToken), anyTableSuspended(walToken));
             String recovered = fingerprint(WAL_TABLE);
             final long recoveredSeqTxn = tableSeqTxn(WAL_TABLE);
             int p = matchingState(fp, recoveredSeqTxn, recovered);   // bar 1: causal cut + membership
@@ -265,7 +285,47 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         return runSeedSweep(s0, s1, windowUs, DEFAULT_ADAPTIVE_CRASH_POINT_CAP);
     }
 
+    /**
+     * Sweep one seed, sizing the cap to the workload actually drawn.
+     * <p>
+     * assertW0Bars requires an UNTRUNCATED sweep, so a fixed cap silently converts "this seed generated more
+     * work than the last one" into a durability-looking failure. Probe N first, then sweep at
+     * {@code max(capFloor, N)}. Returns {@code null} if N exceeds {@code hardLimit} — the caller redraws
+     * rather than letting one pathological workload eat the nightly's budget.
+     */
+    private SweepResult runSeedSweepAutoCap(long s0, long s1, int windowUs, int capFloor, int hardLimit) throws Exception {
+        applySweepConfig(windowUs);
+        try {
+            final FuzzCrashWorkload workload = new FuzzCrashWorkload(s0, s1);
+            final int n = probeCommitDurabilityOps(workload);
+            if (n > hardLimit) {
+                LOG.info().$("[seed] REJECTED seed ").$(s0).$("L, ").$(s1)
+                        .$("L: N=").$(n).$(" > hard limit ").$(hardLimit).$(" — redrawing").I$();
+                System.out.printf("[seed] REJECTED %dL, %dL: N=%d > hardLimit=%d — redrawing%n", s0, s1, n, hardLimit);
+                return null;
+            }
+            final int cap = Math.max(capFloor, n);
+            LOG.info().$("[seed] sweeping seed ").$(s0).$("L, ").$(s1).$("L: N=").$(n).$(", cap=").$(cap).I$();
+            return forEachAdaptiveCrashPoint(workload, cap);
+        } finally {
+            if (windowUs == 0) {
+                setCurrentMicros(-1);
+            }
+        }
+    }
+
     private SweepResult runSeedSweep(long s0, long s1, int windowUs, int cap) throws Exception {
+        applySweepConfig(windowUs);
+        try {
+            return forEachAdaptiveCrashPoint(new FuzzCrashWorkload(s0, s1), cap);
+        } finally {
+            if (windowUs == 0) {
+                setCurrentMicros(-1);
+            }
+        }
+    }
+
+    private void applySweepConfig(int windowUs) {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // 1h >> any test commit() duration: fresh-table lastEpochTs==0 fires exactly one deterministic
         // epoch on batch 1 and nothing can reach 1h to fire a second -- see Budget & runtime / Mechanism
@@ -278,13 +338,6 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             // With the real clock, load jitter changed batch boundaries and therefore changed durability-op
             // identity between adjacent k values, invalidating the W=0 monotone-staircase oracle.
             setCurrentMicros(3_600_001_000L);
-        }
-        try {
-            return forEachAdaptiveCrashPoint(new FuzzCrashWorkload(s0, s1), cap);
-        } finally {
-            if (windowUs == 0) {
-                setCurrentMicros(-1);
-            }
         }
     }
 
@@ -413,16 +466,139 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     private static final long[] FIXED_SEEDS0 = {1234L, 22L, 8080L};
     private static final long[] FIXED_SEEDS1 = {5678L, 33L, 9090L};
 
-    // NIGHTLY-only (run with -Dquestdb.fuzz.nightly=true): the full op library currently gives N≈828
-    // durability ops and assertW0Bars requires a FULL untruncated sweep (cap≥N), so this is ~85 min for one
-    // seed — far past the regular CI ceiling (the @Rule Timeout above lifts to 3h under the nightly flag).
-    // One representative seed; cap 900 avoids truncation. CI covers the ordering fix via the deterministic
-    // testConvertPartitionCrashSafeW0.
+    // ONE fresh seed per run. A hard-coded pair replays one workload forever: once green it stays green, so
+    // the sweep stops being a fuzzer and becomes a (very expensive) regression test. It also under-covers the
+    // op library — one 20-txn workload cannot emit all 13 enabled op types, and the historical pair
+    // (1234,5678) emits 7: never ADD COLUMN (p=0.10, the structural op that commits _cv), never a column type
+    // change, covering index, symbol-capacity change, TTL, or parquet encoding.
+    //
+    // Coverage accumulates across RUNS, not within one: the soak pipeline re-runs this class back-to-back, so
+    // a new workload every invocation is what makes continuous fuzzing worth the agent time. Sweeping several
+    // seeds inside one invocation would only make each run longer and each failure slower to surface.
+    //
+    // PR CI and local runs keep the fixed pair — a randomized failure there would not be reproducible from the
+    // PR alone. Replay a soak failure with -Dquestdb.fuzz.seed=<s0>,<s1>; the pair is printed by
+    // TestUtils.generateRandom, echoed per run below, and named in the failure message.
+    private static final String SEED_PROP = "questdb.fuzz.seed";
+    // A drawn workload's N varies, and assertW0Bars needs cap >= N. Floor keeps the historical cap so a small
+    // seed sweeps at least as much as before; the hard limit rejects an outlier that would stretch one soak
+    // iteration far past the others (a redraw costs one count pass; a 3000-point sweep costs ~15 minutes).
+    private static final int SWEEP_CAP_FLOOR = 900;
+    private static final int SWEEP_CAP_HARD_LIMIT = 2000;
+    private static final int SEED_DRAW_ATTEMPTS = 8;
+
+    /**
+     * The seed for THIS run: the replay override if set, else the fixed pair when the soak flag is off, else
+     * a freshly drawn pair.
+     */
+    private long[] drawSeed(Rnd redraw) {
+        final String replay = System.getProperty(SEED_PROP);
+        if (replay != null) {
+            final int comma = replay.indexOf(',');
+            Assert.assertTrue("-D" + SEED_PROP + " must be '<s0>,<s1>' (was '" + replay + "')", comma > 0);
+            return new long[]{
+                    Long.parseLong(replay.substring(0, comma).trim()),
+                    Long.parseLong(replay.substring(comma + 1).trim())
+            };
+        }
+        if (redraw == null) {
+            return new long[]{FIXED_SEEDS0[0], FIXED_SEEDS1[0]};
+        }
+        return new long[]{redraw.nextLong(), redraw.nextLong()};
+    }
+
+    /**
+     * Run {@code body} on one seed, redrawing if the drawn workload exceeds the hard limit, and naming the
+     * seed on failure — a soak red whose workload cannot be reproduced is barely more useful than no failure.
+     */
+    private void withSweepSeed(SeedSweep body) throws Exception {
+        final boolean randomized = System.getProperty(SEED_PROP) == null && Boolean.getBoolean(NIGHTLY_PROP);
+        final Rnd redraw = randomized ? TestUtils.generateRandom(LOG) : null;
+        long[] seed = drawSeed(redraw);
+        SweepResult r = null;
+        for (int attempt = 0; attempt < SEED_DRAW_ATTEMPTS && r == null; attempt++) {
+            if (attempt > 0) {
+                Assert.assertNotNull("pinned seed exceeded the N<=" + SWEEP_CAP_HARD_LIMIT + " hard limit and "
+                        + "cannot be redrawn — raise the limit or shrink the workload", redraw);
+                seed = drawSeed(redraw);
+            }
+            try {
+                r = body.run(seed[0], seed[1]);
+            } catch (AssertionError e) {
+                throw new AssertionError("seed " + seed[0] + "L, " + seed[1] + "L (replay with -D" + SEED_PROP
+                        + "=" + seed[0] + "," + seed[1] + "): " + e.getMessage(), e);
+            }
+        }
+        Assert.assertNotNull("no seed under the N<=" + SWEEP_CAP_HARD_LIMIT + " hard limit after "
+                + SEED_DRAW_ATTEMPTS + " draws — the op library got much heavier; re-check the limit", r);
+        System.out.printf("[seed] PASSED with seeds %dL, %dL (N=%d, swept=%d)%n",
+                seed[0], seed[1], r.n, r.sweptPoints);
+    }
+
+    @FunctionalInterface
+    private interface SeedSweep {
+        SweepResult run(long s0, long s1) throws Exception;
+    }
+
+    // NIGHTLY-only (run with -Dquestdb.fuzz.nightly=true). assertW0Bars requires a FULL untruncated sweep
+    // (cap≥N), so the cap is sized to the seed actually drawn rather than pinned to one workload's N.
+    // Measured 2026-08-05 on the soak agent: N=768 for the legacy fixed pair, swept in 3m51s — the "~85 min"
+    // this comment used to claim was never re-measured after the driver got faster.
+    // ONE fresh seed per run; PR CI keeps the fixed pair (see drawSeed).
     @Test
     public void testFullLibraryW0() throws Exception {
+        // Redundant with AbstractAdaptiveCrashSweepTest#assumeNightlySweep, which already gates every method
+        // in this family. Kept deliberately: it is the gate that survives if the class-level one is relaxed
+        // to run the cheap sweeps more often.
         Assume.assumeTrue("full-library crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
                 Boolean.getBoolean(NIGHTLY_PROP));
-        runWithCrashFacade(() -> assertW0Bars(runSeedSweep(FIXED_SEEDS0[0], FIXED_SEEDS1[0], 0, 900)));
+        runWithCrashFacade(() -> withSweepSeed((s0, s1) -> {
+            SweepResult r = runSeedSweepAutoCap(s0, s1, 0, SWEEP_CAP_FLOOR, SWEEP_CAP_HARD_LIMIT);
+            if (r != null) {
+                assertW0Bars(r);
+            }
+            return r;
+        }));
+    }
+
+    /**
+     * DATA BEFORE POINTER for a WAL segment column RENAME.
+     * <p>
+     * {@code metadata.switchTo} publishes a segment {@code _meta} that names the column by its NEW name, and
+     * apply resolves that name to a file. Publishing before {@code renameColumnFiles} left a window where the
+     * durable metadata named {@code new_col_N.d} while the file on disk was still under its old name; a crash
+     * on the {@code _meta.swp} barrier made the segment permanently unappliable and recovery suspended the
+     * table with {@code "WAL segment column too short for committed row range [... actual=-1]"} — actual=-1
+     * being a MISSING file, not a short one.
+     * <p>
+     * The sweep's own oracle is the bar: at EVERY crash point the table must come back unsuspended (bar 2)
+     * on a committed state that really existed (bar 1). Add+rename profile so the sweep concentrates on this
+     * path rather than depending on a seed that happens to emit a rename — which is how it hid behind the old
+     * hard-coded seed for the life of the soak.
+     * <p>
+     * COVERAGE, NOT A REGRESSION PIN — read this before trusting it. Reverting the ordering fix leaves this
+     * test GREEN: at 981 swept crash points neither the rename-only nor the add+rename profile reproduces
+     * the defect on this seed. So it does not discriminate, and it must not be cited as proof the fix works.
+     * The only known reproducer is the full-library seed
+     * {@code -Dquestdb.fuzz.seed=-5599363307717330847,-4230914800796809183}, which cannot serve as a control
+     * either because it still fails afterwards for an unrelated reason (the renamed column's CONTENTS are
+     * not durable when the pointer commits: {@code required=128, actual=0}). What the ordering fix IS backed
+     * by is that it moved that seed's symptom from {@code actual=-1} (missing file) to {@code actual=0}
+     * (file present, empty) and advanced the sweep past the crash point — isolated, since the two earlier
+     * add-column attempts changed neither. Turn this into a real pin once a discriminating workload is found.
+     */
+    @Test
+    public void testRenameColumnCrashSafeW0() throws Exception {
+        runWithCrashFacade(() -> {
+            fuzzOverrideRenameOnly = true;
+            try {
+                SweepResult r = runSeedSweep(1234L, 5678L, 0, 1400);
+                Assert.assertFalse("rename sweep truncated (N > cap) — raise the cap", r.truncated);
+                Assert.assertTrue("sweep must exercise crash points", r.sweptPoints > 1);
+            } finally {
+                fuzzOverrideRenameOnly = false;
+            }
+        });
     }
 
     // CI-fast regression guard for the applyNonStructural events-before-sequencer ordering fix. Deterministic
@@ -499,10 +675,14 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         // real clock makes this nightly-scale sweep intermittently wedge under load. Restore in the finally.
         setCurrentMicros(1_000_000L);
         try {
-            runWithCrashFacade(() -> {
-                SweepResult r = runSeedSweep(FIXED_SEEDS0[0], FIXED_SEEDS1[0], GROUP_WINDOW_WN_US, 700);
+            // Fresh seeds per nightly run, same as W0. Truncation stays TOLERATED here (the W>0 oracle is
+            // per-crash-point, not a full-history bar), so the cap stays a fixed 700 and a heavier seed simply
+            // sweeps its first 700 points — no auto-sizing needed, and the truncation is logged by the driver.
+            runWithCrashFacade(() -> withSweepSeed((s0, s1) -> {
+                SweepResult r = runSeedSweep(s0, s1, GROUP_WINDOW_WN_US, 700);
                 Assert.assertTrue("sweep must exercise >= 1 crash point under W>0", r.sweptPoints >= 1);
-            });
+                return r;
+            }));
         } finally {
             setCurrentMicros(-1); // -1 => real clock (the harness default); do not leak a fixed clock
         }
