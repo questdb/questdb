@@ -404,4 +404,5 @@ public class QwpMessageCursor implements Mutable {
         }
         dictRollbackScratch.setPos(0);
     }
+
 }
