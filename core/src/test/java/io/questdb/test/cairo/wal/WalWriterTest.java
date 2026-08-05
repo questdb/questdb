@@ -80,6 +80,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectBinarySequence;
@@ -625,6 +626,51 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertNull(dataInfo.nextSymbolMapDiff());
 
                 assertFalse(eventCursor.hasNext());
+            }
+        });
+    }
+
+    @Test
+    public void testWalReaderRebindSameSegmentGrowsMapping() throws Exception {
+        // WalReader.of() reuses the column mmaps when rebinding to the SAME
+        // (table, wal, segment) with only a larger rowCount - the live view drain
+        // re-opens a segment once per base commit, so many opens share a segment.
+        // Rebind one reader instance to segment 0 at rowCount 1, 2, 3: the reuse
+        // path must remap each retained fixed- and var-size column in place at the
+        // new size, so every row - including the ones newly in range - reads back
+        // correctly, and nothing leaks (assertMemoryLeak).
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+
+            final String walName;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                walName = walWriter.getWalName();
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * 1000L);
+                    row.putByte(0, (byte) ((i + 1) * 10));
+                    row.putStr(1, "v" + i);
+                    row.append();
+                }
+                walWriter.commit(); // one segment (segment 0), three rows
+            }
+
+            try (WalReader reader = new WalReader(engine.getConfiguration())) {
+                for (int rowCount = 1; rowCount <= 3; rowCount++) {
+                    // The 2nd and 3rd of() rebind to the same segment; only rowCount grows.
+                    reader.of(tableToken, walName, 0, rowCount);
+                    assertEquals(3, reader.getColumnCount());
+                    assertEquals(rowCount, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    final Record record = cursor.getRecord();
+                    for (int i = 0; i < rowCount; i++) {
+                        assertTrue("row " + i + " missing at rowCount " + rowCount, cursor.hasNext());
+                        assertEquals((i + 1) * 10, record.getByte(0));
+                        TestUtils.assertEquals("v" + i, record.getStrA(1));
+                        assertEquals(i * 1000L, record.getTimestamp(2));
+                    }
+                    assertFalse("unexpected extra row at rowCount " + rowCount, cursor.hasNext());
+                }
             }
         });
     }
@@ -1796,7 +1842,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         while (cursor.hasNext()) {
                             assertEquals((segmentId % numOfSegments) * maxRowCount + n, record.getInt(0));
                             assertEquals(n, record.getInt(1)); // New symbol value every row
-                            assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + n), record.getSymA(1));
+                            TestUtils.assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + n), record.getSymA(1));
                             assertEquals(n, record.getRowId());
                             n++;
                         }
@@ -2984,8 +3030,8 @@ public class WalWriterTest extends AbstractCairoTest {
                         TestUtils.assertEquals(String.valueOf((char) (65 + i % 26)), record.getStrA(22));
                         TestUtils.assertEquals("abcdefghijklmnopqrstuvwxyz".substring(0, i % 26 + 1), record.getStrA(23));
 
-                        assertEquals(String.valueOf(i), record.getSymA(24));
-                        assertEquals(String.valueOf((char) (65 + i % 26)), record.getSymA(25));
+                        TestUtils.assertEquals(String.valueOf(i), record.getSymA(24));
+                        TestUtils.assertEquals(String.valueOf((char) (65 + i % 26)), record.getSymA(25));
 
                         TestUtils.assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getSymA(26));
                         TestUtils.assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getStrA(27));
@@ -3498,6 +3544,107 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalReaderSymbolKeyMissUsesNotFoundSentinel() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final TableToken tableToken = createTable(
+                    new TableModel(configuration, tableName, PartitionBy.YEAR)
+                            .col("s", ColumnType.SYMBOL)
+                            .timestamp("ts")
+                            .wal()
+            );
+
+            final String walName;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                walName = walWriter.getWalName();
+
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "present");
+                row.append();
+
+                row = walWriter.newRow(1);
+                row.putSym(0, null);
+                row.append();
+                walWriter.commit();
+            }
+
+            try (WalReader reader = engine.getWalReader(
+                    sqlExecutionContext.getSecurityContext(),
+                    tableToken,
+                    walName,
+                    0,
+                    2
+            )) {
+                final int symbolCount = reader.getSymbolCount(0);
+                Assert.assertEquals(1, symbolCount);
+                Assert.assertEquals(0, reader.getSymbolKey(0, "present", symbolCount));
+                Assert.assertEquals(VALUE_NOT_FOUND, reader.getSymbolKey(0, "missing", symbolCount));
+            }
+        });
+    }
+
+    @Test
+    public void testWalReaderIncrementalSymbolMapsMatchFullRebuild() throws Exception {
+        // A same-segment rebind (the live-view drain re-opens one segment per base
+        // commit) must fold ONLY newly-appended events into the symbol maps instead of
+        // clearing and rescanning the whole event history each time. This asserts two
+        // things: (1) the incrementally-maintained maps resolve every symbol key
+        // identically to a from-scratch full rebuild (correctness), and (2) the
+        // incremental reader folds each DATA record exactly once across N rebinds while
+        // the naive per-bind full rebuild re-folds 1+2+...+N records (the quadratic the
+        // fix removes).
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final TableToken tableToken = createTable(
+                    new TableModel(configuration, tableName, PartitionBy.YEAR)
+                            .col("s1", ColumnType.SYMBOL)
+                            .col("s2", ColumnType.SYMBOL)
+                            .timestamp("ts")
+                            .wal()
+            );
+
+            final int commits = 8;
+            try (
+                    WalWriter walWriter = engine.getWalWriter(tableToken);
+                    WalReader incReader = new WalReader(engine.getConfiguration())
+            ) {
+                final String walName = walWriter.getWalName();
+                long fullFoldTotal = 0;
+                long rowCount = 0;
+                for (int c = 0; c < commits; c++) {
+                    // Each commit reuses a shared symbol, adds a fresh symbol, and leaves
+                    // s2 null until commit 3 (a first-seen-mid-segment symbol column).
+                    TableWriter.Row row = walWriter.newRow(c);
+                    row.putSym(0, "shared");
+                    row.putSym(1, c >= 3 ? "vshared" : null);
+                    row.append();
+                    row = walWriter.newRow(c);
+                    row.putSym(0, "s1_" + c);
+                    row.putSym(1, c >= 3 ? ("v" + c) : null);
+                    row.append();
+                    walWriter.commit();
+                    rowCount += 2;
+
+                    // Incremental rebind on the same reader instance (same segment 0,
+                    // growing rowCount) - after the first bind this folds only new events.
+                    incReader.of(tableToken, walName, 0, rowCount);
+                    // Full-rebuild oracle: a fresh reader always clears + full-walks.
+                    try (WalReader fullReader = new WalReader(engine.getConfiguration())) {
+                        fullReader.of(tableToken, walName, 0, rowCount);
+                        fullFoldTotal += fullReader.getSymbolMapFoldedRecords();
+                        assertSameSymbolResolution(incReader, fullReader, 0);
+                        assertSameSymbolResolution(incReader, fullReader, 1);
+                    }
+                }
+                // Incremental: each of the `commits` DATA records folded exactly once.
+                Assert.assertEquals(commits, incReader.getSymbolMapFoldedRecords());
+                // Naive per-bind full rebuild: re-folds every present record each time.
+                Assert.assertEquals((long) commits * (commits + 1) / 2, fullFoldTotal);
+            }
+        });
+    }
+
+    @Test
     public void testRemovingSymbolColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -3555,8 +3702,8 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(12, record.getInt(0));
-                assertEquals("symb", record.getSymA(1));
-                assertEquals("symc", record.getSymA(2));
+                TestUtils.assertEquals("symb", record.getSymA(1));
+                TestUtils.assertEquals("symc", record.getSymA(2));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -3611,7 +3758,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(133, record.getInt(0));
-                assertEquals("Таке-Сяке", record.getSymA(2));
+                TestUtils.assertEquals("Таке-Сяке", record.getSymA(2));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -4796,14 +4943,14 @@ public class WalWriterTest extends AbstractCairoTest {
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
                     assertEquals(i, record.getInt(1));
-                    assertEquals("sym" + i, record.getSymA(1));
+                    TestUtils.assertEquals("sym" + i, record.getSymA(1));
                     assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
                     assertEquals(i % 2, record.getInt(2));
-                    assertEquals("s" + i % 2, record.getSymA(2));
+                    TestUtils.assertEquals("s" + i % 2, record.getSymA(2));
                     assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
                     assertEquals(i % 2, record.getInt(3));
-                    assertEquals("symbol" + i % 2, record.getSymA(3));
-                    assertEquals(record.getSymB(3), record.getSymA(3));
+                    TestUtils.assertEquals("symbol" + i % 2, record.getSymA(3));
+                    TestUtils.assertEquals(record.getSymB(3), record.getSymA(3));
                     assertEquals("symbol" + i % 2, reader.getSymbolMapReader(3).valueOf(i % 2));
                     i++;
                 }
@@ -4823,12 +4970,12 @@ public class WalWriterTest extends AbstractCairoTest {
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
                     assertEquals(i, record.getInt(1));
-                    assertEquals("sym" + i, record.getSymA(1));
+                    TestUtils.assertEquals("sym" + i, record.getSymA(1));
                     assertEquals(i % 2, record.getInt(2));
-                    assertEquals("s" + i % 2, record.getSymA(2));
+                    TestUtils.assertEquals("s" + i % 2, record.getSymA(2));
                     assertEquals(i % 3, record.getInt(3));
-                    assertEquals("symbol" + i % 3, record.getSymA(3));
-                    assertEquals(record.getSymB(3), record.getSymA(3));
+                    TestUtils.assertEquals("symbol" + i % 3, record.getSymA(3));
+                    TestUtils.assertEquals(record.getSymB(3), record.getSymA(3));
                     i++;
                 }
                 assertEquals(i, reader.size());
@@ -6542,6 +6689,22 @@ public class WalWriterTest extends AbstractCairoTest {
                     "Binary sequences not equals at offset " + i
                             + ". Expected byte: " + expectedByte + ", actual byte: " + actualByte + ".",
                     expectedByte, actualByte
+            );
+        }
+    }
+
+    private static void assertSameSymbolResolution(WalReader a, WalReader b, int col) {
+        final int countB = b.getSymbolCount(col);
+        Assert.assertEquals("symbol count col=" + col, countB, a.getSymbolCount(col));
+        final DirectString va = new DirectString();
+        final DirectString vb = new DirectString();
+        for (int key = 0; key < countB; key++) {
+            final CharSequence sa = a.getSymbolValue(col, key, va);
+            final CharSequence sb = b.getSymbolValue(col, key, vb);
+            Assert.assertEquals(
+                    "value col=" + col + " key=" + key,
+                    sb == null ? null : Chars.toString(sb),
+                    sa == null ? null : Chars.toString(sa)
             );
         }
     }

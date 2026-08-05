@@ -75,6 +75,68 @@ import java.util.HashMap;
 
 public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
+    /**
+     * Connection-reuse resets in {@code onDisconnected()}. The state instance
+     * stays in the HttpConnectionContext's LocalValue slot across reconnects,
+     * so every close-echo-wait flag must be reset or the NEXT connection on
+     * this context inherits it:
+     * <ul>
+     *   <li>{@code hasLostCloseEchoSync} left set makes the reused
+     *       connection's resumeRecv gate discard every valid receive;</li>
+     *   <li>{@code roleChangeCloseInitiated} left set lets an unrelated
+     *       fatal CLOSE on the reused durable-ack connection arm an
+     *       erroneous close-echo wait (beginCloseEchoWaitIfEligible keys on
+     *       this mark);</li>
+     *   <li>{@code closeEchoDeadline} left set makes the reused connection
+     *       believe a close handshake is already in progress.</li>
+     * </ul>
+     */
+    @Test
+    public void testOnDisconnectedResetsCloseEchoWaitState() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+
+                // Drive the connection into the terminal close-echo shape:
+                // role-change close initiated, echo wait armed, frame sync
+                // lost behind an unparseable jammed frame.
+                state.initiateRoleChangeClose();
+                state.beginCloseEchoWait();
+                state.onCloseEchoSyncLost();
+                Assert.assertTrue("test scaffolding", state.isRoleChangeCloseInitiated());
+                Assert.assertTrue("test scaffolding", state.isAwaitingCloseEcho());
+                Assert.assertTrue("test scaffolding", state.hasLostCloseEchoSync());
+
+                state.onDisconnected();
+
+                Assert.assertFalse(
+                        "hasLostCloseEchoSync must reset on disconnect: left set, the reused "
+                                + "connection's resumeRecv gate reads-and-discards every valid receive "
+                                + "and the next client on this context can never ingest anything",
+                        state.hasLostCloseEchoSync()
+                );
+                Assert.assertFalse(
+                        "roleChangeCloseInitiated must reset on disconnect: left set, an unrelated "
+                                + "fatal CLOSE on the reused durable-ack connection satisfies "
+                                + "beginCloseEchoWaitIfEligible and arms a close-echo wait for an echo "
+                                + "contract that connection never entered",
+                        state.isRoleChangeCloseInitiated()
+                );
+                Assert.assertFalse(
+                        "closeEchoDeadline must reset on disconnect",
+                        state.isAwaitingCloseEcho()
+                );
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
     @Test
     public void testAddDataIgnoresZeroLengthInput() throws Exception {
         assertMemoryLeak(() -> {
@@ -735,6 +797,93 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 }));
                 state.processMessage();
                 Assert.assertEquals(QwpIngressProcessorState.Status.NOT_ACCEPTING_WRITES, state.getStatus());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testQwpCannotIngestIntoLiveView() throws Exception {
+        // A live view is isWal()==true, isView()==false, isMatView()==false, so it
+        // slips past the view/matview-only guard. QwpTudCache must reject it with a
+        // typed CairoException (surfaced to the sender as a NACK), not silently
+        // return null. The live view already exists, so the schema/cursor arguments
+        // stay unused: the type guard fires before any create attempt.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT val, ts, count(*) OVER (PARTITION BY val ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE,
+                            new Utf8String("lv"),
+                            null,
+                            null,
+                            1
+                    );
+                    Assert.fail("expected the live view to reject the QWP write");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify live view [view=lv]");
+                    // The target's kind cannot change under byte-identical replay, so the
+                    // refusal must carry the permanent marker rather than read as a
+                    // transient write refusal. testQwpCannotIngestIntoLiveViewNacksSchemaMismatch
+                    // pins the NACK status this marker selects.
+                    Assert.assertTrue("a live view target is a permanent rejection", e.isSchemaMismatch());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQwpCannotIngestIntoLiveViewNacksSchemaMismatch() throws Exception {
+        // The sibling test above calls QwpTudCache directly and only inspects the exception
+        // text, so it cannot see how the rejection is classified on the wire. This one drives
+        // a real QWP payload naming the live view through processMessage() with the REAL
+        // tudCache and asserts the resulting NACK status.
+        //
+        // The status is the whole point: QwpIngressUpgradeProcessor encodes SCHEMA_MISMATCH as
+        // STATUS_SCHEMA_MISMATCH and every unmapped status as STATUS_WRITE_ERROR, and the
+        // store-and-forward client maps those to TERMINAL and RETRIABLE respectively
+        // (CursorWebSocketSendLoop.defaultPolicyFor). An unwritable live-view target answered
+        // with NOT_ACCEPTING_WRITES is therefore reconnect-replayed up to max_frame_rejections
+        // times (default 4, over at least a 5s dwell) with every queued frame stalled behind it,
+        // and only then halts - as a PROTOCOL_VIOLATION from the poison-frame detector, which
+        // names the wrong cause. QwpSenderE2ETest#testLiveViewTargetIsRejectedTerminally
+        // pins the same contract end to end through the socket.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT val, ts, count(*) OVER (PARTITION BY val ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Table name "lv", rowCount=0, columnCount=0: the target-kind guard fires
+                // before any row or column is consumed, so an empty block is enough.
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        2, 'l', 'v',
+                        0,    // rowCount=0
+                        0     // columnCount=0
+                }));
+                state.processMessage();
+                Assert.assertEquals(
+                        "a live view target is permanent; NOT_ACCEPTING_WRITES would make the sender replay it",
+                        QwpIngressProcessorState.Status.SCHEMA_MISMATCH,
+                        state.getStatus()
+                );
+                Assert.assertTrue(state.getErrorText().contains("cannot modify live view [view=lv]"));
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -1968,7 +2117,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGetTableUpdateDetailsReturnsNullForMatView() throws Exception {
+    public void testGetTableUpdateDetailsRejectsMatView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE mv_base (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE MATERIALIZED VIEW mv_target AS (SELECT ts, count() cnt FROM mv_base SAMPLE BY 1h)");
@@ -1979,14 +2128,24 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             try (QwpTudCache cache = new QwpTudCache(
                     engine, true, true, defaultColumnTypes, PartitionBy.DAY)
             ) {
-                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
-                        AllowAllSecurityContext.INSTANCE,
-                        new Utf8String("mv_target"),
-                        null,
-                        null,
-                        1
-                );
-                Assert.assertNull(tud);
+                // A materialized view must be rejected with a typed CairoException the
+                // sender surfaces as a NACK, not silently dropped via a null return.
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE,
+                            new Utf8String("mv_target"),
+                            null,
+                            null,
+                            1
+                    );
+                    Assert.fail("expected the materialized view to reject the QWP write");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify materialized view [view=mv_target]");
+                    // Same target-kind guard, same permanence: replaying the identical bytes
+                    // cannot turn a materialized view into a writable table, so the NACK must
+                    // be terminal rather than a retriable write refusal.
+                    Assert.assertTrue("a materialized view target is a permanent rejection", e.isSchemaMismatch());
+                }
             }
         });
     }
@@ -2707,6 +2866,131 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHasPendingDurableWork() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
+
+                // Nothing committed -> no pending durable work.
+                Assert.assertFalse(state.hasPendingDurableWork());
+
+                fake.queueCommit(
+                        new String[]{"t1", "t2"},
+                        new String[]{"t1~1", "t2~1"},
+                        new long[]{10L, 20L}
+                );
+                state.setHighestProcessedSequence(0);
+                state.commit();
+
+                // Committed work is pending regardless of the registry: this
+                // predicate reads only local state, so a racing upload cannot
+                // flip it. Register full coverage and confirm the answer does
+                // NOT change until the durable ack actually prunes the maps.
+                Assert.assertTrue(state.hasPendingDurableWork());
+                registry.set("t1~1", 10L);
+                registry.set("t2~1", 20L);
+                Assert.assertTrue(
+                        "registry coverage alone must not clear pending durable work",
+                        state.hasPendingDurableWork()
+                );
+
+                // The durable-ack send is what prunes the pending maps.
+                state.collectDurableProgress(registry);
+                state.onDurableAckSent();
+                Assert.assertFalse(
+                        "pending durable work must clear once the ack prunes the maps",
+                        state.hasPendingDurableWork()
+                );
+
+                // A fresh commit re-opens pending work; registry state is
+                // irrelevant to the predicate.
+                fake.queueCommit(new String[]{"t1"}, new String[]{"t1~1"}, new long[]{11L});
+                state.setHighestProcessedSequence(1);
+                state.commit();
+                Assert.assertTrue(state.hasPendingDurableWork());
+                registry.set("t1~1", 11L);
+                Assert.assertTrue(
+                        "still pending until the next durable ack prunes it",
+                        state.hasPendingDurableWork()
+                );
+                state.collectDurableProgress(registry);
+                state.onDurableAckSent();
+                Assert.assertFalse(state.hasPendingDurableWork());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCloseEchoWaitLifecycle() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] nowMicros = {0L};
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+                        @Override
+                        public MicrosecondClock getMicrosecondClock() {
+                            return () -> nowMicros[0];
+                        }
+                    };
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // No wait in progress: neither awaiting nor expired.
+                Assert.assertFalse(state.isAwaitingCloseEcho());
+                Assert.assertFalse(state.isCloseEchoWaitExpired());
+
+                // Arm the wait at t=0. Deadline lands at CLOSE_ECHO_WAIT_GRACE_MICROS.
+                state.beginCloseEchoWait();
+                Assert.assertTrue(state.isAwaitingCloseEcho());
+                Assert.assertFalse(state.isCloseEchoWaitExpired());
+
+                // Idempotency: a follow-on beginCloseEchoWait at a LATER time
+                // must NOT push the deadline out. If it did, the deadline
+                // would move to (GRACE-1)+GRACE and the expiry assertion at
+                // exactly GRACE below would fail.
+                nowMicros[0] = QwpIngressProcessorState.CLOSE_ECHO_WAIT_GRACE_MICROS - 1;
+                state.beginCloseEchoWait();
+                Assert.assertTrue(state.isAwaitingCloseEcho());
+                Assert.assertFalse(state.isCloseEchoWaitExpired());
+
+                // The wait spans messages: per-message resets must not drop it.
+                state.clear();
+                state.clearMessageState();
+                Assert.assertTrue(state.isAwaitingCloseEcho());
+
+                // Grace budget exhausts exactly at the original deadline --
+                // proving the follow-on arm did not extend it.
+                nowMicros[0] = QwpIngressProcessorState.CLOSE_ECHO_WAIT_GRACE_MICROS;
+                Assert.assertTrue(state.isCloseEchoWaitExpired());
+                Assert.assertTrue("expiry does not clear the awaiting flag", state.isAwaitingCloseEcho());
+
+                // Connection recycle resets the wait (the only reset point).
+                state.onDisconnected();
+                Assert.assertFalse(state.isAwaitingCloseEcho());
+                Assert.assertFalse(state.isCloseEchoWaitExpired());
+
+                // Post-recycle the clock is far past the old deadline, yet a
+                // fresh arm starts a new grace window relative to "now".
+                state.beginCloseEchoWait();
+                Assert.assertTrue(state.isAwaitingCloseEcho());
+                Assert.assertFalse("fresh arm must not inherit the stale deadline", state.isCloseEchoWaitExpired());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testRoleChangeCloseDeferralLifecycle() throws Exception {
         assertMemoryLeak(() -> {
             long[] nowMicros = {0L};
@@ -2854,8 +3138,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     @Test
     public void testOnFatalCloseBlockedTransitionTableCoversAllSendStates() throws Exception {
         // Exhaustive transition table for onFatalCloseBlocked across every input sendState. Pins the
-        // full routing contract, including the RESUME_CLOSE idempotent branch and the ack/durable-ack
-        // collapse-to-*_THEN_CLOSE arms that keep the deferred code/reason for the resume path.
+        // full routing contract, including the RESUME_CLOSE / RESUME_CLOSE_RESPONSE idempotent branch and
+        // the ack/durable-ack collapse-to-*_THEN_CLOSE arms that keep the deferred code/reason for the
+        // resume path.
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -2874,6 +3159,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 final int RESUME_DURABLE_ACK_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE");
                 final int RESUME_PONG = sendStateConst("SEND_STATE_RESUME_PONG");
                 final int RESUME_DRAIN_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DRAIN_THEN_CLOSE");
+                final int RESUME_CLOSE_RESPONSE = sendStateConst("SEND_STATE_RESUME_CLOSE_RESPONSE");
 
                 // ACK-family inputs collapse to RESUME_ACK_THEN_CLOSE, RETAINING the deferred code/reason.
                 for (int in : new int[]{RESUME_ACK, RESUME_ACK_THEN_ERROR, RESUME_ACK_THEN_CLOSE}) {
@@ -2893,12 +3179,17 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     Assert.assertEquals("input=" + in, "later", state.getDeferredCloseReason().toString());
                 }
 
-                // RESUME_CLOSE stays put and CLEARS the redundant code/reason (parked bytes ARE the CLOSE).
-                setSendState(state, RESUME_CLOSE);
-                state.onFatalCloseBlocked(1011, "boom");
-                Assert.assertEquals(RESUME_CLOSE, state.getSendState());
-                Assert.assertEquals(-1, state.getDeferredCloseCode());
-                Assert.assertEquals(0, state.getDeferredCloseReason().length());
+                // Close-family inputs stay put and CLEAR the redundant code/reason: the parked bytes ARE
+                // a CLOSE frame -- a fatal CLOSE (RESUME_CLOSE) or the close response to a client-initiated
+                // CLOSE (RESUME_CLOSE_RESPONSE) -- and nothing may follow it (RFC 6455), so the resume path
+                // just finishes that flush and disconnects; the just-stored code/reason are redundant.
+                for (int in : new int[]{RESUME_CLOSE, RESUME_CLOSE_RESPONSE}) {
+                    setSendState(state, in);
+                    state.onFatalCloseBlocked(1011, "boom");
+                    Assert.assertEquals("input=" + in, in, state.getSendState());
+                    Assert.assertEquals("input=" + in, -1, state.getDeferredCloseCode());
+                    Assert.assertEquals("input=" + in, 0, state.getDeferredCloseReason().length());
+                }
 
                 // All other inputs park behind a non-ack response: drain-then-close, RETAINING code/reason.
                 for (int in : new int[]{READY, RESUME_ERROR, RESUME_PONG, RESUME_DRAIN_THEN_CLOSE}) {
@@ -2920,7 +3211,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         // Property fuzz over onFatalCloseBlocked: for a random input sendState, random close code and
         // random reason (null / empty / non-empty), the method must never throw, must always leave the
         // connection in a terminal close-bearing state, and must obey the retain-vs-clear contract:
-        //   RESUME_CLOSE   -> stays RESUME_CLOSE, deferred code/reason CLEARED
+        //   CLOSE family   -> stays put (RESUME_CLOSE / RESUME_CLOSE_RESPONSE), deferred code/reason CLEARED
         //   ACK family     -> RESUME_ACK_THEN_CLOSE, code/reason RETAINED
         //   DURABLE family -> RESUME_DURABLE_ACK_THEN_CLOSE, code/reason RETAINED
         //   everything else-> RESUME_DRAIN_THEN_CLOSE, code/reason RETAINED
@@ -2942,11 +3233,13 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 final int RESUME_DURABLE_ACK_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE");
                 final int RESUME_PONG = sendStateConst("SEND_STATE_RESUME_PONG");
                 final int RESUME_DRAIN_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DRAIN_THEN_CLOSE");
+                final int RESUME_CLOSE_RESPONSE = sendStateConst("SEND_STATE_RESUME_CLOSE_RESPONSE");
 
                 final int[] inputs = {
                         READY, RESUME_ACK, RESUME_ERROR, RESUME_ACK_THEN_ERROR, RESUME_DURABLE_ACK,
                         RESUME_DURABLE_ACK_THEN_ERROR, RESUME_CLOSE, RESUME_ACK_THEN_CLOSE,
-                        RESUME_DURABLE_ACK_THEN_CLOSE, RESUME_PONG, RESUME_DRAIN_THEN_CLOSE
+                        RESUME_DURABLE_ACK_THEN_CLOSE, RESUME_PONG, RESUME_DRAIN_THEN_CLOSE,
+                        RESUME_CLOSE_RESPONSE
                 };
 
                 final long seed = System.nanoTime();
@@ -2970,8 +3263,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                         Assert.assertEquals(msg, RESUME_DURABLE_ACK_THEN_CLOSE, out);
                         Assert.assertEquals(msg, code, state.getDeferredCloseCode());
                         assertReason(msg, reason, state.getDeferredCloseReason());
-                    } else if (in == RESUME_CLOSE) {
-                        Assert.assertEquals(msg, RESUME_CLOSE, out);
+                    } else if (in == RESUME_CLOSE || in == RESUME_CLOSE_RESPONSE) {
+                        Assert.assertEquals(msg, in, out);
                         Assert.assertEquals(msg, -1, state.getDeferredCloseCode());
                         Assert.assertEquals(msg, 0, state.getDeferredCloseReason().length());
                     } else {
