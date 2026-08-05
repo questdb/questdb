@@ -432,6 +432,25 @@ public final class LiveViewWindowStatePlan {
     }
 
     /**
+     * Ends every projection function's own incremental checkpoint baseline, because the
+     * group taking their state over or handing it back has changed which dirty set the
+     * keys they touch are recorded in.
+     * <p>
+     * A {@link #isDurableProjection(int) durable} member is covered twice over - it holds
+     * no root at all while it is one, and the seal refuses to build on a predecessor that
+     * has none - but a <b>runtime-only</b> member keeps its root across the move while its
+     * keys go into the window's dirty set, and its own set stands empty for as long as the
+     * group owns it. Freezing that set after the move would publish a root missing every
+     * key the group touched. The two cases are not distinguished here: an eligibility
+     * change is rare and one complete freeze per function is what it costs.
+     */
+    public void requireProjectionCheckpointFullScan() {
+        for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
+            projectionFunctions.getQuick(i).requireCheckpointFullScan();
+        }
+    }
+
+    /**
      * Takes the fused slots off every projection's function, putting each one back on
      * the private map and the per-row accumulator update it owns outside a fused group.
      * The state itself is the caller's to move; this only changes who is asked for it.

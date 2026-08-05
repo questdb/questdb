@@ -643,7 +643,8 @@ public class LiveViewWindow implements QuietCloseable {
         // window root never share a leaf - so the next seal converts whole. Its own
         // predecessor test would reach the same answer; forcing it here keeps the
         // logical-byte baseline, which is charged per entry at a width that just moved,
-        // from being carried across the change.
+        // from being carried across the change. The same has just been done to each
+        // member's own root, which the window's flags do not reach.
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         isCheckpointFullScanRequired = true;
         checkpointLogicalStateBytes = 0;
@@ -1863,6 +1864,10 @@ public class LiveViewWindow implements QuietCloseable {
         activeKeyStartIndex = fusedValueTypes.getColumnCount();
         plan.bindProjectionFunctions();
         plan.releaseProjectionMaps();
+        // The keys a member touches are the group's dirty set's from here, so whatever
+        // baseline its own root carried is against a set that stops moving. See
+        // LiveViewWindowStatePlan.requireProjectionCheckpointFullScan.
+        plan.requireProjectionCheckpointFullScan();
     }
 
     /**
@@ -1909,6 +1914,10 @@ public class LiveViewWindow implements QuietCloseable {
         anchorMap = narrow;
         scratchAnchorMap = Misc.free(scratchAnchorMap);
         plan.unbindProjectionFunctions();
+        // And the other direction of the same thing: a runtime-only member takes its root
+        // back with a baseline the group's dirty set was feeding, and an incremental seal
+        // on top of it would name only the keys touched after this point.
+        plan.requireProjectionCheckpointFullScan();
         checkpointWindowStatePlan = null;
         activeKeySink = anchorKeySink;
         activeKeyStartIndex = AnchorMapValueTypes.INSTANCE.getColumnCount();

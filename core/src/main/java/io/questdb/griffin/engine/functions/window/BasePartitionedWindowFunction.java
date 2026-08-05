@@ -323,6 +323,19 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         tombstoneCount = 0;
     }
 
+    /**
+     * Drops the baseline and the dirty set the next seal would have built on. The two go
+     * together: a full scan reads neither, and leaving the set standing would make the
+     * seal after that one freeze keys whose entries it already wrote.
+     */
+    @Override
+    public void requireCheckpointFullScan() {
+        checkpointBaselineGeneration = Numbers.LONG_NULL;
+        checkpointLogicalStateBytes = 0;
+        isCheckpointFullScanRequired = true;
+        clearCheckpointDirtyPartitions();
+    }
+
     @Override
     public void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
         // Every caller other than the frontier sweep removes keys without naming them,

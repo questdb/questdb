@@ -818,6 +818,25 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Ends the incremental baseline this function's own root is built on, so its next
+     * seal walks its whole live key domain instead of the keys
+     * {@link #getCheckpointDirtyPartitionMap()} names.
+     * <p>
+     * What calls this is a change of owner: a function joining or leaving a window-state
+     * group keeps a root of its own on both sides of the move, but while the group owns
+     * its state the keys that move are recorded in the group's dirty set and not in this
+     * function's. An incremental seal taken after the move would therefore name only the
+     * keys touched since it and leave the rest of the root standing on state that has
+     * moved - a stale entry a restart reads back as live.
+     * <p>
+     * Fail-safe by construction: a function that does not implement this keeps
+     * {@link #isCheckpointFullScanRequired()} answering true, which is the same complete
+     * freeze this asks for.
+     */
+    default void requireCheckpointFullScan() {
+    }
+
+    /**
      * Releases native memory and resets internal state to default/initial.
      * It differs from close() in that it doesn't release memory held by metadata, e.g. partition by key functions.
      * This means function may still be used after calling reopen().

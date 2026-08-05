@@ -39,6 +39,8 @@ import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.Vm;
@@ -55,6 +57,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.ArrayList;
+import java.util.Collections;
 
 /**
  * Coverage for runtime window-state fusion: the anchored window owning one map value per
@@ -376,11 +381,127 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 // the sweep drops its three accounts.
                 insertWideAccount(job, "2026-01-02T09:00:00.000000Z", "acct-4", columns);
                 insertWideAccount(job, "2026-01-03T09:00:00.000000Z", "acct-5", columns);
-                Assert.assertTrue("the sweep must have fired", window().getCompactionCount() > 0);
+                // One sweep for the whole group, not one per member: the key domain the
+                // members share is the window's one map, so the rebuild that drops the
+                // stale bucket drops it for every component in the value at once and no
+                // member has a second domain to prune.
+                Assert.assertEquals("the shared key domain is compacted once", 1, window().getCompactionCount());
                 Assert.assertEquals("only the two retained buckets survive", 2, window().getAnchorMapSize());
+                for (int i = 0; i < columns; i++) {
+                    final Map privateMap = plan.getProjectionFunction(i).getPartitionMap();
+                    Assert.assertTrue(
+                            "member " + i + " must keep no key domain of its own to sweep",
+                            privateMap == null || !privateMap.isOpen()
+                    );
+                }
                 final byte[] swept = snapshotWindow(window());
                 restoreHead();
                 Assert.assertArrayEquals(swept, snapshotWindow(window()));
+                assertWideViewMatchesRecompute(columns);
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testDecliningThePlanEndsARuntimeOnlyMembersIncrementalBaseline() throws Exception {
+        // The one member that leaves a group holding a root of its own, which is what makes
+        // its baseline the group's rather than its own: while it is bound, the keys it
+        // touches go into the window's dirty set and its own stands empty. A seal taken
+        // after it leaves must therefore not read that empty set as "nothing moved" - the
+        // root it would publish keeps the predecessor's entry for every key the group
+        // touched in between, and a restart reads those back as live.
+        //
+        // Four rows per boundary, so the three rows in the middle move the accumulators
+        // without publishing and the fourth is what seals after the decline.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        assertMemoryLeak(() -> {
+            final int fitting =
+                    (LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES - Long.BYTES) / (Double.BYTES + Long.BYTES);
+            final int columns = fitting + 1;
+            final StringBuilder ddl = new StringBuilder();
+            final StringBuilder projections = new StringBuilder();
+            for (int i = 1; i <= columns; i++) {
+                ddl.append(", q").append(i).append(" double");
+                projections.append(", sum(q").append(i).append(") over w as s").append(i);
+            }
+            execute("create table tx (created_at timestamp, cod_acct_no symbol" + ddl + ") "
+                    + "timestamp(created_at) partition by hour wal");
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, cod_acct_no" + projections + " from tx "
+                    + "window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                int second = 0;
+                for (int i = 1; i <= 4; i++) {
+                    insertWideAt(job, second++, "acct-" + i, columns);
+                }
+
+                final LiveViewWindow window = window();
+                final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
+                Assert.assertNotNull(plan);
+                Assert.assertEquals(1, countRuntimeOnlyProjections(plan));
+                final WindowFunction member = runtimeOnlyMember(plan);
+
+                // Roll forward one row at a time until a boundary lands, so what follows
+                // starts on a published root and on a fresh cadence. Which row seals is the
+                // cadence's business rather than this case's; that one did is the case's.
+                long generation = member.getCheckpointBaselineGeneration();
+                while (member.getCheckpointBaselineGeneration() == generation) {
+                    Assert.assertTrue("a boundary must land within a few cadences", second < 40);
+                    insertWideAt(job, second++, "acct-4", columns);
+                }
+                generation = member.getCheckpointBaselineGeneration();
+                Assert.assertFalse(
+                        "the member's root must be on the boundary that just published",
+                        member.isCheckpointFullScanRequired()
+                );
+
+                // Three rows that move three accounts and publish nothing. Only the window's
+                // dirty set knows about them.
+                insertWideAt(job, second++, "acct-1", columns);
+                insertWideAt(job, second++, "acct-2", columns);
+                insertWideAt(job, second++, "acct-3", columns);
+                Assert.assertEquals(
+                        "no boundary may have been published in between",
+                        generation,
+                        member.getCheckpointBaselineGeneration()
+                );
+
+                // Eligibility changes under the live frontier: every member takes its own
+                // map and its own root back, carrying the accumulator the group held.
+                Assert.assertFalse(window.bindCheckpointWindowStatePlan(null));
+
+                // The fourth row of this boundary seals the runtime the decline produced,
+                // and touches only one of the three accounts that moved above.
+                insertWideAt(job, second, "acct-1", columns);
+                Assert.assertNotEquals(
+                        "the row after the decline must have sealed",
+                        generation,
+                        member.getCheckpointBaselineGeneration()
+                );
+                final String sealed = describeDeclinedGroupState(plan);
+                restoreHead();
+                Assert.assertEquals(
+                        "the seal after the decline must publish every key rather than the ones its own "
+                                + "dirty set names, which is only what moved after the decline",
+                        sealed,
+                        describeDeclinedGroupState(plan)
+                );
+                assertWideViewMatchesRecompute(columns);
+
+                // And back the other way: adopting again must take every member's
+                // accumulator into the group rather than restart it, the runtime-only one
+                // included, and the row after it must keep counting from where the restore
+                // left off.
+                Assert.assertTrue(window.bindCheckpointWindowStatePlan(plan));
+                for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+                    Assert.assertTrue(
+                            "projection " + i + " must be fused again",
+                            plan.getProjectionFunction(i).isWindowStateOwned()
+                    );
+                }
+                insertWideAt(job, second + 1, "acct-2", columns);
                 assertWideViewMatchesRecompute(columns);
                 assertNoRefreshFaults("lv");
             }
@@ -735,6 +856,53 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
         return count;
     }
 
+    /**
+     * Every projection function's own partition-map state once the group has handed it
+     * back, as one sorted image: the projection, its partition key and the whole-state
+     * image its component codec writes for that key.
+     * <p>
+     * The codec is the seal's own, so this is exactly the state a root round-trips - which
+     * is what lets a restore be compared against the runtime that produced it.
+     */
+    private static String describeDeclinedGroupState(LiveViewWindowStatePlan plan) {
+        final ArrayList<String> lines = new ArrayList<>();
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            final WindowFunction function = plan.getProjectionFunction(i);
+            final Map map = function.getPartitionMap();
+            Assert.assertNotNull("projection " + i + " must own a map again", map);
+            Assert.assertTrue("projection " + i + " must own an open map again", map.isOpen());
+            final LiveViewAccumulatorDescriptor component = plan.getProjection(i).getFunctionComponent();
+            final byte[] image = new byte[component.getStateLength()];
+            final MapRecordCursor cursor = map.getCursor();
+            final MapRecord record = map.getRecord();
+            final int keyIndex = function.getCheckpointKeyStartIndex();
+            while (cursor.hasNext()) {
+                component.freezeStateInto(record.getValue(), 0, image, 0);
+                final StringBuilder line = new StringBuilder();
+                line.append(i).append('|').append(record.getStrA(keyIndex)).append('|');
+                for (int b = 0; b < image.length; b++) {
+                    line.append(String.format("%02x", image[b]));
+                }
+                lines.add(line.toString());
+            }
+        }
+        Collections.sort(lines);
+        return String.join("\n", lines);
+    }
+
+    /**
+     * The one projection the leaf budget leaves out of the manifest, which is the only
+     * member that carries a function root of its own while the group owns its state.
+     */
+    private static WindowFunction runtimeOnlyMember(LiveViewWindowStatePlan plan) {
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            if (!plan.isDurableProjection(i)) {
+                return plan.getProjectionFunction(i);
+            }
+        }
+        throw new IllegalStateException("the shape must produce one runtime-only member");
+    }
+
     private static Path checkpointsDir(LiveViewInstance instance) {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
@@ -1051,6 +1219,21 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 + (amount == null ? "null" : amount) + "::decimal(38,2))");
         drainWalQueue();
         driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * As {@link #insertWideAccount}, timestamped {@code second} seconds into the anchor
+     * bucket's morning - so a case that steps rows one at a time to find the cadence does
+     * not have to spell every timestamp out.
+     */
+    private void insertWideAt(LiveViewRefreshJob job, int second, String account, int columns)
+            throws Exception {
+        insertWideAccount(
+                job,
+                DAILY_ANCHOR + String.format("09:%02d:%02d.000000Z", second / 60, second % 60),
+                account,
+                columns
+        );
     }
 
     /**
