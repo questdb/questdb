@@ -912,6 +912,132 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testLiveViewDefaults() throws Exception {
+        // Pin every live-view default through the real parser. Tests that set these keys
+        // on a test configuration object never exercise PropServerConfiguration, so an
+        // ignored key or a getter wired to the wrong field would go unnoticed there.
+        CairoConfiguration cairo = newPropServerConfiguration(new Properties()).getCairoConfiguration();
+
+        Assert.assertEquals(5 * Micros.MINUTE_MICROS, cairo.getLiveViewCheckpointMaxDurationMicros());
+        Assert.assertEquals(1_000_000L, cairo.getLiveViewCheckpointRows());
+        Assert.assertTrue(cairo.isLiveViewEnabled());
+        Assert.assertEquals(5, cairo.getLiveViewFlushRetryMax());
+        Assert.assertEquals(60 * Micros.SECOND_MICROS, cairo.getLiveViewFlushRetryMaxDurationMicros());
+        Assert.assertEquals(16L * 1024 * 1024, cairo.getLiveViewInMemoryBufferGrowthBytes());
+        Assert.assertEquals(64L * 1024, cairo.getLiveViewInMemoryBufferInitialBytes());
+        Assert.assertEquals(60 * Micros.MINUTE_MICROS, cairo.getLiveViewInMemoryMaxMicros());
+        Assert.assertEquals(100_000, cairo.getLiveViewPartitionCompactThreshold());
+        Assert.assertEquals(0L, cairo.getLiveViewRefreshMemoryLimitBytes());
+        Assert.assertEquals(64, cairo.getLiveViewRefreshTurnMaxCommits());
+        Assert.assertEquals(50_000L, cairo.getLiveViewRefreshTurnMaxDurationMicros());
+    }
+
+    @Test
+    public void testLiveViewEnvOverrides() throws Exception {
+        // The environment must win over server.conf on the live-view keys, and the
+        // duration/size units must convert on the env path too.
+        final Properties properties = new Properties();
+        final Map<String, String> env = new HashMap<>();
+
+        properties.setProperty("cairo.live.view.checkpoint.rows", "250000");
+        env.put("QDB_CAIRO_LIVE_VIEW_CHECKPOINT_ROWS", "777000");
+
+        properties.setProperty("cairo.live.view.enabled", "true");
+        env.put("QDB_CAIRO_LIVE_VIEW_ENABLED", "false");
+
+        properties.setProperty("cairo.live.view.in.memory.max", "45m");
+        env.put("QDB_CAIRO_LIVE_VIEW_IN_MEMORY_MAX", "90m");
+
+        properties.setProperty("cairo.live.view.in.memory.buffer.growth.bytes", "32M");
+        env.put("QDB_CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES", "64M");
+
+        CairoConfiguration cairo = newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration();
+
+        Assert.assertEquals(777_000L, cairo.getLiveViewCheckpointRows());
+        Assert.assertFalse(cairo.isLiveViewEnabled());
+        Assert.assertEquals(90 * Micros.MINUTE_MICROS, cairo.getLiveViewInMemoryMaxMicros());
+        Assert.assertEquals(64L * 1024 * 1024, cairo.getLiveViewInMemoryBufferGrowthBytes());
+    }
+
+    @Test
+    public void testLiveViewInMemoryBufferGrowthBytesAcceptsZero() throws Exception {
+        // Zero (and negative) growth budget is a supported "compact on every publish" sentinel
+        // (LiveViewRefreshJob.isCompactionWorthwhile treats growthBudget <= 0 that way), so it must
+        // parse cleanly rather than being rejected. Locks the contract so the initial-bytes minimum
+        // is never mistakenly extended to the growth budget.
+        final Properties properties = new Properties();
+        properties.setProperty("cairo.live.view.in.memory.buffer.growth.bytes", "0");
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+        Assert.assertEquals(0, cairo.getLiveViewInMemoryBufferGrowthBytes());
+    }
+
+    @Test
+    public void testLiveViewInMemoryBufferInitialBytesRejectsNonPositive() throws Exception {
+        // A zero or negative in-memory buffer initial size reaches MemoryCARWImpl.setPageSize as
+        // Numbers.msb(ceilPow2(size)) -- a negative shift -- corrupting the first refresh instead of
+        // failing the server start. Reject it at config parse time with a message naming the key.
+        for (String value : new String[]{"0", "-1"}) {
+            final Properties properties = new Properties();
+            properties.setProperty("cairo.live.view.in.memory.buffer.initial.bytes", value);
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail("expected rejection for initial.bytes=" + value);
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertContains(e.getMessage(), "cairo.live.view.in.memory.buffer.initial.bytes");
+            }
+        }
+    }
+
+    @Test
+    public void testLiveViewMalformedDurationRejected() throws Exception {
+        // A duration key that cannot be parsed must fail the server start with a message
+        // naming the offending key, not fall back to the default.
+        final Properties properties = new Properties();
+        properties.setProperty("cairo.live.view.refresh.turn.max.duration.micros", "not-a-duration");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.live.view.refresh.turn.max.duration.micros");
+        }
+    }
+
+    @Test
+    public void testLiveViewNonDefaults() throws Exception {
+        // Every live-view key gets a value that differs from its default AND from every
+        // other key's parsed value, so a key that is ignored, misspelled or swapped with
+        // its neighbour cannot satisfy these assertions. The duration and size keys carry
+        // unit suffixes, exercising the getMicros()/getLongSize() conversions.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.live.view.checkpoint.max.duration.micros", "90s");
+        properties.setProperty("cairo.live.view.checkpoint.rows", "640000");
+        properties.setProperty("cairo.live.view.enabled", "false");
+        properties.setProperty("cairo.live.view.flush.retry.max", "9");
+        properties.setProperty("cairo.live.view.flush.retry.max.duration.micros", "2m");
+        properties.setProperty("cairo.live.view.in.memory.buffer.growth.bytes", "32M");
+        properties.setProperty("cairo.live.view.in.memory.buffer.initial.bytes", "128k");
+        properties.setProperty("cairo.live.view.in.memory.max", "45m");
+        properties.setProperty("cairo.live.view.partition.compact.threshold", "333000");
+        properties.setProperty("cairo.live.view.refresh.turn.max.commits", "128");
+        properties.setProperty("cairo.live.view.refresh.turn.max.duration.micros", "250ms");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(90 * Micros.SECOND_MICROS, cairo.getLiveViewCheckpointMaxDurationMicros());
+        Assert.assertEquals(640_000L, cairo.getLiveViewCheckpointRows());
+        Assert.assertFalse(cairo.isLiveViewEnabled());
+        Assert.assertEquals(9, cairo.getLiveViewFlushRetryMax());
+        Assert.assertEquals(2 * Micros.MINUTE_MICROS, cairo.getLiveViewFlushRetryMaxDurationMicros());
+        Assert.assertEquals(32L * 1024 * 1024, cairo.getLiveViewInMemoryBufferGrowthBytes());
+        Assert.assertEquals(128L * 1024, cairo.getLiveViewInMemoryBufferInitialBytes());
+        Assert.assertEquals(45 * Micros.MINUTE_MICROS, cairo.getLiveViewInMemoryMaxMicros());
+        Assert.assertEquals(333_000, cairo.getLiveViewPartitionCompactThreshold());
+        Assert.assertEquals(128, cairo.getLiveViewRefreshTurnMaxCommits());
+        Assert.assertEquals(250_000L, cairo.getLiveViewRefreshTurnMaxDurationMicros());
+    }
+
+    @Test
     public void testMaxBytesBelowPageSizeAccepted() throws Exception {
         // The implementation floors each operator's effective cap at one *.page.size, so a
         // *.max.bytes below the page size is silently raised at runtime. The config layer

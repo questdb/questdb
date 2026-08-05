@@ -65,6 +65,24 @@ public class ReadOnlyStatementGateMatrixTest extends AbstractCairoTest {
      */
     private static final Set<String> EXPECTED_REFUSED = new HashSet<>();
 
+    static {
+        EXPECTED_REFUSED.add("INSERT");
+        EXPECTED_REFUSED.add("INSERT_AS_SELECT");
+        EXPECTED_REFUSED.add("UPDATE");
+        EXPECTED_REFUSED.add("ALTER");
+        EXPECTED_REFUSED.add("TRUNCATE");
+        EXPECTED_REFUSED.add("RENAME_TABLE");
+        EXPECTED_REFUSED.add("CREATE_TABLE");
+        EXPECTED_REFUSED.add("CREATE_TABLE_AS_SELECT");
+        EXPECTED_REFUSED.add("CREATE_MAT_VIEW");
+        EXPECTED_REFUSED.add("REFRESH_MAT_VIEW");
+        EXPECTED_REFUSED.add("CREATE_VIEW");
+        EXPECTED_REFUSED.add("CREATE_LIVE_VIEW");
+        EXPECTED_REFUSED.add("ALTER_VIEW");
+        EXPECTED_REFUSED.add("ALTER_STORAGE_POLICY");
+        EXPECTED_REFUSED.add("DROP");
+    }
+
     /**
      * The WAL DROP (DROP TABLE / DROP VIEW / DROP MATERIALIZED VIEW / DROP ALL TABLES) is classified
      * engine-fenced, NOT gate-fenced: the gate the pg-wire and HTTP /exec fences share only sees a DROP on

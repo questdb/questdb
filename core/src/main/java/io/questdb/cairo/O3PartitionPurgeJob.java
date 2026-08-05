@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
@@ -130,8 +131,12 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 long partitionTs = partitionByFormat.parse(fileNameSink.asAsciiCharSequence(), 0, index, EN_LOCALE);
                 partitionList.add(partitionTs);
             } catch (NumericException e) {
+                // A live view's table directory holds _checkpoints alongside its
+                // partitions, so without it here every discovery pass logs one
+                // "unknown directory" line per live view.
                 if (!Utf8s.startsWithAscii(fileNameSink, WalUtils.WAL_NAME_BASE) && !Utf8s.equalsAscii(WalUtils.SEQ_DIR, fileNameSink)
-                        && !Utf8s.equalsAscii("seq", fileNameSink)) {
+                        && !Utf8s.equalsAscii("seq", fileNameSink)
+                        && !Utf8s.equalsAscii(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME, fileNameSink)) {
                     LOG.info().$("unknown directory [table=").$(tableToken).$(", dir=").$(fileNameSink).I$();
                 }
                 partitionList.setPos(partitionList.size() - 1); // remove partition version record

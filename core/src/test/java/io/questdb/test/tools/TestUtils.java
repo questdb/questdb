@@ -1720,7 +1720,7 @@ public final class TestUtils {
 
     @NotNull
     public static Rnd generateRandom(Log log) {
-        return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
+        return generateRandom(log, seedOf("fuzz.s0", System.nanoTime()), seedOf("fuzz.s1", System.currentTimeMillis()));
     }
 
     @NotNull
@@ -2799,6 +2799,25 @@ public final class TestUtils {
             sink.put(lines[n - i - 1]).put('\n');
         }
         return sink;
+    }
+
+    /**
+     * Reads a seed override off a system property, falling back to the clock-derived
+     * default. A failing fuzz run prints its seeds; passing them back through
+     * {@code -Dfuzz.s0=<s0> -Dfuzz.s1=<s1>} replays the same draw, which is what makes a
+     * CI fuzz failure actionable at all. Without an override the seeds stay clock-derived,
+     * so ordinary runs keep exploring new cases.
+     */
+    private static long seedOf(String propertyName, long defaultSeed) {
+        final String value = System.getProperty(propertyName);
+        if (value == null) {
+            return defaultSeed;
+        }
+        try {
+            return Numbers.parseLong(value);
+        } catch (NumericException e) {
+            throw new IllegalArgumentException("invalid seed override [" + propertyName + "=" + value + ']');
+        }
     }
 
     private static String toHexString(Long256 expected) {

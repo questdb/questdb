@@ -96,7 +96,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final @Nullable FiberRuntime fiberRuntime;
     private final @Nullable FiberRefreshTask fiberTask;
     private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
-    private final MatViewGraph graph;
+    private final DependentViewGraph graph;
     private final LongList intervals = new LongList();
     private final int maxRefreshRetryAttempts;
     private final MicrosecondClock microsecondClock;
@@ -134,7 +134,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             this.fiberTask = fiberRuntime != null && !isFiberExecutor
                     ? new FiberRefreshTask(engine, sharedQueryWorkerCount, fiberRuntime)
                     : null;
-            this.graph = engine.getMatViewGraph();
+            this.graph = engine.getDependentViewGraph();
             this.stateStore = engine.getMatViewStateStore();
             this.configuration = engine.getConfiguration();
             this.txnRangeLoader = new WalTxnRangeLoader(configuration);
@@ -1940,7 +1940,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private boolean refreshDependentViewsIncremental(
             TableToken baseTableToken,
-            MatViewGraph graph,
+            DependentViewGraph graph,
             MatViewStateStore stateStore,
             long refreshTriggerTimestamp
     ) {

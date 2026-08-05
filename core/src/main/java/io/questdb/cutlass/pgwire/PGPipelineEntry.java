@@ -753,6 +753,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     // fall-through
                 case CompiledQuery.CREATE_MAT_VIEW:
                     // fall-through
+                case CompiledQuery.CREATE_LIVE_VIEW:
+                    // fall-through
                 case CompiledQuery.DROP:
                     executeDdlFenced(sqlExecutionContext, tempSequence, false);
                     break;
@@ -3480,6 +3482,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.DROP:
                 // fall-through
             case CompiledQuery.CREATE_MAT_VIEW:
+                // fall-through
+            case CompiledQuery.CREATE_LIVE_VIEW:
                 // fall-through
             case CompiledQuery.CREATE_TABLE:
                 operation = cq.getOperation();

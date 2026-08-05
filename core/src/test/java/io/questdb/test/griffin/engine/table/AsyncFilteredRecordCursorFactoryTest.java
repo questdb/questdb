@@ -1302,16 +1302,18 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 long rowsLo,
                 char rowsLoUnit,
                 int rowsLoExprPos,
+                int rowsLoKindPos,
                 long rowsHi,
                 char rowsHiUnit,
                 int rowsHiExprPos,
+                int rowsHiKindPos,
                 int exclusionKind,
                 int exclusionKindPos,
                 int timestampIndex,
                 int timestampType,
                 boolean ignoreNulls,
                 int nullsDescPos
-        ) {
+        ) throws SqlException {
             sqlExecutionContext.configureWindowContext(
                     partitionByRecord,
                     partitionBySink,
@@ -1324,9 +1326,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     rowsLo,
                     rowsLoUnit,
                     rowsLoExprPos,
+                    rowsLoKindPos,
                     rowsHi,
                     rowsHiUnit,
                     rowsHiExprPos,
+                    rowsHiKindPos,
                     exclusionKind,
                     exclusionKindPos,
                     timestampIndex,

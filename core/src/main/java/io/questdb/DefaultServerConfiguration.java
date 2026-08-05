@@ -48,6 +48,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultHttpServerConfiguration httpServerConfiguration;
     private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration;
     private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
+    private final WorkerPoolConfiguration liveViewRefreshPoolConfiguration;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration;
     private final DefaultMemoryConfiguration memoryConfiguration = new DefaultMemoryConfiguration();
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
@@ -68,6 +69,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         this.sharedPoolQueryConfiguration = new DefaultWorkerPoolConfiguration("shared_query", WorkerPoolMode.FIBER_HOST);
         this.sharedPoolWriteConfiguration = new DefaultWorkerPoolConfiguration("shared_write", WorkerPoolMode.LEGACY);
         this.matViewRefreshPoolConfiguration = new DefaultWorkerPoolConfiguration("mat_view_refresh", WorkerPoolMode.FIBER_HOST);
+        this.liveViewRefreshPoolConfiguration = new DefaultWorkerPoolConfiguration("live_view_refresh", WorkerPoolMode.LEGACY);
         this.exportPoolConfiguration = new DefaultWorkerPoolConfiguration("export", WorkerPoolMode.LEGACY);
         this.viewCompilerPoolConfiguration = new DefaultWorkerPoolConfiguration("view_compiler", WorkerPoolMode.LEGACY);
         this.walApplyPoolConfiguration = new DefaultWorkerPoolConfiguration("wal_apply", WorkerPoolMode.LEGACY);
@@ -110,6 +112,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     @Override
     public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
         return lineUdpReceiverConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getLiveViewRefreshPoolConfiguration() {
+        return liveViewRefreshPoolConfiguration;
     }
 
     @Override

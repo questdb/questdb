@@ -366,6 +366,7 @@ public abstract class WorkerPoolManager implements Target {
         WAL_APPLY("wal-apply"),
         VIEW_COMPILER("view-compiler"),
         MAT_VIEW_REFRESH("mat-view-refresh"),
+        LIVE_VIEW_REFRESH("live-view-refresh"),
         EXPORT("export");
 
         private final String requester;
