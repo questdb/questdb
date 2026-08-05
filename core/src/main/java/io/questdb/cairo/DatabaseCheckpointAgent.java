@@ -27,8 +27,11 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.mv.DependentViewGraph;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.WalTxnRangeLoader;
@@ -236,7 +239,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     final ObjHashSet<TableToken> tables = new ObjHashSet<>();
                     final ObjList<TableToken> ordered = new ObjList<>();
                     engine.getTableTokens(tables, false);
-                    engine.getMatViewGraph().orderByDependentViews(tables, ordered);
+                    engine.getDependentViewGraph().orderByDependentViews(tables, ordered);
 
                     try (
                             MemoryCMARW mem = Vm.getCMARWInstance();
@@ -272,240 +275,408 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
                             }
 
-                            for (; ; ) {
-                                if (engine.isTableDropped(tableToken)) {
-                                    LOG.info().$("skipping, table is concurrently dropped [table=").$(tableToken).I$();
-                                    break;
-                                }
-
-                                // For mat views, copy view definition and state before copying the underlying table.
-                                // This way, the state copy will never hold a txn number that is newer than what's
-                                // in the table copy (otherwise, such a situation may lead to lost view refresh data).
-                                long mvBaseTableTxn = -1;
-                                if (tableToken.isMatView()) {
-                                    final MatViewGraph matViewGraph = engine.getMatViewGraph();
-                                    final MatViewDefinition matViewDefinition = matViewGraph.getViewDefinition(tableToken);
-                                    if (matViewDefinition != null) {
-                                        matViewFileWriter.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                                        MatViewDefinition.append(matViewDefinition, matViewFileWriter);
-                                        LOG.info().$("materialized view definition included in the checkpoint [view=").$(tableToken).I$();
-                                        // the following call overwrites the path
-                                        final boolean matViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
-                                        if (matViewStateExists) {
-                                            boolean matViewStateValid = false;
-                                            try {
-                                                matViewFileReader.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-                                                matViewStateValid = true;
-                                            } catch (CairoException e) {
-                                                // ApplyWal2TableJob might be creating the mat view state file concurrently, to avoid any
-                                                // concurrency issues we skip copying the mat view state file in this case.
-                                                LOG.info().$("skipping, materialized view state file is not accessible [view=").$(tableToken).I$();
-                                            }
-
-                                            if (matViewStateValid) {
-                                                if (matViewStateReader == null) {
-                                                    matViewStateReader = new MatViewStateReader();
-                                                }
-                                                matViewStateReader.of(matViewFileReader, tableToken);
-                                                mvBaseTableTxn = matViewStateReader.getLastRefreshBaseTxn();
-                                                // restore the path
-                                                path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
-
-                                                matViewFileWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-                                                MatViewState.append(matViewStateReader, matViewFileWriter);
-
-                                                // Mark this mat view for potential interval update in phase 2
-                                                matViewsToUpdate.add(tableToken);
-
-                                                LOG.info().$("materialized view state included in the checkpoint [view=").$(tableToken).I$();
-                                            }
-                                        } else {
-                                            LOG.info().$("materialized view state not found [view=").$(tableToken).I$();
-                                        }
-                                    } else {
-                                        LOG.info().$("skipping, materialized view is concurrently dropped [view=").$(tableToken).I$();
+                            // Holds the LV instance for the current outer-loop iteration when
+                            // tableToken.isLiveView(); null otherwise. Freeze is set inside the
+                            // LV branch of the inner for(;;) and cleared in the finally below,
+                            // so _lv.s + _txn + partition data all capture a single consistent
+                            // refresh-worker state. Refresh worker observes
+                            // isFreezeArmed() at the top of refreshInstance and skips
+                            // the cycle.
+                            LiveViewInstance freezeLvInstance = null;
+                            try {
+                                for (; ; ) {
+                                    if (engine.isTableDropped(tableToken)) {
+                                        LOG.info().$("skipping, table is concurrently dropped [table=").$(tableToken).I$();
                                         break;
                                     }
-                                }
 
-                                if (tableToken.isView()) {
-                                    final ViewGraph viewGraph = engine.getViewGraph();
-                                    ViewDefinition viewDefinition;
-                                    long lastTxn = -1;
+                                    // For mat views, copy view definition and state before copying the underlying table.
+                                    // This way, the state copy will never hold a txn number that is newer than what's
+                                    // in the table copy (otherwise, such a situation may lead to lost view refresh data).
+                                    long mvBaseTableTxn = -1;
+                                    if (tableToken.isMatView()) {
+                                        final DependentViewGraph dependentViewGraph = engine.getDependentViewGraph();
+                                        final MatViewDefinition matViewDefinition = dependentViewGraph.getViewDefinition(tableToken);
+                                        if (matViewDefinition != null) {
+                                            matViewFileWriter.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                                            MatViewDefinition.append(matViewDefinition, matViewFileWriter);
+                                            LOG.info().$("materialized view definition included in the checkpoint [view=").$(tableToken).I$();
+                                            // the following call overwrites the path
+                                            final boolean matViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
+                                            if (matViewStateExists) {
+                                                boolean matViewStateValid = false;
+                                                try {
+                                                    matViewFileReader.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                                    matViewStateValid = true;
+                                                } catch (CairoException e) {
+                                                    // ApplyWal2TableJob might be creating the mat view state file concurrently, to avoid any
+                                                    // concurrency issues we skip copying the mat view state file in this case.
+                                                    LOG.info().$("skipping, materialized view state file is not accessible [view=").$(tableToken).I$();
+                                                }
 
-                                    viewDefinition = viewGraph.getViewDefinition(tableToken);
-                                    if (viewDefinition != null) {
+                                                if (matViewStateValid) {
+                                                    if (matViewStateReader == null) {
+                                                        matViewStateReader = new MatViewStateReader();
+                                                    }
+                                                    matViewStateReader.of(matViewFileReader, tableToken);
+                                                    mvBaseTableTxn = matViewStateReader.getLastRefreshBaseTxn();
+                                                    // restore the path
+                                                    path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
 
-                                        matViewFileWriter.of(path.trimTo(rootLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
-                                        ViewDefinition.append(viewDefinition, matViewFileWriter);
+                                                    matViewFileWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                                    MatViewState.append(matViewStateReader, matViewFileWriter);
 
-                                        // Write table _txn file to checkpoint. Read it safely, it can be changing on view alters.
-                                        try (var trdr = txReader.ofRO(
-                                                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
-                                                ColumnType.TIMESTAMP_MICRO,
-                                                PartitionBy.NOT_APPLICABLE
-                                        )) {
-                                            TableUtils.safeReadTxn(
-                                                    trdr,
-                                                    configuration.getMillisecondClock(),
-                                                    configuration.getSpinLockTimeout()
-                                            );
-                                            if (trdr.seqTxn == viewDefinition.getSeqTxn()) {
-                                                lastTxn = trdr.seqTxn;
-                                                // Dump _txn file to checkpoint
-                                                path.of(checkpointRoot)
-                                                        .concat(configuration.getDbDirectory()).concat(tableToken)
-                                                        .concat(TXN_FILE_NAME)
-                                                        .$();
-                                                mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-                                                trdr.dumpTo(mem);
-                                                mem.close(false);
+                                                    // Mark this mat view for potential interval update in phase 2
+                                                    matViewsToUpdate.add(tableToken);
+
+                                                    LOG.info().$("materialized view state included in the checkpoint [view=").$(tableToken).I$();
+                                                }
+                                            } else {
+                                                LOG.info().$("materialized view state not found [view=").$(tableToken).I$();
+                                            }
+                                        } else {
+                                            LOG.info().$("skipping, materialized view is concurrently dropped [view=").$(tableToken).I$();
+                                            break;
+                                        }
+                                    }
+
+                                    if (tableToken.isView()) {
+                                        final ViewGraph viewGraph = engine.getViewGraph();
+                                        ViewDefinition viewDefinition;
+                                        long lastTxn = -1;
+
+                                        viewDefinition = viewGraph.getViewDefinition(tableToken);
+                                        if (viewDefinition != null) {
+
+                                            matViewFileWriter.of(path.trimTo(rootLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
+                                            ViewDefinition.append(viewDefinition, matViewFileWriter);
+
+                                            // Write table _txn file to checkpoint. Read it safely, it can be changing on view alters.
+                                            try (var trdr = txReader.ofRO(
+                                                    path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                                    ColumnType.TIMESTAMP_MICRO,
+                                                    PartitionBy.NOT_APPLICABLE
+                                            )) {
+                                                TableUtils.safeReadTxn(
+                                                        trdr,
+                                                        configuration.getMillisecondClock(),
+                                                        configuration.getSpinLockTimeout()
+                                                );
+                                                if (trdr.seqTxn == viewDefinition.getSeqTxn()) {
+                                                    lastTxn = trdr.seqTxn;
+                                                    // Dump _txn file to checkpoint
+                                                    path.of(checkpointRoot)
+                                                            .concat(configuration.getDbDirectory()).concat(tableToken)
+                                                            .concat(TXN_FILE_NAME)
+                                                            .$();
+                                                    mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                                                    trdr.dumpTo(mem);
+                                                    mem.close(false);
+                                                }
+                                            }
+
+                                            tableNameRegistryStore.logAddTable(tableToken);
+                                            path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
+                                            if (ff.mkdirs(path.slash(), configuration.getMkDirMode()) != 0) {
+                                                throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
+                                            }
+
+                                            // Generate _name file from table token (not copied from db_root).
+                                            path.trimTo(rootLen).concat(TableUtils.TABLE_NAME_FILE);
+                                            mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                                            TableUtils.createTableNameFile(mem, tableToken.getTableName());
+
+                                            // Copy view _meta file to checkpoint
+                                            final Path auxPath = Path.PATH2.get();
+                                            auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+                                            path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+                                            if (ff.copy(auxPath.$(), path.$()) < 0) {
+                                                throw CairoException.critical(ff.errno()).put("could not copy view metadata file [table=").put(tableToken).put(']');
+                                            }
+
+                                            // Copy txn_seq/_meta file to checkpoint
+                                            auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR).concat(TableUtils.META_FILE_NAME).$();
+                                            path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(WalUtils.SEQ_DIR).concat(TableUtils.META_FILE_NAME).$();
+                                            if (ff.copy(auxPath.$(), path.$()) < 0) {
+                                                throw CairoException.critical(ff.errno()).put("could not copy view sequencer metadata file [table=").put(tableToken).put(']');
+                                            }
+
+                                            // Write txn_seq/_txn to checkpoint
+                                            path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(WalUtils.SEQ_DIR);
+                                            mem.smallFile(ff, path.concat(TableUtils.CHECKPOINT_SEQ_TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                            mem.putLong(lastTxn);
+                                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+
+                                            // Record view seqTxn for checkpoint listener
+                                            checkpointSeqTxns.put(tableToken.getDirName(), lastTxn);
+
+                                            LOG.info().$("view included in the checkpoint [view=").$(tableToken).I$();
+                                        } else {
+                                            LOG.info().$("skipping, view is concurrently dropped [view=").$(tableToken).I$();
+                                        }
+                                        break;
+                                    }
+
+                                    if (tableToken.isLiveView()) {
+                                        // Live views are WAL-backed tables with two authoritative
+                                        // sidecars: _lv (immutable definition) and _lv.s (mutable
+                                        // state). The derived _checkpoints timeline is deliberately
+                                        // excluded and rebuilt locally after restore.
+                                        //
+                                        // Freeze the view's refresh worker first so _lv.s + the
+                                        // standard path's _txn / partition data all capture a
+                                        // consistent state. The flag is cleared in the outer
+                                        // try/finally below once the inner for(;;) exits for this
+                                        // table - covering both the LV-specific copy and the
+                                        // fall-through TableReader path.
+                                        //
+                                        // Freeze exactly once per table. The inner for(;;) can
+                                        // re-enter this branch after a reader retry (continue), and
+                                        // by then a concurrent DROP may have removed the view from
+                                        // the registry so getViewInstance returns null. Reassigning
+                                        // freezeLvInstance there would drop the reference to the
+                                        // already-frozen instance, the finally below would skip its
+                                        // endCheckpoint(), and the view would stay frozen forever
+                                        // (a later base-table invalidation would then park in
+                                        // waitForUnfrozen() and hang). Keep the first frozen
+                                        // reference across retries; startCheckpoint is idempotent.
+                                        if (freezeLvInstance == null) {
+                                            final LiveViewInstance lvInstance = engine.getLiveViewRegistry().getViewInstance(tableToken.getTableName());
+                                            // The registry is keyed by NAME, so a DROP + CREATE in
+                                            // this window hands back a different view that merely
+                                            // shares the name. Freezing that one while this loop
+                                            // copies the old token's directory fences the wrong
+                                            // instance and captures a directory nothing is holding
+                                            // still. Match on the directory name, which carries the
+                                            // table id and so is exact.
+                                            if (lvInstance != null
+                                                    && Chars.equals(lvInstance.getLiveViewToken().getDirName(), tableToken.getDirName())) {
+                                                if (lvInstance.startCheckpoint(circuitBreaker)) {
+                                                    freezeLvInstance = lvInstance;
+                                                } else {
+                                                    // Checkpoint/drop handshake, agent side: a concurrent
+                                                    // DROP LIVE VIEW has marked this instance dropped and is
+                                                    // waiting to tear its files down. Skip the view rather
+                                                    // than copy a directory that is about to vanish, mirroring
+                                                    // the mat-view concurrently-dropped arm above. Leave
+                                                    // freezeLvInstance null so the finally owes no endCheckpoint.
+                                                    LOG.info().$("skipping, live view is concurrently dropped [view=").$(tableToken).I$();
+                                                    break;
+                                                }
                                             }
                                         }
 
-                                        tableNameRegistryStore.logAddTable(tableToken);
-                                        path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
-                                        if (ff.mkdirs(path.slash(), configuration.getMkDirMode()) != 0) {
-                                            throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
+                                        // No freeze fences this view (getViewInstance returned null: a
+                                        // concurrent DROP LIVE VIEW already unregistered it). If its table
+                                        // teardown is under way, skip before touching any file - DROP may be
+                                        // deleting _lv / _lv.s right now, and an ff.copy racing that delete
+                                        // hard-throws and aborts the whole checkpoint. Narrows the pre-existing
+                                        // null-instance window; the standard reader path below applies the same
+                                        // isTableDropped guard around the reader open.
+                                        if (freezeLvInstance == null && engine.isTableDropped(tableToken)) {
+                                            LOG.info().$("skipping, live view is concurrently dropped [view=").$(tableToken).I$();
+                                            break;
                                         }
+
+                                        // The LV-specific copy follows. Standard TableReader path
+                                        // copies _meta / _txn / _cv / _name / partitions / wal<n>/
+                                        // after fall-through.
+                                        final Path auxPath = Path.PATH2.get();
+
+                                        // Copy _lv definition + _lv.s state file. Both are
+                                        // skipped when absent, mirroring the mat-view arm above:
+                                        // a view the catalogue could not load registers as a
+                                        // droppable state_unreadable stub, and one shape of that
+                                        // is an _lv.s that vanished alongside a committed _lv
+                                        // (CairoEngine's load path raises exactly that). This
+                                        // loop has no per-table catch, so hard-throwing on the
+                                        // absent file would abort CHECKPOINT CREATE for the whole
+                                        // database - one broken view would block every checkpoint
+                                        // until an operator dropped it. Skipping reproduces the
+                                        // view in the snapshot exactly as broken as it is here:
+                                        // the restored database re-derives the same stub from the
+                                        // same missing file. A copy that fails for a file that IS
+                                        // present still throws - that is a real I/O error and the
+                                        // snapshot would be silently incomplete.
+                                        auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
+                                        if (ff.exists(auxPath.$())) {
+                                            path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
+                                            if (ff.copy(auxPath.$(), path.$()) < 0) {
+                                                throw CairoException.critical(ff.errno()).put("could not copy live view definition file [view=").put(tableToken).put(']');
+                                            }
+                                        } else {
+                                            LOG.info().$("live view definition file not found, skipping [view=").$(tableToken).I$();
+                                        }
+
+                                        auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$();
+                                        if (ff.exists(auxPath.$())) {
+                                            path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$();
+                                            if (ff.copy(auxPath.$(), path.$()) < 0) {
+                                                throw CairoException.critical(ff.errno()).put("could not copy live view state file [view=").put(tableToken).put(']');
+                                            }
+                                        } else {
+                                            LOG.info().$("live view state file not found, skipping [view=").$(tableToken).I$();
+                                        }
+
+                                        LOG.info().$("live view definition + state included in the checkpoint [view=").$(tableToken).I$();
+                                        // Fall through (no break) to the standard WAL-backed-table
+                                        // copy below: _meta, _txn, _cv, _name, partition data, and
+                                        // wal<n>/ segments come from the TableReader path.
+                                    }
+
+                                    TableReader reader = null;
+                                    try {
+                                        try {
+                                            reader = engine.getReaderWithRepair(tableToken);
+                                        } catch (EntryLockedException e) {
+                                            LOG.info().$("waiting for locked table [table=").$(tableToken).I$();
+                                            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                                            continue;
+                                        } catch (CairoException e) {
+                                            if (engine.isTableDropped(tableToken)) {
+                                                LOG.info().$("skipping, table is concurrently dropped [table=").$(tableToken).I$();
+                                                break;
+                                            }
+                                            throw e;
+                                        } catch (TableReferenceOutOfDateException e) {
+                                            LOG.info().$("retrying, table reference is out of date [table=").$(tableToken).I$();
+                                            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                                            continue;
+                                        }
+
+                                        // restore the path
+                                        path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
+
+                                        // Copy _meta file.
+                                        path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
+                                        mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                                        reader.getMetadata().dumpTo(mem);
+                                        mem.close(false);
+                                        // Copy _txn file.
+                                        path.trimTo(rootLen).concat(TXN_FILE_NAME);
+                                        mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                                        reader.getTxFile().dumpTo(mem);
+                                        mem.close(false);
+                                        // Copy _cv file.
+                                        path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+                                        mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                                        reader.getColumnVersionReader().dumpTo(mem);
+                                        mem.close(false);
 
                                         // Generate _name file from table token (not copied from db_root).
                                         path.trimTo(rootLen).concat(TableUtils.TABLE_NAME_FILE);
                                         mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                                         TableUtils.createTableNameFile(mem, tableToken.getTableName());
 
-                                        // Copy view _meta file to checkpoint
-                                        final Path auxPath = Path.PATH2.get();
-                                        auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
-                                        path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
-                                        if (ff.copy(auxPath.$(), path.$()) < 0) {
-                                            throw CairoException.critical(ff.errno()).put("could not copy view metadata file [table=").put(tableToken).put(']');
+                                        long txn = reader.getTxn();
+                                        long seqTxn = reader.getSeqTxn();
+                                        TxnScoreboard scoreboard = engine.getTxnScoreboard(tableToken);
+                                        if (!scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, txn)) {
+                                            throw CairoException.nonCritical().put("cannot lock table for checkpoint [table=").put(tableToken).put(']');
+                                        }
+                                        scoreboardTxns.add(txn);
+                                        scoreboardTxns.add(
+                                                Numbers.encodeLowHighInts(
+                                                        reader.getMetadata().getPartitionBy(),
+                                                        reader.getMetadata().getTimestampType()
+                                                )
+                                        );
+                                        scoreboards.add(scoreboard);
+
+                                        if (isWalTable) {
+                                            // Add entry to table name registry copy.
+                                            tableNameRegistryStore.logAddTable(tableToken);
+
+                                            // Record the seqTxn for this table (may be a base table for mat views)
+                                            baseTableSeqTxns.put(tableToken.getTableName(), seqTxn);
+
+                                            if (isIncrementalBackup) {
+                                                BackupSeqPartLock seqPartLock = engine.getBackupSeqPartLock();
+                                                seqPartLock.lock(tableToken, seqTxn);
+                                            }
+
+                                            // Fetch sequencer metadata and the last committed sequencer txn.
+                                            // The metadata will be dumped to the checkpoint, and lastTxn is stored
+                                            // separately to know which sequencer txn the metadata corresponds to.
+                                            metadata.clear();
+                                            long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
+                                            path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
+                                            metadata.switchTo(path, path.size(), true); // dump sequencer metadata to checkpoint's  "db/tableName/txn_seq/_meta"
+                                            metadata.close(true, Vm.TRUNCATE_TO_POINTER);
+
+                                            mem.smallFile(ff, path.concat(TableUtils.CHECKPOINT_SEQ_TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                            // write lastTxn to the end of checkpoint's "db/tableName/txn_seq/_txn"
+                                            // This is not main table _txn file but an additional one 8 bytes file that stores
+                                            // the sequencer txn of the snapshot sequencer metadata
+                                            mem.putLong(lastTxn);
+                                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+
+                                            if (tableToken.isLiveView()) {
+                                                // Carry the SEQUENCER-dir _lv marker. It is a distinct file
+                                                // from the table-dir _lv the live-view branch above copies,
+                                                // and it is the one that classifies a live view from on-disk
+                                                // state alone: enterprise replication stats
+                                                // <table>/txn_seq/_lv both to answer a table's replication
+                                                // status while its token is unresolved and to classify a
+                                                // downloaded table on a fresh replica, and the primary's
+                                                // sequencer-meta upload ships that copy as the view's
+                                                // replication-visible definition. Omitting it makes every
+                                                // restored live view read back as a plain WAL table, so its
+                                                // node-local WAL replicates as ordinary data and no node runs
+                                                // a local refresh. Copied here rather than in the live-view
+                                                // branch because the checkpoint's txn_seq dir only exists once
+                                                // the sequencer metadata dump above has created it.
+                                                //
+                                                // Exists-guarded like the table-dir sidecars: a view the
+                                                // catalogue could not load must not abort CHECKPOINT CREATE
+                                                // for the whole database.
+                                                final Path seqAuxPath = Path.PATH2.get();
+                                                seqAuxPath.of(configuration.getDbRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR)
+                                                        .concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
+                                                if (ff.exists(seqAuxPath.$())) {
+                                                    path.trimTo(rootLen).concat(WalUtils.SEQ_DIR)
+                                                            .concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
+                                                    if (ff.copy(seqAuxPath.$(), path.$()) < 0) {
+                                                        throw CairoException.critical(ff.errno())
+                                                                .put("could not copy live view sequencer definition file [view=")
+                                                                .put(tableToken).put(']');
+                                                    }
+                                                } else {
+                                                    LOG.info().$("live view sequencer definition file not found, skipping [view=")
+                                                            .$(tableToken).I$();
+                                                }
+                                                // Deliberately NO checkpointSeqTxns entry. That map's only
+                                                // consumer is onCheckpointReleased, which enterprise
+                                                // replication turns into an object-store cleanup cutoff
+                                                // ("clean every object up to this txn"). A live view holds
+                                                // node-local data: its WAL is never uploaded, so the store has
+                                                // no per-txn objects to clean up TO, while this lastTxn is the
+                                                // local seqTxn its own refresh keeps advancing. The cleaner
+                                                // reads a cutoff above the last object txn as inconsistent
+                                                // records and skips the table, so recording one buys nothing.
+                                                // A dropped live view is still reclaimed -- the cleaner's
+                                                // dropped-table arm needs no cutoff.
+                                            } else {
+                                                // Record WAL table seqTxn for checkpoint listener
+                                                checkpointSeqTxns.put(tableToken.getDirName(), lastTxn);
+                                            }
                                         }
 
-                                        // Copy txn_seq/_meta file to checkpoint
-                                        auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR).concat(TableUtils.META_FILE_NAME).$();
-                                        path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(WalUtils.SEQ_DIR).concat(TableUtils.META_FILE_NAME).$();
-                                        if (ff.copy(auxPath.$(), path.$()) < 0) {
-                                            throw CairoException.critical(ff.errno()).put("could not copy view sequencer metadata file [table=").put(tableToken).put(']');
+                                        LogRecord logRecord = LOG.info().$("table included in the checkpoint [table=").$(tableToken)
+                                                .$(", txn=").$(txn)
+                                                .$(", seqTxn=").$(seqTxn);
+                                        if (tableToken.isMatView()) {
+                                            logRecord.$(", mvBaseTableTxn=").$(mvBaseTableTxn);
                                         }
-
-                                        // Write txn_seq/_txn to checkpoint
-                                        path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(WalUtils.SEQ_DIR);
-                                        mem.smallFile(ff, path.concat(TableUtils.CHECKPOINT_SEQ_TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                                        mem.putLong(lastTxn);
-                                        mem.close(true, Vm.TRUNCATE_TO_POINTER);
-
-                                        // Record view seqTxn for checkpoint listener
-                                        checkpointSeqTxns.put(tableToken.getDirName(), lastTxn);
-
-                                        LOG.info().$("view included in the checkpoint [view=").$(tableToken).I$();
-                                    } else {
-                                        LOG.info().$("skipping, view is concurrently dropped [view=").$(tableToken).I$();
+                                        logRecord.I$();
+                                        break;
+                                    } finally {
+                                        Misc.free(reader);
                                     }
-                                    break;
                                 }
-
-                                TableReader reader = null;
-                                try {
-                                    try {
-                                        reader = engine.getReaderWithRepair(tableToken);
-                                    } catch (EntryLockedException e) {
-                                        LOG.info().$("waiting for locked table [table=").$(tableToken).I$();
-                                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                                        continue;
-                                    } catch (CairoException e) {
-                                        if (engine.isTableDropped(tableToken)) {
-                                            LOG.info().$("skipping, table is concurrently dropped [table=").$(tableToken).I$();
-                                            break;
-                                        }
-                                        throw e;
-                                    } catch (TableReferenceOutOfDateException e) {
-                                        LOG.info().$("retrying, table reference is out of date [table=").$(tableToken).I$();
-                                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                                        continue;
-                                    }
-
-                                    // restore the path
-                                    path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
-
-                                    // Copy _meta file.
-                                    path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
-                                    mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-                                    reader.getMetadata().dumpTo(mem);
-                                    mem.close(false);
-                                    // Copy _txn file.
-                                    path.trimTo(rootLen).concat(TXN_FILE_NAME);
-                                    mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-                                    reader.getTxFile().dumpTo(mem);
-                                    mem.close(false);
-                                    // Copy _cv file.
-                                    path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
-                                    mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-                                    reader.getColumnVersionReader().dumpTo(mem);
-                                    mem.close(false);
-
-                                    // Generate _name file from table token (not copied from db_root).
-                                    path.trimTo(rootLen).concat(TableUtils.TABLE_NAME_FILE);
-                                    mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-                                    TableUtils.createTableNameFile(mem, tableToken.getTableName());
-
-                                    long txn = reader.getTxn();
-                                    long seqTxn = reader.getSeqTxn();
-                                    TxnScoreboard scoreboard = engine.getTxnScoreboard(tableToken);
-                                    if (!scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, txn)) {
-                                        throw CairoException.nonCritical().put("cannot lock table for checkpoint [table=").put(tableToken).put(']');
-                                    }
-                                    scoreboardTxns.add(txn);
-                                    scoreboardTxns.add(
-                                            Numbers.encodeLowHighInts(
-                                                    reader.getMetadata().getPartitionBy(),
-                                                    reader.getMetadata().getTimestampType()
-                                            )
-                                    );
-                                    scoreboards.add(scoreboard);
-
-                                    if (isWalTable) {
-                                        // Add entry to table name registry copy.
-                                        tableNameRegistryStore.logAddTable(tableToken);
-
-                                        // Record the seqTxn for this table (may be a base table for mat views)
-                                        baseTableSeqTxns.put(tableToken.getTableName(), seqTxn);
-
-                                        if (isIncrementalBackup) {
-                                            BackupSeqPartLock seqPartLock = engine.getBackupSeqPartLock();
-                                            seqPartLock.lock(tableToken, seqTxn);
-                                        }
-
-                                        // Fetch sequencer metadata and the last committed sequencer txn.
-                                        // The metadata will be dumped to the checkpoint, and lastTxn is stored
-                                        // separately to know which sequencer txn the metadata corresponds to.
-                                        metadata.clear();
-                                        long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
-                                        path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
-                                        metadata.switchTo(path, path.size(), true); // dump sequencer metadata to checkpoint's  "db/tableName/txn_seq/_meta"
-                                        metadata.close(true, Vm.TRUNCATE_TO_POINTER);
-
-                                        mem.smallFile(ff, path.concat(TableUtils.CHECKPOINT_SEQ_TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                                        // write lastTxn to the end of checkpoint's "db/tableName/txn_seq/_txn"
-                                        // This is not main table _txn file but an additional one 8 bytes file that stores
-                                        // the sequencer txn of the snapshot sequencer metadata
-                                        mem.putLong(lastTxn);
-                                        mem.close(true, Vm.TRUNCATE_TO_POINTER);
-
-                                        // Record WAL table seqTxn for checkpoint listener
-                                        checkpointSeqTxns.put(tableToken.getDirName(), lastTxn);
-                                    }
-
-                                    LogRecord logRecord = LOG.info().$("table included in the checkpoint [table=").$(tableToken)
-                                            .$(", txn=").$(txn)
-                                            .$(", seqTxn=").$(seqTxn);
-                                    if (tableToken.isMatView()) {
-                                        logRecord.$(", mvBaseTableTxn=").$(mvBaseTableTxn);
-                                    }
-                                    logRecord.I$();
-                                    break;
-                                } finally {
-                                    Misc.free(reader);
+                            } finally {
+                                if (freezeLvInstance != null) {
+                                    freezeLvInstance.endCheckpoint();
                                 }
                             }
                         }
@@ -620,8 +791,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
         for (int m = 0, n = matViewsToUpdate.size(); m < n; m++) {
             TableToken matViewToken = matViewsToUpdate.get(m);
-            final MatViewGraph matViewGraph = engine.getMatViewGraph();
-            final MatViewDefinition matViewDefinition = matViewGraph.getViewDefinition(matViewToken);
+            final DependentViewGraph dependentViewGraph = engine.getDependentViewGraph();
+            final MatViewDefinition matViewDefinition = dependentViewGraph.getViewDefinition(matViewToken);
             if (matViewDefinition == null) {
                 continue;
             }
