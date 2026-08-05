@@ -45,6 +45,18 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
     }
 
     @Test
+    public void testMalformedUtf8ColumnNameLeavesWriterHealthy() throws Exception {
+        final String table = "malformedUtf8ColumnName";
+        assertMalformedUtf8LeavesWriterHealthy(
+                table,
+                "LONG",
+                table + " valu" + (char) 0xC3 + "e=1i 1465839830100400200\n" +
+                        table + " value=42i 1465839830100400300\n",
+                "42"
+        );
+    }
+
+    @Test
     public void testMalformedUtf8StringIsRejected() throws Exception {
         final String table = "malformedUtf8String";
         runInContext(() -> {
@@ -72,23 +84,48 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
     @Test
     public void testMalformedUtf8StringLeavesWriterHealthy() throws Exception {
         final String table = "malformedUtf8Lifecycle";
+        assertMalformedUtf8LeavesWriterHealthy(
+                table,
+                "STRING",
+                table + " value=\"1" + (char) 0xC3 + "\" 1465839830100400200\n" +
+                        table + " value=\"2" + (char) 0xC3 + "\" 1465839830100400300\n" +
+                        table + " value=\"ok\" 1465839830100400400\n",
+                "ok"
+        );
+    }
+
+    @Test
+    public void testMalformedUtf8SymbolLeavesWriterHealthy() throws Exception {
+        final String table = "malformedUtf8SymbolLifecycle";
+        assertMalformedUtf8LeavesWriterHealthy(
+                table,
+                "SYMBOL",
+                table + " value=\"1" + (char) 0xC3 + "\" 1465839830100400200\n" +
+                        table + " value=\"2" + (char) 0xC3 + "\" 1465839830100400300\n" +
+                        table + " value=\"ok\" 1465839830100400400\n",
+                "ok"
+        );
+    }
+
+    private void assertMalformedUtf8LeavesWriterHealthy(
+            String table,
+            String columnType,
+            String input,
+            String expectedValue
+    ) throws Exception {
         runInContext(() -> {
-            execute("CREATE TABLE " + table + " (value STRING, timestamp TIMESTAMP) " +
+            execute("CREATE TABLE " + table + " (value " + columnType + ", timestamp TIMESTAMP) " +
                     "TIMESTAMP(timestamp) PARTITION BY DAY WAL");
-            // Rejecting the value must not cost the table its writer. Routed as a bare
-            // CairoException the malformed line reaches the scheduler's catch-all, which calls
-            // setWriterInError() and drops the writer -- a client looping bad bytes would then
-            // tear down and rebuild the writer once per line. Asserting on rows alone cannot see
-            // that, because the surviving lines still land either way.
-            recvBuffer = table + " value=\"1" + (char) 0xC3 + "\" 1465839830100400200\n" +
-                    table + " value=\"2" + (char) 0xC3 + "\" 1465839830100400300\n" +
-                    table + " value=\"ok\" 1465839830100400400\n";
+            // Rejecting malformed input must not cost the table its writer. A bare CairoException
+            // reaches the scheduler's catch-all, which calls setWriterInError() and drops the
+            // writer. Asserting on rows alone cannot see that because surviving lines still land.
+            recvBuffer = input;
             capture.start();
             try {
                 handleContextIO0();
-                Assert.assertFalse("malformed value must not disconnect the client", disconnected);
+                Assert.assertFalse("malformed UTF8 must not disconnect the client", disconnected);
                 // handleWriterException() logs this immediately before setWriterInError() drops
-                // the writer, so its absence is the assertion that the writer survived
+                // the writer, so its absence is the assertion that the writer survived.
                 capture.assertNotLogged("closing writer because of error");
             } finally {
                 capture.stop();
@@ -97,9 +134,8 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
             closeContext();
             drainWalQueue();
 
-            // The writer rejects the value while appending, so nothing malformed reaches a WAL
-            // segment and ApplyWal2TableJob never sees it. Rejecting later, at apply time, would
-            // suspend the table instead of failing the write.
+            // Rejection happens before the malformed value reaches a WAL segment. Rejecting later,
+            // at apply time, would suspend the table instead of failing the write.
             assertQuery("SELECT suspended FROM wal_tables() WHERE name = '" + table + "'")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -110,10 +146,7 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
             assertQuery("SELECT value FROM " + table + " ORDER BY timestamp")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("""
-                            value
-                            ok
-                            """);
+                    .returns("value\n" + expectedValue + "\n");
         });
     }
 

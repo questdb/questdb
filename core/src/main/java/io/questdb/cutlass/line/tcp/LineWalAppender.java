@@ -91,6 +91,11 @@ public class LineWalAppender implements QuietCloseable {
                 if (retryCount == maxMetadataChangeRetries) {
                     throw CairoException.nonCritical().put("metadata changed too many times during WAL append");
                 }
+            } catch (CairoException e) {
+                if (e.isMalformedUtf8()) {
+                    throw LineProtocolException.malformedUtf8(tud.getTableNameUtf16(), e.getFlyweightMessage());
+                }
+                throw e;
             }
         }
     }

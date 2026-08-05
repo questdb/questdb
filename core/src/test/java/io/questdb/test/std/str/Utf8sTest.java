@@ -2425,6 +2425,7 @@ public class Utf8sTest {
                 Utf8s.utf8ToUtf16Unchecked(dirSink, tempSink);
                 Assert.fail("expected CairoException");
             } catch (CairoException e) {
+                Assert.assertTrue(e.isMalformedUtf8());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
             }
         }

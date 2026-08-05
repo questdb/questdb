@@ -1629,7 +1629,7 @@ public final class Utf8s {
     public static void utf8ToUtf16Unchecked(@NotNull DirectUtf8Sequence utf8CharSeq, @NotNull MutableUtf16Sink tempSink) {
         tempSink.clear();
         if (!utf8ToUtf16(utf8CharSeq, tempSink)) {
-            throw CairoException.nonCritical().put("invalid UTF8 in value for ").put(utf8CharSeq);
+            throw CairoException.malformedUtf8(utf8CharSeq);
         }
     }
 

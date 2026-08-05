@@ -33,6 +33,9 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurableAckRegistry;
+import io.questdb.client.cutlass.qwp.client.QwpBufferWriter;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
+import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
@@ -41,9 +44,13 @@ import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
+import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
+import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -53,9 +60,11 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
@@ -731,6 +740,58 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 state.close();
             }
         });
+    }
+
+    @Test
+    public void testMalformedUtf8DeltaSymbolReturnsParseError() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                byte[] message = wrapQwpPayload(
+                        new byte[]{0, 1, 2, 'a', (byte) 0xC3},
+                        QwpConstants.FLAG_DELTA_SYMBOL_DICT
+                );
+                message[6] = 0; // tableCount=0; the payload contains only the delta dictionary
+                addNativeData(state, message);
+                state.processMessage();
+
+                Assert.assertEquals(QwpIngressProcessorState.Status.PARSE_ERROR, state.getStatus());
+                Assert.assertTrue(state.getErrorText().contains("invalid UTF-8"));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testMalformedUtf8StringColumnReturnsParseError() throws Exception {
+        assertMalformedUtf8ColumnReturnsParseError(
+                "qwp_bad_string",
+                "STRING",
+                QwpConstants.TYPE_VARCHAR
+        );
+    }
+
+    @Test
+    public void testMalformedUtf8SymbolColumnReturnsParseError() throws Exception {
+        assertMalformedUtf8ColumnReturnsParseError(
+                "qwp_bad_symbol",
+                "SYMBOL",
+                QwpConstants.TYPE_SYMBOL
+        );
+    }
+
+    @Test
+    public void testMalformedUtf8VarcharToSymbolColumnReturnsParseError() throws Exception {
+        assertMalformedUtf8ColumnReturnsParseError(
+                "qwp_bad_varchar_symbol",
+                "SYMBOL",
+                QwpConstants.TYPE_VARCHAR
+        );
     }
 
     @Test
@@ -2931,6 +2992,102 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             Assert.assertEquals(msg, 0, actual.length());
         } else {
             Assert.assertEquals(msg, expected, actual.toString());
+        }
+    }
+
+    private void assertMalformedUtf8ColumnReturnsParseError(
+            String tableName,
+            String targetColumnType,
+            byte qwpColumnType
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE " + tableName + " (val " + targetColumnType
+                    + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                try (
+                        QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                        QwpTableBuffer tableBuffer = new QwpTableBuffer(tableName)
+                ) {
+                    QwpTableBuffer.ColumnBuffer valueColumn =
+                            tableBuffer.getOrCreateColumn("val", qwpColumnType, false);
+                    QwpTableBuffer.ColumnBuffer timestampColumn =
+                            tableBuffer.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
+                    if (qwpColumnType == QwpConstants.TYPE_SYMBOL) {
+                        valueColumn.addSymbol("ok");
+                    } else {
+                        valueColumn.addString("ok");
+                    }
+                    timestampColumn.addLong(1_000_000_000_000L);
+                    tableBuffer.nextRow();
+
+                    if (qwpColumnType == QwpConstants.TYPE_SYMBOL) {
+                        valueColumn.addSymbol("ab");
+                    } else {
+                        valueColumn.addString("ab");
+                    }
+                    timestampColumn.addLong(1_000_000_000_001L);
+                    tableBuffer.nextRow();
+
+                    int messageSize = encoder.encode(tableBuffer);
+                    QwpBufferWriter buffer = encoder.getBuffer();
+                    long messageAddress = buffer.getBufferPtr();
+                    corruptQwpUtf8Value(messageAddress, messageSize, qwpColumnType);
+                    state.addData(messageAddress, messageAddress + messageSize);
+                    state.processMessage();
+                }
+
+                Assert.assertEquals(QwpIngressProcessorState.Status.PARSE_ERROR, state.getStatus());
+                Assert.assertTrue(state.getErrorText().contains("invalid UTF8 in value for"));
+                // Commit anything left in the writer so the query below proves the columnar
+                // cancellation removed the malformed row, independently of disconnect rollback.
+                state.commit();
+                Assert.assertEquals(QwpIngressProcessorState.Status.PARSE_ERROR, state.getStatus());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+
+            TestUtils.drainWalQueue(engine);
+            assertQuery("SELECT * FROM " + tableName)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("val\tts\n");
+        });
+    }
+
+    private static void corruptQwpUtf8Value(long messageAddress, int messageSize, byte qwpColumnType)
+            throws QwpParseException {
+        try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {
+            QwpMessageCursor message = decoder.decode(messageAddress, messageSize);
+            Assert.assertTrue(message.hasNextTable());
+            QwpTableBlockCursor table = message.nextTable();
+            Assert.assertTrue(table.hasNextRow());
+            table.nextRow();
+            Assert.assertTrue(table.hasNextRow());
+            table.nextRow();
+
+            for (int i = 0, n = table.getColumnCount(); i < n; i++) {
+                if (table.getColumnDef(i).getTypeCode() == qwpColumnType) {
+                    DirectUtf8Sequence value;
+                    if (qwpColumnType == QwpConstants.TYPE_SYMBOL) {
+                        QwpSymbolColumnCursor cursor = table.getSymbolColumn(i);
+                        value = cursor.getSymbolUtf8();
+                    } else {
+                        QwpStringColumnCursor cursor = table.getStringColumn(i);
+                        value = cursor.getUtf8Value();
+                    }
+                    Assert.assertNotNull(value);
+                    Assert.assertTrue(value.size() > 0);
+                    Unsafe.putByte(value.ptr() + value.size() - 1, (byte) 0xC3);
+                    return;
+                }
+            }
+            Assert.fail("QWP value column not found");
         }
     }
 
