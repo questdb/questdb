@@ -813,10 +813,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             }
                         }
                     }
-                    deleter.unlock(walId);
                     // Move to next discovered entry, wal entries are composed of 3 + nSegments longs:
                     // (walId, maxSegmentLocked, nSegments, segmentId...)
                     i += 3 + nSegments;
+                    deleter.unlock(walId);
                 }
             } finally {
                 unlockDiscovered(i);

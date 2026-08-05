@@ -33,11 +33,10 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.IntList;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 
-import java.lang.management.ManagementFactory;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -563,19 +562,6 @@ public class LiveViewSymbolCacheConcurrencyTest {
         }
     }
 
-    // Turns on per-thread allocation accounting, or skips the calling test when the JVM
-    // does not offer it.
-    private static ThreadMXBean enableThreadAllocationProfiling() {
-        final java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
-        Assume.assumeTrue("thread allocation profiling unavailable", mxBean instanceof ThreadMXBean);
-        final ThreadMXBean threadMXBean = (ThreadMXBean) mxBean;
-        Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
-        if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
-            threadMXBean.setThreadAllocatedMemoryEnabled(true);
-        }
-        return threadMXBean;
-    }
-
     // Loads the intern path's classes on a throwaway cache so a measured intern sees
     // steady-state allocation behavior.
     private static void warmUpInterning() {
@@ -698,7 +684,7 @@ public class LiveViewSymbolCacheConcurrencyTest {
         // must stay sparse across that gap too, and both bands must still resolve -
         // a cursor pinned before the jump reads the low ids, one pinned after reads
         // the high ones.
-        final ThreadMXBean threadMXBean = enableThreadAllocationProfiling();
+        final ThreadMXBean threadMXBean = TestUtils.threadAllocationBean();
         final IntList columnTypes = new IntList();
         columnTypes.add(ColumnType.SYMBOL);
         warmUpInterning();
@@ -739,7 +725,7 @@ public class LiveViewSymbolCacheConcurrencyTest {
         // un-flushed lead must not make the store materialize a slot per committed
         // symbol - that is tens of megabytes of nulls for one string, retained until
         // the view closes.
-        final ThreadMXBean threadMXBean = enableThreadAllocationProfiling();
+        final ThreadMXBean threadMXBean = TestUtils.threadAllocationBean();
         final IntList columnTypes = new IntList();
         columnTypes.add(ColumnType.SYMBOL);
         warmUpInterning();

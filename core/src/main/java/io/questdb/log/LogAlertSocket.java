@@ -61,6 +61,7 @@ public class LogAlertSocket implements Closeable {
     private final int outBufferSize;
     private final Rnd rand;
     private final long reconnectDelay;
+    private final long reconnectDelayMillis;
     private final Runnable onReconnectRef = this::onReconnect;
     private final StringSink responseSink = new StringSink();
     private long addressInfoAddr = -1; // tcp/ip host:port address
@@ -106,6 +107,7 @@ public class LogAlertSocket implements Closeable {
         this.outBufferSize = outBufferSize;
         this.outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_LOGGER);
         this.reconnectDelay = reconnectDelay;
+        this.reconnectDelayMillis = Math.max(1, reconnectDelay / 1_000_000);
     }
 
     @Override
@@ -299,7 +301,7 @@ public class LogAlertSocket implements Closeable {
             );
             if (alertHostIdx == this.alertHostIdx) {
                 logFailOver.$(" with a delay of ")
-                        .$(reconnectDelay / 1000000)
+                        .$(reconnectDelayMillis)
                         .$(" millis (as it is the same alert manager)")
                         .$();
                 onReconnect.run();
@@ -364,7 +366,7 @@ public class LogAlertSocket implements Closeable {
     }
 
     private void onReconnect() {
-        Os.sleep(Math.max(1, reconnectDelay / 1_000_000));
+        Os.sleep(reconnectDelayMillis);
     }
 
     private void parseAlertTargets() {

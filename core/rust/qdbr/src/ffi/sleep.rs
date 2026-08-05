@@ -25,7 +25,7 @@
 //! Millisecond sleep backing `io.questdb.std.Os.sleep`.
 //!
 //! Java's `Thread.sleep` allocates a `jdk.internal.event.ThreadSleepEvent` on
-//! every call since JDK 25 -- `Thread.beforeSleep` constructs the event before
+//! every call since JDK 24 -- `Thread.beforeSleep` constructs the event before
 //! testing `isEnabled()`, so the 40 bytes are paid even with JFR off wherever
 //! the JIT does not eliminate the dead event (the Graal JIT, C1 and the
 //! interpreter do not; a hot C2-compiled call site does). QuestDB's worker
@@ -38,11 +38,8 @@
 //! `std::thread::sleep` re-issues the underlying syscall with the remaining
 //! duration after EINTR.
 //!
-//! Java binds this symbol through the Foreign Function & Memory API WITHOUT
-//! `Linker.Option.critical`. The plain binding transitions the calling thread to
-//! `_thread_in_native`, which is what lets the VM reach a safepoint while a
-//! worker sleeps. Marking a blocking function critical instead stalls every
-//! safepoint for the full sleep duration.
+//! Java deliberately binds this symbol WITHOUT `Linker.Option.critical`; see
+//! `io.questdb.std.Os.SLEEP_MILLIS` for the safepoint rationale.
 
 use std::thread;
 use std::time::Duration;
@@ -66,7 +63,7 @@ mod tests {
         qdb_sleep_millis(50);
         let elapsed = start.elapsed();
         assert!(elapsed >= Duration::from_millis(50));
-        assert!(elapsed < Duration::from_secs(5));
+        assert!(elapsed < Duration::from_millis(2_000));
     }
 
     #[test]

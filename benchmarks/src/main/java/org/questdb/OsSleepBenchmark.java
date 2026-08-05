@@ -49,7 +49,7 @@ import java.util.concurrent.TimeUnit;
  * {@code legacyPause}/{@code legacySleep}.
  * <p>
  * Read {@code ·gc.alloc.rate.norm} first ({@code main} adds the gc profiler; CLI
- * runs need {@code -prof gc}): since JDK 25 {@code Thread.beforeSleep} constructs
+ * runs need {@code -prof gc}): since JDK 24 {@code Thread.beforeSleep} constructs
  * a {@code jdk.internal.event.ThreadSleepEvent} before testing {@code isEnabled()},
  * so {@code Thread.sleep} allocates 40 bytes per call even with JFR off -- wherever
  * the JIT does not eliminate the dead event. The legacy rows report ~40 B/op under
@@ -60,10 +60,13 @@ import java.util.concurrent.TimeUnit;
  * dominated by the OS timer, so {@code testLegacySleep*} and {@code testOsSleep*}
  * must land within noise of each other; a native sleep that overshoots would show
  * up here.
+ * <p>
+ * CLI runs need {@code --enable-native-access=ALL-UNNAMED}: touching {@code Os}
+ * resolves a restricted FFM downcall at class load.
  */
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
-@Fork(1)
+@Fork(value = 1, jvmArgsAppend = "--enable-native-access=ALL-UNNAMED")
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @Warmup(iterations = 2, time = 2)
 @Measurement(iterations = 3, time = 3)
@@ -92,7 +95,7 @@ public class OsSleepBenchmark {
     }
 
     @Benchmark
-    @Fork(value = 1, jvmArgsAppend = "-XX:TieredStopAtLevel=1")
+    @Fork(value = 1, jvmArgsAppend = {"-XX:TieredStopAtLevel=1", "--enable-native-access=ALL-UNNAMED"})
     @OutputTimeUnit(TimeUnit.NANOSECONDS)
     public void testLegacyPauseC1() {
         legacyPause();
@@ -115,7 +118,7 @@ public class OsSleepBenchmark {
     }
 
     @Benchmark
-    @Fork(value = 1, jvmArgsAppend = "-XX:TieredStopAtLevel=1")
+    @Fork(value = 1, jvmArgsAppend = {"-XX:TieredStopAtLevel=1", "--enable-native-access=ALL-UNNAMED"})
     @OutputTimeUnit(TimeUnit.NANOSECONDS)
     public void testOsPauseC1() {
         Os.pause();

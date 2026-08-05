@@ -54,7 +54,9 @@ import java.io.File;
 import java.util.Arrays;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.log.HttpLogRecordUtf8Sink.CRLF;
 
@@ -217,6 +219,58 @@ public class LogAlertSocketTest {
                 AtomicInteger reconnectCounter = new AtomicInteger();
                 Assert.assertFalse(alertSkt.send(builder.size(), reconnectCounter::incrementAndGet));
                 Assert.assertEquals(2, reconnectCounter.get());
+            }
+        });
+    }
+
+    @Test
+    public void testFailOverSingleHostWaitsReconnectDelay() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long reconnectDelayNanos = TimeUnit.MILLISECONDS.toNanos(200);
+            final NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public int connectAddrInfo(long fd, long pAddrInfo) {
+                    return -1;
+                }
+            };
+            try (LogAlertSocket alertSkt = new LogAlertSocket(
+                    nf,
+                    "localhost:1234",
+                    LogAlertSocket.IN_BUFFER_SIZE,
+                    LogAlertSocket.OUT_BUFFER_SIZE,
+                    reconnectDelayNanos,
+                    LogAlertSocket.DEFAULT_HOST,
+                    LogAlertSocket.DEFAULT_PORT,
+                    LOG
+            )) {
+                final HttpLogRecordUtf8Sink builder = new HttpLogRecordUtf8Sink(alertSkt)
+                        .putHeader("localhost")
+                        .setMark();
+                builder.rewindToMark().put("Something").put(CRLF).$();
+
+                AtomicBoolean hasSent = new AtomicBoolean(true);
+                AtomicReference<Throwable> error = new AtomicReference<>();
+                long time = System.nanoTime();
+                // Run on a bounded helper thread: a broken nanos-to-millis conversion turns
+                // the reconnect delay into a multi-day sleep, which must fail the test
+                // instead of hanging the fork.
+                Thread t = new Thread(() -> {
+                    try {
+                        hasSent.set(alertSkt.send(builder.size()));
+                    } catch (Throwable th) {
+                        error.set(th);
+                    }
+                });
+                t.setDaemon(true);
+                t.start();
+                t.join(TimeUnit.SECONDS.toMillis(10));
+                long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time);
+
+                Assert.assertFalse(t.isAlive());
+                Assert.assertNull(error.get());
+                Assert.assertFalse(hasSent.get());
+                // single host, two attempts -> the reconnect delay is paid twice
+                Assert.assertTrue("send waited only " + elapsedMs + "ms across reconnects", elapsedMs >= 400);
             }
         });
     }

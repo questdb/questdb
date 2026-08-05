@@ -33,6 +33,7 @@ import org.junit.Test;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
 import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -72,9 +73,10 @@ public class SOCountDownLatchTest {
     public void testAwaitTimeoutWhileInterrupted() throws Exception {
         ThreadMXBean bean = ManagementFactory.getThreadMXBean();
         Assume.assumeTrue(bean.isCurrentThreadCpuTimeSupported());
+        Os.sleep(1);
 
         SOCountDownLatch latch = new SOCountDownLatch(1);
-        AtomicBoolean isPhase1Done = new AtomicBoolean();
+        CountDownLatch phase1Done = new CountDownLatch(1);
         AtomicBoolean hasTimedOut = new AtomicBoolean();
         AtomicBoolean hasSeenCountDown = new AtomicBoolean();
         AtomicLong cpuNanos = new AtomicLong();
@@ -85,18 +87,19 @@ public class SOCountDownLatchTest {
                 long cpu = bean.getCurrentThreadCpuTime();
                 hasTimedOut.set(!latch.await(TimeUnit.MILLISECONDS.toNanos(500)));
                 cpuNanos.set(bean.getCurrentThreadCpuTime() - cpu);
-                isPhase1Done.set(true);
+                phase1Done.countDown();
                 hasSeenCountDown.set(latch.await(TimeUnit.SECONDS.toNanos(30)));
             } catch (Throwable th) {
                 error.set(th);
+                phase1Done.countDown();
             }
         });
         waiter.start();
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while (!isPhase1Done.get() && System.nanoTime() < deadline) {
-            Os.pause();
+        boolean isPhase1Done = phase1Done.await(10, TimeUnit.SECONDS);
+        if (error.get() != null) {
+            throw new AssertionError(error.get());
         }
-        Assert.assertTrue(isPhase1Done.get());
+        Assert.assertTrue("phase 1 did not complete", isPhase1Done);
         latch.countDown();
         waiter.join(TimeUnit.SECONDS.toMillis(10));
 

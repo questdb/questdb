@@ -219,6 +219,9 @@ final class AsyncLogRecord implements LogRecord {
                 validateUtf8(sink);
             }
         } finally {
+            if (dejaVu.size() > 0) {
+                dejaVu.clear();
+            }
             isLogRecordInProgress = false;
             seq.done(cursor);
         }
@@ -502,17 +505,5 @@ final class AsyncLogRecord implements LogRecord {
         }
         $(" #$#$ ABANDONED LOG RECORD #$#$").$();
         return abandonedLogRecordError;
-    }
-
-    /**
-     * Returns this record's {@code dejaVu} set. Used by {@code $(Throwable)} to
-     * accumulate already-printed exception identities across nested cause/suppressed
-     * traversal. The set is cleared by the writer thread when it consumes the entry,
-     * NOT here - callers reuse it across chains and rely on identity inequality
-     * across messages.
-     */
-    @SuppressWarnings("unused")
-    ObjHashSet<Throwable> getDejaVu() {
-        return dejaVu;
     }
 }

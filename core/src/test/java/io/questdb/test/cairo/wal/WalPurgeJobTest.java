@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
@@ -38,6 +39,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
@@ -720,27 +722,51 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLogicReleasesLocksWhenDeleteThrows() {
-        ObjList<Integer> unlocked = new ObjList<>();
+    public void testLogicReleaseLocksSwallowsUnlockFailure() {
         TestDeleter deleter = new TestDeleter() {
             @Override
-            public void deleteWalDirectory(int walId) {
-                throw new RuntimeException("delete failed");
-            }
-
-            @Override
             public void unlock(int walId) {
-                unlocked.add(walId);
+                if (walId == 2) {
+                    throw new RuntimeException("unlock failed");
+                }
+                super.unlock(walId);
             }
         };
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
         TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
         logic.reset(tableToken);
 
-        int idx1 = logic.trackDiscoveredWal(1);
-        logic.endWalTracking(idx1, WalUtils.SEG_NONE_ID, true);
-        int idx2 = logic.trackDiscoveredWal(2);
-        logic.endWalTracking(idx2, WalUtils.SEG_NONE_ID, true);
+        logic.endWalTracking(logic.trackDiscoveredWal(1), WalUtils.SEG_NONE_ID, true);
+        logic.endWalTracking(logic.trackDiscoveredWal(2), WalUtils.SEG_NONE_ID, true);
+        logic.trackSeqPart(7);
+        logic.endWalTracking(logic.trackDiscoveredWal(3), WalUtils.SEG_NONE_ID, true);
+
+        logic.releaseLocks();
+
+        Assert.assertEquals(2, deleter.unlocked.size());
+        Assert.assertEquals(1, deleter.unlocked.getQuick(0));
+        Assert.assertEquals(3, deleter.unlocked.getQuick(1));
+    }
+
+    @Test
+    public void testLogicReleasesLocksWhenDeleteThrows() {
+        TestDeleter deleter = new TestDeleter() {
+            @Override
+            public void deleteWalDirectory(int walId) {
+                if (walId == 2) {
+                    throw new RuntimeException("delete failed");
+                }
+                super.deleteWalDirectory(walId);
+            }
+        };
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
+        TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
+        logic.reset(tableToken);
+
+        logic.endWalTracking(logic.trackDiscoveredWal(1), WalUtils.SEG_NONE_ID, true);
+        logic.endWalTracking(logic.trackDiscoveredWal(2), WalUtils.SEG_NONE_ID, true);
+        logic.trackSeqPart(7);
+        logic.endWalTracking(logic.trackDiscoveredWal(3), WalUtils.SEG_NONE_ID, true);
 
         try {
             logic.run();
@@ -749,22 +775,58 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             Assert.assertEquals("delete failed", e.getMessage());
         }
 
-        Assert.assertEquals(2, unlocked.size());
-        Assert.assertEquals(1, (int) unlocked.get(0));
-        Assert.assertEquals(2, (int) unlocked.get(1));
+        Assert.assertEquals(1, deleter.events.size());
+        Assert.assertEquals(new DeletionEvent(1), deleter.events.get(0));
+        Assert.assertEquals(3, deleter.unlocked.size());
+        Assert.assertEquals(1, deleter.unlocked.getQuick(0));
+        Assert.assertEquals(2, deleter.unlocked.getQuick(1));
+        Assert.assertEquals(3, deleter.unlocked.getQuick(2));
+    }
+
+    @Test
+    public void testLogicReleasesRemainingLocksWhenUnlockThrows() {
+        TestDeleter deleter = new TestDeleter() {
+            @Override
+            public void unlock(int walId) {
+                super.unlock(walId);
+                if (walId == 1) {
+                    throw new RuntimeException("unlock failed");
+                }
+            }
+        };
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
+        TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
+        logic.reset(tableToken);
+
+        logic.endWalTracking(logic.trackDiscoveredWal(1), WalUtils.SEG_NONE_ID, true);
+        logic.endWalTracking(logic.trackDiscoveredWal(2), WalUtils.SEG_NONE_ID, true);
+
+        try {
+            logic.run();
+            Assert.fail("expected unlock failure to propagate");
+        } catch (RuntimeException e) {
+            Assert.assertEquals("unlock failed", e.getMessage());
+        }
+
+        Assert.assertEquals(1, deleter.events.size());
+        Assert.assertEquals(new DeletionEvent(1), deleter.events.get(0));
+        Assert.assertEquals(2, deleter.unlocked.size());
+        Assert.assertEquals(1, deleter.unlocked.getQuick(0));
+        Assert.assertEquals(2, deleter.unlocked.getQuick(1));
     }
 
     @Test
     public void testLogicWaitsBeforeDelete() {
+        final int waitMs = 500;
         TestDeleter deleter = new TestDeleter();
-        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 200);
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, waitMs);
         TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
 
         logic.reset(tableToken);
         long time = System.nanoTime();
         logic.run();
         long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time);
-        Assert.assertTrue("empty run waited " + elapsedMs + "ms", elapsedMs < 200);
+        Assert.assertTrue("empty run waited " + elapsedMs + "ms", elapsedMs < waitMs);
 
         logic.reset(tableToken);
         int idx = logic.trackDiscoveredWal(1);
@@ -772,7 +834,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         time = System.nanoTime();
         logic.run();
         elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time);
-        Assert.assertTrue("run waited only " + elapsedMs + "ms", elapsedMs >= 200);
+        Assert.assertTrue("run waited only " + elapsedMs + "ms", elapsedMs >= waitMs);
         Assert.assertEquals(1, deleter.events.size());
         Assert.assertEquals(new DeletionEvent(1), deleter.events.get(0));
     }
@@ -1269,6 +1331,79 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSegmentScanFailureReleasesLocks() throws Exception {
+        // Regression test for the endWalTracking finally in discoverWalSegments(): a throw
+        // mid-segment-scan used to leave a partial (walId, 0, 0, segmentId...) entry whose
+        // zero segment-count desyncs the stride walk in releaseLocks(), which then reads a
+        // segment id as a walId, unlocks a WAL the sweep never locked, and aborts with an
+        // out-of-bounds read that replaces the original error.
+        final String tableName = testName.getMethodName();
+        final String tableDirName = tableName + "~1";
+        final AtomicBoolean armed = new AtomicBoolean(false);
+        final FilesFacade testFf = new TestFilesFacadeImpl() {
+            long segmentScanPtr = -1;
+
+            @Override
+            public long findFirst(LPSZ path) {
+                long ptr = super.findFirst(path);
+                if (armed.get() && Utf8s.containsAscii(path, tableDirName) && Utf8s.endsWithAscii(path, "wal1")) {
+                    segmentScanPtr = ptr;
+                }
+                return ptr;
+            }
+
+            @Override
+            public int findNext(long findPtr) {
+                int r = super.findNext(findPtr);
+                if (r <= 0 && findPtr == segmentScanPtr) {
+                    segmentScanPtr = -1;
+                    throw CairoException.critical(0).put("segment scan failure");
+                }
+                return r;
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            execute("create table " + tableName + "("
+                    + "x long,"
+                    + "ts timestamp"
+                    + ") timestamp(ts) partition by DAY WAL");
+            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            execute("alter table " + tableName + " add column s1 string");
+            execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
+
+            // Release the writer: an exclusive purge lock tracks both segments with
+            // positive ids, the encoding the broken stride walk misreads as WAL ids.
+            engine.releaseInactive();
+            assertWalNotLocked(tableName, 1);
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentExistence(true, tableName, 1, 1);
+
+            // The sweep fails mid-scan; with the finally in place the injected CairoException
+            // surfaces through the per-table handler and the sweep releases its locks. Without
+            // it the desynced walk escalates to an ArrayIndexOutOfBoundsException that escapes
+            // the purge job and fails this call.
+            armed.set(true);
+            try {
+                TestUtils.drainPurgeJob(engine, testFf);
+            } finally {
+                armed.set(false);
+            }
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentExistence(true, tableName, 1, 1);
+
+            // The failed sweep must not have leaked purge locks or corrupted tracking:
+            // once applied and released, a clean sweep purges the WAL.
+            drainWalQueue();
+            engine.releaseInactive();
+            TestUtils.drainPurgeJob(engine, testFf);
+            assertWalExistence(false, tableName, 1);
+        });
+    }
+
+    @Test
     public void testSegmentsCreatedWhenSweeping() throws Exception {
 
         AtomicReference<WalWriter> walWriter1Ref = new AtomicReference<>();
@@ -1664,6 +1799,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     private static class TestDeleter implements WalPurgeJob.Deleter {
         public final ObjList<DeletionEvent> events = new ObjList<>();
+        public final IntList unlocked = new IntList();
 
         @Override
         public void deleteSegmentDirectory(int walId, int segmentId) {
@@ -1682,6 +1818,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
         @Override
         public void unlock(int walId) {
+            unlocked.add(walId);
         }
     }
 }
