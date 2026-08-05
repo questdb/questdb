@@ -413,8 +413,8 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     final String window = range == 0
                             ? NATURAL_RANGE_FRAME_WINDOW
                             : (range == 1
-                            ? NATURAL_LAGGING_RANGE_FRAME_WINDOW
-                            : NATURAL_UNBOUNDED_LO_RANGE_FRAME_WINDOW);
+                               ? NATURAL_LAGGING_RANGE_FRAME_WINDOW
+                               : NATURAL_UNBOUNDED_LO_RANGE_FRAME_WINDOW);
                     final String lead = ", " + FORCING_CALL;
                     assertFusedMatchesUnfused(window, lead, "sum(x) over w", "avg(x) over w");
                     assertFusedMatchesUnfused(
@@ -505,7 +505,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     final String expressionWindow = ordered == 0
                             ? PARTITION_WINDOW
                             : " from t window q as (partition by concat(k, k2) order by ts desc "
-                            + "rows between unbounded preceding and unbounded following)";
+                              + "rows between unbounded preceding and unbounded following)";
                     assertFusedMatchesUnfused(
                             expressionWindow,
                             "",

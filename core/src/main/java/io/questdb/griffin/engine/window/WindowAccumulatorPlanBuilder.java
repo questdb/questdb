@@ -127,16 +127,16 @@ public final class WindowAccumulatorPlanBuilder {
      * {@link WindowAccumulatorPlan#getStructuralReduction()} - so a window carrying one
      * fusible function produces no group, and neither does one carrying none.
      *
-     * @param functions    the functions to bucket, in output order - every SELECT-list
-     *                     function for the streaming cursor, and one sort group's own
-     *                     members for a cached one, which is why the list is only required
-     *                     to hold functions
-     * @param specs        one entry per {@code functions} index: the window spec that index
-     *                     was compiled under, or null for a non-window column and for a
-     *                     window shape this build does not group
-     * @param recordTypes  the types of the record the window functions and their arguments
-     *                     read, by index - see
-     *                     {@link WindowAccumulatorDescriptor#directColumnIndex}
+     * @param functions   the functions to bucket, in output order - every SELECT-list
+     *                    function for the streaming cursor, and one sort group's own
+     *                    members for a cached one, which is why the list is only required
+     *                    to hold functions
+     * @param specs       one entry per {@code functions} index: the window spec that index
+     *                    was compiled under, or null for a non-window column and for a
+     *                    window shape this build does not group
+     * @param recordTypes the types of the record the window functions and their arguments
+     *                    read, by index - see
+     *                    {@link WindowAccumulatorDescriptor#directColumnIndex}
      */
     public static @Nullable ObjList<WindowAccumulatorPlan> compileGroups(
             @NotNull ObjList<? extends Function> functions,

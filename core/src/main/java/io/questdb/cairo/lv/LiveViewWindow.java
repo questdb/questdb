@@ -800,9 +800,9 @@ public class LiveViewWindow implements QuietCloseable {
      * the window's one dirty set's. What stays the member's own is only what its root
      * charges: the logical byte baseline it is incremental against.
      *
-     * @param projectionIndex        the member's projection in the adopted plan
-     * @param baselineLogicalBytes   the member root's own logical size to build on for an
-     *                               incremental freeze, ignored for a complete one
+     * @param projectionIndex      the member's projection in the adopted plan
+     * @param baselineLogicalBytes the member root's own logical size to build on for an
+     *                             incremental freeze, ignored for a complete one
      */
     public long freezeCheckpointMemberEntries(
             @NotNull MemoryCARW keyBuffer,
@@ -2252,9 +2252,9 @@ public class LiveViewWindow implements QuietCloseable {
      * key because this walk has no base row to evaluate the argument against. A
      * NULL-key partition's image is the eight zero bytes a fresh array already holds.
      *
-     * @param keyRecord      the record of whichever map the walk is on - the anchor map's
-     *                       for a complete freeze, the dirty set's for an incremental one
-     * @param keyStartIndex  where that record's key columns begin
+     * @param keyRecord     the record of whichever map the walk is on - the anchor map's
+     *                      for a complete freeze, the dirty set's for an incremental one
+     * @param keyStartIndex where that record's key columns begin
      */
     private byte[] encodeMemberStateImage(
             int projectionIndex,
