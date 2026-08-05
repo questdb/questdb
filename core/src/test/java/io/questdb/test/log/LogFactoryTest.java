@@ -1046,6 +1046,52 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testThrowableCauseIsNotCircularAcrossRecords() {
+        // Regression test for the dejaVu clear in AsyncLogRecord.$(): the set used to
+        // retain every Throwable a carrier thread ever logged, so a cause shared with
+        // an earlier record printed as [CIRCULAR REFERENCE] instead of its stack trace.
+        try (LogFactory factory = new LogFactory()) {
+            final StringSink sink = new StringSink();
+            SOCountDownLatch latch = new SOCountDownLatch(1);
+
+            factory.add(new LogWriterConfig(LogLevel.ALL, (ring, seq, level) -> new LogWriter() {
+                @Override
+                public void bindProperties(LogFactory factory) {
+                }
+
+                @Override
+                public boolean run(@NotNull WorkerContext workerContext) {
+                    return seq.consumeAll(ring, this::log);
+                }
+
+                private void log(LogRecordUtf8Sink record) {
+                    sink.put((Sinkable) record);
+                    latch.countDown();
+                }
+            }));
+
+            factory.bind();
+            factory.startThread();
+            Log logger = factory.create("x");
+
+            Exception cause = new RuntimeException("shared cause");
+            logger.error().$("first").$(new RuntimeException("wrapper 1", cause)).$();
+            latch.await();
+            latch.setCount(1);
+            logger.error().$("second").$(new RuntimeException("wrapper 2", cause)).$();
+            latch.await();
+
+            String out = sink.toString();
+            Assert.assertFalse("shared cause degraded to a circular reference: " + out,
+                    out.contains("[CIRCULAR REFERENCE"));
+            int first = out.indexOf("Caused by: java.lang.RuntimeException: shared cause");
+            Assert.assertTrue("cause missing from the first record: " + out, first > -1);
+            Assert.assertTrue("cause missing from the second record: " + out,
+                    out.indexOf("Caused by: java.lang.RuntimeException: shared cause", first + 1) > first);
+        }
+    }
+
+    @Test
     public void testUninitializedFactory() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, Files.getResourcePath(getClass().getResource("/test-log.conf")));
 
