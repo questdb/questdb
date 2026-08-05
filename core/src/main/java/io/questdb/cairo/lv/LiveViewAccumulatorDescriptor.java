@@ -67,6 +67,15 @@ import java.util.Arrays;
  * every field offset therefore follow the runtime slot model rather than being tabulated a
  * second time. A family whose image is not that shape - a DECIMAL accumulator, say - needs
  * a codec of its own and must not be described by this one.
+ * <p>
+ * {@link #familyCodecVersion} is the list of families this codec covers, and a family joins
+ * it only once its contributing implementation writes that exact image: the accumulating
+ * families a live view has fused since the first slice, the compensated total, and the four
+ * fixed scalar extrema, whose implementations keep the running extremum in one slot and read
+ * the family's own identity - {@code LONG_NULL} or NaN - as "no row has contributed".
+ * Getting the extrema there took their own value layout down to that one slot: the redundant
+ * "initialized" byte they used to keep beside it was a field the group's value has no room
+ * for and a byte the component image would have had to carry.
  *
  * <h2>Containment is a claim about two codecs</h2>
  * {@link WindowAccumulatorDescriptor#derivedSlotOffset} names the family pairs whose state
@@ -105,8 +114,13 @@ public final class LiveViewAccumulatorDescriptor {
      */
     public static int familyCodecVersion(int family) {
         switch (family) {
+            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT:
+            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX:
+            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN:
             case WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT:
             case WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD:
+            case WindowAccumulatorDescriptor.FAMILY_LONG_MAX:
+            case WindowAccumulatorDescriptor.FAMILY_LONG_MIN:
             case WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT:
             case WindowAccumulatorDescriptor.FAMILY_ROW_COUNT:
                 return 1;

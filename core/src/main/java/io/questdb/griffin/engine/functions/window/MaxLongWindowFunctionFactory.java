@@ -2454,7 +2454,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     valueTypesCopy.add(MAX_COLUMN_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = 2;
+                this.tombstoneValueIndex = 1;
             } else {
                 this.mapValueTypes = null;
                 this.tombstoneValueIndex = -1;
@@ -2513,21 +2513,17 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
 
             if (l != Numbers.LONG_NULL) {
                 MapValue value = key.createValue();
-                if (value.isNew() && tombstoneValueIndex >= 0) {
-                    value.putByte(tombstoneValueIndex, (byte) 0);
-                }
-                // The "initialized" byte only exists in the live-view layout, where
-                // resetPartition clears it to re-arm a partition the anchor has retired.
-                // Outside a live view resetPartition never runs, so isNew() alone decides.
-                if (value.isNew() || (liveView && value.getByte(1) == 0)) {
-                    value.putLong(0, l);
-                    if (liveView) {
-                        value.putByte(1, (byte) 1);
+                if (value.isNew()) {
+                    if (tombstoneValueIndex >= 0) {
+                        value.putByte(tombstoneValueIndex, (byte) 0);
                     }
+                    value.putLong(0, l);
                     this.maxMin = l;
                 } else {
                     long max = value.getLong(0);
-                    if (comparator.compare(l, max)) {
+                    // max can be LONG_NULL after an anchor reset re-armed the slot
+                    // (resetPartition writes the null sentinel); re-anchor on it.
+                    if (max == Numbers.LONG_NULL || comparator.compare(l, max)) {
                         value.putLong(0, l);
                         max = l;
                     }
@@ -2535,9 +2531,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                 }
             } else {
                 MapValue value = key.findValue();
-                this.maxMin = value != null && (!liveView || value.getByte(1) == 1)
-                        ? value.getLong(0)
-                        : Numbers.LONG_NULL;
+                this.maxMin = value != null ? value.getLong(0) : Numbers.LONG_NULL;
             }
         }
 
@@ -2555,11 +2549,19 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
 
         @Override
         public void resetPartition(Record record) {
+            if (isWindowStateOwned()) {
+                // The window re-arms the component in the fused value it has already
+                // loaded, so the crossing costs no probe of this function's own - and
+                // this function has no map left to probe.
+                return;
+            }
+            // ANCHOR-driven reset. Restore the null sentinel so the next computeNext
+            // re-anchors the running max/min on the post-reset row.
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.createValue();
-            value.putByte(1, (byte) 0);
+            value.putLong(0, Numbers.LONG_NULL);
             if (value.isNew()) {
                 if (tombstoneValueIndex >= 0) {
                     value.putByte(tombstoneValueIndex, (byte) 0);
@@ -2646,23 +2648,35 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putLong(0, source.getLong(offset));
             offset += Long.BYTES;
-            value.putByte(1, source.getByte(offset));
-            offset += Byte.BYTES;
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
         }
 
+        /**
+         * The running extremum, one 64-bit payload, which is the whole of the state the
+         * {@link #windowAccumulatorFamily() family} declares. Declaring it is what offers the
+         * function to a live view's fused window state: the group carries the same one slot,
+         * and the component codec writes this very image out of it.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Long.BYTES;
+        }
+
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
+            // 2: the "initialized" byte left both the value layout and the image, and the
+            // null sentinel says what it used to. A root written under version 1 carries a
+            // byte this build would read as part of the next entry, so it must not resolve
+            // to this function at all.
+            return 2;
         }
 
         @Override
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(value.getLong(0));
-            sink.putByte(value.getByte(1));
         }
 
         @Override
@@ -2941,15 +2955,14 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         MAX_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_COLUMN_TYPES.add(ColumnType.LONG); // max value
 
-        // Live-view ANCHOR contract: explicit "initialized" byte signals "no value
-        // yet for this partition" so resetPartition can re-arm the slot without
-        // relying on MapValue.isNew() (which only fires on the very first access).
-        // Only the live-view layout carries it: resetPartition never runs outside a
-        // live view, so adding the byte to MAX_COLUMN_TYPES would widen the map entry
-        // of every ordinary max()/min() query for a flag it can never read.
+        // Live-view ANCHOR contract: resetPartition re-arms a partition the anchor has
+        // retired by writing LONG_NULL back into the value slot, which is a state no
+        // contributing row can produce - a null argument never reaches the slot at all.
+        // The tombstone byte is what only a live view carries: resetPartition never runs
+        // outside one, so adding it to MAX_COLUMN_TYPES would widen the map entry of every
+        // ordinary max()/min() query for a flag it can never read.
         MAX_COLUMN_TYPES_LV = new ArrayColumnTypes();
         MAX_COLUMN_TYPES_LV.add(ColumnType.LONG); // max value
-        MAX_COLUMN_TYPES_LV.add(ColumnType.BYTE); // initialized flag
         MAX_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
 
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();

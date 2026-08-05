@@ -1622,6 +1622,11 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public void resetPartition(Record record) {
+            if (isWindowStateOwned()) {
+                // The window zeroes the component in the fused value it has already
+                // loaded, so the crossing costs no probe of this function's own.
+                return;
+            }
             // ANCHOR-driven reset. Zero [sum, compensation, count]; Kahan
             // re-runs cleanly from zero.
             partitionByRecord.of(record);
@@ -1651,6 +1656,18 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        /**
+         * The compensated total, its compensation term and the counter, which is the whole
+         * of the state the {@link #windowAccumulatorFamily() family} declares. Declaring it
+         * is what offers the function to a live view's fused window state: the group carries
+         * the same three slots in the same order, and the component codec writes this very
+         * image out of them.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return 2 * Double.BYTES + Long.BYTES;
         }
 
         @Override

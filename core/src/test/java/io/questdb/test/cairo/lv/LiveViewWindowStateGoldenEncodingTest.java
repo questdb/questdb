@@ -104,6 +104,34 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
             "4c564143" + "00000001" + "00000002" + "00000001" + "00000002" + "00000001" + "0000000c";
     private static final String GOLDEN_COUNT_STATE_IMAGE = "0300000000000000";
     /**
+     * {@code ksum(x)} over the DOUBLE column of {@code gold}, at base index 2. It counts
+     * the rows a plain {@code sum(x)} counts - the same {@code isFinite} test - and keeps a
+     * different total, which is why it is its own family carrying the same contribution
+     * kind.
+     */
+    private static final String GOLDEN_KAHAN_SUM_COUNT_DOUBLE_COL2 =
+            "4c564143" + "00000001" + "00000009" + "00000001" + "00000001" + "00000002" + "0000000a";
+    /**
+     * {@code (sum, compensation, nonNullCount)} holding {@code 17.5}, {@code 18.5} and
+     * {@code 5}. The counter is last, which is the fact a {@code count(x)} folded onto a
+     * {@code ksum(x)} reads its own image out of - and pinned separately from the Welford
+     * image it happens to equal, because the two are separate claims about separate
+     * implementations.
+     */
+    private static final String GOLDEN_KAHAN_SUM_COUNT_STATE_IMAGE =
+            "0000000000803140" + "0000000000803240" + "0500000000000000";
+    /**
+     * A running extremum holding {@code 17.5}: one little-endian 64-bit field and no
+     * counter beside it, because the family's empty state is the slot's own NULL.
+     */
+    private static final String GOLDEN_EXTREMUM_DOUBLE_STATE_IMAGE = "0000000000803140";
+    /**
+     * A 64-bit running extremum holding {@code 3}. The same one field as the DOUBLE one at
+     * the other state width, and the same bytes a one-slot counter's image has - which the
+     * identity, not the image, is what tells apart.
+     */
+    private static final String GOLDEN_EXTREMUM_LONG_STATE_IMAGE = "0300000000000000";
+    /**
      * The manifest of a two-component group built directly rather than compiled: a row
      * count and a Welford accumulator, which no compiled case below produces. The two
      * carry the remaining families, so every family the plan admits reaches a manifest
@@ -135,6 +163,33 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
             "4c56574d" + "00000001" + "00000018" + "00000000" + "00000008" + "00000001"
                     + "00000001" + "00000001" + "00000008" + "00000010" + "0000001c"
                     + "4c564143" + "00000001" + "00000001" + "00000001" + "00000001" + "00000002" + "0000000a";
+    /**
+     * {@code max(x)} over the DOUBLE column of {@code gold}, at base index 2. It reads its
+     * argument through the same {@code getDouble} a sum does and skips a row on the same
+     * {@code isFinite} test, so it carries {@code CONTRIBUTION_FINITE_DOUBLE} - and stays a
+     * component of its own, because a running maximum is not readable out of a total.
+     */
+    private static final String GOLDEN_MAX_DOUBLE_COL2 =
+            "4c564143" + "00000001" + "00000005" + "00000001" + "00000001" + "00000002" + "0000000a";
+    /**
+     * {@code max(y)} over the LONG column of {@code gold}, at base index 3. A 64-bit
+     * extremum keeps the argument's payload word and skips the row whose word is
+     * {@code LONG_NULL}, which is its own null test rather than the DOUBLE one.
+     */
+    private static final String GOLDEN_MAX_LONG_COL3 =
+            "4c564143" + "00000001" + "00000007" + "00000001" + "00000002" + "00000003" + "00000006";
+    /**
+     * {@code min(x)} over the DOUBLE column of {@code gold}, at base index 2. Separate from
+     * {@link #GOLDEN_MAX_DOUBLE_COL2} by one field, which is the whole of what keeps a
+     * running minimum from being read out of a running maximum.
+     */
+    private static final String GOLDEN_MIN_DOUBLE_COL2 =
+            "4c564143" + "00000001" + "00000006" + "00000001" + "00000001" + "00000002" + "0000000a";
+    /**
+     * {@code min(y)} over the LONG column of {@code gold}, at base index 3.
+     */
+    private static final String GOLDEN_MIN_LONG_COL3 =
+            "4c564143" + "00000001" + "00000008" + "00000001" + "00000002" + "00000003" + "00000006";
     /**
      * {@code count(*)} and partitioned {@code row_number()}. The family takes no argument
      * at all, and its identity says so with one exact pair - {@code ffffffff} for the
@@ -220,6 +275,31 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
                 GOLDEN_WELFORD_DOUBLE_COL2,
                 component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD, 2, ColumnType.DOUBLE).getEncoded()
         );
+        assertGolden(
+                "ksum(x) over a DOUBLE column",
+                GOLDEN_KAHAN_SUM_COUNT_DOUBLE_COL2,
+                component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT, 2, ColumnType.DOUBLE).getEncoded()
+        );
+        assertGolden(
+                "max(x) over a DOUBLE column",
+                GOLDEN_MAX_DOUBLE_COL2,
+                component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX, 2, ColumnType.DOUBLE).getEncoded()
+        );
+        assertGolden(
+                "min(x) over a DOUBLE column",
+                GOLDEN_MIN_DOUBLE_COL2,
+                component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN, 2, ColumnType.DOUBLE).getEncoded()
+        );
+        assertGolden(
+                "max(y) over a LONG column",
+                GOLDEN_MAX_LONG_COL3,
+                component(WindowAccumulatorDescriptor.FAMILY_LONG_MAX, 3, ColumnType.LONG).getEncoded()
+        );
+        assertGolden(
+                "min(y) over a LONG column",
+                GOLDEN_MIN_LONG_COL3,
+                component(WindowAccumulatorDescriptor.FAMILY_LONG_MIN, 3, ColumnType.LONG).getEncoded()
+        );
     }
 
     @Test
@@ -241,6 +321,26 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
                     GOLDEN_COUNT_STATE_IMAGE
             );
             assertStateImage(rowCountComponent(), GOLDEN_COUNT_STATE_IMAGE);
+            assertStateImage(
+                    component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT, 2, ColumnType.DOUBLE),
+                    GOLDEN_KAHAN_SUM_COUNT_STATE_IMAGE
+            );
+            assertStateImage(
+                    component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX, 2, ColumnType.DOUBLE),
+                    GOLDEN_EXTREMUM_DOUBLE_STATE_IMAGE
+            );
+            assertStateImage(
+                    component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN, 2, ColumnType.DOUBLE),
+                    GOLDEN_EXTREMUM_DOUBLE_STATE_IMAGE
+            );
+            assertStateImage(
+                    component(WindowAccumulatorDescriptor.FAMILY_LONG_MAX, 3, ColumnType.LONG),
+                    GOLDEN_EXTREMUM_LONG_STATE_IMAGE
+            );
+            assertStateImage(
+                    component(WindowAccumulatorDescriptor.FAMILY_LONG_MIN, 3, ColumnType.LONG),
+                    GOLDEN_EXTREMUM_LONG_STATE_IMAGE
+            );
         });
     }
 
@@ -248,7 +348,7 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
     public void testEveryAdmittedFamilyHasAGoldenIdentity() {
         // Walked rather than listed: a family added without a golden identity above must
         // fail here instead of shipping an encoding nothing pinned. The bound is well past
-        // the four ids in use and costs nothing.
+        // the nine ids in use and costs nothing.
         final IntList admitted = new IntList();
         for (int family = 0; family < 64; family++) {
             if (LiveViewAccumulatorDescriptor.familyCodecVersion(family) >= 0) {
@@ -262,6 +362,11 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
         golden.add(WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT);
         golden.add(WindowAccumulatorDescriptor.FAMILY_ROW_COUNT);
         golden.add(WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD);
+        golden.add(WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX);
+        golden.add(WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN);
+        golden.add(WindowAccumulatorDescriptor.FAMILY_LONG_MAX);
+        golden.add(WindowAccumulatorDescriptor.FAMILY_LONG_MIN);
+        golden.add(WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT);
         Assert.assertEquals(
                 "a family without a golden identity is a persisted encoding nothing pins",
                 golden.toString(),

@@ -2269,6 +2269,12 @@ public class MaxMinWindowFunctionFactoryHelper {
 
         @Override
         public void resetPartition(Record record) {
+            if (isWindowStateOwned()) {
+                // The window re-arms the component in the fused value it has already
+                // loaded, so the crossing costs no probe of this function's own - and
+                // this function has no map left to probe.
+                return;
+            }
             // ANCHOR-driven reset. Restore the null sentinel so the next
             // computeNext re-anchors the running max/min on the post-reset row.
             partitionByRecord.of(record);
@@ -2292,6 +2298,17 @@ public class MaxMinWindowFunctionFactoryHelper {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        /**
+         * The running extremum, one 64-bit payload, which is the whole of the state the
+         * {@link #windowAccumulatorFamily() family} declares. Declaring it is what offers the
+         * function to a live view's fused window state: the group carries the same one slot,
+         * and the component codec writes this very image out of it.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Long.BYTES;
         }
 
         @Override

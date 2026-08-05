@@ -625,13 +625,15 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testMaxMinValueLayoutHasNoLiveViewFlagOutsideLiveView() {
-        // The live-view ANCHOR contract needs an explicit "initialized" byte in the map value so
-        // resetPartition can re-arm a partition without deleting its entry: MapValue.isNew() flips
-        // on first access and is too coarse for repeated resets within one partition.
+        // The live-view ANCHOR contract needs resetPartition to re-arm a partition without
+        // deleting its entry: MapValue.isNew() flips on first access and is too coarse for
+        // repeated resets within one partition. What says "re-armed" is the value slot's own
+        // null sentinel - NaN or LONG_NULL - which no contributing row can write, so the two
+        // layouts differ by the tombstone byte alone.
         //
         // That byte belongs to the live-view layout ONLY. resetPartition never runs outside a live
         // view - a live view drives the ZERO_PASS streaming factory, and LiveViewWindow is the sole
-        // dispatcher of resetPartition - so carrying the byte in the shared layout made every
+        // dispatcher of resetPartition - so carrying the byte in the shared layout would make every
         // ordinary max()/min() OVER (PARTITION BY ...) query pay for a flag it can never read: an
         // extra per-row byte load plus a wider map entry on a hot path, for nothing. Unordered8Map
         // sizes entries as align8b(8 + valueSize), so a 9th value byte pushes them 16 -> 24 bytes;
@@ -652,16 +654,16 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         );
         Assert.assertEquals(ColumnType.LONG, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES.getColumnType(0));
 
-        // The live-view layout keeps both extra bytes: the initialized flag at slot 1 (read only
-        // behind the liveView gate) and the tombstone at slot 2 (anchor-driven map compaction).
-        Assert.assertEquals(3, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
+        // The live-view layout adds the tombstone byte and nothing else. The value slot ahead
+        // of it is the whole of the accumulator, which is what lets a fused live-view window
+        // carry this state in one slot of its own map value and persist it through the
+        // component codec - see LiveViewAccumulatorDescriptor.familyCodecVersion.
+        Assert.assertEquals(2, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
         Assert.assertEquals(ColumnType.DOUBLE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(0));
         Assert.assertEquals(ColumnType.BYTE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(1));
-        Assert.assertEquals(ColumnType.BYTE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(2));
-        Assert.assertEquals(3, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
+        Assert.assertEquals(2, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
         Assert.assertEquals(ColumnType.LONG, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(0));
         Assert.assertEquals(ColumnType.BYTE, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(1));
-        Assert.assertEquals(ColumnType.BYTE, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(2));
     }
 
     @Test

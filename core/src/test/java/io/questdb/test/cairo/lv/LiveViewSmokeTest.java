@@ -1073,6 +1073,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     // Same as assertMaxMinTimestampDateFrameRoundTrip but for the unbounded-preceding
     // (anchored) shape; the function lives on the anchor window, not the main factory.
+    // An extremum over an anchored unbounded frame joins the fused plan, so this helper
+    // hands the state back before it exercises the function's own snapshot codec - see the
+    // comment on the bind below.
     private void assertMaxMinTimestampDateUnboundedRoundTrip(
             String fnName,
             String valueType,
@@ -1095,6 +1098,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                // The subject here is the function's own snapshot codec, and a function the
+                // fused plan groups no longer runs it - the window owns that state and the
+                // private map below is closed. Hand it back first, exactly as
+                // assertStatefulAnchorRoundTrip does: the codec is still what a residual
+                // function and the legacy-head upgrade adapter both go through, and
+                // declining migrates the accumulators into the private maps rather than
+                // dropping them.
+                lv.getAnchorWindow().bindCheckpointWindowStatePlan(null);
                 WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
                 Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();

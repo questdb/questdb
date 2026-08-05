@@ -75,6 +75,8 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
 
     private static final int ANCHOR_BYTES = Long.BYTES;
     private static final int COUNT_STATE_BYTES = Long.BYTES;
+    private static final int EXTREMUM_STATE_BYTES = Long.BYTES;
+    private static final int KAHAN_STATE_BYTES = 2 * Double.BYTES + Long.BYTES;
     private static final int SUM_STATE_BYTES = Double.BYTES + Long.BYTES;
     private static final int WELFORD_STATE_BYTES = 2 * Double.BYTES + Long.BYTES;
 
@@ -295,6 +297,136 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         Assert.assertEquals(
                                 ANCHOR_BYTES + SUM_STATE_BYTES + 2 * COUNT_STATE_BYTES,
                                 plan.getTotalInlineStateBytes()
+                        );
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testTheExtremaAndTheCompensatedTotalJoinTheGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            createNumericBaseTable();
+            execute("create table extrema (ts timestamp, sym symbol, x double, l long, d date) "
+                    + "timestamp(ts) partition by day wal");
+            // A running extremum is one slot and the whole of the state its family declares,
+            // which is what admits it here: the implementation reads the slot's own null
+            // sentinel as "no row has contributed" rather than keeping a flag beside it, so
+            // the group's value carries the same one word the private map did.
+            //
+            // The four calls are four components. A maximum and a minimum are not readable
+            // out of each other however identical the rest of the window is, and neither is
+            // a run inside the sum beside them - a running total is not the largest thing
+            // ever added to it - so nothing here merges or folds.
+            assertPlan(
+                    "select ts, sym, max(x) over w as mx, min(x) over w as mn, "
+                            + "sum(x) over w as s, count(x) over w as c "
+                            + "from extrema window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(3, plan.getComponentCount());
+                        Assert.assertEquals(4, plan.getProjectionCount());
+                        Assert.assertEquals(0, plan.getResidualFunctions().size());
+                        // Canonical identity order, which is by family: the sum leads, the
+                        // maximum follows it and the minimum follows that, whatever order
+                        // the SELECT list named them in.
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX,
+                                plan.getComponent(1).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN,
+                                plan.getComponent(2).getFamily()
+                        );
+                        Assert.assertEquals(EXTREMUM_STATE_BYTES, plan.getComponent(1).getStateLength());
+                        Assert.assertEquals(EXTREMUM_STATE_BYTES, plan.getComponent(2).getStateLength());
+                        Assert.assertEquals(
+                                ANCHOR_BYTES + SUM_STATE_BYTES + 2 * EXTREMUM_STATE_BYTES,
+                                plan.getTotalInlineStateBytes()
+                        );
+                        // The count is the only one of the four that reads a slice its own
+                        // function would not have persisted alone.
+                        Assert.assertFalse(plan.getProjection(0).isDerived());
+                        Assert.assertFalse(plan.getProjection(1).isDerived());
+                        Assert.assertFalse(plan.getProjection(2).isDerived());
+                        Assert.assertTrue(plan.getProjection(3).isDerived());
+                    }
+            );
+            // The 64-bit extremum is one family serving three argument types, and the
+            // argument type still separates the identities: the three store the same
+            // payload word and count different columns' rows.
+            assertPlan(
+                    "select ts, sym, max(l) over w as ml, max(d) over w as md, max(ts) over w as mt "
+                            + "from extrema window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(3, plan.getComponentCount());
+                        Assert.assertEquals(0, plan.getResidualFunctions().size());
+                        for (int i = 0; i < 3; i++) {
+                            Assert.assertEquals(
+                                    WindowAccumulatorDescriptor.FAMILY_LONG_MAX,
+                                    plan.getComponent(i).getFamily()
+                            );
+                            Assert.assertEquals(EXTREMUM_STATE_BYTES, plan.getComponent(i).getStateLength());
+                        }
+                        Assert.assertEquals(
+                                ANCHOR_BYTES + 3 * EXTREMUM_STATE_BYTES,
+                                plan.getTotalInlineStateBytes()
+                        );
+                    }
+            );
+            // The compensated total is three slots in the order its own implementation
+            // keeps them, so it fuses on the same terms - and a count over the same column
+            // folds onto the counter it ends with, exactly as it does onto a plain sum's.
+            assertPlan(
+                    "select ts, sym, ksum(x) over w as k, count(x) over w as c "
+                            + "from extrema window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(2, plan.getProjectionCount());
+                        Assert.assertEquals(0, plan.getResidualFunctions().size());
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(ANCHOR_BYTES + KAHAN_STATE_BYTES, plan.getTotalInlineStateBytes());
+                        Assert.assertTrue(plan.getProjection(1).isDerived());
+                    }
+            );
+            // A compensated total and a plain one are different numbers over the same rows,
+            // which is what the compensation is for, so neither reads the other's slice.
+            assertPlan(
+                    "select ts, sym, ksum(x) over w as k, sum(x) over w as s "
+                            + "from extrema window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(2, plan.getComponentCount());
+                        Assert.assertEquals(0, plan.getResidualFunctions().size());
+                        Assert.assertEquals(
+                                ANCHOR_BYTES + SUM_STATE_BYTES + KAHAN_STATE_BYTES,
+                                plan.getTotalInlineStateBytes()
+                        );
+                    }
+            );
+            // A DECIMAL extremum keeps its argument's own payload, which is a slot wider
+            // than a word for the two wide widths and a codec this build does not have for
+            // any of the six. It stays residual, and says so beside a call that fuses.
+            assertPlan(
+                    "select ts, sym, max(dec) over w as md, count(dec) over w as c "
+                            + "from nums window w as (partition by sym order by ts anchor daily '00:00')",
+                    plan -> {
+                        Assert.assertNotNull(plan);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(1, plan.getProjectionCount());
+                        Assert.assertEquals(1, plan.getResidualFunctions().size());
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                                plan.getComponent(0).getFamily()
                         );
                     }
             );

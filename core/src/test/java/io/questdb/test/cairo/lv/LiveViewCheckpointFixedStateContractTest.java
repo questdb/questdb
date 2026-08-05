@@ -89,6 +89,8 @@ import org.junit.Test;
 public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTest {
 
     private static final int COUNT_STATE_BYTES = Long.BYTES;
+    private static final int EXTREMUM_STATE_BYTES = Long.BYTES;
+    private static final int KAHAN_STATE_BYTES = 2 * Double.BYTES + Long.BYTES;
     private static final int SUM_STATE_BYTES = Double.BYTES + Long.BYTES;
     private static final int WELFORD_STATE_BYTES = 2 * Double.BYTES + Long.BYTES;
 
@@ -241,6 +243,19 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
                     + "rows between unbounded preceding and current row) s from base", WELFORD_STATE_BYTES);
             assertDeclaredWidth("select ts, sym, var_pop(x) over (partition by sym order by ts "
                     + "rows between unbounded preceding and current row) v from base", WELFORD_STATE_BYTES);
+            // A running extremum is one word, at either state width, and it declares that
+            // width for the same reason the accumulators above do: the fused group carries
+            // the same one slot, and the leaf carries the image the codec writes out of it.
+            assertDeclaredWidth("select ts, sym, max(x) over (partition by sym order by ts "
+                    + "rows between unbounded preceding and current row) m from base", EXTREMUM_STATE_BYTES);
+            assertDeclaredWidth("select ts, sym, min(x) over (partition by sym order by ts "
+                    + "rows between unbounded preceding and current row) m from base", EXTREMUM_STATE_BYTES);
+            assertDeclaredWidth("select ts, sym, max(ts) over (partition by sym order by ts "
+                    + "rows between unbounded preceding and current row) m from base", EXTREMUM_STATE_BYTES);
+            // The compensated total keeps its compensation term beside the fields a plain
+            // sum keeps, so it is one word wider than one.
+            assertDeclaredWidth("select ts, sym, ksum(x) over (partition by sym order by ts "
+                    + "rows between unbounded preceding and current row) k from base", KAHAN_STATE_BYTES);
             // The RANGE spelling of the same unbounded frame compiles to the same
             // implementations, so it must declare the same widths.
             assertDeclaredWidth("select ts, sym, sum(x) over (partition by sym order by ts "

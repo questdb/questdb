@@ -270,9 +270,10 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
             // The shape this case describes is the legacy one - an anchor root beside a
             // per-function root whose state is a data page - so its window function has to
             // be one the fused plan leaves residual and one that writes a page rather than
-            // inlining. ksum's Kahan accumulator is both: it declares no fixed width, so
-            // its whole image goes to a data segment, which is what the reference counting
-            // below is about.
+            // inlining. The exponential moving average is both: it declares no accumulator
+            // family and no fixed width, so its whole image goes to a data segment, which
+            // is what the reference counting below is about. It replaced ksum here when the
+            // compensated total joined the group.
             createPageBackedAnchoredView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 appendAndRefresh(job, 10, 1);
@@ -947,7 +948,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute(
                 "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                        "SELECT ts, sym, ksum(x) OVER w s FROM base " +
+                        "SELECT ts, sym, avg(x, 'period', 5) OVER w s FROM base " +
                         "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')"
         );
     }

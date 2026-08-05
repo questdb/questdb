@@ -135,12 +135,16 @@ public class WindowAccumulatorDescriptorTest {
         for (int slot = 0; slot < 3; slot++) {
             Assert.assertEquals("slot " + slot, 0L, kahan.getSlotIdentityBits(slot));
         }
-        // Runtime-only: no component codec, and so no durable wrapper and no manifest.
+        // Durable as well as runtime: the implementation writes these three slots in this
+        // order as three little-endian words, which is the component codec's image exactly,
+        // so the family has a codec and a manifest names it.
         Assert.assertEquals(
-                -1,
+                1,
                 LiveViewAccumulatorDescriptor.familyCodecVersion(WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT)
         );
-        Assert.assertNull(LiveViewAccumulatorDescriptor.of(kahan));
+        final LiveViewAccumulatorDescriptor durableKahan = LiveViewAccumulatorDescriptor.of(kahan);
+        Assert.assertNotNull(durableKahan);
+        Assert.assertEquals(3 * Long.BYTES, durableKahan.getStateLength());
 
         final WindowAccumulatorDescriptor count = WindowAccumulatorDescriptor.of(
                 WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
@@ -643,12 +647,12 @@ public class WindowAccumulatorDescriptorTest {
     }
 
     @Test
-    public void testTheExtremumFamiliesAreRuntimeOnlyAndStartAtNull() {
-        // The four extremum families are the first this build admits at runtime and not on
-        // disk, and the first whose starting state is not a zeroed slice. Both halves matter
-        // beyond their own arithmetic: a durable descriptor for a family whose codec nothing
-        // pinned would ship an unpinned encoding, and a slice reset to zero would read back as
-        // "the largest value so far is zero" for a partition nothing has contributed to.
+    public void testTheExtremumFamiliesPersistOneSlotThatStartsAtNull() {
+        // The four extremum families are the first whose starting state is not a zeroed
+        // slice, which matters beyond their own arithmetic: a slice reset to zero would read
+        // back as "the largest value so far is zero" for a partition nothing has contributed
+        // to. They are durable as well as runtime components - one slot, one 64-bit field,
+        // which is exactly the image their own freezeCheckpointState writes.
         final ObjList<WindowAccumulatorDescriptor> extrema = new ObjList<>();
         addExtremum(extrema, WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX, 2, ColumnType.DOUBLE);
         addExtremum(extrema, WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN, 2, ColumnType.DOUBLE);
@@ -684,9 +688,14 @@ public class WindowAccumulatorDescriptorTest {
                     isDoubleState ? Double.doubleToRawLongBits(Double.NaN) : Numbers.LONG_NULL,
                     component.getSlotIdentityBits(0)
             );
-            // Runtime-only: no component codec, and so no durable wrapper and no manifest.
-            Assert.assertEquals(what, -1, LiveViewAccumulatorDescriptor.familyCodecVersion(component.getFamily()));
-            Assert.assertNull(what, LiveViewAccumulatorDescriptor.of(component));
+            // Durable: one component codec, at the version the containment table was proved
+            // at, and a wrapper whose whole image is that one slot.
+            Assert.assertEquals(what, 1, LiveViewAccumulatorDescriptor.familyCodecVersion(component.getFamily()));
+            final LiveViewAccumulatorDescriptor durable = LiveViewAccumulatorDescriptor.of(component);
+            Assert.assertNotNull(what, durable);
+            Assert.assertEquals(what, Long.BYTES, durable.getStateLength());
+            Assert.assertEquals(what, 0, durable.getFieldOffset(WindowAccumulatorDescriptor.FIELD_EXTREMUM));
+            Assert.assertEquals(what, -1, durable.getFieldOffset(WindowAccumulatorDescriptor.FIELD_SUM));
         }
 
         // No containment in either direction, against each other or against every durable

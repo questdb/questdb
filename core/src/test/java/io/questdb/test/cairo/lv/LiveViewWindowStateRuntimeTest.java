@@ -570,6 +570,124 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testACompensatedTotalFusesAndKeepsTheCountItAlreadyMaintains() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // ksum keeps (sum, compensation, count) in the order its own implementation
+            // stores them, so the group carries the same three slots and the count folds
+            // onto the counter it ends with. What the recompute proves is that the fused
+            // arithmetic is the compensated one: a projection reading a plain total out of
+            // this slice would differ from it by the compensation on data that cancels,
+            // which is what the magnitudes below are chosen to produce.
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, cod_acct_no, ksum(amt_txn) over w as k, "
+                    + "count(amt_txn) over w as c "
+                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", 1e16);
+                insertAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-1", 1.0);
+                insertAccount(job, DAILY_ANCHOR + "09:00:20.000000Z", "acct-1", -1e16);
+                insertAccount(job, DAILY_ANCHOR + "09:00:30.000000Z", "acct-2", 7.5);
+                // A null joins neither the total nor the counter.
+                insertAccount(job, DAILY_ANCHOR + "09:00:40.000000Z", "acct-1", null);
+                // A bucket crossing, so the component is zeroed in place under a new anchor.
+                insertAccount(job, "2026-01-02T09:00:00.000000Z", "acct-1", 3.0);
+
+                final LiveViewWindowStatePlan plan = window().getCheckpointWindowStatePlan();
+                Assert.assertNotNull(plan);
+                Assert.assertEquals("the count folds onto the total's counter", 1, plan.getComponentCount());
+                Assert.assertEquals(2, plan.getProjectionCount());
+                Assert.assertEquals(0, plan.getResidualFunctions().size());
+                Assert.assertTrue(plan.getProjection(1).isDerived());
+                for (int i = 0; i < 2; i++) {
+                    final WindowFunction function = plan.getProjectionFunction(i);
+                    Assert.assertTrue("projection " + i + " must be fused", function.isWindowStateOwned());
+                    Assert.assertFalse(
+                            "a fused projection must never allocate its private map",
+                            function.getPartitionMap().isOpen()
+                    );
+                }
+                assertKahanViewMatchesRecompute();
+
+                final byte[] before = snapshotWindow(window());
+                restoreHead();
+                Assert.assertArrayEquals(before, snapshotWindow(window()));
+                assertKahanViewMatchesRecompute();
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testTheExtremaFuseAndCarryTheirEmptyStateBothWays() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // A running extremum has no counter to say whether a partition has contributed,
+            // so its empty state is the slot's own null sentinel - NaN here - and every path
+            // below has to preserve that reading rather than a flag beside it: the anchor
+            // crossing that re-arms a partition, the group handing the state back, and the
+            // seal that images the slot.
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, cod_acct_no, max(amt_txn) over w as mx, "
+                    + "min(amt_txn) over w as mn, count(amt_txn) over w as c "
+                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", 5.0);
+                insertAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-2", 7.0);
+                insertAccount(job, DAILY_ANCHOR + "09:00:20.000000Z", "acct-1", 11.0);
+                // An account whose only row is null contributes to neither extremum nor the
+                // counter, so its whole slice stays at the identity the component resets to.
+                insertAccount(job, DAILY_ANCHOR + "09:00:30.000000Z", "acct-3", null);
+                insertAccount(job, DAILY_ANCHOR + "09:00:40.000000Z", "acct-1", 2.0);
+                // A bucket crossing. The maximum is re-armed in place, so a state that kept
+                // the previous bucket's 11.0 would emit it for this row.
+                insertAccount(job, "2026-01-02T09:00:00.000000Z", "acct-1", 3.0);
+
+                final LiveViewWindow window = window();
+                final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
+                Assert.assertNotNull(plan);
+                Assert.assertEquals("a maximum, a minimum and a counter", 3, plan.getComponentCount());
+                Assert.assertEquals(3, plan.getProjectionCount());
+                Assert.assertEquals(0, plan.getResidualFunctions().size());
+                for (int i = 0; i < 3; i++) {
+                    final WindowFunction function = plan.getProjectionFunction(i);
+                    Assert.assertTrue("projection " + i + " must be fused", function.isWindowStateOwned());
+                    Assert.assertFalse(
+                            "a fused projection must never allocate its private map",
+                            function.getPartitionMap().isOpen()
+                    );
+                }
+                assertExtremaViewMatchesRecompute();
+
+                // The head that seals the extrema restores them exactly - the component
+                // codec writes one word per slot and the manifest names where it sits.
+                final byte[] before = snapshotWindow(window);
+                restoreHead();
+                Assert.assertArrayEquals(before, snapshotWindow(window));
+                assertExtremaViewMatchesRecompute();
+
+                // Handing the state back has to carry an empty slice as an empty slice:
+                // acct-3 has contributed nothing, and the private implementation reads that
+                // slot's NaN as "no row yet" only because it is the very state its own
+                // resetPartition writes.
+                Assert.assertFalse(window.bindCheckpointWindowStatePlan(null));
+                insertAccount(job, "2026-01-02T09:01:00.000000Z", "acct-3", 8.0);
+                assertExtremaViewMatchesRecompute();
+
+                // And adopting again takes them back the same way rather than starting the
+                // extrema over.
+                Assert.assertTrue(window.bindCheckpointWindowStatePlan(plan));
+                insertAccount(job, "2026-01-02T09:02:00.000000Z", "acct-3", 4.0);
+                insertAccount(job, "2026-01-02T09:03:00.000000Z", "acct-1", 1.0);
+                assertExtremaViewMatchesRecompute();
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
     public void testAnIntegralArgumentSumsAndCountsExactlyTheSameRows() throws Exception {
         assertMemoryLeak(() -> {
             // A LONG column reaches sum(D), avg(D) and count(D) by widening, so the
@@ -643,7 +761,9 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
             execute("create live view lv flush every 100ms start from beginning as "
                     + "select created_at, cod_acct_no, sum(amt_txn) over w as s, "
                     + "count(br_code) over w as c, count(*) over w as r, "
-                    + "stddev_samp(amt_txn) over w as sd "
+                    + "stddev_samp(amt_txn) over w as sd, ksum(amt_txn) over w as k, "
+                    + "max(amt_txn) over w as mx, min(amt_txn) over w as mn, "
+                    + "max(created_at) over w as mt "
                     + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
@@ -654,7 +774,7 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 Assert.assertNotNull(plan);
                 Assert.assertEquals(
                         "the view must produce one component per family",
-                        4,
+                        8,
                         plan.getComponentCount()
                 );
                 for (int c = 0, n = plan.getComponentCount(); c < n; c++) {
@@ -1028,6 +1148,54 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 "(select created_at, cod_acct_no, "
                         + "sum(amt_txn) " + frame + " as s, "
                         + "avg(amt_txn) " + frame + " as a, "
+                        + "count(amt_txn) " + frame + " as c "
+                        + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)"
+                        + ") order by 2, 1",
+                "(lv) order by 2, 1",
+                LOG,
+                true
+        );
+    }
+
+    /**
+     * The {@link #assertViewMatchesRecompute()} counterpart for the compensated-total
+     * shape. The recompute runs the unfused {@code ksum}, so a fused total that dropped
+     * the compensation term - or a folded count reading a counter the total does not keep -
+     * surfaces here.
+     */
+    private void assertKahanViewMatchesRecompute() throws Exception {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
+        final String frame = "over (partition by cod_acct_no, bucket order by created_at "
+                + "rows between unbounded preceding and current row)";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(select created_at, cod_acct_no, "
+                        + "ksum(amt_txn) " + frame + " as k, "
+                        + "count(amt_txn) " + frame + " as c "
+                        + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)"
+                        + ") order by 2, 1",
+                "(lv) order by 2, 1",
+                LOG,
+                true
+        );
+    }
+
+    /**
+     * The {@link #assertViewMatchesRecompute()} counterpart for the extremum shape. The
+     * recompute runs the unfused max/min implementations, so a fused extremum that missed
+     * an anchor crossing - or read an empty partition as a running one - surfaces here.
+     */
+    private void assertExtremaViewMatchesRecompute() throws Exception {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
+        final String frame = "over (partition by cod_acct_no, bucket order by created_at "
+                + "rows between unbounded preceding and current row)";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(select created_at, cod_acct_no, "
+                        + "max(amt_txn) " + frame + " as mx, "
+                        + "min(amt_txn) " + frame + " as mn, "
                         + "count(amt_txn) " + frame + " as c "
                         + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)"
                         + ") order by 2, 1",
