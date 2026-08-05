@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
@@ -33,18 +34,22 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class BasePartitionedWindowFunction extends BaseWindowFunction implements Reopenable {
+public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
+        implements Reopenable, PartitionStateEvictor.EntryCopier {
     protected final VirtualRecord partitionByRecord;
     protected final RecordSink partitionBySink;
     // Generation of the checkpoint root checkpointLogicalStateBytes and
@@ -68,6 +73,11 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     // sweep never allocates. Null until the first sweep, or for functions that opt
     // out (newCompactionScratch returns null).
     protected Map compactionScratch;
+    // Scratch arena the frontier sweep re-homes surviving ring slabs into, before one bulk
+    // copy puts them back over the truncated primary arena. Null until the first sweep of a
+    // ring-holding function, and truncated (not freed) after each sweep so the next one pays
+    // no allocation for the slabs it has already sized for.
+    protected MemoryARW compactionRingScratch;
     // True once a sweep has put evicted keys into checkpointDirtyPartitions and the seal
     // has not consumed them yet. What it decides is whether dropping the dirty set also
     // hands the backing memory back - see clearCheckpointDirtyPartitions.
@@ -144,6 +154,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         super.close();
         Misc.free(map);
         Misc.free(compactionScratch);
+        Misc.free(compactionRingScratch);
         Misc.free(checkpointDirtyPartitions);
         Misc.freeObjList(partitionByRecord.getFunctions());
     }
@@ -311,6 +322,17 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         clearCheckpointDirtyPartitions();
     }
 
+    /**
+     * Re-homes one surviving partition's ring slab into the sweep's scratch arena and points the
+     * rebuilt entry at where it landed. {@link MapValue#copyFrom(MapValue)} has already carried
+     * the geometry across verbatim, so without this the rebuilt entry would name an offset into
+     * the arena the sweep is about to compact out from under it.
+     */
+    @Override
+    public void onEntryRetained(MapValue srcValue, MapValue dstValue) {
+        copyRingSlab(srcValue, dstValue, compactionRingScratch);
+    }
+
     @Override
     public void reopen() {
         // A fused function's map stays closed: the window allocated one value layout for
@@ -376,7 +398,46 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
             // scratch consistent even if a prior sweep threw mid-rebuild.
             compactionScratch.clear();
         }
-        PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, survivingKeys, survivingKeySink);
+        final MemoryARW ringArena = getRingArena();
+        if (ringArena != null) {
+            if (compactionRingScratch == null) {
+                // Lazily, like the scratch map, and bound to the tracker before first use: the
+                // arena allocates nothing until something appends to it, so binding here keeps
+                // its malloc and its free on the same counter.
+                compactionRingScratch = newCompactionRingScratch();
+                if (compactionRingScratch == null) {
+                    // Half an enrolment: the map rebuild would drop the evicted entries while
+                    // nothing re-homed the survivors' slabs, so the arena would keep every
+                    // evicted slab AND the survivors would end up naming a stale layout. Refuse
+                    // rather than corrupt - the class either enrols in full or not at all.
+                    throw CairoException.critical(0)
+                            .put("window function declares a ring arena but no compaction scratch [function=")
+                            .put(getClass().getName())
+                            .put(']');
+                }
+                if (memoryTracker != null) {
+                    compactionRingScratch.setMemoryTracker(memoryTracker);
+                }
+            } else {
+                // Empty it up front rather than trusting the previous sweep's tail, for the same
+                // reason the scratch map is cleared up front: a sweep that threw part-way -- the
+                // realistic source being the per-view tracker tripping inside an append, which is
+                // exactly the pressure this sweep exists to relieve -- leaves slabs behind that
+                // nothing names. Appending on top of them would copy that dead prefix back into
+                // the primary arena and quietly give away the reclamation this is here to make.
+                compactionRingScratch.truncate();
+            }
+        }
+        PartitionStateEvictor.rebuildKeepingMembers(
+                map,
+                compactionScratch,
+                survivingKeys,
+                survivingKeySink,
+                compactionRingScratch != null ? this : null
+        );
+        if (compactionRingScratch != null) {
+            compactRingArena(ringArena);
+        }
         // Ping-pong: the rebuilt scratch becomes the live map; the old live map
         // becomes the scratch for the next sweep. No allocation, no free.
         Map old = map;
@@ -389,6 +450,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     public void reset() {
         Misc.free(map);
         compactionScratch = Misc.free(compactionScratch);
+        compactionRingScratch = Misc.free(compactionRingScratch);
         checkpointDirtyPartitions = Misc.free(checkpointDirtyPartitions);
         hasCheckpointEvictionsRecorded = false;
         tombstoneCount = 0;
@@ -408,6 +470,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         }
         if (checkpointDirtyPartitions != null) {
             checkpointDirtyPartitions.setMemoryTracker(tracker);
+        }
+        if (compactionRingScratch != null) {
+            compactionRingScratch.setMemoryTracker(tracker);
         }
     }
 
@@ -492,6 +557,38 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     }
 
     /**
+     * Puts the survivors' slabs back over a truncated primary arena, which is what actually
+     * hands the evicted partitions' bytes back.
+     * <p>
+     * The bulk copy lands the whole scratch block at offset 0, so the offsets
+     * {@link #onEntryRetained} already wrote into the rebuilt entries - each relative to the
+     * scratch's own base - address the primary arena correctly without a second walk to fix
+     * them up.
+     * <p>
+     * {@link MemoryARW#truncate()} rather than {@code jumpTo(0)}: only truncate reallocates,
+     * and reallocating is the entire point. {@code jumpTo} moves the append pointer and leaves
+     * the allocation at its high-water mark, which would make this a no-op against the refresh
+     * memory limit the sweep exists to keep the view under.
+     * <p>
+     * The free list goes with it. Its entries name offsets into the arena as it was laid out
+     * before this ran, and a compacted arena has no holes for it to describe anyway.
+     */
+    private void compactRingArena(MemoryARW ringArena) {
+        final long usedBytes = compactionRingScratch.getAppendOffset();
+        ringArena.truncate();
+        if (usedBytes > 0) {
+            Vect.memcpy(ringArena.appendAddressFor(usedBytes), compactionRingScratch.getPageAddress(0), usedBytes);
+        }
+        // Truncate rather than free: the next sweep re-homes a similar volume of slabs, so
+        // keeping the (now single-page) scratch alive costs one page and saves the regrow.
+        compactionRingScratch.truncate();
+        final LongList ringFreeList = getRingFreeList();
+        if (ringFreeList != null) {
+            ringFreeList.clear();
+        }
+    }
+
+    /**
      * Charges the freshly created compaction scratch to the per-query tracker.
      * {@link #newCompactionScratch()} returns an OPEN map allocated under no tracker,
      * so - mirroring the deferred lifecycle the constructor gives the primary map -
@@ -536,6 +633,39 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         // seal would freeze the same removals a second time.
         checkpointDirtyPartitions.clear();
         hasCheckpointEvictionsRecorded = false;
+    }
+
+    /**
+     * Copies one surviving partition's ring slab out of this function's arena and into
+     * {@code scratch}, then rewrites {@code dstValue}'s start-offset slot to name where it
+     * landed. The default does nothing, which is correct for every function that owns no ring.
+     * <p>
+     * Implement on the concrete class whose value layout it reads, using
+     * {@link AbstractWindowFunctionFactory#copyRingSlab}. Doing it here rather than through
+     * three separate slot accessors keeps the whole layout dependency - both indices and the
+     * record width - in one expression per class, which is what makes it checkable against the
+     * layout comment sitting next to it.
+     */
+    protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+    }
+
+    /**
+     * Returns a fresh, empty arena for the sweep to re-home surviving ring slabs into, or
+     * {@code null} for a function that owns no ring. Mirrors {@link #newCompactionScratch()}:
+     * the caller binds the memory tracker and owns the result thereafter.
+     */
+    protected @Nullable MemoryARW newCompactionRingScratch() {
+        return null;
+    }
+
+    /**
+     * This function's per-partition ring free list, or {@code null} when it owns no ring.
+     * The sweep clears it: a compacted arena holds the surviving slabs back to back and so
+     * has no holes for the list to name, and every offset it held addressed the arena as it
+     * was laid out before the compaction.
+     */
+    protected @Nullable LongList getRingFreeList() {
+        return null;
     }
 
     /**

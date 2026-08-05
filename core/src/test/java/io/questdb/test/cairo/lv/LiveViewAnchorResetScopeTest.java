@@ -253,18 +253,21 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
      * which sends {@code avg} to its RANGE-frame implementation: one resizable ring slab per
      * partition in a {@code MemoryARW} arena, and {@code supportsCheckpointRingState()} true.
      * <p>
-     * What this pins is that the sweep leaves that function's partition state alone.
-     * {@code LiveViewWindow.compact()} does call {@code retainPartitions} on it, but the
-     * rebuild needs a scratch map of the function's own layout and every ring-holding class
-     * leaves {@code newCompactionScratch()} at its {@code null} default, so the call returns
-     * before touching the map. That is what keeps the arena consistent: the survivor-driven
-     * rebuild never visits an evicted entry, so a ring partition dropped from the map would
-     * leave its slab allocated with nothing naming it and no way back onto the free list.
-     * Enrolling a ring function in the sweep therefore has to hand the slab back in the same
-     * change; this test is what fails if the first half lands without the second.
+     * What this pins is that the sweep reclaims that function's partition state, arena and all.
+     * {@code LiveViewWindow.compact()} calls {@code retainPartitions} on it; the rebuild drops
+     * the evicted keys from the map, and because a map value names its ring slab by a
+     * {@code (startOffset, capacity)} pair rather than a reference, the arena is compacted in
+     * the same pass - surviving slabs are re-homed into a scratch arena, their offsets rewritten,
+     * and the block copied back over the truncated original. Both halves have to land together:
+     * dropping the entries alone would orphan every evicted slab, and re-homing alone would
+     * leave the map growing with the view's lifetime partition cardinality.
+     * <p>
+     * The arena assertion is the half that matters most, and it is the one a map-size check
+     * cannot stand in for: {@code MemoryARW} only ever appends, so without the truncate-and-copy
+     * the arena holds its high-water mark however small the map gets.
      */
     @Test
-    public void testFrontierSweepLeavesARingShapedAnchoredFunctionsStateIntact() throws Exception {
+    public void testFrontierSweepReclaimsARingShapedAnchoredFunctionsStateAndArena() throws Exception {
         // Four accounts in the seed bucket, so three have to fall behind the frontier before
         // the trigger's stale-percent arm - half the map at its default - lets a sweep fire.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
@@ -279,7 +282,7 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
             drainWalQueue();
             execute("""
                     CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
-                    SELECT ts, sym, y, avg(y) OVER w AS a
+                    SELECT ts, sym, y, avg(y) OVER w AS a, count(y) OVER w AS c
                     FROM base
                     WINDOW w AS (PARTITION BY sym ORDER BY ts
                                  RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW
@@ -292,18 +295,35 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull("live view 'lv' must be registered", instance);
                 final ObjList<WindowFunction> anchorable = anchorableFunctions(instance);
-                Assert.assertEquals("the anchored window carries one call", 1, anchorable.size());
-                final WindowFunction ring = anchorable.getQuick(0);
-                Assert.assertTrue(
-                        "EXCLUDE CURRENT ROW must fold the anchored frame into the ring-shaped avg",
-                        ring.supportsCheckpointRingState()
-                );
-                Assert.assertNotNull("a ring-shaped avg keeps its partitions in a map", ring.getPartitionMap());
+                Assert.assertEquals("the anchored window carries two calls", 2, anchorable.size());
+                // Both calls fold to a ring under EXCLUDE CURRENT ROW, and they sit on different
+                // value layouts - avg puts its (startOffset, capacity) pair at slots 2 and 4,
+                // count at 1 and 3 - so asserting over both is what catches an enrolment that
+                // reads the right pair for one shape and the wrong one for another.
+                final long[] fourPartitionArenaBytes = new long[anchorable.size()];
+                for (int i = 0, n = anchorable.size(); i < n; i++) {
+                    final WindowFunction f = anchorable.getQuick(i);
+                    Assert.assertTrue(
+                            "EXCLUDE CURRENT ROW must fold every anchored call here into a ring shape",
+                            f.supportsCheckpointRingState()
+                    );
+                    Assert.assertNotNull("a ring-shaped function keeps its partitions in a map", f.getPartitionMap());
+                    Assert.assertNotNull("a ring-shaped function keeps its slabs in an arena", f.getRingArena());
+                    Assert.assertEquals("one map entry per seeded account", 4, f.getPartitionMap().size());
+                    // Four partitions, one slab each, so the arena is holding four. Captured rather
+                    // than asserted as an absolute: the slab width follows
+                    // cairo.sql.window.initial.range.buffer.size, and what the sweep has to change
+                    // is the ratio, not the constant.
+                    fourPartitionArenaBytes[i] = f.getRingArena().getAppendOffset();
+                    Assert.assertTrue(
+                            "four partitions must have put something in the arena",
+                            fourPartitionArenaBytes[i] > 0
+                    );
+                }
 
                 final LiveViewWindow window = instance.getAnchorWindow();
                 Assert.assertNotNull("the view must carry an anchored window", window);
                 Assert.assertEquals(4, window.getAnchorMapSize());
-                Assert.assertEquals(4, ring.getPartitionMap().size());
 
                 // Two bucket advances with only 'a' following the frontier. The second one
                 // puts three accounts a full bucket behind it, which is what fires the sweep.
@@ -317,28 +337,48 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                         1,
                         window.getAnchorMapSize()
                 );
-                Assert.assertEquals(
-                        "the sweep must leave a ring-shaped function's partition state alone",
-                        4,
-                        ring.getPartitionMap().size()
-                );
+                for (int i = 0, n = anchorable.size(); i < n; i++) {
+                    final WindowFunction f = anchorable.getQuick(i);
+                    Assert.assertEquals(
+                            "the sweep must drop the evicted partitions from every ring function's map",
+                            1,
+                            f.getPartitionMap().size()
+                    );
+                    // The surviving partition's slab is re-homed and the arena truncated to it, so
+                    // three quarters of the bytes come back. Asserted as a strict shrink against the
+                    // captured baseline rather than an exact figure, because 'a' has crossed two
+                    // bucket boundaries by now and its own ring may have grown in the meantime.
+                    Assert.assertTrue(
+                            "the sweep must hand back the evicted partitions' arena bytes, but "
+                                    + f.getName() + " held " + f.getRingArena().getAppendOffset()
+                                    + " of " + fourPartitionArenaBytes[i],
+                            f.getRingArena().getAppendOffset() < fourPartitionArenaBytes[i]
+                    );
+                }
+
+                // The survivor's ring has to still be readable AT ITS NEW HOME. This row lands in
+                // the same bucket as the two before it, so the frame walks the re-homed slab to
+                // decide what is still in range; a slab that was never copied, or an offset left
+                // naming the arena as it was before the truncate, gives a wrong average here.
+                commit("('2026-01-03T03:00:00.000000Z', 'a', 10.0)", job);
 
                 assertNoRefreshFaults("lv");
                 // The anchor still resets the ring at every bucket crossing, so the first row
                 // of each of a's three buckets sees an empty frame; only the second row of the
                 // last bucket has a predecessor to average.
-                assertQuery("SELECT ts, sym, y, a FROM lv ORDER BY sym, ts")
+                assertQuery("SELECT ts, sym, y, a, c FROM lv ORDER BY sym, ts")
                         .noLeakCheck()
                         .expectSize()
                         .returns("""
-                                ts\tsym\ty\ta
-                                2026-01-01T11:00:00.000000Z\ta\t1.0\tnull
-                                2026-01-02T01:00:00.000000Z\ta\t5.0\tnull
-                                2026-01-03T01:00:00.000000Z\ta\t6.0\tnull
-                                2026-01-03T02:00:00.000000Z\ta\t8.0\t6.0
-                                2026-01-01T11:00:01.000000Z\tb\t2.0\tnull
-                                2026-01-01T11:00:02.000000Z\tc\t3.0\tnull
-                                2026-01-01T11:00:03.000000Z\td\t4.0\tnull
+                                ts\tsym\ty\ta\tc
+                                2026-01-01T11:00:00.000000Z\ta\t1.0\tnull\t0
+                                2026-01-02T01:00:00.000000Z\ta\t5.0\tnull\t0
+                                2026-01-03T01:00:00.000000Z\ta\t6.0\tnull\t0
+                                2026-01-03T02:00:00.000000Z\ta\t8.0\t6.0\t1
+                                2026-01-03T03:00:00.000000Z\ta\t10.0\t7.0\t2
+                                2026-01-01T11:00:01.000000Z\tb\t2.0\tnull\t0
+                                2026-01-01T11:00:02.000000Z\tc\t3.0\tnull\t0
+                                2026-01-01T11:00:03.000000Z\td\t4.0\tnull\t0
                                 """);
             }
         });

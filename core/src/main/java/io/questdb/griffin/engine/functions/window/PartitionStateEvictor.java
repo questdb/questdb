@@ -30,6 +30,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Helper for the live view frontier-gated compaction sweep. Rebuilds a
@@ -93,25 +94,42 @@ public final class PartitionStateEvictor {
      * function's partition map in lockstep with the anchor map after a
      * frontier-gated sweep drops partitions whose bucket has fallen behind.
      * <p>
-     * Scope limit worth knowing about: this reclaims MAP entries only, and nothing ever
-     * hands it a function that owns a native ring arena. A ROWS or RANGE frame function
-     * holds one ring slab per partition in its own {@code MemoryARW} arena, and dropping
-     * such a partition here would orphan the slab - the survivor-driven walk never visits
-     * an evicted entry, so nothing would return it to that function's free list, and no
-     * {@link Map} API exposes one either. What keeps that off the table is that every
-     * ring-holding class leaves {@code BasePartitionedWindowFunction.newCompactionScratch()}
-     * at its {@code null} default, so {@code retainPartitions} returns before it reaches
-     * this helper.
-     * <p>
-     * The opt-out has its own cost, which is the other half of the same coin: such a
-     * function keeps EVERY partition it has ever seen, so both its map and its arena grow
-     * with the view's LIFETIME partition cardinality, and since both are charged to the
-     * per-view refresh tracker, a long-lived high-churn anchored view eventually breaches
-     * the limit. Enrolling a ring function in the sweep is therefore not a one-line
-     * override: it needs a per-class (startOffset, capacity) value-layout hook and
-     * free-list-aware initial allocation, landing in the same change as the enrolment.
+     * A function that owns a native ring arena reaches this through the
+     * {@link EntryCopier} overload. Reclaiming its MAP entries alone would not be enough and
+     * would not even be safe: it holds one ring slab per partition in its own
+     * {@code MemoryARW} arena, and a value copy carries the slab's {@code (startOffset,
+     * capacity)} pair verbatim, so a rebuilt entry keeps naming the arena the sweep is about
+     * to compact. The copier is what re-homes each surviving slab and rewrites the offset that
+     * names it; an evicted partition's slab is reclaimed by never being copied at all. See
+     * {@code BasePartitionedWindowFunction.compactRingArena()} for the arena side of the same
+     * sweep.
      */
     public static long rebuildKeepingMembers(Map src, Map dst, Map survivingKeys, RecordSink survivingKeySink) {
+        return rebuildKeepingMembers(src, dst, survivingKeys, survivingKeySink, null);
+    }
+
+    /**
+     * Overload that hands every surviving entry to {@code copier} after the flat value copy,
+     * for a function whose value carries a handle into memory the value copy does not reach.
+     * A ring function's slab is the one such handle: {@link MapValue#copyFrom(MapValue)} moves
+     * the {@code (startOffset, capacity)} pair verbatim, so without this the rebuilt entry
+     * still names the OLD arena's offset, and the sweep's whole point - releasing what the
+     * evicted partitions held - would leave those offsets dangling the moment the arena is
+     * compacted underneath them.
+     * <p>
+     * The callback runs against BOTH values while both are live, which is what lets it copy the
+     * slab out of {@code src}'s arena and rewrite {@code dst}'s offset to name where it landed.
+     * It is called only for entries that survive; an evicted partition's slab is reclaimed by
+     * not being copied at all, which is what makes the compacted arena hold exactly the
+     * survivors.
+     */
+    public static long rebuildKeepingMembers(
+            Map src,
+            Map dst,
+            Map survivingKeys,
+            RecordSink survivingKeySink,
+            @Nullable EntryCopier copier
+    ) {
         MapRecordCursor cursor = survivingKeys.getCursor();
         MapRecord survivorRecord = survivingKeys.getRecord();
         long kept = 0;
@@ -127,9 +145,29 @@ public final class PartitionStateEvictor {
             dstKey.put(survivorRecord, survivingKeySink);
             // srcValue stays valid across the dst insert: the two maps own separate
             // flyweights over separate memory, so a dst resize cannot move it.
-            dstKey.createValue().copyFrom(srcValue);
+            MapValue dstValue = dstKey.createValue();
+            dstValue.copyFrom(srcValue);
+            if (copier != null) {
+                copier.onEntryRetained(srcValue, dstValue);
+            }
             kept++;
         }
         return kept;
+    }
+
+    /**
+     * Callback for the value bytes {@link MapValue#copyFrom(MapValue)} cannot carry on its own.
+     * Implemented by the retaining function itself rather than allocated per sweep, so the
+     * rebuild stays allocation-free.
+     */
+    @FunctionalInterface
+    public interface EntryCopier {
+
+        /**
+         * Called once per surviving entry, after {@code dstValue} has received the flat copy of
+         * {@code srcValue} and while both remain valid. Implementations rewrite whatever slots
+         * of {@code dstValue} name memory that the flat copy left pointing at the source.
+         */
+        void onEntryRetained(MapValue srcValue, MapValue dstValue);
     }
 }

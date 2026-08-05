@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -488,6 +489,24 @@ public interface WindowFunction extends Function {
     @Override
     default RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Exposes the arena holding this function's per-partition ring slabs, or {@code null} when
+     * it keeps no ring. A bounded ROWS or RANGE frame carries one resizable slab per partition
+     * in a {@code MemoryARW} of its own, addressed by a {@code (startOffset, capacity)} pair in
+     * the partition's map value rather than by a Java reference, so nothing but the function
+     * itself can find a slab from the map.
+     * <p>
+     * The live-view frontier sweep reads this to compact the arena down to the partitions that
+     * survived; see {@code BasePartitionedWindowFunction.compactRingArena()}. Because the arena
+     * only ever appends, its footprint would otherwise track the view's LIFETIME partition
+     * cardinality rather than its live one, and both the arena and the function's map are
+     * charged to {@code cairo.live.view.refresh.memory.limit.bytes}.
+     */
+    @Nullable
+    default MemoryARW getRingArena() {
+        return null;
     }
 
     @Override
