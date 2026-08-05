@@ -19,12 +19,14 @@
 # across iterations rather than replaying one workload. The loop aborts on the first failure so the run goes
 # red immediately rather than burning the rest of its budget.
 #
-# Cadence is every 30 minutes with a ~22-minute budget: the remainder covers agent setup (~4.5 min for the
-# JDK/maven install and the C+java build) plus overrun on a long sweep. A 30-minute cron bounds how long a
-# newly pushed fix waits before it is being fuzzed.
+# Cadence is hourly and the WHOLE RUN is budgeted to TOTAL_RUN_MINUTES (~50m), measured from a stamp taken
+# before the template's own test pass. Budgeting only the loop step spent that pass for free: build
+# 20260805.21 was CANCELLED at the 45m ceiling and made the next run queue 16 minutes late, on a pool that
+# runs one agent at a time.
 #
-# Measured on this agent 2026-08-05: the whole crash class is ~9m20s (testFullLibraryW0 alone ~3m50s at
-# N=768), the ordinary fuzz suite ~12 min. So a budget of 22 minutes fits ~2 iterations.
+# Measured ON THE CI AGENT 2026-08-05 (not the dev box -- the first estimates came from there and were ~3x
+# optimistic): RandomizedAdaptiveCrashFuzzTest ~10 min, the whole cairo/crash package ~26 min, the ordinary
+# fuzz suite ~12 min. Hence a ~10m first pass plus roughly two loop iterations inside the hour.
 #
 # A full-suite pass still runs once nightly, sharded into separate JVMs so a long/OOM-prone sweep cannot
 # poison the rest of the suite. Delete this file after the squash-merge; the branch deletion leaves the
@@ -39,7 +41,7 @@ trigger: none
 pr: none
 
 schedules:
-  - cron: "0,30 2-23 * * *"
+  - cron: "0 2-23 * * *"
     displayName: Run continuous soak (outside nightly window)
     branches:
       include:
@@ -87,30 +89,34 @@ stages:
               os: Linux
               jdk: "1.25"
               testset: "all"
-              # Iteration 1 runs through the shared template (which also builds). The loop step below runs
-              # the remaining iterations and alternates in the ordinary fuzz suite.
-              includeTests: "**/cairo/crash/*.java"
+              # Iteration 1 runs through the shared template (which also builds). Scope it to the fuzz
+              # class (~10m on the CI agent) rather than the whole crash package (~26m measured on build
+              # 20260805.21) -- the loop below covers the rest, and an oversized first pass ate the entire
+              # job before the loop could run.
+              includeTests: "**/cairo/crash/RandomizedAdaptiveCrashFuzzTest.java"
               javadoc_step: ""
               javadoc_profile: ""
         pool:
           # The soak fuzzes on its own pool so it never takes agents away from PR builds.
           name: hetzner-adaptive-commit-fuzz
-        # Budgeted to finish inside the 30-minute cadence: ~4.5m setup + ~9.5m for the template's own pass
-        # + at most one more ~12m iteration = ~26m. The timeout is headroom above that, NOT the target; a
-        # run that reaches it has overrun and the loop's budget guard needs revisiting. On this single-agent
-        # pool a run that outlasts its cadence does not just delay itself, it queues behind the next one.
-        timeoutInMinutes: 45
+        # Headroom, NOT the target. The run is budgeted to TOTAL_RUN_MINUTES below (~50m inside an hourly
+        # cadence); this only stops a pathological iteration hanging the agent. Build 20260805.21 hit the
+        # old 45m ceiling and was CANCELLED because the budget ignored time already spent by the template's
+        # own pass -- on this single-agent pool that also made the next run queue 16 minutes late.
+        timeoutInMinutes: 90
         variables:
           SOURCE_CODE_CHANGED: true
           # Enables the nightly-gated crash sweeps. Without it every class under cairo/crash that extends
           # AbstractAdaptiveCrashSweepTest is assumption-skipped and the soak silently fuzzes nothing.
           MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dquestdb.fuzz.nightly=true -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
-          # Budget for the loop step ALONE (the template's own pass already ran). 13m fits one more
-          # iteration inside the 30-minute cadence; MIN_ITERATION_MINUTES is the conservative length of the
-          # longest iteration (the ordinary fuzz suite, ~12m measured locally) and stops the loop starting
-          # one it cannot finish. If the CI agent is faster, raise the budget rather than lowering this.
-          SOAK_BUDGET_MINUTES: 13
-          MIN_ITERATION_MINUTES: 12
+          # Budget for the WHOLE RUN, measured from job start -- not for the loop step alone. The previous
+          # version budgeted only the loop, so the template's own pass was spent "for free" and the job blew
+          # its ceiling. 50m keeps a run inside the hourly cadence (~2m setup + ~10m first pass + ~2
+          # iterations). MIN_ITERATION_MINUTES is the conservative length of the LONGEST iteration measured
+          # on the CI agent (crash package ~26m; ordinary fuzz ~12m) so the loop never starts one it cannot
+          # finish inside the budget.
+          TOTAL_RUN_MINUTES: 50
+          MIN_ITERATION_MINUTES: 27
           ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
         steps:
           - template: templates/checkout-source.yml
@@ -121,6 +127,10 @@ stages:
               echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
               echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
               echo "JAVA_HOME will be set to: $JAVA_PATH"
+              # Stamp job start so the soak loop can budget the WHOLE RUN. The loop step's own SECONDS
+              # starts at zero AFTER the template's test pass, so budgeting from there spends that pass
+              # for free -- which is what pushed build 20260805.21 past its ceiling and got it cancelled.
+              date +%s > "$(Agent.TempDirectory)/soak_start_epoch"
           - template: templates/steps.yml
             parameters:
               isCheckoutEnabled: false
@@ -131,23 +141,31 @@ stages:
               # agent fuzzes continuously instead of idling until the next cron. Each mvn invocation draws a
               # fresh seed (RandomizedAdaptiveCrashFuzzTest#drawSeed under -Dquestdb.fuzz.nightly), so every
               # iteration is a new workload. No `clean`: the build from the template is reused.
-              # Bash's SECONDS builtin, not $(date +%s): inside an ADO bash step `$( )` collides with ADO's
-              # own $(macro) syntax, and an unresolved macro would reach bash verbatim.
-              budget=$(( SOAK_BUDGET_MINUTES * 60 ))
+              # Budget the WHOLE RUN from the stamp taken before the template pass, not this step's own
+              # SECONDS -- the template pass is ~10m and was previously unbudgeted.
+              start=$(cat "$(Agent.TempDirectory)/soak_start_epoch" 2>/dev/null || echo 0)
+              now=$(date +%s)
+              if [ "$start" -eq 0 ]; then
+                echo "##vso[task.logissue type=warning]soak start stamp missing; budgeting from this step only"
+                start=$now
+              fi
+              budget=$(( TOTAL_RUN_MINUTES * 60 ))
+              elapsed=$(( now - start ))
+              echo "run already used $(( elapsed / 60 ))m of its ${TOTAL_RUN_MINUTES}m budget before the loop"
               # Only START an iteration if a whole one can still finish. Checking just "budget left > 0"
-              # lets an iteration begin with a second to spare and run ~12 more minutes, overshooting the
-              # job timeout -- which reports as a hard-killed red that looks like a test failure.
+              # lets an iteration begin with a second to spare and run to the job timeout -- which reports
+              # as a hard-killed red that looks like a test failure.
               min_iter=$(( MIN_ITERATION_MINUTES * 60 ))
               iter=1
               rc=0
-              while [ $(( budget - SECONDS )) -ge "$min_iter" ]; do
+              while [ $(( budget - ( $(date +%s) - start ) )) -ge "$min_iter" ]; do
                 iter=$((iter + 1))
                 if [ $((iter % 2)) -eq 0 ]; then
                   inc='%regex[.*Fuzz.*class]'; what='ordinary-fuzz'
                 else
                   inc='**/cairo/crash/*.java'; what='adaptive-crash-sweeps'
                 fi
-                echo "=== soak iteration $iter ($what), $(( (budget - SECONDS) / 60 ))m budget left ==="
+                echo "=== soak iteration $iter ($what), $(( (budget - ( $(date +%s) - start )) / 60 ))m budget left ==="
                 mvn -f pom.xml -s "${MAVEN_SETTINGS_FILE:-ci/maven-settings-hetzner.xml}" \
                   --batch-mode --quiet \
                   -Dtest.include="$inc" -Dtest.exclude= \
@@ -163,7 +181,7 @@ stages:
               # Say what was NOT run: a soak that stops early because the budget could not fit another
               # iteration must not read as "the whole budget was fuzzed".
               if [ $rc -eq 0 ]; then
-                echo "soak ran $iter iteration(s); stopped with $(( (budget - SECONDS) / 60 ))m left" \
+                echo "soak ran $iter iteration(s); stopped with $(( (budget - ( $(date +%s) - start )) / 60 ))m left" \
                      "(less than the ${MIN_ITERATION_MINUTES}m an iteration needs)"
               fi
               exit $rc
