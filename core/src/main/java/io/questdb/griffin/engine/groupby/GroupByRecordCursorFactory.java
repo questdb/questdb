@@ -135,6 +135,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public int getScanDirection() {
+        // Keyed GROUP BY emits rows in hash-map iteration order, which bears no relation to the base
+        // scan order even when grouping by the designated timestamp. Reporting a forward scan here
+        // would let generateOrderBy() (and isBaseTimestampAscending) treat the output as already
+        // ascending by the designated timestamp and wrongly elide an ORDER BY timestamp ASC.
+        return SCAN_DIRECTION_OTHER;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {

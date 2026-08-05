@@ -96,6 +96,22 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
         return SortedRecordCursorFactory.toOrder(sortColumnFilter.get(0));
     }
 
+    /**
+     * Scan direction as seen by a parent that reasons about the designated timestamp. A forward/backward
+     * direction only implies "ordered by the designated timestamp" when the primary sort key IS that
+     * timestamp; sorting by any other column leaves rows unordered with respect to the timestamp, so we
+     * report {@link #SCAN_DIRECTION_OTHER} to stop generateOrderBy() eliding an ORDER BY timestamp.
+     */
+    public static int getScanDirection(ListColumnFilter sortColumnFilter, int timestampIndex) {
+        assert sortColumnFilter.size() > 0;
+        final int firstKey = sortColumnFilter.get(0);
+        final int firstKeyColumnIndex = (firstKey > 0 ? firstKey : -firstKey) - 1;
+        if (timestampIndex < 0 || firstKeyColumnIndex != timestampIndex) {
+            return SCAN_DIRECTION_OTHER;
+        }
+        return toOrder(firstKey);
+    }
+
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
@@ -115,7 +131,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public int getScanDirection() {
-        return getScanDirection(sortColumnFilter);
+        return getScanDirection(sortColumnFilter, getMetadata().getTimestampIndex());
     }
 
     @Override

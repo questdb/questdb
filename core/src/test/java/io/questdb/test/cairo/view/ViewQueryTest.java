@@ -1469,6 +1469,9 @@ public class ViewQueryTest extends AbstractViewTest {
                             """,
                     "(select v1.ts, v1.v_max from " + VIEW1 + " v1 where v_max > 6) timestamp(ts)",
                     "ts",
+                    // the view is a keyed GROUP BY, so timestamp(ts) designates a timestamp over a
+                    // hash-ordered result: designated, but with no scan-order guarantee.
+                    true,
                     true,
                     false,
                     """

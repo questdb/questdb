@@ -7517,12 +7517,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return generateSubQuery(model, executionContext);
     }
 
+    // true when the model's ORDER BY is a single column that is the factory's designated timestamp
+    private static boolean ordersBySingleDesignatedTimestamp(RecordCursorFactory factory, IQueryModel model) {
+        final RecordMetadata metadata = factory.getMetadata();
+        final int timestampIndex = metadata.getTimestampIndex();
+        if (timestampIndex < 0) {
+            return false;
+        }
+        final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
+        if (orderHash.size() != 1) {
+            return false;
+        }
+        return SqlUtil.getColumnIndexQuiet(metadata, orderHash.keys().getQuick(0)) == timestampIndex;
+    }
+
     private RecordCursorFactory generateOrderBy(
             RecordCursorFactory recordCursorFactory,
             IQueryModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (recordCursorFactory.followedOrderByAdvice()) {
+        // followedOrderByAdvice() means the factory satisfied the advice pushed into its branch, which may
+        // be a DIFFERENT ordering than this model asks for -- e.g. an inner ORDER BY symbol re-designated
+        // with timestamp(ts) and wrapped in an outer ORDER BY ts. When this model orders by the designated
+        // timestamp we must not blind-trust that flag; fall through to the scan-direction check, which
+        // returns the factory unsorted only when it genuinely scans the timestamp in the requested order.
+        if (recordCursorFactory.followedOrderByAdvice() && !ordersBySingleDesignatedTimestamp(recordCursorFactory, model)) {
             return recordCursorFactory;
         }
         try {
