@@ -189,7 +189,7 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
             final String legacySql = "SELECT ts, sum(v) AS s FROM base "
                     + "WHERE ts > (SELECT max(value) FROM read_parquet('ext.parquet')) SAMPLE BY 1h";
             final TableToken viewToken = engine.verifyTableName("mv");
-            final MatViewDefinition current = engine.getMatViewGraph().getViewDefinition(viewToken);
+            final MatViewDefinition current = engine.getDependentViewGraph().getViewDefinition(viewToken);
             final MatViewDefinition legacy = new MatViewDefinition();
             legacy.init(
                     current.getRefreshType(),
@@ -214,7 +214,7 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
             );
             // Mirror TableWriter's definition-swap: both the graph and the state store, so the
             // refresh job (which reads viewState.getViewDefinition()) sees the legacy SQL.
-            engine.getMatViewGraph().updateViewDefinition(viewToken, legacy);
+            engine.getDependentViewGraph().updateViewDefinition(viewToken, legacy);
             engine.getMatViewStateStore().updateViewDefinition(viewToken, legacy);
 
             execute("REFRESH MATERIALIZED VIEW mv FULL");
@@ -507,7 +507,7 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
      */
     private void recompileAsRefreshJobWould(String shape) {
         final TableToken viewToken = engine.verifyTableName("mv");
-        final MatViewDefinition definition = engine.getMatViewGraph().getViewDefinition(viewToken);
+        final MatViewDefinition definition = engine.getDependentViewGraph().getViewDefinition(viewToken);
         final String viewSql = definition.getMatViewSql();
         final TableToken baseToken = engine.verifyTableName(definition.getBaseTableName());
         try (

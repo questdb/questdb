@@ -164,6 +164,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntList undefinedVariables = new IntList();
     private boolean cursorFunctionInstantiated;
+    private String lastFunctionFactorySignature;
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
@@ -229,8 +230,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     public void clear() {
         this.positionStack.clear();
         this.functionStack.clear();
+        this.lastFunctionFactorySignature = null;
         this.sqlExecutionContext = null;
         this.cursorFunctionInstantiated = false;
+    }
+
+    /**
+     * Signature of the factory that produced the most recent top-level parsed
+     * function. Consumed immediately by the SQL code generator for checkpoint
+     * identity, so the selected overload is not inferred from a runtime class.
+     */
+    public String getLastFunctionFactorySignature() {
+        return lastFunctionFactorySignature;
     }
 
     public Function createBindVariable(SqlExecutionContext sqlExecutionContext, int position, CharSequence name, int expressionType) throws SqlException {
@@ -347,6 +358,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             SqlExecutionContext executionContext
     ) throws SqlException {
         this.sqlExecutionContext = executionContext;
+        this.lastFunctionFactorySignature = null;
 
         if (this.metadata != null) {
             metadataStack.push(this.metadata);
@@ -698,7 +710,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             Misc.freeObjList(args, ex);
             throw ex;
         } else if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
-            final SqlException exception = SqlException.nonDeterministicColumn(node.position, node.token);
+            // The same guard is armed for both a materialized view and a live view
+            // SELECT; name the kind actually being compiled so the reject reads right.
+            final SqlException exception = SqlException.nonDeterministicColumn(
+                    node.position,
+                    node.token,
+                    sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view"
+            );
             if (args != null) {
                 args.clear(); // newInstance() transferred argument ownership to function
             }
@@ -715,6 +733,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (ColumnType.isCursor(function.getType())) {
             cursorFunctionInstantiated = true;
         }
+        lastFunctionFactorySignature = factory.getSignature();
         return function;
     }
 
@@ -862,7 +881,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // function. Do NOT consult isNonDeterministic() here: it is a fail-safe optimizer hint that
             // defaults to true, so 97 of 114 factories would make legal SQL illegal by accident.
             if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.getRecordCursorFactory().usesExternalDataSource()) {
-                final SqlException exception = SqlException.nonDeterministicColumn(node.position, "sub-query");
+                final SqlException exception = SqlException.nonDeterministicColumn(
+                        node.position,
+                        "sub-query",
+                        sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view"
+                );
                 try {
                     function.close();
                 } catch (Throwable cleanupFailure) {

@@ -114,6 +114,17 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
      */
     boolean hasParquetFormatPartitions(SqlExecutionContext executionContext);
 
+    /**
+     * Returns {@code true} when the factory restricts the scan to a set of
+     * designated-timestamp intervals (i.e. an {@code IntervalPartitionFrameCursorFactory}).
+     * The interval predicate lives in the frame cursor and never surfaces as a residual
+     * {@code Function}, so the live view refresh path cannot see it. Live view
+     * validation relies on this to reject such factories.
+     */
+    default boolean isIntervalScan() {
+        return false;
+    }
+
     void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions);
 
     boolean supportsTableRowId(TableToken tableToken);

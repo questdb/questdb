@@ -139,6 +139,14 @@ public final class QwpConstants {
      */
     public static final byte STATUS_CANCELLED = 0x0A;
     /**
+     * A delta symbol dictionary whose start id runs past the connection dictionary.
+     * Distinct from {@link #STATUS_PARSE_ERROR} because the verdict depends on
+     * per-connection SERVER state, not on the frame's bytes: the identical frame is
+     * accepted once the sender has re-registered its dictionary. A client should treat
+     * it as retriable and re-register from id 0.
+     */
+    public static final byte STATUS_DICTIONARY_GAP = 0x0D;
+    /**
      * Status: Per-table durable-upload acknowledgment.
      * <p>
      * Sent by the server (only when the client opted in via the

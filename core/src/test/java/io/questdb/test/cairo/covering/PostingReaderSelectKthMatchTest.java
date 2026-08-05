@@ -37,9 +37,7 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 /**
  * Exact-equivalence (TDD oracle) tests for the O(genCount) covered-frame metadata
@@ -118,7 +116,7 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                     // the dirty-clamp fallback.
                     for (int k = 0; k < 20; k++) {
                         assertEquals("untrimmed select must be exact at k=" + k,
-                                (long) (k * 5), reader.selectKthMatch(0, 0, 95, 95, k));
+                                k * 5, reader.selectKthMatch(0, 0, 95, 95, k));
                     }
                     assertEquals(Numbers.LONG_NULL, reader.selectKthMatch(0, 0, 95, 95, 20));
                     // Clean (untrimmed) clamp: exact full count, no sentinel.
@@ -180,10 +178,10 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                     LongList gt = drain(reader, 0, 0, callerHiInclusive);
                     assertEquals("cursor must emit 20 nulls + 11 index rows", 31, gt.size());
                     for (int k = 0; k < 20; k++) {
-                        assertEquals("null prefix row " + k, (long) k, gt.getQuick(k));
+                        assertEquals("null prefix row " + k, k, gt.getQuick(k));
                     }
                     for (int k = 20; k < 31; k++) {
-                        assertEquals("index row at k=" + k, (long) (k - 20), gt.getQuick(k));
+                        assertEquals("index row at k=" + k, k - 20, gt.getQuick(k));
                     }
 
                     final long clampedMax = loweredMax;          // min(49, 10)
@@ -191,7 +189,7 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
 
                     // countMatchesClamped must equal the cursor's drained count.
                     assertEquals("countMatchesClamped must use unclamped null bound",
-                            (long) gt.size(),
+                            gt.size(),
                             reader.countMatchesClamped(0, 0, nullMaxValue, clampedMax));
 
                     // selectKthMatch must match the cursor at every k: the full null prefix
@@ -470,7 +468,7 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                         // Warm A by traversal.
                         drain(a, key, 0, Long.MAX_VALUE);
                         // Warm B by the metadata-only primitive.
-                        b.populateCacheForKey(key, Long.MAX_VALUE);
+                        b.populateCacheForKey(key);
 
                         long slotA = la.cacheLookup(key);
                         long slotB = lb.cacheLookup(key);
@@ -505,42 +503,6 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                                     rowsA.getQuick(i), rowsB.getQuick(i));
                         }
                     }
-                }
-            }
-        });
-    }
-
-    /**
-     * populateCacheForKey is gated on a multi-gen sparse layout. A single-gen dense (sealed)
-     * index never caches, so the call must be a no-op and leave the key cold — matching the
-     * traverse, whose single-gen-dense fast path also skips the cache.
-     */
-    @Test
-    public void testPopulateCacheForKeyNoOpOnSingleGenDense() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final String name = "skm_cache_noop";
-                final int plen = path.size();
-                final int keyCount = 8;
-                try (PostingIndexWriter writer = new PostingIndexWriter(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
-                    for (int row = 0; row < keyCount * 4; row++) {
-                        writer.add(row % keyCount, row);
-                    }
-                    writer.setMaxValue(keyCount * 4 - 1);
-                    writer.commit();
-                    writer.seal(); // collapse to a single dense gen
-                }
-
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
-                    reader.reloadConditionally();
-                    PostingGenLookup lookup = genLookupOf(reader);
-                    reader.populateCacheForKey(0, Long.MAX_VALUE);
-                    assertEquals("single-gen-dense must not cache",
-                            CACHE_NOT_PRESENT, lookup.cacheLookup(0));
-                    // And selectKthMatch still works against the single dense gen.
-                    assertSelectMatchesCursor(reader, 0, 0, Long.MAX_VALUE);
                 }
             }
         });
@@ -590,7 +552,7 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                         PostingGenLookup lb = genLookupOf(b);
 
                         drain(a, key, 0, Long.MAX_VALUE);            // traverse-warm (fires putCacheEntries)
-                        b.populateCacheForKey(key, Long.MAX_VALUE);   // metadata-warm
+                        b.populateCacheForKey(key);   // metadata-warm
 
                         long slotA = la.cacheLookup(key);
                         long slotB = lb.cacheLookup(key);
@@ -608,6 +570,42 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                             assertEquals("absent in-range key " + key + " must cache zero entries", 0, cntA);
                         }
                     }
+                }
+            }
+        });
+    }
+
+    /**
+     * populateCacheForKey is gated on a multi-gen sparse layout. A single-gen dense (sealed)
+     * index never caches, so the call must be a no-op and leave the key cold — matching the
+     * traverse, whose single-gen-dense fast path also skips the cache.
+     */
+    @Test
+    public void testPopulateCacheForKeyNoOpOnSingleGenDense() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "skm_cache_noop";
+                final int plen = path.size();
+                final int keyCount = 8;
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (int row = 0; row < keyCount * 4; row++) {
+                        writer.add(row % keyCount, row);
+                    }
+                    writer.setMaxValue(keyCount * 4 - 1);
+                    writer.commit();
+                    writer.seal(); // collapse to a single dense gen
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
+                    reader.reloadConditionally();
+                    PostingGenLookup lookup = genLookupOf(reader);
+                    reader.populateCacheForKey(0);
+                    assertEquals("single-gen-dense must not cache",
+                            CACHE_NOT_PRESENT, lookup.cacheLookup(0));
+                    // And selectKthMatch still works against the single dense gen.
+                    assertSelectMatchesCursor(reader, 0, 0, Long.MAX_VALUE);
                 }
             }
         });
@@ -651,7 +649,7 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                     final int key = 50; // present in the single sparse gen
                     assertEquals(CACHE_NOT_PRESENT, lb.cacheLookup(key));
                     drain(a, key, 0, Long.MAX_VALUE);            // traverse warms
-                    b.populateCacheForKey(key, Long.MAX_VALUE);   // must now ALSO warm (was a no-op)
+                    b.populateCacheForKey(key);   // must now ALSO warm (was a no-op)
 
                     long slotA = la.cacheLookup(key);
                     long slotB = lb.cacheLookup(key);
@@ -711,7 +709,7 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                         assertEquals("single-row key must count 1",
                                 1L, r.countMatchesClamped(key, 0, Long.MAX_VALUE, Long.MAX_VALUE));
                         assertEquals("single-row key k=0 is its row",
-                                (long) key, r.selectKthMatch(key, 0, Long.MAX_VALUE, Long.MAX_VALUE, 0));
+                                key, r.selectKthMatch(key, 0, Long.MAX_VALUE, Long.MAX_VALUE, 0));
                         assertEquals("single-row key k==count is the sentinel",
                                 Numbers.LONG_NULL, r.selectKthMatch(key, 0, Long.MAX_VALUE, Long.MAX_VALUE, 1));
                         assertSelectMatchesCursor(r, key, 0, Long.MAX_VALUE);
@@ -836,7 +834,7 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-        long clamp = entryMax >= 0 ? Math.min(callerMax == Long.MAX_VALUE ? Long.MAX_VALUE : callerMax, entryMax) : callerMax;
+        long clamp = entryMax >= 0 ? Math.min(callerMax, entryMax) : callerMax;
         // The null prefix is bounded by the UNCLAMPED caller max (columnTop only); only
         // the gen walk uses the entryMaxValue-folded clamp. For these clean layouts the
         // two coincide (entryMax >= callerMax), so the assertions hold either way.
@@ -848,7 +846,7 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
         // layouts are clean (the dirty-rows MIXED case is asserted separately), so the
         // sentinel must not appear here.
         assertEquals("countMatchesClamped != cursor count for key " + key,
-                (long) n, reader.countMatchesClamped(key, minValue, nullMax, clamp));
+                n, reader.countMatchesClamped(key, minValue, nullMax, clamp));
         if (n == 0) {
             assertEquals("empty match set must yield the sentinel at k=0",
                     Numbers.LONG_NULL, reader.selectKthMatch(key, minValue, nullMax, clamp, 0));

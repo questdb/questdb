@@ -973,7 +973,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
             assertQuery("alter")
                     .noLeakCheck()
-                    .fails(5, "'table' or 'materialized' or 'view' expected");
+                    .fails(5, "'table' or 'materialized' or 'live' or 'view' expected");
 
             assertQuery("alter view")
                     .noLeakCheck()

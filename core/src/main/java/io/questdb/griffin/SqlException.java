@@ -120,8 +120,8 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).errorCode(EXCEPTION_MAT_VIEW_DOES_NOT_EXIST).put("materialized view does not exist [view=").put(tableName).put(']');
     }
 
-    public static SqlException nonDeterministicColumn(int position, CharSequence column) {
-        return position(position).put("non-deterministic function cannot be used in materialized view: ").put(column);
+    public static SqlException nonDeterministicColumn(int position, CharSequence column, CharSequence objectKind) {
+        return position(position).put("non-deterministic function cannot be used in ").put(objectKind).put(": ").put(column);
     }
 
     public static SqlException parserErr(int position, @Nullable CharSequence tok, @NotNull CharSequence msg) {
