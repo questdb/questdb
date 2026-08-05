@@ -252,7 +252,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal128SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -381,7 +381,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal16SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -511,7 +511,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal256SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -641,7 +641,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal32SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -771,7 +771,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal64SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -900,7 +900,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal8SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -1124,6 +1124,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         private static final int RECORD_SIZE = Long.BYTES + 16;
         private final Decimal256 acc = new Decimal256();
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        private final CairoConfiguration configuration;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
@@ -1159,7 +1162,8 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 int position,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -1172,6 +1176,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.position = position;
             this.liveView = liveView;
+            this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
             for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                 this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
@@ -1194,6 +1199,42 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 2 is the ring's start offset,
+         * slot 4 its capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 2, 4, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -2932,6 +2973,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     public static class Decimal16SumOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        private final CairoConfiguration configuration;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
@@ -2964,7 +3008,8 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int timestampIdx,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -2976,6 +3021,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
             this.liveView = liveView;
+            this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
             for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                 this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
@@ -2998,6 +3044,42 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 2 is the ring's start offset,
+         * slot 4 its capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 2, 4, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -4546,6 +4628,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         private static final int RECORD_SIZE = Long.BYTES + 32;
         private final Decimal256 acc = new Decimal256();
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        private final CairoConfiguration configuration;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
@@ -4582,7 +4667,8 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 int position,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -4595,6 +4681,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.position = position;
             this.liveView = liveView;
+            this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
             for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                 this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
@@ -4617,6 +4704,42 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 2 is the ring's start offset,
+         * slot 4 its capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 2, 4, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -6404,6 +6527,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         private static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
         private final Decimal128 acc = new Decimal128();
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        private final CairoConfiguration configuration;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
@@ -6438,7 +6564,8 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 int position,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -6451,6 +6578,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.position = position;
             this.liveView = liveView;
+            this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
             for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                 this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
@@ -6473,6 +6601,42 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 2 is the ring's start offset,
+         * slot 4 its capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 2, 4, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -8089,6 +8253,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         private static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
         private final Decimal128 acc = new Decimal128();
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        private final CairoConfiguration configuration;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
@@ -8123,7 +8290,8 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 int position,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -8136,6 +8304,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.position = position;
             this.liveView = liveView;
+            this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
             for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                 this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
@@ -8158,6 +8327,42 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 2 is the ring's start offset,
+         * slot 4 its capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 2, 4, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -9766,6 +9971,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     public static class Decimal8SumOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Byte.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        private final CairoConfiguration configuration;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
@@ -9798,7 +10006,8 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int timestampIdx,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -9810,6 +10019,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
             this.liveView = liveView;
+            this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
             for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                 this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
@@ -9832,6 +10042,42 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 2 is the ring's start offset,
+         * slot 4 its capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 2, 4, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override

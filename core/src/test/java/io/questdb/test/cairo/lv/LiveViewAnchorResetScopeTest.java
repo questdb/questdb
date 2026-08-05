@@ -265,6 +265,11 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
      * The arena assertion is the half that matters most, and it is the one a map-size check
      * cannot stand in for: {@code MemoryARW} only ever appends, so without the truncate-and-copy
      * the arena holds its high-water mark however small the map gets.
+     * <p>
+     * Two sweeps, not one. The scratch arena survives a sweep truncated rather than freed, so a
+     * second sweep takes a different path through {@code retainPartitions} than the first: it
+     * empties an existing scratch instead of allocating one, and appends the survivors over the
+     * bytes the previous sweep left behind.
      */
     @Test
     public void testFrontierSweepReclaimsARingShapedAnchoredFunctionsStateAndArena() throws Exception {
@@ -300,26 +305,7 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 // value layouts - avg puts its (startOffset, capacity) pair at slots 2 and 4,
                 // count at 1 and 3 - so asserting over both is what catches an enrolment that
                 // reads the right pair for one shape and the wrong one for another.
-                final long[] fourPartitionArenaBytes = new long[anchorable.size()];
-                for (int i = 0, n = anchorable.size(); i < n; i++) {
-                    final WindowFunction f = anchorable.getQuick(i);
-                    Assert.assertTrue(
-                            "EXCLUDE CURRENT ROW must fold every anchored call here into a ring shape",
-                            f.supportsCheckpointRingState()
-                    );
-                    Assert.assertNotNull("a ring-shaped function keeps its partitions in a map", f.getPartitionMap());
-                    Assert.assertNotNull("a ring-shaped function keeps its slabs in an arena", f.getRingArena());
-                    Assert.assertEquals("one map entry per seeded account", 4, f.getPartitionMap().size());
-                    // Four partitions, one slab each, so the arena is holding four. Captured rather
-                    // than asserted as an absolute: the slab width follows
-                    // cairo.sql.window.initial.range.buffer.size, and what the sweep has to change
-                    // is the ratio, not the constant.
-                    fourPartitionArenaBytes[i] = f.getRingArena().getAppendOffset();
-                    Assert.assertTrue(
-                            "four partitions must have put something in the arena",
-                            fourPartitionArenaBytes[i] > 0
-                    );
-                }
+                final long[] fourPartitionArenaBytes = captureRingArenas(anchorable, 4);
 
                 final LiveViewWindow window = instance.getAnchorWindow();
                 Assert.assertNotNull("the view must carry an anchored window", window);
@@ -337,24 +323,8 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                         1,
                         window.getAnchorMapSize()
                 );
-                for (int i = 0, n = anchorable.size(); i < n; i++) {
-                    final WindowFunction f = anchorable.getQuick(i);
-                    Assert.assertEquals(
-                            "the sweep must drop the evicted partitions from every ring function's map",
-                            1,
-                            f.getPartitionMap().size()
-                    );
-                    // The surviving partition's slab is re-homed and the arena truncated to it, so
-                    // three quarters of the bytes come back. Asserted as a strict shrink against the
-                    // captured baseline rather than an exact figure, because 'a' has crossed two
-                    // bucket boundaries by now and its own ring may have grown in the meantime.
-                    Assert.assertTrue(
-                            "the sweep must hand back the evicted partitions' arena bytes, but "
-                                    + f.getName() + " held " + f.getRingArena().getAppendOffset()
-                                    + " of " + fourPartitionArenaBytes[i],
-                            f.getRingArena().getAppendOffset() < fourPartitionArenaBytes[i]
-                    );
-                }
+                assertRingArenasReclaimed(anchorable, fourPartitionArenaBytes);
+                final long[] afterFirstSweepArenaBytes = ringArenaExtents(anchorable);
 
                 // The survivor's ring has to still be readable AT ITS NEW HOME. This row lands in
                 // the same bucket as the two before it, so the frame walks the re-homed slab to
@@ -362,10 +332,44 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 // naming the arena as it was before the truncate, gives a wrong average here.
                 commit("('2026-01-03T03:00:00.000000Z', 'a', 10.0)", job);
 
+                // A SECOND sweep, which is the only way to reach the scratch-reuse arm: the
+                // first one left compactionRingScratch allocated, so this one has to empty it up
+                // front and append the survivors from logical 0 again. Appending on top of the
+                // first sweep's tail instead would copy that dead prefix back over the primary
+                // arena and give the reclamation away. Reviving b, c and d in a's current bucket
+                // puts the map back to four; two more advances then leave them behind again.
+                commit("('2026-01-03T03:00:01.000000Z', 'b', 20.0), "
+                        + "('2026-01-03T03:00:02.000000Z', 'c', 30.0), "
+                        + "('2026-01-03T03:00:03.000000Z', 'd', 40.0)", job);
+                final long[] revivedArenaBytes = captureRingArenas(anchorable, 4);
+                commit("('2026-01-04T01:00:00.000000Z', 'a', 12.0)", job);
+                commit("('2026-01-05T01:00:00.000000Z', 'a', 14.0)", job);
+
+                Assert.assertEquals(2, window.getCompactionCount());
+                Assert.assertEquals(1, window.getAnchorMapSize());
+                assertRingArenasReclaimed(anchorable, revivedArenaBytes);
+                // Both sweeps leave the same one partition with the same slab, so the arena has
+                // to land on the same extent twice. A strict shrink alone would not say this: a
+                // second sweep that appended onto the first one's leftover scratch still shrinks
+                // four slabs to two, and only carrying the dead prefix forward sweep after sweep
+                // would eventually show up as growth.
+                for (int i = 0, n = anchorable.size(); i < n; i++) {
+                    Assert.assertEquals(
+                            "a second sweep must not carry the first one's re-homed bytes forward",
+                            afterFirstSweepArenaBytes[i],
+                            anchorable.getQuick(i).getRingArena().getAppendOffset()
+                    );
+                }
+
+                // Same reasoning as the row after the first sweep: read the re-homed ring at the
+                // home the SECOND compaction gave it.
+                commit("('2026-01-05T02:00:00.000000Z', 'a', 16.0)", job);
+
                 assertNoRefreshFaults("lv");
-                // The anchor still resets the ring at every bucket crossing, so the first row
-                // of each of a's three buckets sees an empty frame; only the second row of the
-                // last bucket has a predecessor to average.
+                // The anchor still resets the ring at every bucket crossing, so the first row of
+                // each of a's five buckets sees an empty frame; only a row that has a predecessor
+                // within its own bucket averages anything. The two that do - 03T02:00 and
+                // 05T02:00 - are the ones reading a slab the sweep re-homed.
                 assertQuery("SELECT ts, sym, y, a, c FROM lv ORDER BY sym, ts")
                         .noLeakCheck()
                         .expectSize()
@@ -376,9 +380,114 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                                 2026-01-03T01:00:00.000000Z\ta\t6.0\tnull\t0
                                 2026-01-03T02:00:00.000000Z\ta\t8.0\t6.0\t1
                                 2026-01-03T03:00:00.000000Z\ta\t10.0\t7.0\t2
+                                2026-01-04T01:00:00.000000Z\ta\t12.0\tnull\t0
+                                2026-01-05T01:00:00.000000Z\ta\t14.0\tnull\t0
+                                2026-01-05T02:00:00.000000Z\ta\t16.0\t14.0\t1
                                 2026-01-01T11:00:01.000000Z\tb\t2.0\tnull\t0
+                                2026-01-03T03:00:01.000000Z\tb\t20.0\tnull\t0
                                 2026-01-01T11:00:02.000000Z\tc\t3.0\tnull\t0
+                                2026-01-03T03:00:02.000000Z\tc\t30.0\tnull\t0
                                 2026-01-01T11:00:03.000000Z\td\t4.0\tnull\t0
+                                2026-01-03T03:00:03.000000Z\td\t40.0\tnull\t0
+                                """);
+            }
+        });
+    }
+
+    /**
+     * The same sweep over the decimal {@code avg}, {@code sum} and {@code avg(x, scale)}
+     * families: 18 ring-shaped classes, one per (aggregate, decimal width) pair, each
+     * declaring its own {@code (startOffset, capacity)} value indices.
+     * <p>
+     * All 18 happen to carry the ring geometry at slots 2 and 4 today, and this is what holds
+     * them there. Naming the wrong pair no longer corrupts silently - it trips the range check
+     * in {@code AbstractWindowFunctionFactory.copyRingSlab} - but that check fires at refresh
+     * time, so a sweep has to reach every one of the 18 for it to say anything.
+     */
+    @Test
+    public void testFrontierSweepReclaimsEveryDecimalRingArena() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            // One column per decimal storage width, since the width picks the implementation
+            // class: precision 2 -> DECIMAL8, 4 -> DECIMAL16, 9 -> DECIMAL32, 18 -> DECIMAL64,
+            // 38 -> DECIMAL128, 75 -> DECIMAL256.
+            execute("""
+                    CREATE TABLE base (
+                        ts TIMESTAMP, sym SYMBOL,
+                        d8 DECIMAL(2, 1), d16 DECIMAL(4, 1), d32 DECIMAL(9, 1),
+                        d64 DECIMAL(18, 1), d128 DECIMAL(38, 1), d256 DECIMAL(75, 1)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("INSERT INTO base (ts, sym, d8, d16, d32, d64, d128, d256) VALUES "
+                    + decimalRow("2026-01-01T11:00:00.000000Z", "a", "1.0") + ", "
+                    + decimalRow("2026-01-01T11:00:01.000000Z", "b", "2.0") + ", "
+                    + decimalRow("2026-01-01T11:00:02.000000Z", "c", "3.0") + ", "
+                    + decimalRow("2026-01-01T11:00:03.000000Z", "d", "4.0"));
+            drainWalQueue();
+            // avg(x) and sum(x) dispatch on the argument's width; avg(x, scale) is a separate
+            // rescaling family that dispatches on it too, which is the third set of six.
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, sym,
+                           avg(d8) OVER w AS a8, sum(d8) OVER w AS s8, avg(d8, 2) OVER w AS r8,
+                           avg(d16) OVER w AS a16, sum(d16) OVER w AS s16, avg(d16, 2) OVER w AS r16,
+                           avg(d32) OVER w AS a32, sum(d32) OVER w AS s32, avg(d32, 2) OVER w AS r32,
+                           avg(d64) OVER w AS a64, sum(d64) OVER w AS s64, avg(d64, 2) OVER w AS r64,
+                           avg(d128) OVER w AS a128, sum(d128) OVER w AS s128, avg(d128, 2) OVER w AS r128,
+                           avg(d256) OVER w AS a256, sum(d256) OVER w AS s256, avg(d256, 2) OVER w AS r256
+                    FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts
+                                 RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW
+                                 ANCHOR DAILY '00:00')""");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' must be registered", instance);
+                final ObjList<WindowFunction> anchorable = anchorableFunctions(instance);
+                Assert.assertEquals("the anchored window carries all 18 decimal calls", 18, anchorable.size());
+                final long[] fourPartitionArenaBytes = captureRingArenas(anchorable, 4);
+
+                final LiveViewWindow window = instance.getAnchorWindow();
+                Assert.assertNotNull("the view must carry an anchored window", window);
+                Assert.assertEquals(4, window.getAnchorMapSize());
+
+                commitDecimals(decimalRow("2026-01-02T01:00:00.000000Z", "a", "5.0"), job);
+                commitDecimals(decimalRow("2026-01-03T01:00:00.000000Z", "a", "6.0") + ", "
+                        + decimalRow("2026-01-03T02:00:00.000000Z", "a", "8.0"), job);
+
+                Assert.assertEquals(1, window.getCompactionCount());
+                Assert.assertEquals(
+                        "only the account that followed the frontier survives in the anchor map",
+                        1,
+                        window.getAnchorMapSize()
+                );
+                assertRingArenasReclaimed(anchorable, fourPartitionArenaBytes);
+
+                commitDecimals(decimalRow("2026-01-03T03:00:00.000000Z", "a", "9.0"), job);
+
+                assertNoRefreshFaults("lv");
+                // The anchor resets every ring at each bucket crossing, so the first row of each
+                // of a's three buckets sees an empty frame. All six widths must agree row for
+                // row: a re-homing that read the wrong slot pair for one width would answer only
+                // that width wrongly.
+                assertQuery("""
+                        SELECT ts, sym, a8, s8, r8, a16, s16, r16, a32, s32, r32,
+                               a64, s64, r64, a128, s128, r128, a256, s256, r256
+                        FROM lv ORDER BY sym, ts""")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\ta8\ts8\tr8\ta16\ts16\tr16\ta32\ts32\tr32\ta64\ts64\tr64\ta128\ts128\tr128\ta256\ts256\tr256
+                                2026-01-01T11:00:00.000000Z\ta\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-02T01:00:00.000000Z\ta\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-03T01:00:00.000000Z\ta\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-03T02:00:00.000000Z\ta\t6.0\t6.0\t6.00\t6.0\t6.0\t6.00\t6.0\t6.0\t6.00\t6.0\t6.0\t6.00\t6.0\t6.0\t6.00\t6.0\t6.0\t6.00
+                                2026-01-03T03:00:00.000000Z\ta\t7.0\t14.0\t7.00\t7.0\t14.0\t7.00\t7.0\t14.0\t7.00\t7.0\t14.0\t7.00\t7.0\t14.0\t7.00\t7.0\t14.0\t7.00
+                                2026-01-01T11:00:01.000000Z\tb\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-01T11:00:02.000000Z\tc\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-01T11:00:03.000000Z\td\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
                                 """);
             }
         });
@@ -469,8 +578,82 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
         throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
     }
 
+    private static void assertRingArenasReclaimed(ObjList<WindowFunction> anchorable, long[] seededArenaBytes) {
+        for (int i = 0, n = anchorable.size(); i < n; i++) {
+            final WindowFunction f = anchorable.getQuick(i);
+            Assert.assertEquals(
+                    "the sweep must drop the evicted partitions from every ring function's map",
+                    1,
+                    f.getPartitionMap().size()
+            );
+            // The surviving partition's slab is re-homed and the arena truncated to it, so
+            // the evicted partitions' bytes come back. Asserted as a strict shrink against
+            // the captured baseline rather than an exact figure, because the survivor has
+            // crossed bucket boundaries by now and its own ring may have grown meanwhile.
+            Assert.assertTrue(
+                    "the sweep must hand back the evicted partitions' arena bytes, but "
+                            + f.getName() + "#" + i + " held " + f.getRingArena().getAppendOffset()
+                            + " of " + seededArenaBytes[i],
+                    f.getRingArena().getAppendOffset() < seededArenaBytes[i]
+            );
+        }
+    }
+
+    /**
+     * Asserts every anchorable call folded to a ring and is holding one slab per seeded
+     * partition, and returns each one's arena extent for the post-sweep shrink to be
+     * measured against.
+     */
+    private static long[] captureRingArenas(ObjList<WindowFunction> anchorable, int seededPartitions) {
+        final long[] seededArenaBytes = new long[anchorable.size()];
+        for (int i = 0, n = anchorable.size(); i < n; i++) {
+            final WindowFunction f = anchorable.getQuick(i);
+            Assert.assertTrue(
+                    "EXCLUDE CURRENT ROW must fold every anchored call here into a ring shape",
+                    f.supportsCheckpointRingState()
+            );
+            Assert.assertNotNull("a ring-shaped function keeps its partitions in a map", f.getPartitionMap());
+            Assert.assertNotNull("a ring-shaped function keeps its slabs in an arena", f.getRingArena());
+            Assert.assertEquals("one map entry per seeded account", seededPartitions, f.getPartitionMap().size());
+            // One slab per partition, so the arena is holding them all. Captured rather than
+            // asserted as an absolute: the slab width follows
+            // cairo.sql.window.initial.range.buffer.size, and what the sweep has to change is
+            // the ratio, not the constant.
+            seededArenaBytes[i] = f.getRingArena().getAppendOffset();
+            Assert.assertTrue(
+                    "the seeded partitions must have put something in the arena",
+                    seededArenaBytes[i] > 0
+            );
+        }
+        return seededArenaBytes;
+    }
+
+    /**
+     * One row carrying the same magnitude in all six decimal widths, so a case can state the
+     * expected frame arithmetic once instead of six times.
+     */
+    private static String decimalRow(String ts, String sym, String value) {
+        return "('" + ts + "', '" + sym + "'"
+                + (", " + value + "m").repeat(6)
+                + ")";
+    }
+
+    private static long[] ringArenaExtents(ObjList<WindowFunction> anchorable) {
+        final long[] extents = new long[anchorable.size()];
+        for (int i = 0, n = anchorable.size(); i < n; i++) {
+            extents[i] = anchorable.getQuick(i).getRingArena().getAppendOffset();
+        }
+        return extents;
+    }
+
     private void commit(String values, LiveViewRefreshJob job) throws Exception {
         execute("INSERT INTO base (ts, sym, y) VALUES " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    private void commitDecimals(String row, LiveViewRefreshJob job) throws Exception {
+        execute("INSERT INTO base (ts, sym, d8, d16, d32, d64, d128, d256) VALUES " + row);
         drainWalQueue();
         driveRefreshToQuiescence(job);
     }
