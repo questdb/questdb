@@ -717,10 +717,12 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     /**
      * Restores every function that has a root of its own under this state root.
      * <p>
-     * Under a fused root the grouped projections are skipped: their state came out of the
-     * window walk. Under a <b>legacy</b> root they are not, however the runtime compiled,
-     * because the checkpoint holds one root per function and that is where their state
-     * is; {@link #restoreRuntime} is what then moves it to whoever owns it now.
+     * Under a fused root the durable projections are skipped: their state came out of the
+     * window walk. A runtime-only member is not - the root holds its bytes and the group
+     * holds its slots, so {@link #restoreGroupedFunction} puts one into the other. Under a
+     * <b>legacy</b> root nothing is skipped, however the runtime compiled, because the
+     * checkpoint holds one root per function and that is where their state is;
+     * {@link #restoreRuntime} is what then moves it to whoever owns it now.
      */
     private void restoreFunctions(
             @NotNull ObjList<WindowFunction> functions,
@@ -730,11 +732,57 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction function = functions.getQuick(i);
-            if (!function.supportsCheckpointState() || isGroupedProjection(anchorWindow, function)) {
+            if (!function.supportsCheckpointState() || isDurableGroupedProjection(anchorWindow, function)) {
                 continue;
             }
             functionDirectory.find(function.checkpointFunctionIdentity().getEncoded(), functionRootRef);
-            restoreFunction(function, functionRootRef, baselineGeneration);
+            final int memberIndex = memberProjectionIndex(anchorWindow, function, false);
+            if (memberIndex >= 0) {
+                restoreGroupedFunction(anchorWindow, memberIndex, function, functionRootRef, baselineGeneration);
+            } else {
+                restoreFunction(function, functionRootRef, baselineGeneration);
+            }
+        }
+    }
+
+    /**
+     * Rehydrates one runtime-only member's root into the group's map value.
+     * <p>
+     * The window-state walk has already run - see {@link #restoreRuntime} - so every live
+     * key has an entry with this member's slots at identity, and what this walk adds is the
+     * slice the root holds. Every entry is inline by construction: a member reached the
+     * group through the compiler's inline-budget gate, so its root was written by
+     * {@code freezeGroupedFunction}, which mints no data pages.
+     */
+    private void restoreGroupedFunction(
+            @NotNull LiveViewWindow anchorWindow,
+            int projectionIndex,
+            WindowFunction function,
+            LiveViewCheckpointPageRef functionRootRef,
+            long baselineGeneration
+    ) {
+        functionRoot.of(checkpointsDir, functionRootRef);
+        // Still the ordinary begin, for the incremental-freeze latches it clears: the
+        // baseline it drops and the full scan it forces are what keep a member off the
+        // dirty path until a seal has published its root again. The map it would clear is
+        // the one the window closed when it adopted the plan, and a bound function's begin
+        // leaves it closed - the state this restore replaces was put to identity by the
+        // window-state entry it is about to write into.
+        function.onCheckpointRestoreBegin();
+        final LiveViewCheckpointPageRef partitionRootRef = new LiveViewCheckpointPageRef();
+        functionRoot.getPartitionMapRootRef(partitionRootRef);
+        restoredLogicalStateBytes = 0;
+        partitionReader.iterateAll(partitionRootRef, entry -> {
+            final byte[] encodedKey = entry.getKey();
+            final byte[] scalarState = entry.getScalarState();
+            if (scalarState.length == 0) {
+                throw invalid("grouped member root entry carries no inline state");
+            }
+            anchorWindow.restoreCheckpointMemberEntry(projectionIndex, openKeyPage(encodedKey), scalarState);
+            restoredLogicalStateBytes += encodedKey.length + scalarState.length;
+        });
+        if (baselineGeneration != Numbers.LONG_NULL) {
+            function.onCheckpointPersisted(restoredLogicalStateBytes, baselineGeneration);
         }
     }
 
@@ -756,8 +804,17 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             @Nullable LiveViewWindow anchorWindow,
             long baselineGeneration
     ) {
-        final boolean hoistLegacyComponents = !isFusedStateRoot
-                && anchorWindow != null
+        if (isFusedStateRoot) {
+            // The other order, and for the mirror-image reason. A runtime-only member's
+            // root holds a slice of entries the window-state root owns, so those entries
+            // have to exist before it can be read into them - where a legacy root holds
+            // whole functions the window has yet to take over. Nothing else depends on the
+            // sequence: a residual restores into a map of its own either way.
+            restoreState(anchorWindow, baselineGeneration);
+            restoreFunctions(functions, anchorWindow, baselineGeneration);
+            return;
+        }
+        final boolean hoistLegacyComponents = anchorWindow != null
                 && anchorWindow.beginLegacyComponentRestore();
         try {
             restoreFunctions(functions, anchorWindow, baselineGeneration);
@@ -774,21 +831,39 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
      * its own, and so is restored by the window-state walk instead of by the function
      * directory. Always false under a legacy anchor root, however the runtime compiled:
      * what the root holds is what decides where a function's state comes from.
+     * <p>
+     * A runtime-only member answers false and keeps its directory entry: the group holds
+     * its accumulator and the root still holds its bytes, which
+     * {@link #memberProjectionIndex} is what routes back into the group.
      */
-    private boolean isGroupedProjection(@Nullable LiveViewWindow anchorWindow, WindowFunction function) {
+    private boolean isDurableGroupedProjection(@Nullable LiveViewWindow anchorWindow, WindowFunction function) {
+        return memberProjectionIndex(anchorWindow, function, true) >= 0;
+    }
+
+    /**
+     * Returns {@code function}'s projection in the adopted plan, or {@code -1} when the
+     * group does not carry it or the root being restored is a legacy one.
+     *
+     * @param durable when true, answers only for a projection the fused payload carries;
+     *                when false, only for a runtime-only member
+     */
+    private int memberProjectionIndex(
+            @Nullable LiveViewWindow anchorWindow,
+            WindowFunction function,
+            boolean durable
+    ) {
         if (!isFusedStateRoot || anchorWindow == null) {
-            return false;
+            return -1;
         }
         final LiveViewWindowStatePlan plan = anchorWindow.getCheckpointWindowStatePlan();
         if (plan == null) {
-            return false;
+            return -1;
         }
-        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
-            if (plan.getProjectionFunction(i) == function) {
-                return true;
-            }
+        final int projectionIndex = plan.indexOfProjectionFunction(function);
+        if (projectionIndex < 0 || plan.isDurableProjection(projectionIndex) != durable) {
+            return -1;
         }
-        return false;
+        return projectionIndex;
     }
 
     private boolean rootCatalogueContains(long segmentId) {
@@ -1025,7 +1100,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction function = functions.getQuick(i);
-            if (!function.supportsCheckpointState() || isGroupedProjection(anchorWindow, function)) {
+            if (!function.supportsCheckpointState() || isDurableGroupedProjection(anchorWindow, function)) {
                 continue;
             }
             capableCount++;

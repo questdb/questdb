@@ -615,23 +615,44 @@ public class LiveViewSteadyStateBenchmark {
      * past the limit before fusing and a SYMBOL or STRING key was never eligible, so this
      * only ever moves for the INT-keyed control.
      */
+    /**
+     * How many of the plan's projections are grouped in the window's map but persist on a
+     * root of their own - the components the leaf budget left out of the manifest.
+     */
+    private static int runtimeOnlyMembers(LiveViewWindowStatePlan plan) {
+        int count = 0;
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            if (!plan.isDurableProjection(i)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private static void reportWindowState(LiveViewWindow window) {
         final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
-        // The state-root kind and the residual count are the per-seal fixed cost the
-        // fusion is about: a window root replaces the anchor root and every grouped
-        // function's root at once, so a view whose whole SELECT list fuses publishes two
-        // metadata files per seal - window root plus checkpoint root - where it used to
-        // publish one per function on top of those two. The meta_segs column is where
-        // that shows up as a number.
+        // The state-root kind and the root counts are the per-seal fixed cost the fusion is
+        // about: a window root replaces the anchor root and every durable projection's root
+        // at once, so a view whose whole SELECT list fuses publishes two metadata files per
+        // seal - window root plus checkpoint root - where it used to publish one per
+        // function on top of those two. The meta_segs column is where that shows up as a
+        // number.
+        //
+        // Two kinds of function still publish a root of their own and they cost the same
+        // per seal, so both are reported: a residual, which owns a map and a probe per row
+        // as well, and a runtime-only member, which is in the group's one map and only its
+        // bytes are separate.
         System.out.printf(
                 Locale.ROOT,
-                "# window_state map=%s state_root=%s components=%d projections=%d entry_state_bytes=%d "
-                        + "residual_functions=%s%n",
+                "# window_state map=%s state_root=%s components=%d durable_components=%d projections=%d "
+                        + "entry_state_bytes=%d runtime_only_members=%s residual_functions=%s%n",
                 window.getAnchorMapImplementation(),
                 plan == null ? "anchor" : "window",
                 plan == null ? 0 : plan.getComponentCount(),
+                plan == null ? 0 : plan.getDurableComponentCount(),
                 plan == null ? 0 : plan.getProjectionCount(),
                 plan == null ? Long.BYTES : plan.getTotalInlineStateBytes(),
+                plan == null ? "n/a" : Integer.toString(runtimeOnlyMembers(plan)),
                 plan == null ? "n/a" : Integer.toString(plan.getResidualFunctions().size())
         );
     }

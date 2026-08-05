@@ -1336,12 +1336,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             if (boundary.windowState != null) {
                 final FrozenWindowState windowState = boundary.windowState;
                 windowState.window.onCheckpointPersisted(windowState.logicalStateBytes, generation);
-                // A grouped projection charges nothing of its own - the fused entry's
+                // A durable projection charges nothing of its own - the fused entry's
                 // whole width is the window's - but it still has to be told the seal
                 // happened, or its dirty set would grow for the life of the view and its
-                // baseline would never reach the generation the next seal builds on.
+                // baseline would never reach the generation the next seal builds on. A
+                // runtime-only member is told below instead, with the figure its own root
+                // charges, which is the one its next incremental freeze builds on.
                 for (int i = 0, n = windowState.plan.getProjectionCount(); i < n; i++) {
-                    windowState.plan.getProjectionFunction(i).onCheckpointPersisted(0, generation);
+                    if (windowState.plan.isDurableProjection(i)) {
+                        windowState.plan.getProjectionFunction(i).onCheckpointPersisted(0, generation);
+                    }
                 }
             }
             for (int i = 0, n = boundary.functions.size(); i < n; i++) {
@@ -1455,22 +1459,21 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
-     * Whether {@code plan} carries {@code function} as one of its output projections,
-     * and so holds its state in the fused root rather than in a root of its own.
-     * Identity comparison: the plan holds non-owning references to the very functions
-     * the factory compiled, so two distinct functions are two distinct outputs however
-     * alike their identities read.
+     * Whether {@code plan} carries {@code function} as a <b>durable</b> projection, and so
+     * holds its state in the fused root rather than in a root of its own.
+     * <p>
+     * A runtime-only member answers false: the group holds its accumulator and it still
+     * publishes a root, which {@link #freezeGroupedFunction} writes out of that group.
      */
-    private static boolean isGroupedProjection(@Nullable LiveViewWindowStatePlan plan, WindowFunction function) {
+    private static boolean isDurableGroupedProjection(
+            @Nullable LiveViewWindowStatePlan plan,
+            WindowFunction function
+    ) {
         if (plan == null) {
             return false;
         }
-        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
-            if (plan.getProjectionFunction(i) == function) {
-                return true;
-            }
-        }
-        return false;
+        final int projectionIndex = plan.indexOfProjectionFunction(function);
+        return projectionIndex >= 0 && plan.isDurableProjection(projectionIndex);
     }
 
     private static CairoException missingRedirect(LiveViewCheckpointStatePageRef ref) {
@@ -1781,7 +1784,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             if (!function.supportsCheckpointState()) {
                 continue;
             }
-            if (isGroupedProjection(plan, function)) {
+            if (isDurableGroupedProjection(plan, function)) {
                 // The fused root holds this function's state, so it gets no root of its
                 // own and never reaches the function directory. Its identity is not
                 // persisted anywhere for this boundary, which is the point: the durable
@@ -1799,8 +1802,22 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     function.checkpointStateFormatVersion(),
                     LiveViewCheckpointMetadata.encodeKeySchema(function.getCheckpointKeyColumnTypes())
             );
-            final long functionLogicalStateBytes =
-                    freezeFunction(dataWriter, function, frozen, previousBoundary, outputKeys, baselineGeneration);
+            // A runtime-only member has no map of its own left to walk: the window owns
+            // its slots. Its root is written from the group's key domain instead, which
+            // is the whole of what step 8.1 changes about where a function's bytes come
+            // from.
+            final int memberProjectionIndex = plan == null ? -1 : plan.indexOfProjectionFunction(function);
+            final long functionLogicalStateBytes = memberProjectionIndex >= 0
+                    ? freezeGroupedFunction(
+                    anchorWindow,
+                    memberProjectionIndex,
+                    function,
+                    frozen,
+                    previousBoundary,
+                    outputKeys,
+                    baselineGeneration
+            )
+                    : freezeFunction(dataWriter, function, frozen, previousBoundary, outputKeys, baselineGeneration);
             frozen.logicalStateBytes = functionLogicalStateBytes;
             logicalStateBytes = checkedAdd(logicalStateBytes, functionLogicalStateBytes);
             boundary.functions.add(frozen);
@@ -2001,6 +2018,79 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     logicalBytes = checkedAdd(logicalBytes, stateLength);
                 }
             }
+        }
+        return logicalBytes;
+    }
+
+    /**
+     * Freezes one runtime-only member's root out of the group's map rather than out of a
+     * private map it no longer has.
+     * <p>
+     * Everything about the root is what it always was - the same identity, the same state
+     * format version, the same inline whole-state image, the same incremental removals - and
+     * only where the bytes come from moved. That is deliberate: a checkpoint written before
+     * the member joined the group reads back into one written after it without conversion,
+     * which is what keeps the group a runtime decision.
+     * <p>
+     * The image is always inline. A member reached the group through the compiler's
+     * inline-budget gate, so its declared width fits
+     * {@code MAX_INLINE_COMPONENT_STATE_BYTES} and no data page is ever written here - which
+     * is also why this takes no data-segment writer.
+     * <p>
+     * Two of the three questions an incremental freeze asks are the group's now. Which keys
+     * moved and which the sweep dropped are the window's one dirty set's, because a bound
+     * function marks nothing of its own; what stays this function's is only whether its own
+     * root is the one the predecessor holds at the generation being built on.
+     */
+    private long freezeGroupedFunction(
+            @NotNull LiveViewWindow window,
+            int projectionIndex,
+            WindowFunction function,
+            FrozenFunction frozen,
+            @Nullable PreviousBoundary previousBoundary,
+            @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
+            long baselineGeneration
+    ) {
+        final boolean incremental = previousBoundary instanceof RootPreviousBoundary
+                && !function.isCheckpointFullScanRequired()
+                && function.getCheckpointBaselineGeneration() == baselineGeneration
+                && window.canFreezeCheckpointIncrementally(baselineGeneration)
+                && previousBoundary.hasFunctionRoot(frozen.identity, frozen.stateFormatVersion);
+        frozen.isIncremental = incremental;
+        final ObjList<byte[]> keys = new ObjList<>();
+        final LongList anchorValues = new LongList();
+        final ObjList<byte[]> images = new ObjList<>();
+        final ObjList<byte[]> removedKeys = new ObjList<>();
+        final long logicalBytes = window.freezeCheckpointMemberEntries(
+                keyBuffer,
+                projectionIndex,
+                keys,
+                anchorValues,
+                images,
+                removedKeys,
+                incremental,
+                function.getCheckpointLogicalStateBytes()
+        );
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final byte[] key = keys.getQuick(i);
+            if (outputKeys != null && !outputKeys.contains(key)) {
+                // Outside the replay's key domain, exactly as in freezeFunction: the state
+                // the group holds for this key was rebuilt from whatever rows fell inside
+                // [L, H), so the root keeps the entry it already had.
+                continue;
+            }
+            final byte[] image = images.getQuick(i);
+            final LiveViewCheckpointPartitionMapEntry previous = previousBoundary == null
+                    ? null
+                    : previousBoundary.find(frozen.identity, frozen.stateFormatVersion, key);
+            final boolean isUnchanged = previousBoundary instanceof RootPreviousBoundary
+                    && previous != null
+                    && previous.getStatePageCount() == 0
+                    && Arrays.equals(previous.getScalarState(), image);
+            frozen.addPartition(key, image, isUnchanged);
+        }
+        for (int i = 0, n = removedKeys.size(); i < n; i++) {
+            frozen.removedPartitions.add(removedKeys.getQuick(i));
         }
         return logicalBytes;
     }

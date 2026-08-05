@@ -84,8 +84,25 @@ import java.util.Arrays;
  * on entry count rather than encoded size, so an unbounded "fixed width means inline"
  * rule would build very large 64-entry leaves and make every CRC and decode along the
  * path more expensive. A group that overflows keeps the prefix of that order which
- * fits and turns the rest into residuals, so it degrades one component at a time
- * rather than losing the fusion whole.
+ * fits, and every component past it stays in the group's map value while its projecting
+ * function keeps the function root it has today - see below.
+ *
+ * <h2>Durable and runtime-only members</h2>
+ * The budget is a fact about a persisted leaf and not about a map, so the two questions it
+ * used to answer at once are separate:
+ * <ul>
+ *     <li>a <b>durable member</b> is a component in {@link #getManifest() the manifest}.
+ *     Its bytes are in every fused leaf and its function has no root of its own;</li>
+ *     <li>a <b>runtime-only member</b> is a component past the budget. Its slots are in the
+ *     window's one map value exactly like a durable member's - one map, one probe, one
+ *     accumulator update - and its bytes go to the function root its projection keeps, read
+ *     out of the group's value at {@link LiveViewAccumulatorProjection#getFunctionSlotBase()}
+ *     through the same component codec the manifest would have used.</li>
+ * </ul>
+ * The durable members are a prefix of the canonical order and the runtime-only ones the
+ * tail, so {@link #getDurableComponentCount()} splits one list rather than naming a subset.
+ * A <b>residual</b> is neither: a function the compiler never offered, or one the runtime
+ * builder turned away, which keeps both its own map and its own root.
  *
  * <h2>What reads it</h2>
  * The plan is durable, not advisory. {@code LiveViewCheckpointWindowRoot} persists
@@ -128,29 +145,34 @@ public final class LiveViewWindowStatePlan {
      * output position" ever reaches disk.
      */
     private final IntList contributorIndexes;
+    private final int durableComponentCount;
     private final ColumnTypes keyColumnTypes;
     private final LiveViewWindowStateManifest manifest;
     private final ObjList<WindowFunction> projectionFunctions;
     private final ObjList<LiveViewAccumulatorProjection> projections;
     private final ObjList<WindowFunction> residualFunctions;
     private final int totalInlineStateBytes;
+    private final int totalRuntimeStateBytes;
     private final byte[] windowIdentity;
 
     private LiveViewWindowStatePlan(
             byte[] windowIdentity,
             ColumnTypes keyColumnTypes,
             ObjList<LiveViewAccumulatorDescriptor> components,
+            int durableComponentCount,
             IntList componentSlotBases,
             IntList contributorIndexes,
             ObjList<LiveViewAccumulatorProjection> projections,
             ObjList<WindowFunction> projectionFunctions,
             ObjList<WindowFunction> residualFunctions,
             LiveViewWindowStateManifest manifest,
-            int totalInlineStateBytes
+            int totalInlineStateBytes,
+            int totalRuntimeStateBytes
     ) {
         this.windowIdentity = windowIdentity;
         this.keyColumnTypes = keyColumnTypes;
         this.components = components;
+        this.durableComponentCount = durableComponentCount;
         this.componentSlotBases = componentSlotBases;
         this.contributorIndexes = contributorIndexes;
         this.projections = projections;
@@ -158,6 +180,7 @@ public final class LiveViewWindowStatePlan {
         this.residualFunctions = residualFunctions;
         this.manifest = manifest;
         this.totalInlineStateBytes = totalInlineStateBytes;
+        this.totalRuntimeStateBytes = totalRuntimeStateBytes;
     }
 
     /**
@@ -208,6 +231,11 @@ public final class LiveViewWindowStatePlan {
         return components.getQuick(index);
     }
 
+    /**
+     * The whole group's component count - the durable prefix and the runtime-only tail
+     * together. It is the map value's shape, so every runtime walk takes it: the value
+     * layout, the reset, the contributor loop and both directions of adoption.
+     */
     public int getComponentCount() {
         return components.size();
     }
@@ -233,6 +261,16 @@ public final class LiveViewWindowStatePlan {
      */
     public WindowFunction getContributor(int index) {
         return projectionFunctions.getQuick(contributorIndexes.getQuick(index));
+    }
+
+    /**
+     * How many of {@link #getComponentCount()}'s components the fused leaf carries, which
+     * is the prefix of the canonical order that fits the leaf budget. Every walk that
+     * reads or writes a persisted payload takes this rather than the whole count; the
+     * components past it are the group's at runtime and their own functions' on disk.
+     */
+    public int getDurableComponentCount() {
+        return durableComponentCount;
     }
 
     /**
@@ -266,24 +304,37 @@ public final class LiveViewWindowStatePlan {
     }
 
     /**
-     * Returns the window functions this plan does not group. Each keeps its own legacy
-     * function root - a ring-backed RANGE function, a bounded ROWS accumulator, an
-     * expression argument, a DECIMAL {@code sum}. "One B-tree per window" therefore
-     * means one tree for the grouped components plus independent roots for these.
+     * Returns the window functions this plan does not group at all. Each keeps both its own
+     * map and its own legacy function root - a ring-backed RANGE function, a bounded ROWS
+     * accumulator, an expression argument, a DECIMAL {@code sum}. "One B-tree per window"
+     * therefore means one tree for the durable components plus independent roots for these
+     * and for every runtime-only member.
      * <p>
-     * The ones the compiler declined come first, in SELECT-list order, followed by any
-     * whose component fell past the leaf budget. Nothing reads the order today; it is
-     * SELECT-list order for the common case because that is the order they arrived in.
+     * A component the leaf budget left out is <b>not</b> here: its projection is a
+     * runtime-only member of the group, which is a different thing from a function the
+     * group never took - see {@link #isDurableProjection(int)}. In SELECT-list order,
+     * because that is the order they arrived in.
      */
     public ObjList<WindowFunction> getResidualFunctions() {
         return residualFunctions;
     }
 
     /**
-     * The whole fused scalar payload's width, anchor value included.
+     * The whole fused scalar payload's width, anchor value included. The durable prefix's
+     * width: a runtime-only member contributes nothing to a leaf.
      */
     public int getTotalInlineStateBytes() {
         return totalInlineStateBytes;
+    }
+
+    /**
+     * The width of one entry's whole component image - every component, durable or not, in
+     * the plan's canonical order. It is what the in-RAM repair overlay carries the group's
+     * state across in, which has to be all of it: a runtime-only member's accumulator lives
+     * in the same map value and no function root is consulted during a repair.
+     */
+    public int getTotalRuntimeStateBytes() {
+        return totalRuntimeStateBytes;
     }
 
     /**
@@ -291,6 +342,42 @@ public final class LiveViewWindowStatePlan {
      */
     public byte[] getWindowIdentity() {
         return Arrays.copyOf(windowIdentity, windowIdentity.length);
+    }
+
+    /**
+     * Returns the projection {@code function} emits, or {@code -1} when the group does not
+     * carry it. Identity comparison: the plan holds non-owning references to the very
+     * functions the factory compiled, so two distinct functions are two distinct outputs
+     * however alike their identities read.
+     */
+    public int indexOfProjectionFunction(WindowFunction function) {
+        for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
+            if (projectionFunctions.getQuick(i) == function) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Whether projection {@code index} is the function that maintains its own component,
+     * and so the one whose root holds that component's whole image. It is what a restore
+     * of a runtime-only member's root asks before writing anything into the group's slots:
+     * a derived or guarded member's root holds a narrower or corrected number that is not
+     * the component's state, and the contributor's root holds the state itself.
+     */
+    public boolean isContributor(int index) {
+        final int componentIndex = projections.getQuick(index).getComponentIndex();
+        return contributorIndexes.getQuick(componentIndex) == index;
+    }
+
+    /**
+     * Whether projection {@code index}'s state is in the fused payload rather than on the
+     * function root its own function keeps. False for a runtime-only member, which is
+     * grouped in the map and separate on disk.
+     */
+    public boolean isDurableProjection(int index) {
+        return projections.getQuick(index).isDurable();
     }
 
     /**
@@ -476,8 +563,8 @@ public final class LiveViewWindowStatePlan {
             if (runtimePlan == null) {
                 return null;
             }
-            final int componentCount = componentsWithinTheLeafBudget(runtimePlan);
-            if (componentCount == 0) {
+            final int durableComponentCount = componentsWithinTheLeafBudget(runtimePlan);
+            if (durableComponentCount == 0) {
                 // Unreachable through the compiler, which admits a function only while its
                 // own declared image fits MAX_INLINE_COMPONENT_STATE_BYTES and so leaves the
                 // first component inside the leaf budget by a wide margin. Declining whole is
@@ -485,19 +572,31 @@ public final class LiveViewWindowStatePlan {
                 // outside a group.
                 return null;
             }
+            final int componentCount = runtimePlan.getComponentCount();
             final ObjList<LiveViewAccumulatorDescriptor> components = new ObjList<>(componentCount);
+            // Every component's offset in the fused payload, or NOT_PERSISTED past the
+            // budget. The runtime slot layout and the durable one are the same components in
+            // the same order, so a component's slot base is read straight off the plan that
+            // assigned it and only the byte offsets are added here.
             final IntList componentOffsets = new IntList(componentCount);
-            // The runtime slot layout and the durable one are the same components in the same
-            // order, so a component's slot base is read straight off the plan that assigned it
-            // and only the byte offsets are added here. Neither can drift from the other.
             final IntList componentSlotBases = new IntList(componentCount);
+            final ObjList<LiveViewAccumulatorDescriptor> durableComponents = new ObjList<>(durableComponentCount);
+            final IntList durableComponentOffsets = new IntList(durableComponentCount);
             int offset = ANCHOR_STATE_OFFSET + ANCHOR_STATE_BYTES;
+            int runtimeStateBytes = 0;
             for (int i = 0; i < componentCount; i++) {
                 final LiveViewAccumulatorDescriptor component = durableComponent(runtimePlan.getComponent(i));
                 components.add(component);
-                componentOffsets.add(offset);
                 componentSlotBases.add(runtimePlan.getComponentSlotBase(i));
-                offset += component.getStateLength();
+                runtimeStateBytes += component.getStateLength();
+                if (i < durableComponentCount) {
+                    componentOffsets.add(offset);
+                    durableComponents.add(component);
+                    durableComponentOffsets.add(offset);
+                    offset += component.getStateLength();
+                } else {
+                    componentOffsets.add(LiveViewAccumulatorProjection.NOT_PERSISTED);
+                }
             }
             // The budget walk above and this loop add the same widths from the same start, so
             // they cannot disagree - and if they ever did, the manifest and the leaf would
@@ -506,49 +605,42 @@ public final class LiveViewWindowStatePlan {
             final int projectionCount = runtimePlan.getProjectionCount();
             final ObjList<LiveViewAccumulatorProjection> projections = new ObjList<>(projectionCount);
             final ObjList<WindowFunction> projectionFunctions = new ObjList<>(projectionCount);
-            final int[] newProjectionIndexOfOld = new int[projectionCount];
             for (int i = 0; i < projectionCount; i++) {
                 final WindowAccumulatorProjection projection = runtimePlan.getProjection(i);
-                final int componentIndex = projection.getComponentIndex();
-                if (componentIndex >= componentCount) {
-                    newProjectionIndexOfOld[i] = -1;
-                    residualFunctions.add(runtimePlan.getProjectionFunction(i));
-                    continue;
-                }
-                newProjectionIndexOfOld[i] = projections.size();
                 projections.add(new LiveViewAccumulatorProjection(
                         projection,
-                        componentOffsets.getQuick(componentIndex),
-                        components.getQuick(componentIndex),
+                        componentOffsets.getQuick(projection.getComponentIndex()),
+                        components.getQuick(projection.getComponentIndex()),
                         durableComponent(projection.getFunctionComponent())
                 ));
                 projectionFunctions.add(runtimePlan.getProjectionFunction(i));
             }
-            // A contributor is one of the projections that reads its own component, so a kept
-            // component's contributor is a survivor by construction and only its index moved.
-            // Remapping it is therefore exact, where re-deriving it would have to re-answer a
-            // question the runtime plan already settled.
+            // Every projection the runtime plan made is a member, so the contributor indexes
+            // are the runtime plan's own. The budget renumbered them while it handed the tail
+            // back as residuals; it no longer drops anything, so there is nothing to remap.
             final IntList contributorIndexes = new IntList(componentCount);
             for (int i = 0; i < componentCount; i++) {
-                contributorIndexes.add(newProjectionIndexOfOld[runtimePlan.getContributorIndex(i)]);
+                contributorIndexes.add(runtimePlan.getContributorIndex(i));
             }
             return new LiveViewWindowStatePlan(
                     windowIdentity,
                     keyColumnTypes,
                     components,
+                    durableComponentCount,
                     componentSlotBases,
                     contributorIndexes,
                     projections,
                     projectionFunctions,
                     residualFunctions,
                     new LiveViewWindowStateManifest(
-                            components,
-                            componentOffsets,
+                            durableComponents,
+                            durableComponentOffsets,
                             ANCHOR_STATE_OFFSET,
                             ANCHOR_STATE_BYTES,
                             offset
                     ),
-                    offset
+                    offset,
+                    runtimeStateBytes
             );
         }
 
@@ -556,7 +648,8 @@ public final class LiveViewWindowStatePlan {
          * Returns how many of the plan's components the leaf carries: the longest prefix of
          * its canonical order whose layout fits
          * {@link LiveViewCheckpointContracts#MAX_INLINE_LEAF_STATE_BYTES}. Every projection
-         * reading a component past it becomes a residual.
+         * reading a component past it becomes a runtime-only member - grouped in the map,
+         * separate on disk.
          * <p>
          * A group that overflows therefore degrades rather than falling off a cliff. It used
          * to decline whole, and what that cost is measurable: over 1M retained keys a
@@ -573,10 +666,11 @@ public final class LiveViewWindowStatePlan {
          * a narrower later one is out.
          * <p>
          * A projection whose component was folded onto a host that then falls past the budget
-         * becomes a residual too, and persists its own narrower component on its own root.
-         * Nothing tries to un-fold it back into the leaf: the fold is what decided the layout
-         * the budget was measured against, and re-deciding it here would make the manifest
-         * depend on the order the two passes ran in.
+         * follows that host out of the manifest, and persists its own narrower image on its
+         * own root - read out of the host's slots, which the group still keeps. Nothing tries
+         * to un-fold it back into the leaf: the fold is what decided the layout the budget was
+         * measured against, and re-deciding it here would make the manifest depend on the
+         * order the two passes ran in.
          */
         private int componentsWithinTheLeafBudget(WindowAccumulatorPlan runtimePlan) {
             int kept = 0;

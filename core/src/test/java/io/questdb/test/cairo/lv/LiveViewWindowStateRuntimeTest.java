@@ -263,12 +263,14 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testAGroupPastTheLeafBudgetFusesThePrefixAndResidualizesTheRest() throws Exception {
+    public void testAGroupPastTheLeafBudgetKeepsEveryMemberInOneMap() throws Exception {
         assertMemoryLeak(() -> {
             // One more (sum, nonNullCount) component than the leaf budget carries beside
             // the anchor. The group used to lose the fusion whole at this point and send
-            // every function back to a root of its own; it now keeps the prefix of the
-            // canonical order that fits and hands one function back.
+            // every function back to a root of its own, then to keep the prefix and hand one
+            // function back; it now keeps every member in the one map and only the leaf's
+            // payload stops at the budget. The overflowing member's bytes go to the function
+            // root it keeps, written out of the group.
             final int fitting =
                     (LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES - Long.BYTES) / (Double.BYTES + Long.BYTES);
             final int columns = fitting + 1;
@@ -288,30 +290,97 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 insertWideAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", columns);
                 insertWideAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-2", columns);
                 insertWideAccount(job, DAILY_ANCHOR + "09:00:20.000000Z", "acct-1", columns);
-                // A bucket crossing, so the fused prefix resets in place and the residual
-                // resets through its own map.
+                // A bucket crossing, which every member's component resets through in place -
+                // the runtime-only one included, since the reset is the group's.
                 insertWideAccount(job, "2026-01-02T09:00:00.000000Z", "acct-1", columns);
 
                 final LiveViewWindowStatePlan plan = window().getCheckpointWindowStatePlan();
                 Assert.assertNotNull(plan);
-                Assert.assertEquals(fitting, plan.getComponentCount());
-                Assert.assertEquals(fitting, plan.getProjectionCount());
-                Assert.assertEquals(1, plan.getResidualFunctions().size());
+                Assert.assertEquals(columns, plan.getComponentCount());
+                Assert.assertEquals(columns, plan.getProjectionCount());
+                Assert.assertEquals(fitting, plan.getDurableComponentCount());
+                Assert.assertEquals(0, plan.getResidualFunctions().size());
                 Assert.assertEquals(
                         Long.BYTES + fitting * (Double.BYTES + Long.BYTES),
                         plan.getTotalInlineStateBytes()
                 );
-                for (int i = 0; i < fitting; i++) {
+                // Every member owns no state of its own, the overflowing one included: one
+                // map, one probe a row, and one private map fewer than the truncation left.
+                for (int i = 0; i < columns; i++) {
                     Assert.assertTrue(plan.getProjectionFunction(i).isWindowStateOwned());
+                    final Map privateMap = plan.getProjectionFunction(i).getPartitionMap();
+                    Assert.assertTrue(privateMap == null || !privateMap.isOpen());
                 }
-                Assert.assertFalse(plan.getResidualFunctions().getQuick(0).isWindowStateOwned());
+                Assert.assertEquals(1, countRuntimeOnlyProjections(plan));
                 assertWideViewMatchesRecompute(columns);
 
-                // And the head that seals a truncated group beside its residual restores
-                // on its own.
+                // And the head that seals a truncated group restores on its own: the fused
+                // root puts the durable prefix back and the runtime-only member's own root
+                // puts its slice back into the same entries.
                 final byte[] before = snapshotWindow(window());
                 restoreHead();
                 Assert.assertArrayEquals(before, snapshotWindow(window()));
+                assertWideViewMatchesRecompute(columns);
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testARuntimeOnlyMemberSealsAndRestoresThroughTheGroup() throws Exception {
+        // The member the leaf budget leaves out of the manifest keeps a root of its own, and
+        // that root is written out of the group's map and read back into it. What the case
+        // holds is the two halves the group now owns for it. An incremental seal names the
+        // window's dirty keys, so an account no cadence touched has to survive on the
+        // predecessor's entries; and the frontier sweep's removals are the window's, so a
+        // key it evicts has to leave the member's root as well - a root that kept one would
+        // fail the restore outright, since the window state root no longer names it.
+        //
+        // A lost slice restores as identity rather than as an error, so the assertion is the
+        // whole runtime image before and after a restore of the published head.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT, 50);
+        assertMemoryLeak(() -> {
+            final int fitting =
+                    (LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES - Long.BYTES) / (Double.BYTES + Long.BYTES);
+            final int columns = fitting + 1;
+            final StringBuilder ddl = new StringBuilder();
+            final StringBuilder projections = new StringBuilder();
+            for (int i = 1; i <= columns; i++) {
+                ddl.append(", q").append(i).append(" double");
+                projections.append(", sum(q").append(i).append(") over w as s").append(i);
+            }
+            execute("create table tx (created_at timestamp, cod_acct_no symbol" + ddl + ") "
+                    + "timestamp(created_at) partition by hour wal");
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, cod_acct_no" + projections + " from tx "
+                    + "window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertWideAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", columns);
+                insertWideAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-2", columns);
+                insertWideAccount(job, DAILY_ANCHOR + "09:00:20.000000Z", "acct-3", columns);
+                // One account moves in this cadence, so the seal above it names one key and
+                // the other two stand on the entries the predecessor root already holds.
+                insertWideAccount(job, DAILY_ANCHOR + "09:00:30.000000Z", "acct-1", columns);
+
+                final LiveViewWindowStatePlan plan = window().getCheckpointWindowStatePlan();
+                Assert.assertNotNull(plan);
+                Assert.assertEquals(1, countRuntimeOnlyProjections(plan));
+                final byte[] incremental = snapshotWindow(window());
+                restoreHead();
+                Assert.assertArrayEquals(incremental, snapshotWindow(window()));
+                assertWideViewMatchesRecompute(columns);
+
+                // Two bucket advances leave the first bucket behind the retained pair, so
+                // the sweep drops its three accounts.
+                insertWideAccount(job, "2026-01-02T09:00:00.000000Z", "acct-4", columns);
+                insertWideAccount(job, "2026-01-03T09:00:00.000000Z", "acct-5", columns);
+                Assert.assertTrue("the sweep must have fired", window().getCompactionCount() > 0);
+                Assert.assertEquals("only the two retained buckets survive", 2, window().getAnchorMapSize());
+                final byte[] swept = snapshotWindow(window());
+                restoreHead();
+                Assert.assertArrayEquals(swept, snapshotWindow(window()));
                 assertWideViewMatchesRecompute(columns);
                 assertNoRefreshFaults("lv");
             }
@@ -652,6 +721,20 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
         });
     }
 
+    /**
+     * How many of the plan's projections are runtime-only members - grouped in the map, on
+     * a function root of their own.
+     */
+    private static int countRuntimeOnlyProjections(LiveViewWindowStatePlan plan) {
+        int count = 0;
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            if (!plan.isDurableProjection(i)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private static Path checkpointsDir(LiveViewInstance instance) {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
@@ -937,10 +1020,9 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     }
 
     /**
-     * Compares the first fused output and the residual one against a from-base recompute.
-     * The two are the ends of the truncated group: one is read off the window's own value
-     * and one off the function's private map, and both have to agree with the unfused
-     * implementation.
+     * Compares the first durable output and the runtime-only one against a from-base
+     * recompute. The two are the ends of the truncated group: both read the window's own
+     * value, and one of them persists on a root of its own.
      */
     private void assertWideViewMatchesRecompute(int columns) throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";

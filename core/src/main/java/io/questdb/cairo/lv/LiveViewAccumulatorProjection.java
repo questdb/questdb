@@ -53,8 +53,24 @@ import org.jetbrains.annotations.NotNull;
  * absorbed, so it keeps its real {@link LiveViewCheckpointDependency} for repair planning
  * even when it owns no checkpoint root of its own. Reporting it as stateless would hand a
  * localized repair a zero-width replay floor and restore wrong state.
+ *
+ * <h2>Runtime-only members</h2>
+ * A projection whose component the leaf budget left out of the manifest is a member of the
+ * group at runtime and of no fused payload at all: its slots are in the window's one map
+ * value like everyone else's, and its bytes go to the function root it keeps. Such a
+ * projection carries {@link #NOT_PERSISTED} for every byte offset below - there is no fused
+ * payload for them to point into - while the runtime slots and both durable descriptors stay
+ * exactly what they are, because the descriptor is what turns the group's slots into the
+ * image that root holds. {@link #isDurable()} is the one question a caller has to ask before
+ * reading an offset.
  */
 public final class LiveViewAccumulatorProjection {
+    /**
+     * The offset of a projection whose state the fused payload does not carry. Every byte
+     * offset on a runtime-only projection is this: a group's map value holds its slots, and
+     * the manifest does not name them.
+     */
+    public static final int NOT_PERSISTED = -1;
     private final LiveViewAccumulatorDescriptor component;
     private final int componentStateLength;
     private final int componentStateOffset;
@@ -71,7 +87,10 @@ public final class LiveViewAccumulatorProjection {
      * index and every slot - is {@code runtime}'s and is not re-decided here.
      *
      * @param runtime              the runtime projection this one persists
-     * @param componentStateOffset the component's offset in the fused scalar payload
+     * @param componentStateOffset the component's offset in the fused scalar payload, or
+     *                             {@link #NOT_PERSISTED} when the leaf budget left the
+     *                             component out of the manifest and the projecting function
+     *                             keeps a root of its own
      * @param component            the durable half of the component {@code runtime} reads
      * @param functionComponent    the durable half of the component the projecting function
      *                             persists on its own, which is {@code component} unless the
@@ -104,7 +123,9 @@ public final class LiveViewAccumulatorProjection {
         this.functionComponent = functionComponent;
         this.componentStateOffset = componentStateOffset;
         this.componentStateLength = component.getStateLength();
-        this.functionStateOffset = componentStateOffset + derivedOffset;
+        this.functionStateOffset = componentStateOffset == NOT_PERSISTED
+                ? NOT_PERSISTED
+                : componentStateOffset + derivedOffset;
         this.functionStateLength = functionComponent.getStateLength();
         this.sumFieldOffset = absoluteFieldOffset(
                 component,
@@ -259,6 +280,15 @@ public final class LiveViewAccumulatorProjection {
     }
 
     /**
+     * Whether the fused payload carries this projection's component, and so whether any of
+     * the byte offsets above mean anything. False for a runtime-only member: its slots are
+     * in the group's map value and its bytes are on its own function root.
+     */
+    public boolean isDurable() {
+        return componentStateOffset != NOT_PERSISTED;
+    }
+
+    /**
      * Whether this output corrects the component's counter with a per-row test on the
      * partition key rather than reading it straight - a {@code count(k)} over the very
      * column the window partitions by.
@@ -268,6 +298,9 @@ public final class LiveViewAccumulatorProjection {
     }
 
     private static int absoluteFieldOffset(LiveViewAccumulatorDescriptor component, int componentStateOffset, int field) {
+        if (componentStateOffset == NOT_PERSISTED) {
+            return NOT_PERSISTED;
+        }
         final int relative = component.getFieldOffset(field);
         return relative < 0 ? -1 : componentStateOffset + relative;
     }

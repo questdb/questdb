@@ -298,11 +298,15 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
     }
 
     /**
-     * Drives the frontier sweep and requires it to have reclaimed through both owners:
-     * the window's one fused map for the kept components, and each residual's private
-     * map for the rest. A sweep that pruned one and not the other would leave the two
-     * describing different key sets, which the next seal would publish as a fused entry
-     * beside a residual root that disagrees about which partitions exist.
+     * Drives the frontier sweep and requires it to have reclaimed through both owners: the
+     * window's one fused map for every member, and each residual's private map for the
+     * functions the group never took. A sweep that pruned one and not the other would leave
+     * the two describing different key sets, which the next seal would publish as a fused
+     * entry beside a residual root that disagrees about which partitions exist.
+     * <p>
+     * A runtime-only member is on the window's side of that split even though it publishes a
+     * root of its own: its slots ride across inside the entries the rebuild keeps, and its
+     * root is written from those entries.
      */
     private void assertFrontierSweepReclaimsTheShape(Shape shape) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
@@ -325,22 +329,39 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
                 Assert.assertEquals("only the two retained buckets survive", 2, window.getAnchorMapSize());
                 final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
                 Assert.assertNotNull(plan);
-                int sweptResiduals = 0;
-                for (int i = 0, n = plan.getResidualFunctions().size(); i < n; i++) {
-                    final WindowFunction residual = plan.getResidualFunctions().getQuick(i);
-                    if (residual.getPartitionMap() == null || !residual.getPartitionMap().isOpen()) {
+                final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance());
+                int ownMapFunctions = 0;
+                int members = 0;
+                for (int i = 0, n = functions.size(); i < n; i++) {
+                    final WindowFunction function = functions.getQuick(i);
+                    if (!function.supportsCheckpointState()) {
+                        continue;
+                    }
+                    if (function.isWindowStateOwned()) {
+                        // A member's accumulator rode across inside the entries the rebuild
+                        // kept, runtime-only members included: the sweep drops a key from the
+                        // group's one map and there is no second map to prune.
+                        Assert.assertTrue(
+                                "member " + function.getName() + " must keep its map closed",
+                                function.getPartitionMap() == null || !function.getPartitionMap().isOpen()
+                        );
+                        members++;
+                        continue;
+                    }
+                    if (function.getPartitionMap() == null || !function.getPartitionMap().isOpen()) {
                         continue;
                     }
                     Assert.assertEquals(
-                            "residual " + residual.getName() + " must sweep with the window",
+                            "residual " + function.getName() + " must sweep with the window",
                             window.getAnchorMapSize(),
-                            residual.getPartitionMap().size()
+                            function.getPartitionMap().size()
                     );
-                    sweptResiduals++;
+                    ownMapFunctions++;
                 }
-                // Both shapes keep at least one function out of the group, so a run that
-                // compared nothing would mean the shape stopped being what it is named for.
-                Assert.assertTrue("the shape must carry a residual with a map of its own", sweptResiduals > 0);
+                // Every checkpoint-capable function belongs to one of the two owners, and a
+                // shape that reclaimed through neither would mean the sweep compared nothing.
+                Assert.assertEquals(plan.getProjectionCount(), members);
+                Assert.assertTrue("the sweep must have reached a map", members + ownMapFunctions > 0);
                 shape.assertMatchesRecompute();
 
                 // And the head sealed over a swept runtime restores it back.

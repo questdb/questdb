@@ -977,33 +977,50 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testLeafBudgetKeepsThePrefixThatFitsAndResidualizesTheRest() {
+    public void testLeafBudgetKeepsThePrefixThatFitsAndGroupsTheRestAtRuntime() {
         // The budget is derived from the constant rather than written out, so a later
         // measurement can move it without rewriting the case. What the case is about is
-        // the shape of the overflow: the group keeps the prefix of the canonical order
-        // that fits and hands the rest back as residuals, rather than losing the fusion
-        // whole and sending every function to a root of its own.
+        // the shape of the overflow: the leaf carries the prefix of the canonical order
+        // that fits, and every component past it stays in the group's map value while its
+        // projection keeps the function root it has today. The budget is a fact about a
+        // persisted leaf, and the map it used to shrink is not one.
         final int widest = (LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES - ANCHOR_BYTES) / SUM_STATE_BYTES;
         final LiveViewWindowStatePlan exact = buildSumGroup(widest);
         Assert.assertNotNull(exact);
         Assert.assertEquals(widest, exact.getComponentCount());
+        Assert.assertEquals(widest, exact.getDurableComponentCount());
         Assert.assertEquals(0, exact.getResidualFunctions().size());
         Assert.assertEquals(ANCHOR_BYTES + widest * SUM_STATE_BYTES, exact.getTotalInlineStateBytes());
 
         final LiveViewWindowStatePlan overflowing = buildSumGroup(widest + 3);
         Assert.assertNotNull(overflowing);
-        Assert.assertEquals(widest, overflowing.getComponentCount());
-        Assert.assertEquals(widest, overflowing.getProjectionCount());
-        Assert.assertEquals(3, overflowing.getResidualFunctions().size());
+        Assert.assertEquals(widest + 3, overflowing.getComponentCount());
+        Assert.assertEquals(widest + 3, overflowing.getProjectionCount());
+        Assert.assertEquals(widest, overflowing.getDurableComponentCount());
+        // Nothing was handed back: a runtime-only member is grouped in the map and separate
+        // on disk, which is a different answer from the group never taking the function.
+        Assert.assertEquals(0, overflowing.getResidualFunctions().size());
         Assert.assertEquals(
                 "the payload the leaf carries must not move when a group overflows",
                 exact.getTotalInlineStateBytes(),
                 overflowing.getTotalInlineStateBytes()
         );
-        // Every kept component still has a contributor, and it is one of the projections
-        // that survived - the removal renumbers them.
-        for (int i = 0; i < widest; i++) {
+        Assert.assertEquals(
+                "the map value carries every component either way",
+                (widest + 3) * SUM_STATE_BYTES,
+                overflowing.getTotalRuntimeStateBytes()
+        );
+        // Every component still has a contributor, and the durable split is the projection's
+        // as well as the component's.
+        for (int i = 0; i < widest + 3; i++) {
             Assert.assertNotNull(overflowing.getContributor(i));
+        }
+        for (int i = 0; i < widest + 3; i++) {
+            Assert.assertEquals(
+                    "projection " + i,
+                    overflowing.getProjection(i).getComponentIndex() < widest,
+                    overflowing.isDurableProjection(i)
+            );
         }
     }
 
@@ -1035,21 +1052,24 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                     }
             );
         });
-        // And across the truncation, which renumbers the projections the layout is read
-        // through while leaving the kept components' bases where they were.
+        // And across the truncation, where the two layouts stop describing the same list:
+        // the slot bases run to the end of the group and the byte offsets stop at the leaf
+        // budget, with the tail carrying NOT_PERSISTED rather than an offset into a payload
+        // that does not hold it.
         final int widest = (LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES - ANCHOR_BYTES) / SUM_STATE_BYTES;
         final LiveViewWindowStatePlan overflowing = buildSumGroup(widest + 3);
         Assert.assertNotNull(overflowing);
         assertLayoutsAgree(overflowing);
-        // The same overflow with the two orders disagreeing, which is what makes the
-        // renumbering observable at all: here the dropped projections are the ones offered
-        // first, so every survivor moves and a contributor index left where it was would name
-        // another projection's function.
+        // The same overflow with the offer order and the canonical order disagreeing, which
+        // is what says the durable prefix is taken in the canonical order rather than in the
+        // order the projections arrived: the components left out are still the last three,
+        // and the contributor of each is still its own function.
         final LiveViewWindowStatePlan reordered = buildDescendingSumGroup(widest + 3);
         Assert.assertNotNull(reordered);
-        Assert.assertEquals(widest, reordered.getComponentCount());
-        Assert.assertEquals(widest, reordered.getProjectionCount());
-        Assert.assertEquals(3, reordered.getResidualFunctions().size());
+        Assert.assertEquals(widest + 3, reordered.getComponentCount());
+        Assert.assertEquals(widest + 3, reordered.getProjectionCount());
+        Assert.assertEquals(widest, reordered.getDurableComponentCount());
+        Assert.assertEquals(0, reordered.getResidualFunctions().size());
         assertLayoutsAgree(reordered);
     }
 
@@ -1324,6 +1344,8 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     private static void assertLayoutsAgree(LiveViewWindowStatePlan plan) {
         int slot = LiveViewWindowStatePlan.WINDOW_VALUE_SLOT_COUNT;
         int offset = LiveViewWindowStatePlan.ANCHOR_STATE_OFFSET + LiveViewWindowStatePlan.ANCHOR_STATE_BYTES;
+        int runtimeBytes = 0;
+        final int durableComponentCount = plan.getDurableComponentCount();
         for (int i = 0, n = plan.getComponentCount(); i < n; i++) {
             final LiveViewAccumulatorDescriptor component = plan.getComponent(i);
             Assert.assertEquals("component " + i + " slot base", slot, plan.getComponentSlotBase(i));
@@ -1332,20 +1354,34 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                     component.getSlotCount() * Long.BYTES,
                     component.getStateLength()
             );
-            Assert.assertEquals(
-                    "component " + i + " state offset",
-                    offset,
-                    projectionOn(plan, i).getComponentStateOffset()
-            );
+            if (i < durableComponentCount) {
+                Assert.assertEquals(
+                        "component " + i + " state offset",
+                        offset,
+                        projectionOn(plan, i).getComponentStateOffset()
+                );
+                offset += component.getStateLength();
+            } else {
+                // Past the leaf budget: the slots above are still the group's, and there is
+                // no payload for a byte offset to point into.
+                Assert.assertEquals(
+                        "component " + i + " is runtime-only",
+                        LiveViewAccumulatorProjection.NOT_PERSISTED,
+                        projectionOn(plan, i).getComponentStateOffset()
+                );
+            }
             // A contributor writes the whole component, so it is neither a derived reader of
             // a wider host nor the guarded one whose counter differs from its component's.
             final LiveViewAccumulatorProjection contributor = contributorProjection(plan, i);
             Assert.assertFalse("component " + i + " has a derived contributor", contributor.isDerived());
             Assert.assertFalse("component " + i + " has a guarded contributor", contributor.isPartitionKeyGuarded());
             slot += component.getSlotCount();
-            offset += component.getStateLength();
+            runtimeBytes += component.getStateLength();
         }
         Assert.assertEquals(offset, plan.getTotalInlineStateBytes());
+        // The overlay's image is the whole group at the same widths, which is the leaf's
+        // payload minus its anchor value whenever the leaf carries all of it.
+        Assert.assertEquals(runtimeBytes, plan.getTotalRuntimeStateBytes());
         for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
             final LiveViewAccumulatorProjection projection = plan.getProjection(i);
             final int componentIndex = projection.getComponentIndex();
@@ -1355,6 +1391,19 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                     plan.getComponentSlotBase(componentIndex),
                     projection.getComponentSlotBase()
             );
+            Assert.assertEquals(
+                    "projection " + i + " is durable exactly when its component is",
+                    componentIndex < durableComponentCount,
+                    plan.isDurableProjection(i)
+            );
+            if (!plan.isDurableProjection(i)) {
+                Assert.assertEquals(
+                        "projection " + i + " has no payload slice",
+                        LiveViewAccumulatorProjection.NOT_PERSISTED,
+                        projection.getFunctionStateOffset()
+                );
+                continue;
+            }
             // The function's own slice sits inside its component's, at the same relative
             // place in slots and in bytes - which is the fold, read through both layouts.
             Assert.assertEquals(

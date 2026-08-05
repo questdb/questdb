@@ -289,7 +289,12 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
      */
     @Override
     public void onCheckpointRestoreBegin() {
-        if (map != null) {
+        // A fused function's map stays closed, for the reason reopen() leaves it closed:
+        // the window owns the group's one value layout, and the state a restore replaces is
+        // in that map rather than in this one. The legacy-checkpoint adapter is the single
+        // path that does restore into the private map, and it opens the map itself first -
+        // see LiveViewWindowStatePlan.reopenProjectionMaps - so the clear below is its.
+        if (map != null && (!isWindowStateOwned() || map.isOpen())) {
             // On a fresh restart the lazy per-partition map is still closed: the
             // live-view restore path (restoreFromHead) runs before any cursor
             // of()/ofIncremental reopens it. reopen() allocates the backing when
