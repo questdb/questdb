@@ -156,6 +156,7 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
         COLUMN_COUNT_EXCEEDED,
         ROW_COUNT_EXCEEDED,
         INVALID_OFFSET_ARRAY,
-        INVALID_DICTIONARY_INDEX
+        INVALID_DICTIONARY_INDEX,
+        DELTA_DICT_GAP
     }
 }
