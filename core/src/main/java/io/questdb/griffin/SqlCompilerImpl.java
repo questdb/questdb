@@ -82,6 +82,8 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyCancelFactory;
 import io.questdb.griffin.engine.ops.CopyExportFactory;
 import io.questdb.griffin.engine.ops.CopyImportFactory;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
@@ -517,6 +519,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             case OperationCodes.DROP_TABLE -> executeDropTable((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_VIEW -> executeDropView((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_MAT_VIEW -> executeDropMatView((GenericDropOperation) op, executionContext);
+            case OperationCodes.CREATE_LIVE_VIEW ->
+                    executeCreateLiveView((CreateLiveViewOperation) op, executionContext);
+            case OperationCodes.DROP_LIVE_VIEW -> executeDropLiveView((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_ALL -> executeDropAllTables((DropAllOperation) op, executionContext);
             default ->
                     throw SqlException.position(0).put("Unsupported operation [code=").put(op.getOperationCode()).put(']');
@@ -589,6 +594,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     public void setFullFatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
+    }
+
+    @Override
+    public ExpressionNode parseExpression(CharSequence expression) throws SqlException {
+        clear();
+        lexer.of(expression);
+        // Stamp the flag rather than inherit whatever the last parse() left behind.
+        // Both callers hand in a live view's stored ANCHOR EXPRESSION, which is a
+        // scalar expression and carries no ANCHOR clause of its own, so the clause
+        // stays refused here exactly as it is for any other bare expression.
+        parser.setAnchorAllowed(false);
+        return parser.expr(lexer, (IQueryModel) null, this);
     }
 
     @TestOnly
@@ -1937,46 +1954,36 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    /**
-     * INSERT/COPY-only variant of {@link #checkMatViewModification(ExecutionModel)} that
-     * also accepts the model when the mat view has {@code REFRESH LIMIT} set, allowing
-     * the row to be backfilled into the frozen zone. ALTER/RENAME/UPDATE/TRUNCATE/VACUUM
-     * still go through the strict {@link #checkMatViewModification} variants.
-     */
-    private void checkMatViewInsertOrCopyModification(ExecutionModel executionModel) throws SqlException {
-        final CharSequence name = executionModel.getTableName();
-        final TableToken tableToken = engine.getTableTokenIfExists(name);
-        if (tableToken != null && tableToken.isMatView() && !engine.isBackfillableMatView(tableToken)) {
-            throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify materialized view [view=").put(name).put(']');
-        }
-    }
-
-    private void checkMatViewModification(ExecutionModel executionModel) throws SqlException {
-        final CharSequence name = executionModel.getTableName();
-        final TableToken tableToken = engine.getTableTokenIfExists(name);
-        if (tableToken != null && tableToken.isMatView()) {
-            throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify materialized view [view=").put(name).put(']');
-        }
-    }
-
-    private void checkMatViewModification(TableToken tableToken) throws SqlException {
-        if (tableToken != null && tableToken.isMatView()) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("cannot modify materialized view [view=").put(tableToken.getTableName()).put(']');
-        }
-    }
-
     private void checkViewModification(ExecutionModel executionModel) throws SqlException {
         final CharSequence name = executionModel.getTableName();
         final TableToken tableToken = engine.getTableTokenIfExists(name);
-        if (tableToken != null && tableToken.isView()) {
-            throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify view [view=").put(name).put(']');
-        }
+        checkViewModification(tableToken, executionModel.getTableNameExpr().position);
     }
 
     private void checkViewModification(TableToken tableToken) throws SqlException {
-        if (tableToken != null && tableToken.isView()) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("cannot modify view [view=").put(tableToken.getTableName()).put(']');
+        checkViewModification(tableToken, lexer.lastTokenPosition());
+    }
+
+    private void checkViewModification(TableToken tableToken, int position) throws SqlException {
+        if (tableToken == null || tableToken.getType() == TableToken.Type.TABLE) {
+            return;
         }
+        throw SqlException.position(position).put("cannot modify ").put(tableToken.getType().keyword()).put(" [view=").put(tableToken.getTableName()).put(']');
+    }
+
+    /**
+     * INSERT/COPY-only variant of {@link #checkViewModification(ExecutionModel)} that also
+     * accepts a materialized view carrying a {@code REFRESH LIMIT}, letting the rows be
+     * backfilled into the frozen zone. ALTER/RENAME/UPDATE/TRUNCATE/VACUUM still go through
+     * the strict {@link #checkViewModification} variants, and every other view kind is
+     * rejected here exactly as it is there.
+     */
+    private void checkViewModificationForInsertOrCopy(ExecutionModel executionModel) throws SqlException {
+        final TableToken tableToken = engine.getTableTokenIfExists(executionModel.getTableName());
+        if (tableToken != null && engine.isBackfillableMatView(tableToken)) {
+            return;
+        }
+        checkViewModification(tableToken, executionModel.getTableNameExpr().position);
     }
 
     private void clearExceptSqlText() {
@@ -1996,7 +2003,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || (!isTableKeyword(tok) && !isMaterializedKeyword(tok) && !isViewKeyword(tok))) {
+        if (tok == null || (!isTableKeyword(tok) && !isMaterializedKeyword(tok) && !isLiveKeyword(tok) && !isViewKeyword(tok))) {
             compileAlterExt(executionContext, tok);
             return;
         }
@@ -2005,8 +2012,41 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compileAlterTable(executionContext);
         } else if (isMaterializedKeyword(tok)) {
             compileAlterMatView(executionContext);
+        } else if (isLiveKeyword(tok)) {
+            compileAlterLiveView(executionContext);
         } else {
             compileAlterView(executionContext);
+        }
+    }
+
+    /**
+     * {@code ALTER LIVE VIEW <name> RESUME|SUSPEND WAL}. Mirrors compileAlterMatView.
+     * <p>
+     * A live view is a WAL table, so a failing inline apply suspends it like any other, and
+     * hasPendingLiveViewApply then skips it until an operator RESUMEs. That recovery was
+     * unreachable: compileAlterTable rejects every ALTER on a non-TABLE token up front, and no
+     * ALTER LIVE VIEW grammar existed - so an idle view stayed suspended, serving a stale prefix,
+     * with DROP + recreate the only escape.
+     * <p>
+     * Only the WAL-control verbs live here; the structural ones stay rejected, since a live view's
+     * schema is a function of its SELECT.
+     */
+    private void compileAlterLiveView(SqlExecutionContext executionContext) throws SqlException {
+        expectKeyword(lexer, "view");
+        final int liveViewNamePosition = lexer.getPosition();
+        CharSequence tok = expectToken(lexer, "live view name");
+        assertNameIsQuotedOrNotAKeyword(tok, liveViewNamePosition);
+        final TableToken liveViewToken = tableExistsOrFail(liveViewNamePosition, unquote(tok), executionContext);
+        if (!liveViewToken.isLiveView()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "live view name expected");
+        }
+        tok = expectToken(lexer, "'resume' or 'suspend'");
+        if (isResumeKeyword(tok)) {
+            parseResumeWal(liveViewToken, liveViewNamePosition, executionContext);
+        } else if (isSuspendKeyword(tok)) {
+            parseSuspendWal(liveViewToken, liveViewNamePosition, executionContext);
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'resume' or 'suspend' expected");
         }
     }
 
@@ -2020,7 +2060,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!matViewToken.isMatView()) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
         }
-        final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+        final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
         if (viewDefinition == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist");
         }
@@ -2174,7 +2214,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         // consequences and warrants its own message; without an explicit
                         // warning a silent extend can overwrite previously-frozen
                         // backfill on the next refresh.
-                        final MatViewDefinition existing = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                        final MatViewDefinition existing = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                         if (existing != null) {
                             final int oldLimit = existing.getRefreshLimitHoursOrMonths();
                             if (oldLimit != limitHoursOrMonths) {
@@ -2401,7 +2441,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         assertNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
         final TableToken tableToken = tableExistsOrFail(tableNamePosition, unquote(tok), executionContext);
         checkViewModification(tableToken);
-        checkMatViewModification(tableToken);
+        final SecurityContext securityContext = executionContext.getSecurityContext();
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(tableToken)) {
             tok = expectToken(lexer, ALTER_TABLE_EXPECTED_TOKEN_DESCR);
@@ -2991,7 +3031,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final CharSequence tableName = unquote(tok);
                 // define operation to make sure we generate correct errors in case of syntax check failure
                 final TableToken tt = executionContext.getTableTokenIfExists(tableName);
-                if (tt != null && (tt.isView() || tt.isMatView())) {
+                if (tt != null && (tt.isView() || tt.isMatView() || tt.isLiveView())) {
+                    // Live views are rejected here as well as at execute time, so DROP TABLE on
+                    // one fails the compile-only /validate endpoint too. Keep the message
+                    // identical to the execute-time one so the user-visible contract is unchanged.
+                    if (tt.isLiveView()) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "table name expected, got live view name: ").put(tableName);
+                    }
                     throw SqlException.$(lexer.lastTokenPosition(), "table name expected, got view or materialized view name");
                 }
                 dropOperationBuilder.clear();
@@ -3031,12 +3077,50 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // define operation to make sure we generate correct errors in case of syntax check failure
                 final TableToken tt = executionContext.getTableTokenIfExists(viewName);
                 if (tt != null && !tt.isView()) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "view name expected, got table or materialized view name");
+                    throw SqlException.$(lexer.lastTokenPosition(), "view name expected, got ").put(tt.getType().keyword()).put(" name");
                 }
                 dropOperationBuilder.clear();
                 dropOperationBuilder.setOperationCode(OperationCodes.DROP_VIEW);
                 dropOperationBuilder.setEntityName(viewName);
                 dropOperationBuilder.setEntityNamePosition(viewNamePosition);
+                dropOperationBuilder.setIfExists(hasIfExists);
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+                }
+                dropOperationBuilder.setSqlText(sqlText);
+                compiledQuery.ofDrop(dropOperationBuilder.build());
+                // DROP LIVE VIEW [ IF EXISTS ] name [;]
+            } else if (isLiveKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isViewKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected VIEW");
+                }
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("[IF EXISTS] live-view-name");
+                }
+                boolean hasIfExists = false;
+                int liveViewNamePosition = lexer.lastTokenPosition();
+                if (isIfKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || !isExistsKeyword(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS live-view-name");
+                    }
+                    hasIfExists = true;
+                    liveViewNamePosition = lexer.getPosition();
+                } else {
+                    lexer.unparseLast();
+                }
+
+                tok = expectToken(lexer, "live view name");
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                final CharSequence liveViewName = GenericLexer.unquote(tok);
+                dropOperationBuilder.clear();
+                dropOperationBuilder.setOperationCode(OperationCodes.DROP_LIVE_VIEW);
+                dropOperationBuilder.setEntityName(liveViewName);
+                dropOperationBuilder.setEntityNamePosition(liveViewNamePosition);
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
@@ -3074,7 +3158,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // define operation to make sure we generate correct errors in case of syntax check failure
                 final TableToken tt = executionContext.getTableTokenIfExists(matViewName);
                 if (tt != null && !tt.isMatView()) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table or view name");
+                    throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got ").put(tt.getType().keyword()).put(" name");
                 }
                 dropOperationBuilder.clear();
                 dropOperationBuilder.setOperationCode(OperationCodes.DROP_MAT_VIEW);
@@ -3175,6 +3259,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (createMatViewBuilder.getQueryModel() != null) {
                     final IQueryModel selectModel = optimiser.optimise(createMatViewBuilder.getQueryModel(), executionContext, this);
                     createMatViewBuilder.setSelectModel(selectModel);
+                }
+                return model;
+            case ExecutionModel.CREATE_LIVE_VIEW:
+                // Authorize for parity with CREATE MAT VIEW so a restricted user cannot probe a plan
+                // they may not create. Then optimise like the two arms above: falling through with
+                // the raw parser model made generateExplain() codegen an unoptimised SELECT, which
+                // trips "wtf? ts" under -ea and an AIOOBE without - an Error escaping compile(),
+                // i.e. a 500 on HTTP/pgwire instead of a plan.
+                //
+                // The live-view codegen flag is armed in generateExplain, not here: nothing in
+                // SqlOptimiser reads isLiveViewCompile(), so arming it around this call alone would
+                // leave it false for the code generation that actually reads it.
+                executionContext.getSecurityContext().authorizeLiveViewCreate();
+                final CreateLiveViewOperationBuilder createLiveViewBuilder = (CreateLiveViewOperationBuilder) model;
+                if (createLiveViewBuilder.getQueryModel() != null) {
+                    final IQueryModel selectModel = optimiser.optimise(createLiveViewBuilder.getQueryModel(), executionContext, this);
+                    createLiveViewBuilder.setSelectModel(selectModel);
                 }
                 return model;
         }
@@ -3600,7 +3701,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table name");
         }
 
-        final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+        final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
         if (matViewDefinition == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist or is not ready for refresh");
         }
@@ -3693,7 +3794,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
 
         checkViewModification(tableToken);
-        checkMatViewModification(tableToken);
 
         try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
             indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
@@ -3835,7 +3935,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 if (tableToken != null) {
                     checkViewModification(tableToken);
-                    checkMatViewModification(tableToken);
                     executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
                     // Validation parses and resolves the table but must not acquire the writer
                     // (which locks the table) or truncate any data.
@@ -3984,13 +4083,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     compiledQuery.ofCreateMatView(((CreateMatViewOperationBuilder) executionModel)
                             .build(this, executionContext, sqlText));
                     break;
+                case ExecutionModel.CREATE_LIVE_VIEW:
+                    compiledQuery.ofCreateLiveView(((CreateLiveViewOperationBuilder) executionModel)
+                            .build(sqlText));
+                    break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     if (executionModel.getTableName() != null) {
                         assert executionModel.getModelType() == ExecutionModel.COPY;
                         if (((ExportModel) executionModel).getType() == COPY_TYPE_FROM) {
-                            checkViewModification(executionModel);
-                            checkMatViewInsertOrCopyModification(executionModel);
+                            checkViewModificationForInsertOrCopy(executionModel);
                         }
                     }
                     copy(executionContext, (ExportModel) executionModel);
@@ -4001,7 +4103,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         sqlId = queryRegistry.register(sqlText, executionContext);
                         QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                         checkViewModification(executionModel);
-                        checkMatViewModification(executionModel);
                         final RenameTableModel rtm = (RenameTableModel) executionModel;
                         engine.rename(
                                 executionContext.getSecurityContext(),
@@ -4018,7 +4119,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 case ExecutionModel.UPDATE:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     checkViewModification(executionModel);
-                    checkMatViewModification(executionModel);
                     final IQueryModel updateQueryModel = (IQueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
                     try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
@@ -4039,8 +4139,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 default:
-                    checkViewModification(executionModel);
-                    checkMatViewInsertOrCopyModification(executionModel);
+                    checkViewModificationForInsertOrCopy(executionModel);
                     final InsertModel insertModel = (InsertModel) executionModel;
                     // we use SQL Compiler state (reusing objects) to generate InsertOperation
                     if (insertModel.getQueryModel() != null) {
@@ -4085,7 +4184,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (eol == null || Chars.equals(eol, ';')) {
                 final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
                 checkViewModification(tableToken);
-                checkMatViewModification(tableToken);
                 try (TableReader rdr = executionContext.getReader(tableToken)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();
                     if (PartitionBy.isPartitioned(partitionBy)) {
@@ -4323,6 +4421,48 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    private boolean executeCreateLiveView(CreateLiveViewOperation op, SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getSecurityContext().authorizeLiveViewCreate();
+        // Reject a name already taken up front, mirroring CREATE MATERIALIZED VIEW so
+        // the collision wording names the offending kind:
+        //   - a table / regular view / materialized view collision is always an error
+        //     ("table or view with the requested name already exists"), even under
+        //     IF NOT EXISTS - otherwise the shared create helper silently no-ops the
+        //     IF NOT EXISTS branch and a user is left believing a live view exists when
+        //     the name is actually a plain table;
+        //   - a same-kind live-view collision without IF NOT EXISTS reports "live view
+        //     already exists" (mirroring "materialized view already exists") instead of
+        //     the generic "table exists" createLiveView would otherwise surface.
+        // A same-kind IF NOT EXISTS falls through to createLiveView, which no-ops.
+        final TableToken existingToken = executionContext.getTableTokenIfExists(op.getViewName());
+        if (existingToken != null) {
+            if (!existingToken.isLiveView()) {
+                throw SqlException.$(op.getViewNamePosition(), "table or view with the requested name already exists");
+            }
+            if (!op.isIgnoreIfExists()) {
+                throw SqlException.$(op.getViewNamePosition(), "live view already exists");
+            }
+        }
+        // validate base table exists and is WAL
+        final TableToken baseTableToken = executionContext.getTableTokenIfExists(op.getBaseTableName());
+        if (baseTableToken == null) {
+            throw SqlException.$(op.getBaseTableNamePosition(), "base table does not exist [name=").put(op.getBaseTableName()).put(']');
+        }
+        if (!engine.isWalTable(baseTableToken)) {
+            throw SqlException.$(op.getBaseTableNamePosition(), "base table must be a WAL table [name=").put(op.getBaseTableName()).put(']');
+        }
+        if (baseTableToken.isLiveView()) {
+            // Live-on-live composition is not supported; live views may
+            // become composable once the apply pipeline supports LV-as-base.
+            // Position at the base table name.
+            throw SqlException.$(op.getBaseTableNamePosition(),
+                    "live views are not allowed as base tables in V1 [name=").put(op.getBaseTableName()).put(']');
+        }
+
+        engine.createLiveView(op, baseTableToken, executionContext);
+        return true;
+    }
+
     private boolean executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
         if (createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE
                 && createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_TIMER
@@ -4445,8 +4585,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
             if (status == TableUtils.TABLE_EXISTS) {
                 final TableToken tt = executionContext.getTableTokenIfExists(createTableOp.getTableName());
-                if (tt != null && (tt.isView() || tt.isMatView())) {
-                    throw SqlException.$(createTableOp.getTableNamePosition(), "view or materialized view with the requested name already exists");
+                if (tt != null && (tt.isView() || tt.isMatView() || tt.isLiveView())) {
+                    // Mirrors executeCreateLiveView: a cross-kind collision is always an error, even
+                    // under IF NOT EXISTS. Letting a live view satisfy IF NOT EXISTS would silently
+                    // no-op the CREATE and leave the user believing a plain table exists when the
+                    // name is actually a live view.
+                    throw SqlException.$(createTableOp.getTableNamePosition(), tt.isLiveView()
+                            ? "live view with the requested name already exists"
+                            : "view or materialized view with the requested name already exists");
                 }
                 if (createTableOp.ignoreIfExists()) {
                     createTableOp.updateOperationFutureTableToken(tt);
@@ -4726,14 +4872,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (!tableToken.isSystem()) {
                 final String tableName = tableToken.getTableName();
                 try {
-                    if (tableToken.isView()) {
+                    if (tableToken.isLiveView()) {
+                        securityContext.authorizeLiveViewDrop(tableToken);
+                    } else if (tableToken.isView()) {
                         securityContext.authorizeViewDrop(tableToken);
                     } else if (tableToken.isMatView()) {
                         securityContext.authorizeMatViewDrop(tableToken);
                     } else {
                         securityContext.authorizeTableDrop(tableToken);
                     }
-                    engine.dropTableOrViewOrMatView(path, tableToken);
+                    if (tableToken.isLiveView()) {
+                        // A live view carries state the generic drop does not know about:
+                        // the registry entry, the dependents graph edge and the durable
+                        // _lv.drop sentinel. It also has to fence the refresh worker before
+                        // the table teardown. dropLiveView does all of that and calls
+                        // dropTableOrViewOrMatView itself.
+                        engine.dropLiveView(tableName, securityContext);
+                    } else {
+                        engine.dropTableOrViewOrMatView(path, tableToken);
+                    }
                     hasDroppedAny = true;
                     op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableToken);
                 } catch (Exception e) {
@@ -4760,6 +4917,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return hasDroppedAny;
     }
 
+    private boolean executeDropLiveView(GenericDropOperation op, SqlExecutionContext executionContext) throws SqlException {
+        final String name = op.getEntityName();
+        final TableToken tableToken = executionContext.getTableTokenIfExists(name);
+        if (tableToken != null && !tableToken.isLiveView()) {
+            throw SqlException.$(op.getEntityNamePosition(), "live view name expected [name=").put(name).put(']');
+        }
+        // Determine existence from the durable LV token, NOT the registry instance. When the
+        // live-view feature is disabled at restart, buildViewGraphs loads the token (and _lv stays
+        // on disk) but deliberately registers no instance - an unattended one would pin the base
+        // WAL floor forever. Gating the drop on a non-null instance would leave such a view
+        // undroppable: a plain DROP threw "does not exist" and DROP ... IF EXISTS silently no-opped.
+        if (tableToken == null) {
+            if (op.ifExists()) {
+                return false;
+            }
+            throw SqlException.$(op.getEntityNamePosition(), "live view does not exist [name=").put(name).put(']');
+        }
+        // Authorize against the token resolved above (already null-checked, so the enterprise
+        // per-object ACL dereference is safe). engine.dropLiveView is null-instance-safe: it
+        // re-authorizes, stamps the _lv.drop sentinel, and performs the full on-disk teardown
+        // whether or not a refresh instance is registered.
+        executionContext.getSecurityContext().authorizeLiveViewDrop(tableToken);
+        engine.dropLiveView(name, executionContext.getSecurityContext());
+        return true;
+    }
+
     private boolean executeDropMatView(
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
@@ -4772,7 +4955,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.matViewDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
         if (!tableToken.isMatView()) {
-            throw SqlException.$(op.getEntityNamePosition(), "materialized view name expected, got table name");
+            throw SqlException.$(op.getEntityNamePosition(), "materialized view name expected, got ").put(tableToken.getType().keyword()).put(" name");
         }
         sqlExecutionContext.getSecurityContext().authorizeMatViewDrop(tableToken);
 
@@ -4806,8 +4989,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             throw SqlException.tableDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
-        if (tableToken.isMatView()) {
-            throw SqlException.$(op.getEntityNamePosition(), "table name expected, got materialized view name: ").put(op.getEntityName());
+        if (tableToken.getType() != TableToken.Type.TABLE) {
+            throw SqlException.$(op.getEntityNamePosition(), "table name expected, got ").put(tableToken.getType().keyword()).put(" name: ").put(op.getEntityName());
         }
         sqlExecutionContext.getSecurityContext().authorizeTableDrop(tableToken);
 
@@ -4842,7 +5025,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.viewDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
         if (!tableToken.isView()) {
-            throw SqlException.$(op.getEntityNamePosition(), "view name expected, got table name");
+            throw SqlException.$(op.getEntityNamePosition(), "view name expected, got ").put(tableToken.getType().keyword()).put(" name");
         }
         if (tableToken.isSystem()) {
             throw SqlException.$(op.getEntityNamePosition(), "cannot drop a system view");
@@ -4948,9 +5131,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     executionContext
             );
             return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, model.getFormat());
-        } else {
-            return codeGenerator.generateExplain(model, executionContext);
         }
+        if (model.getInnerExecutionModel().getModelType() == ExecutionModel.CREATE_LIVE_VIEW) {
+            // Arm the live-view compile flag around CODE GENERATION, which is the only thing that
+            // reads it: SqlCodeGenerator (the symbol partition-key sink, anchor collection),
+            // WhereClauseParser (a SqlCodeGenerator field - it suppresses indexed-symbol filters
+            // for a live view) and CompiledFilterIRSerializer. SqlOptimiser never reads it, so
+            // arming it only around optimise() in compileExplainExecutionModel0 left it false here
+            // and printed a plan the real CREATE never generates (an indexed symbol scan). Mirrors
+            // the arm CairoEngine.createLiveView wraps its compile() in.
+            executionContext.setLiveViewCompile(true);
+            try {
+                return codeGenerator.generateExplain(model, executionContext);
+            } finally {
+                executionContext.setLiveViewCompile(false);
+            }
+        }
+        return codeGenerator.generateExplain(model, executionContext);
     }
 
     private UpdateOperation generateUpdate(IQueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
@@ -5433,9 +5630,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' or 'view' expected");
+            throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
         }
-        throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'view' expected");
+        throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
     }
 
     protected void compileAlterMatViewExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {

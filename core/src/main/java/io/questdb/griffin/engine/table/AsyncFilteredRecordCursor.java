@@ -80,7 +80,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         PageFrameMemoryPool frameMemoryPool = null;
         try {
             record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-            frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
+            frameMemoryPool = new PageFrameMemoryPool(configuration);
         } catch (Throwable th) {
             Misc.free(record);
             Misc.free(frameMemoryPool);

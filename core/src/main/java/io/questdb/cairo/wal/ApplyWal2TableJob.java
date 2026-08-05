@@ -114,6 +114,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final WalEventReader walEventReader;
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
+    // Set by processWalCommit for the live-view dedup-base signal: true if the just-processed
+    // commit's applied state diverges from its raw WAL stream (dedup / skip / non-DATA op).
+    // Read once by applyOutstandingWalTransactions right after processWalCommit returns.
+    private boolean lastCommitDiverged;
     private long lastAttemptSeqTxn;
     private long lastCommittedRows;
 
@@ -231,7 +235,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     //
                     // This mat-view exemption is safe only because no row-order-dependent structural change
                     // can reach a mat view: a column type conversion - the one such operation - is rejected on
-                    // a mat view (SqlCompilerImpl.checkMatViewModification), and the column alters that a mat view
+                    // a mat view (SqlCompilerImpl.checkViewModification), and the column alters that a mat view
                     // does permit (ADD INDEX, DROP INDEX, SYMBOL CAPACITY) are non-structural, so they commit
                     // as walId > 0 SQL transactions and stay hard barriers via the futureType != SQL check
                     // below. Making a row-dependent op structural and allowing it on a mat view would reopen
@@ -411,6 +415,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             TableWriterPressureControl pressureControl
     ) {
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
+        // Long-lived, never-evicted per-table home for the live-view dedup-base signal.
+        // Recorded per applied batch/op below (never per row); a coupled dedup-base LV
+        // reads it to route provably-clean ranges through the raw-WAL path.
+        final SeqTxnTracker seqTxnTracker = tableSequencerAPI.getTxnTracker(tableToken);
         boolean isTerminating;
         boolean finishedAll = true;
         long initialSeqTxn = writer.getSeqTxn();
@@ -502,6 +510,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         if (matViewInvalidationReason != null) {
                                             mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                                             mvRefreshTask.invalidationReason = matViewInvalidationReason;
+                                            // Narrow live-view invalidation: only views that read a
+                                            // column missing from the post-change writer metadata
+                                            // need to be invalidated.
+                                            engine.invalidateLiveViewsForBaseSchemaChange(
+                                                    tableToken,
+                                                    writer.getMetadata(),
+                                                    matViewInvalidationReason
+                                            );
                                         }
                                         if (metadataChangeOp.shouldCompileDependentViews()) {
                                             engine.enqueueCompileView(tableToken);
@@ -573,6 +589,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     if (txnCommitted > 1) {
                                         transactionLogCursor.setPosition(writer.getAppliedSeqTxn());
                                     }
+                                    // Live-view dedup-base signal: record the durably-applied range
+                                    // [seqTxn, appliedSeqTxn] and whether it diverged from raw WAL.
+                                    // These seqTxns are committed at this point, so a later apply
+                                    // failure in the batch cannot un-apply them (see design 2A.5).
+                                    seqTxnTracker.recordApplied(seqTxn, writer.getAppliedSeqTxn(), lastCommitDiverged);
                                 }
 
                                 isTerminating = runStatus.isTerminating();
@@ -736,9 +757,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         // invalidate, view def, truncate) would otherwise re-read the prior iter's count.
         writer.resetWalApplyCounters();
 
+        // Dedup-base signal default: a non-DATA op (TRUNCATE / DROP PARTITION / TTL via SQL,
+        // view/mat-view maintenance) removes or replaces applied rows the raw WAL append would
+        // keep, so it diverges. The DATA branch refines this to the precise skip/dedup outcome.
+        lastCommitDiverged = true;
+
         switch (walTxnType) {
             case DATA:
             case MAT_VIEW_DATA:
+            case LIVE_VIEW_DATA:
                 TableToken tableToken = writer.getTableToken();
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp, txnDetails.getMinTimestamp(seqTxn), txnDetails.getMaxTimestamp(seqTxn));
                 if (walTxnType == DATA && tableToken.isMatView()) {
@@ -786,7 +813,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 // Decrement pending WAL row count and track dedup after successful processing
-                engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedSeqTxn, lastCommittedRows, writer.getDedupRowsRemovedSinceLastCommit());
+                final long dedupRowsRemoved = writer.getDedupRowsRemovedSinceLastCommit();
+                engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedSeqTxn, lastCommittedRows, dedupRowsRemoved);
+                // Dedup-base signal: a DATA batch matches its raw WAL stream only if it skipped
+                // nothing (a skipped DATA commit's rows never materialise), deduped nothing
+                // (a dedup replaced/removed a row the raw append would keep) and expired nothing
+                // (the commit's own housekeeping runs enforceTtl, which drops whole partitions
+                // the raw stream still carries). Any of the three diverges.
+                lastCommitDiverged = skipped || dedupRowsRemoved > 0 || writer.hasTtlEvictedPartitionsSinceLastCommit();
 
                 if (writer.getTableToken().isMatView()) {
                     final TableToken token = writer.getTableToken();
@@ -846,6 +880,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         }
                     }
                 }
+                // The lvConsumedSeqTxn advance for LV tokens lives in LiveViewRefreshJob, which
+                // runs the inline apply immediately after applyWalDirect returns and amortises a
+                // reusable BlockFileWriter + Path across FLUSH cycles. Under symmetric local refresh
+                // every node (primary or replica) runs that refresh-enabled worker and owns its own
+                // LV state, so doRun drops LV notifications and this global apply job never advances
+                // LV state itself; LV WAL is never replicated either.
 
                 return (int) (lastCommittedSeqTxn - seqTxn + 1);
             case SQL:
@@ -859,6 +899,26 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     return 1;
                 }
             case TRUNCATE:
+                // Freeze-and-continue keeps live views valid across a plain base TRUNCATE: it
+                // retires settled data the view already consumed, and a live view is a
+                // forward-computed row stream, not a re-derivable aggregate.
+                //
+                // A mat view is derived, so a TRUNCATE of one is never data retirement - it is the
+                // rebuild half of a full refresh. A live view on it would walk past the TRUNCATE and
+                // treat the re-materialised rows as fresh appends, emitting them twice while its
+                // accumulators still carry pre-rebuild state (a bounded frame keeps the deleted rows
+                // in its ring). Invalidate instead; the operator recreates the view.
+                //
+                // Runs BEFORE the partitions go: invalidation is idempotent, so doing it for a
+                // truncate that then fails is harmless, whereas a throw after removeAllPartitions()
+                // would commit the seqTxn, never re-enter this arm, and leave the view active over a
+                // rebuilt base.
+                if (writer.getTableToken().isMatView()) {
+                    engine.invalidateLiveViewsForBaseTable(
+                            writer.getTableToken(),
+                            "base materialized view was rebuilt"
+                    );
+                }
                 long txn = writer.getTxn();
                 writer.setSeqTxn(seqTxn);
                 writer.removeAllPartitions();
@@ -867,7 +927,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writer.markSeqTxnCommitted(seqTxn);
                 }
                 lastCommittedRows = 0;
-                // Invalidate dependent mat views on truncate.
+                // Invalidate dependent materialized views on truncate.
                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                 mvRefreshTask.invalidationReason = "truncate operation";
                 return 1;
@@ -926,7 +986,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 lastCommittedRows = 0;
                 return 1;
             default:
-                throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
+                try (WalEventReader eventReader = walEventReader) {
+                    final WalEventCursor walEventCursor = eventReader.of(walPath, segmentTxn);
+                    walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp, Numbers.LONG_NULL, Numbers.LONG_NULL);
+                    final long txnBeforeApply = writer.getTxn();
+                    int rows = engine.getWalTxnTypeHandler().applyUnknownWalTxn(walTxnType, writer, walEventCursor, seqTxn);
+                    if (writer.getTxn() == txnBeforeApply) {
+                        // The handler did not commit (e.g. an idempotent no-op event): force-mark this
+                        // seqTxn as applied. A handler that commits must stamp seqTxn itself, so when it
+                        // did commit we skip this redundant second _txn write.
+                        writer.markSeqTxnCommitted(seqTxn);
+                    }
+                    lastCommittedRows = 0;
+                    return Math.max(rows, 1);
+                }
         }
     }
 
@@ -944,6 +1017,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             if (matViewInvalidationReason != null) {
                                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                                 mvRefreshTask.invalidationReason = matViewInvalidationReason;
+                                // Mat views re-aggregate base data, so base data removal
+                                // legitimately invalidates them above. Live views must NOT
+                                // be invalidated here: the non-structural alters routed
+                                // through this branch (DROP/DETACH/ATTACH PARTITION, SET
+                                // PARAM, ...) never change a live view's column projection,
+                                // and base data removal (DROP PARTITION, base TTL) is
+                                // transparent to live views. A live view is a forward-computed
+                                // row stream, not a re-derivable aggregate, so removing old
+                                // base data does not retract its already-computed rows; the
+                                // refresh worker walks past these non-data commits on its own.
+                                // Schema changes that DO touch a referenced column travel the
+                                // structural path and invalidate live views narrowly via
+                                // invalidateLiveViewsForBaseSchemaChange.
                             }
                             return;
                         case CMD_UPDATE_TABLE:
@@ -951,6 +1037,23 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             if (rowsAffected > 0) {
                                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                                 mvRefreshTask.invalidationReason = UpdateOperation.MAT_VIEW_INVALIDATION_REASON;
+                                // Live views must be invalidated too. An UPDATE rewrites base rows in
+                                // place, which the data-removal operations routed through the ALTER
+                                // branch above never do: those only retire settled data below the view's
+                                // replay window, so the view's already-computed rows stay consistent with
+                                // the base rows they came from. An UPDATE instead mutates the very rows a
+                                // live view derives from, and it does so only in the applied partitions -
+                                // the WAL segments the refresh worker drains keep the pre-update values.
+                                // The two sources the view reads then disagree: the forward drain emits
+                                // pre-update rows, while every recovery path (restart, O3 replay, refresh
+                                // failure) recomputes the same range from the applied base and emits
+                                // post-update rows. The view's contents would come to depend on whether a
+                                // recovery happened to run, so invalidate instead and let the operator
+                                // recreate it.
+                                engine.invalidateLiveViewsForBaseTable(
+                                        tableWriter.getTableToken(),
+                                        UpdateOperation.MAT_VIEW_INVALIDATION_REASON
+                                );
                             }
                             return;
                         default:
@@ -1005,14 +1108,17 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             if (e.isTableDropped()) {
                 throw e;
             }
-            LogRecord log = !e.isWALTolerable() ? LOG.error() : LOG.info();
+            // UPDATE is acknowledged when sequenced. Even if its underlying error is normally
+            // WAL-tolerable, advancing the apply watermark would silently lose acknowledged DML.
+            final boolean tolerable = e.isWALTolerable() && cmdType != CMD_UPDATE_TABLE;
+            final LogRecord log = tolerable ? LOG.info() : LOG.error();
             log.$("error applying SQL to wal table [table=").$(tableWriter.getTableToken())
                     .$(", sql=").$(sql)
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
 
-            if (!e.isWALTolerable()) {
+            if (!tolerable) {
                 throw e;
             } else {
                 // Mark as applied.
@@ -1252,9 +1358,36 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     /**
-     * Returns transaction number, which is always > -1. Negative values are used as status code.
+     * Convenience entry for direct (non-queue-driven) callers — runs the apply loop
+     * for the given token using the job's own {@code engine} and
+     * {@code operationExecutor}. Used by {@code LiveViewRefreshJob} to apply an
+     * LV's own WAL inline after a {@code LIVE_VIEW_DATA} block has been committed.
+     * The notification-driven
+     * {@link #doRun(long, WorkerContext)} path skips live-view tokens so a global
+     * pool worker never races the LV's own refresh worker.
      */
-    void applyWal(
+    public void applyWalDirect(@NotNull TableToken tableToken, WorkerContext runStatus) {
+        applyWal(tableToken, engine, operationExecutor, runStatus);
+    }
+
+    /**
+     * Drives the apply loop for {@code tableToken} to best effort. Does NOT report
+     * whether (or how far) it applied: it silently returns without applying when the
+     * table backs off under memory pressure ({@code !isReadyToProcess()}) or the writer
+     * is busy ({@code EntryUnavailableException}), and on any other error it suspends the
+     * table via {@code handleWalApplyFailure} and returns. Callers that must know whether
+     * their committed transaction actually landed read the table's applied seqTxn from
+     * {@code engine.getTableSequencerAPI().getTxnTracker(token).getWriterTxn()} before and
+     * after the call and compare (see {@code LiveViewRefreshJob.flushLead}); a committed
+     * block that did not apply stays durable in the table's own WAL and is re-driven later
+     * (runtime: {@code retryPendingLiveViewApply}; restart: {@code reconcileAppliedFloorAfterRestart}).
+     * <p>
+     * Public so that {@code LiveViewRefreshJob} can drive the same apply machinery
+     * inline after writing a {@code LIVE_VIEW_DATA} block. The notification-driven
+     * {@link #doRun(long, WorkerContext)} path skips live-view tokens so a global
+     * pool worker never races the LV's own refresh worker.
+     */
+    public void applyWal(
             @NotNull TableToken tableToken,
             CairoEngine engine,
             OperationExecutor operationExecutor,
@@ -1332,6 +1465,24 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         } finally {
             // Do not hold the queue while transactions are applied to the table
             subSeq.done(cursor);
+        }
+
+        // On a primary the LV refresh worker applies the view's own WAL inline (it owns the
+        // TableWriter), so a global apply task on this token would race that acquire -- drop
+        // the notification (WalWriter emits them unconditionally on commit). On a read-only
+        // replica the refresh worker is quiesced (the live-view state store is NoOp, so
+        // isRefreshEnabled() is false) and never applies anything, so the global apply job
+        // owns the LV's on-disk tier and its _lv.s advance instead -- fall through to applyWal.
+        //
+        // A DROP is the exception: dropLiveView removes the instance from the registry, marks it
+        // dropped and fences the refresh latch BEFORE the sequencer mints the drop, so no worker
+        // is left to race. applyWal's head is the only path to purgeTableFiles, so swallowing the
+        // drop here left the view's whole directory and its tables.d entry on disk forever, with
+        // WalPurgeJob re-pinging the apply job every sweep.
+        if (tableToken.isLiveView()
+                && engine.getLiveViewStateStore().isRefreshEnabled()
+                && !engine.isTableDropped(tableToken)) {
+            return true;
         }
 
         // Hard-suspended tables (config list or ALTER TABLE ... SUSPEND WAL) are excluded from apply.

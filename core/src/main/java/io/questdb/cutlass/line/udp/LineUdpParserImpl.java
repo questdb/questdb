@@ -354,6 +354,15 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 int exists = engine.getTableStatus(path, tableToken);
                 switch (exists) {
                     case TABLE_EXISTS:
+                        // A mat view with a REFRESH LIMIT accepts direct backfill into its frozen
+                        // zone, so it is the one non-TABLE kind this gate lets through.
+                        if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE
+                                && !engine.isBackfillableMatView(tableToken)) {
+                            throw CairoException.nonCritical()
+                                    .put("cannot modify ").put(tableToken.getType().keyword()).put(" [view=")
+                                    .put(tableToken.getTableName())
+                                    .put(']');
+                        }
                         entry.state = 1;
                         cacheWriter(entry, token, tableToken);
                         break;

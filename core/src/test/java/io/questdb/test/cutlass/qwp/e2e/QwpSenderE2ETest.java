@@ -3528,6 +3528,40 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testLiveViewTargetIsRejectedTerminally() throws Exception {
+        runInContext((port) -> {
+            // A live view is WAL-backed derived state, so QwpTudCache refuses to hand the
+            // sender a writer for it. That refusal is permanent: replaying byte-identical
+            // frames cannot turn the view into a writable table. It therefore has to reach
+            // the client as a terminal SCHEMA_MISMATCH NACK.
+            //
+            // Classified as a plain non-critical CairoException it mapped to
+            // NOT_ACCEPTING_WRITES -> STATUS_WRITE_ERROR -> Policy.RETRIABLE, so the
+            // store-and-forward sender reconnect-replayed the doomed frame from the SF log
+            // up to max_frame_rejections times, stalling every frame behind it, and then
+            // halted anyway - as the poison-frame PROTOCOL_VIOLATION, naming the wrong cause.
+            // This test observes the FIRST SenderError, which is what tells the two apart:
+            // under the old classification that first strike is a retriable WRITE_ERROR.
+            execute("CREATE TABLE lv_base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv_target FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT val, ts, count(*) OVER (PARTITION BY val ORDER BY ts "
+                    + "ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM lv_base");
+
+            assertCoercionError(port, "lv_target",
+                    (s, t) -> s.table(t).longColumn("val", 1).at(1_000_000, ChronoUnit.MICROS),
+                    "cannot modify live view", "[view=lv_target]");
+
+            // The view must be untouched: no foreign row may reach its WAL.
+            drainWalQueue();
+            assertQuery("SELECT count() FROM lv_target")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
+        });
+    }
+
+    @Test
     public void testLong() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_long";
@@ -4874,7 +4908,8 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             java.util.function.BiConsumer<QwpWebSocketSender, String> sendAction,
             String expectedMsgPart1, String expectedMsgPart2
     ) {
-        // A deterministic wire-value/column-type mismatch is a terminal SCHEMA_MISMATCH:
+        // A rejection that repeats under byte-identical replay - a wire-value/column-type
+        // mismatch, or a target that is not a writable table - is a terminal SCHEMA_MISMATCH:
         // the client latches TERMINAL on the first strike, no replay. We assert both
         // observables: the first handler dispatch carries the server's rejection message,
         // and the latched terminal surfaces loudly -- through the handler or, when the
@@ -4908,7 +4943,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 throw new AssertionError("Did not receive a SenderError within 10s for table " + table, e);
             }
             Assert.assertSame(
-                    "coercion/type/value-conversion rejects must be a deterministic terminal"
+                    "a reject that repeats under byte-identical replay must be a terminal"
                             + " SCHEMA_MISMATCH, not a retriable WRITE_ERROR",
                     SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
             Assert.assertSame(SenderError.Policy.TERMINAL, err.getAppliedPolicy());

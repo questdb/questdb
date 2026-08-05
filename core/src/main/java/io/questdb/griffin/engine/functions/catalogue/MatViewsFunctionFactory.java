@@ -218,7 +218,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     final TableToken viewToken = viewTokens.get(viewIndex);
                     if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
-                        final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
+                        final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(viewToken);
                         if (viewDefinition == null) {
                             continue; // mat view was dropped concurrently
                         }
@@ -383,7 +383,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             @Override
             public void toTop() {
                 viewTokens.clear();
-                engine.getMatViewGraph().getViews(viewTokens);
+                engine.getDependentViewGraph().getViews(viewTokens);
                 viewIndex = 0;
                 // Defensively drop the per-(base token, base txn) max(base_ts) memo on restart.
                 // The cache key already captures freshness (the base writer txn is re-read live

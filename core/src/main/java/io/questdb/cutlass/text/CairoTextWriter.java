@@ -403,19 +403,13 @@ public class CairoTextWriter implements Closeable, Mutable {
                 break;
             case TableUtils.TABLE_EXISTS:
                 tableToken = engine.getTableTokenIfExists(tableName);
-                if (tableToken != null && tableToken.isView()) {
-                    throw CairoException.nonCritical()
-                            .put("cannot modify view [view=")
-                            .put(tableToken.getTableName())
-                            .put(']');
-                }
-                if (tableToken != null
-                        && tableToken.isMatView()
+                // A mat view with a REFRESH LIMIT accepts direct backfill into its frozen zone,
+                // so it is the one non-TABLE kind this gate lets through. Not under overwrite
+                // though: that drops and recreates the target, which would destroy the view.
+                if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE
                         && (overwrite || !engine.isBackfillableMatView(tableToken))) {
-                    throw CairoException.nonCritical()
-                            .put("cannot modify materialized view [view=")
-                            .put(tableToken.getTableName())
-                            .put(']');
+                    throw CairoException.nonCritical().put("cannot modify ").put(tableToken.getType().keyword())
+                            .put(" [view=").put(tableToken.getTableName()).put(']');
                 }
                 if (overwrite) {
                     securityContext.authorizeTableDrop(tableToken);
