@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
+import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -74,6 +75,14 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
             @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
+            @Nullable RecordMetadata horizonJoinMasterMetadata,
+            @Nullable ListColumnFilter asOfMasterColumnFilter,
+            @Nullable ListColumnFilter asOfSlaveColumnFilter,
+            @Nullable BitSet asOfWriteSymbolAsString,
+            @Nullable BitSet asOfWriteStringAsVarcharA,
+            @Nullable BitSet asOfWriteStringAsVarcharB,
+            @Nullable BitSet writeTimestampAsNanosA,
+            @Nullable BitSet writeTimestampAsNanosB,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -96,6 +105,14 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                 asOfJoinKeyTypes,
                 masterAsOfJoinMapSinkClass,
                 slaveAsOfJoinMapSinkClass,
+                horizonJoinMasterMetadata,
+                asOfMasterColumnFilter,
+                asOfSlaveColumnFilter,
+                asOfWriteSymbolAsString,
+                asOfWriteStringAsVarcharA,
+                asOfWriteStringAsVarcharB,
+                writeTimestampAsNanosA,
+                writeTimestampAsNanosB,
                 masterColumnCount,
                 masterSymbolKeyColumnIndices,
                 slaveSymbolKeyColumnIndices,

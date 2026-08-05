@@ -36,6 +36,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -120,8 +121,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
             @NotNull CairoConfiguration configuration,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
-            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
+            @NotNull RecordMetadata horizonJoinMasterMetadata,
             int masterTimestampColumnIndex,
             long @NotNull [] offsets,
             int @NotNull [] columnSources,
@@ -167,6 +167,14 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
             for (int s = 0; s < slaveCount; s++) {
                 perSlaveMasterTsScales[s] = slaveStates.getQuick(s).getMasterTsScale();
             }
+            // ASOF join-key sinks are built here, lazily, only when this atom is actually
+            // instantiated (i.e. only for the async execution path the query plan chose) --
+            // an owner instance per slave, plus workerCount independent instances per slave (each
+            // worker needs its own sink for thread safety with mutable-state types like DECIMAL).
+            // A slave's sink class may legitimately be null (bytecode generation fell back to
+            // signal "use LoopingRecordSink"); RecordSinkFactory.getInstance(Class, ...) already
+            // builds a correct fallback sink in that case, so the branch is on
+            // HorizonJoinSlaveState.isKeyed(), not on whether class generation happened to succeed.
             this.ownerMasterAsOfJoinSinks = new ObjList<>(slaveCount);
             this.ownerSlaveAsOfJoinSinks = new ObjList<>(slaveCount);
             this.perWorkerMasterAsOfJoinSinks = new ObjList<>(workerCount);
@@ -176,12 +184,29 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                 perWorkerSlaveAsOfJoinSinks.add(new ObjList<>(slaveCount));
             }
             for (int s = 0; s < slaveCount; s++) {
-                if (masterAsOfJoinMapSinkClasses[s] != null) {
-                    ownerMasterAsOfJoinSinks.add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
-                    ownerSlaveAsOfJoinSinks.add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
+                HorizonJoinSlaveState state = slaveStates.getQuick(s);
+                if (state.isKeyed()) {
+                    ownerMasterAsOfJoinSinks.add(RecordSinkFactory.getInstance(
+                            state.getMasterAsOfJoinMapSinkClass(), horizonJoinMasterMetadata, state.getMasterColumnFilter(), null, null,
+                            state.getWriteSymbolAsString(), state.getWriteStringAsVarcharB(), state.getWriteTimestampAsNanosB(),
+                            state.getAsOfJoinKeyTypes()
+                    ));
+                    ownerSlaveAsOfJoinSinks.add(RecordSinkFactory.getInstance(
+                            state.getSlaveAsOfJoinMapSinkClass(), state.getSlaveMetadata(), state.getSlaveColumnFilter(), null, null,
+                            state.getWriteSymbolAsString(), state.getWriteStringAsVarcharA(), state.getWriteTimestampAsNanosA(),
+                            state.getAsOfJoinKeyTypes()
+                    ));
                     for (int w = 0; w < workerCount; w++) {
-                        perWorkerMasterAsOfJoinSinks.getQuick(w).add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
-                        perWorkerSlaveAsOfJoinSinks.getQuick(w).add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
+                        perWorkerMasterAsOfJoinSinks.getQuick(w).add(RecordSinkFactory.getInstance(
+                                state.getMasterAsOfJoinMapSinkClass(), horizonJoinMasterMetadata, state.getMasterColumnFilter(), null, null,
+                                state.getWriteSymbolAsString(), state.getWriteStringAsVarcharB(), state.getWriteTimestampAsNanosB(),
+                                state.getAsOfJoinKeyTypes()
+                        ));
+                        perWorkerSlaveAsOfJoinSinks.getQuick(w).add(RecordSinkFactory.getInstance(
+                                state.getSlaveAsOfJoinMapSinkClass(), state.getSlaveMetadata(), state.getSlaveColumnFilter(), null, null,
+                                state.getWriteSymbolAsString(), state.getWriteStringAsVarcharA(), state.getWriteTimestampAsNanosA(),
+                                state.getAsOfJoinKeyTypes()
+                        ));
                     }
                 } else {
                     ownerMasterAsOfJoinSinks.add(null);

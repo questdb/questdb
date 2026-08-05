@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
@@ -55,6 +56,7 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.jit.CompiledFilter;
+import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
@@ -107,6 +109,14 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
             @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
+            @Nullable RecordMetadata horizonJoinMasterMetadata,
+            @Nullable ListColumnFilter asOfMasterColumnFilter,
+            @Nullable ListColumnFilter asOfSlaveColumnFilter,
+            @Nullable BitSet asOfWriteSymbolAsString,
+            @Nullable BitSet asOfWriteStringAsVarcharA,
+            @Nullable BitSet asOfWriteStringAsVarcharB,
+            @Nullable BitSet writeTimestampAsNanosA,
+            @Nullable BitSet writeTimestampAsNanosB,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -146,6 +156,14 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     asOfJoinKeyTypes,
                     masterAsOfJoinMapSinkClass,
                     slaveAsOfJoinMapSinkClass,
+                    horizonJoinMasterMetadata,
+                    asOfMasterColumnFilter,
+                    asOfSlaveColumnFilter,
+                    asOfWriteSymbolAsString,
+                    asOfWriteStringAsVarcharA,
+                    asOfWriteStringAsVarcharB,
+                    writeTimestampAsNanosA,
+                    writeTimestampAsNanosB,
                     masterColumnCount,
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,

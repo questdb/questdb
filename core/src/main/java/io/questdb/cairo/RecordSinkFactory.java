@@ -101,6 +101,43 @@ public class RecordSinkFactory {
         return createSinkFromClass(clazz, columnFilter, keyFunctions);
     }
 
+    /**
+     * Same as {@link #getInstance(Class, ColumnTypes, ColumnFilter, ObjList, IntList, BitSet, BitSet, BitSet)},
+     * but additionally accepts {@code targetKeyTypes} -- see
+     * {@link #getInstance(CairoConfiguration, BytecodeAssembler, ColumnTypes, ColumnFilter, BitSet, BitSet, BitSet, ColumnTypes)}.
+     * Only consulted for the {@link LoopingRecordSink} fallback (clazz == null); an
+     * already-generated ASM class already has any widening baked in from generation time.
+     */
+    public static RecordSink getInstance(
+            @Nullable Class<RecordSink> clazz,
+            ColumnTypes columnTypes,
+            ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos,
+            @Nullable ColumnTypes targetKeyTypes
+    ) {
+        if (clazz == null) {
+            // Create LoopingRecordSink
+            LoopingRecordSink sink = new LoopingRecordSink(
+                    columnTypes,
+                    columnFilter,
+                    skewIndex,
+                    writeSymbolAsString,
+                    writeStringAsVarchar,
+                    writeTimestampAsNanos,
+                    targetKeyTypes
+            );
+            if (keyFunctions != null) {
+                sink.setFunctions(keyFunctions);
+            }
+            return sink;
+        }
+        return createSinkFromClass(clazz, columnFilter, keyFunctions);
+    }
+
     public static RecordSink getInstance(
             @NotNull CairoConfiguration configuration,
             @NotNull BytecodeAssembler asm,
@@ -140,6 +177,40 @@ public class RecordSinkFactory {
                 writeSymbolAsString,
                 writeStringAsVarchar,
                 writeTimestampAsNanos
+        );
+    }
+
+    /**
+     * Same as {@link #getInstance(CairoConfiguration, BytecodeAssembler, ColumnTypes, ColumnFilter, BitSet, BitSet, BitSet)},
+     * but additionally accepts {@code targetKeyTypes}: when a JOIN key column's own real type
+     * (from {@code columnTypes}) differs from the type recorded for that same slot in
+     * {@code targetKeyTypes} (e.g. an INT column feeding a LONG-wide comparison-buffer slot),
+     * the generated sink widens the value on write instead of assuming read type equals write
+     * type. Pass null (or use the overload without this parameter) when the two always agree,
+     * which is the case for every non-JOIN caller of this factory.
+     */
+    public static RecordSink getInstance(
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos,
+            @Nullable ColumnTypes targetKeyTypes
+    ) {
+        return getInstance(
+                configuration,
+                asm,
+                columnTypes,
+                columnFilter,
+                null,
+                null,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                writeTimestampAsNanos,
+                targetKeyTypes,
+                DEFAULT_METHOD_SIZE_LIMIT
         );
     }
 
@@ -284,6 +355,53 @@ public class RecordSinkFactory {
     }
 
     /**
+     * Same as {@link #getInstance(CairoConfiguration, BytecodeAssembler, ColumnTypes, ColumnFilter, ObjList, IntList, BitSet, BitSet, BitSet, int)},
+     * but additionally accepts {@code targetKeyTypes} -- see
+     * {@link #getInstance(CairoConfiguration, BytecodeAssembler, ColumnTypes, ColumnFilter, BitSet, BitSet, BitSet, ColumnTypes)}.
+     */
+    public static RecordSink getInstance(
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos,
+            @Nullable ColumnTypes targetKeyTypes,
+            int methodSizeLimit
+    ) {
+        // Phase 1: Get the class (or null for looping)
+        Class<RecordSink> clazz = getInstanceClass(
+                configuration,
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                writeTimestampAsNanos,
+                targetKeyTypes,
+                methodSizeLimit
+        );
+
+        // Phase 2: Create the sink from the class (or looping if null)
+        return getInstance(
+                clazz,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                writeTimestampAsNanos,
+                targetKeyTypes
+        );
+    }
+
+    /**
      * Phase 1: Simplified version with default method size limit.
      */
     @Nullable
@@ -313,6 +431,40 @@ public class RecordSinkFactory {
     }
 
     /**
+     * Same as {@link #getInstanceClass(CairoConfiguration, BytecodeAssembler, ColumnTypes, ColumnFilter, ObjList, IntList, BitSet, BitSet, BitSet)},
+     * but additionally accepts {@code targetKeyTypes} -- see
+     * {@link #getInstance(CairoConfiguration, BytecodeAssembler, ColumnTypes, ColumnFilter, BitSet, BitSet, BitSet, ColumnTypes)}.
+     * This is the overload the JOIN code path in {@code SqlCodeGenerator} calls directly.
+     */
+    @Nullable
+    public static Class<RecordSink> getInstanceClass(
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos,
+            @Nullable ColumnTypes targetKeyTypes
+    ) {
+        return getInstanceClass(
+                configuration,
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                writeTimestampAsNanos,
+                targetKeyTypes,
+                DEFAULT_METHOD_SIZE_LIMIT
+        );
+    }
+
+    /**
      * Legacy method: Returns the single-method generated class.
      * Does not support chunking or looping fallback.
      * Used when creating per-worker sinks for parallel GROUP BY.
@@ -334,6 +486,7 @@ public class RecordSinkFactory {
                 keyFunctions,
                 null,
                 writeSymbolAsString,
+                null,
                 null,
                 null
         );
@@ -376,7 +529,8 @@ public class RecordSinkFactory {
                         skewIndex,
                         writeSymbolAsString,
                         writeStringAsVarchar,
-                        writeTimestampAsNanos
+                        writeTimestampAsNanos,
+                        null
                 );
             case SINK_TYPE_CHUNKED:
                 Class<RecordSink> chunkedClass = getChunkedInstanceClassOrNull(
@@ -388,6 +542,7 @@ public class RecordSinkFactory {
                         writeSymbolAsString,
                         writeStringAsVarchar,
                         writeTimestampAsNanos,
+                        null,
                         methodSizeLimit
                 );
                 if (chunkedClass != null) {
@@ -413,7 +568,8 @@ public class RecordSinkFactory {
                     skewIndex,
                     writeSymbolAsString,
                     writeStringAsVarchar,
-                    writeTimestampAsNanos
+                    writeTimestampAsNanos,
+                    null
             );
         }
 
@@ -428,6 +584,110 @@ public class RecordSinkFactory {
                     writeSymbolAsString,
                     writeStringAsVarchar,
                     writeTimestampAsNanos,
+                    null,
+                    methodSizeLimit
+            );
+            if (chunkedClass != null) {
+                return chunkedClass;
+            }
+            // Fall through to null (looping) if chunking failed
+            LOG.info().$("chunked sink generation failed, falling back to looping sink [columnCount=").$(columnFilter.getColumnCount())
+                    .$(", estimatedBytecodeSize=").$(estimatedSize)
+                    .I$();
+        }
+
+        // Path 3: Return null to signal LoopingRecordSink should be used
+        return null;
+    }
+
+    /**
+     * Same as {@link #getInstanceClass(CairoConfiguration, BytecodeAssembler, ColumnTypes, ColumnFilter, ObjList, IntList, BitSet, BitSet, BitSet, int)},
+     * but additionally accepts {@code targetKeyTypes} -- see
+     * {@link #getInstance(CairoConfiguration, BytecodeAssembler, ColumnTypes, ColumnFilter, BitSet, BitSet, BitSet, ColumnTypes)}.
+     */
+    @Nullable
+    public static Class<RecordSink> getInstanceClass(
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos,
+            @Nullable ColumnTypes targetKeyTypes,
+            int methodSizeLimit
+    ) {
+        int copierType = configuration.getCopierType();
+
+        // Handle forced sink types (for testing)
+        switch (copierType) {
+            case SINK_TYPE_SINGLE_METHOD:
+                return getSingleInstanceClass(
+                        asm,
+                        columnTypes,
+                        columnFilter,
+                        keyFunctions,
+                        skewIndex,
+                        writeSymbolAsString,
+                        writeStringAsVarchar,
+                        writeTimestampAsNanos,
+                        targetKeyTypes
+                );
+            case SINK_TYPE_CHUNKED:
+                Class<RecordSink> chunkedClass = getChunkedInstanceClassOrNull(
+                        asm,
+                        columnTypes,
+                        columnFilter,
+                        keyFunctions,
+                        skewIndex,
+                        writeSymbolAsString,
+                        writeStringAsVarchar,
+                        writeTimestampAsNanos,
+                        targetKeyTypes,
+                        methodSizeLimit
+                );
+                if (chunkedClass != null) {
+                    return chunkedClass;
+                }
+                // Fall through to null (looping) if chunked fails
+                LOG.info().$("forced chunked sink generation failed, falling back to looping sink [columnCount=").$(columnFilter.getColumnCount()).I$();
+                return null;
+            case SINK_TYPE_LOOPING:
+                return null;
+        }
+
+        // Default: auto-select based on bytecode size
+        int estimatedSize = estimateBytecodeSize(columnTypes, columnFilter, keyFunctions);
+
+        // Path 1: Small schema - use single-method approach
+        if (estimatedSize <= methodSizeLimit) {
+            return getSingleInstanceClass(
+                    asm,
+                    columnTypes,
+                    columnFilter,
+                    keyFunctions,
+                    skewIndex,
+                    writeSymbolAsString,
+                    writeStringAsVarchar,
+                    writeTimestampAsNanos,
+                    targetKeyTypes
+            );
+        }
+
+        // Path 2: Large schema with chunking enabled
+        if (configuration.isCopierChunkedEnabled()) {
+            Class<RecordSink> chunkedClass = getChunkedInstanceClassOrNull(
+                    asm,
+                    columnTypes,
+                    columnFilter,
+                    keyFunctions,
+                    skewIndex,
+                    writeSymbolAsString,
+                    writeStringAsVarchar,
+                    writeTimestampAsNanos,
+                    targetKeyTypes,
                     methodSizeLimit
             );
             if (chunkedClass != null) {
@@ -593,6 +853,122 @@ public class RecordSinkFactory {
     }
 
     /**
+     * Emits get-source/convert/put-target bytecode for a JOIN key column whose real type is
+     * numerically narrower than the shared comparison buffer's slot type (e.g. an INT column
+     * feeding a LONG-wide slot) -- see {@link ColumnType#commonNumericWideningType(int, int)}.
+     * BYTE/SHORT sources have no null sentinel, so a plain JVM widening opcode is safe; INT/LONG
+     * sources must go through {@code Numbers.xToY}, which remaps the source type's own null
+     * sentinel (Integer.MIN_VALUE / Long.MIN_VALUE) to the target type's, instead of silently
+     * sign-extending it into a bogus non-null value.
+     */
+    private static void emitNumericKeyWiden(
+            BytecodeAssembler asm,
+            int sourceTag,
+            int targetTag,
+            int skewedIdx,
+            int rGetByte,
+            int rGetShort,
+            int rGetInt,
+            int rGetLong,
+            int rGetFloat,
+            int wPutShort,
+            int wPutInt,
+            int wPutLong,
+            int wPutFloat,
+            int wPutDouble,
+            int numbersIntToLong,
+            int numbersIntToFloat,
+            int numbersIntToDouble,
+            int numbersLongToFloat,
+            int numbersLongToDouble
+    ) {
+        asm.aload(2);
+        asm.aload(1);
+        asm.iconst(skewedIdx);
+        switch (sourceTag) {
+            case ColumnType.BYTE:
+                asm.invokeInterface(rGetByte, 1);
+                switch (targetTag) {
+                    case ColumnType.SHORT:
+                        asm.i2s();
+                        asm.invokeInterface(wPutShort, 1);
+                        break;
+                    case ColumnType.INT:
+                        asm.invokeInterface(wPutInt, 1);
+                        break;
+                    case ColumnType.LONG:
+                        asm.i2l();
+                        asm.invokeInterface(wPutLong, 2);
+                        break;
+                    case ColumnType.FLOAT:
+                        asm.i2f();
+                        asm.invokeInterface(wPutFloat, 1);
+                        break;
+                    case ColumnType.DOUBLE:
+                        asm.i2d();
+                        asm.invokeInterface(wPutDouble, 2);
+                        break;
+                }
+                break;
+            case ColumnType.SHORT:
+                asm.invokeInterface(rGetShort, 1);
+                switch (targetTag) {
+                    case ColumnType.INT:
+                        asm.invokeInterface(wPutInt, 1);
+                        break;
+                    case ColumnType.LONG:
+                        asm.i2l();
+                        asm.invokeInterface(wPutLong, 2);
+                        break;
+                    case ColumnType.FLOAT:
+                        asm.i2f();
+                        asm.invokeInterface(wPutFloat, 1);
+                        break;
+                    case ColumnType.DOUBLE:
+                        asm.i2d();
+                        asm.invokeInterface(wPutDouble, 2);
+                        break;
+                }
+                break;
+            case ColumnType.INT:
+                asm.invokeInterface(rGetInt, 1);
+                switch (targetTag) {
+                    case ColumnType.LONG:
+                        asm.invokeStatic(numbersIntToLong);
+                        asm.invokeInterface(wPutLong, 2);
+                        break;
+                    case ColumnType.FLOAT:
+                        asm.invokeStatic(numbersIntToFloat);
+                        asm.invokeInterface(wPutFloat, 1);
+                        break;
+                    case ColumnType.DOUBLE:
+                        asm.invokeStatic(numbersIntToDouble);
+                        asm.invokeInterface(wPutDouble, 2);
+                        break;
+                }
+                break;
+            case ColumnType.LONG:
+                asm.invokeInterface(rGetLong, 1);
+                switch (targetTag) {
+                    case ColumnType.FLOAT:
+                        asm.invokeStatic(numbersLongToFloat);
+                        asm.invokeInterface(wPutFloat, 1);
+                        break;
+                    case ColumnType.DOUBLE:
+                        asm.invokeStatic(numbersLongToDouble);
+                        asm.invokeInterface(wPutDouble, 2);
+                        break;
+                }
+                break;
+            case ColumnType.FLOAT:
+                asm.invokeInterface(rGetFloat, 1);
+                asm.f2d();
+                asm.invokeInterface(wPutDouble, 2);
+                break;
+        }
+    }
+
+    /**
      * Estimates the bytecode size for the copy method.
      */
     private static int estimateBytecodeSize(
@@ -715,6 +1091,7 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
             @Nullable BitSet writeTimestampAsNanos,
+            @Nullable ColumnTypes targetKeyTypes,
             IntList boundaries,
             int methodSizeLimit
     ) {
@@ -815,6 +1192,11 @@ public class RecordSinkFactory {
         final int wPutDecimal256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal256", "(Lio/questdb/std/Decimal256;)V");
 
         final int constantLong1000 = asm.poolLongConst(1000L);
+        final int numbersIntToLong = asm.poolMethod(Numbers.class, "intToLong", "(I)J");
+        final int numbersIntToFloat = asm.poolMethod(Numbers.class, "intToFloat", "(I)F");
+        final int numbersIntToDouble = asm.poolMethod(Numbers.class, "intToDouble", "(I)D");
+        final int numbersLongToFloat = asm.poolMethod(Numbers.class, "longToFloat", "(J)F");
+        final int numbersLongToDouble = asm.poolMethod(Numbers.class, "longToDouble", "(J)D");
         final int copyNameIndex = asm.poolUtf8("copy");
         final int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
         final int setFunctionsIndex = asm.poolUtf8("setFunctions");
@@ -1190,6 +1572,17 @@ public class RecordSinkFactory {
 
                 int skewedIdx = getSkewedIndex(index, skewIndex);
 
+                final int targetType = targetKeyTypes != null ? targetKeyTypes.getColumnType(i) : type;
+                if (factor == 1 && targetType != type && isNumericKeyWideningSource(type)) {
+                    emitNumericKeyWiden(
+                            asm, ColumnType.tagOf(type), ColumnType.tagOf(targetType), skewedIdx,
+                            rGetByte, rGetShort, rGetInt, rGetLong, rGetFloat,
+                            wPutShort, wPutInt, wPutLong, wPutFloat, wPutDouble,
+                            numbersIntToLong, numbersIntToFloat, numbersIntToDouble, numbersLongToFloat, numbersLongToDouble
+                    );
+                    continue;
+                }
+
                 switch (factor * ColumnType.tagOf(type)) {
                     case ColumnType.INT:
                         asm.aload(2);
@@ -1477,6 +1870,7 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
             @Nullable BitSet writeTimestampAsNanos,
+            @Nullable ColumnTypes targetKeyTypes,
             int methodSizeLimit
     ) {
         IntList boundaries = calculateChunkBoundaries(columnTypes, columnFilter);
@@ -1493,7 +1887,8 @@ public class RecordSinkFactory {
                         skewIndex,
                         writeSymbolAsString,
                         writeStringAsVarchar,
-                        writeTimestampAsNanos
+                        writeTimestampAsNanos,
+                        targetKeyTypes
                 );
             } catch (BytecodeException e) {
                 // Single-sink generation failed, signal to use looping
@@ -1511,6 +1906,7 @@ public class RecordSinkFactory {
                     writeSymbolAsString,
                     writeStringAsVarchar,
                     writeTimestampAsNanos,
+                    targetKeyTypes,
                     boundaries,
                     methodSizeLimit
             );
@@ -1528,7 +1924,8 @@ public class RecordSinkFactory {
             @Transient @Nullable IntList skewIndex,
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
-            @Nullable BitSet writeTimestampAsNanos
+            @Nullable BitSet writeTimestampAsNanos,
+            @Nullable ColumnTypes targetKeyTypes
     ) {
         asm.init(RecordSink.class);
         asm.setupPool();
@@ -1625,6 +2022,11 @@ public class RecordSinkFactory {
         final int wPutDecimal256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal256", "(Lio/questdb/std/Decimal256;)V");
 
         final int constantLong1000 = asm.poolLongConst(1000L);
+        final int numbersIntToLong = asm.poolMethod(Numbers.class, "intToLong", "(I)J");
+        final int numbersIntToFloat = asm.poolMethod(Numbers.class, "intToFloat", "(I)F");
+        final int numbersIntToDouble = asm.poolMethod(Numbers.class, "intToDouble", "(I)D");
+        final int numbersLongToFloat = asm.poolMethod(Numbers.class, "longToFloat", "(J)F");
+        final int numbersLongToDouble = asm.poolMethod(Numbers.class, "longToDouble", "(J)D");
         final int copyNameIndex = asm.poolUtf8("copy");
         final int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
         final int setFunctionsIndex = asm.poolUtf8("setFunctions");
@@ -1717,6 +2119,18 @@ public class RecordSinkFactory {
             final boolean symAsString = writeSymbolAsString != null && writeSymbolAsString.get(index);
             final boolean strAsVarchar = writeStringAsVarchar != null && writeStringAsVarchar.get(index);
             final boolean timestampAsNanos = writeTimestampAsNanos != null && writeTimestampAsNanos.get(index);
+
+            final int targetType = targetKeyTypes != null ? targetKeyTypes.getColumnType(i) : type;
+            if (factor == 1 && targetType != type && isNumericKeyWideningSource(type)) {
+                emitNumericKeyWiden(
+                        asm, ColumnType.tagOf(type), ColumnType.tagOf(targetType), getSkewedIndex(index, skewIndex),
+                        rGetByte, rGetShort, rGetInt, rGetLong, rGetFloat,
+                        wPutShort, wPutInt, wPutLong, wPutFloat, wPutDouble,
+                        numbersIntToLong, numbersIntToFloat, numbersIntToDouble, numbersLongToFloat, numbersLongToDouble
+                );
+                continue;
+            }
+
             int skewedIndex;
             switch (factor * ColumnType.tagOf(type)) {
                 case ColumnType.INT:
@@ -2316,6 +2730,23 @@ public class RecordSinkFactory {
             return src;
         }
         return skewIndex.getQuick(src);
+    }
+
+    /**
+     * True for exactly the source tags {@link #emitNumericKeyWiden} knows how to widen
+     * (BYTE/SHORT/INT/LONG/FLOAT). A join key column's real type can also legitimately differ
+     * from its {@code targetKeyTypes} slot for reasons unrelated to numeric widening -- SYMBOL
+     * written as STRING, STRING/VARCHAR interchangeability, TIMESTAMP nanos-vs-micros -- all of
+     * which the ORIGINAL per-column switch already handles correctly via the writeSymbolAsString/
+     * writeStringAsVarchar/writeTimestampAsNanos flags. Routing one of THOSE mismatches into
+     * emitNumericKeyWiden instead would silently emit nothing for the unmatched source tag while
+     * having already pushed operands onto the stack, corrupting the generated method. This check
+     * is what keeps the numeric-widening branch from ever intercepting them.
+     */
+    private static boolean isNumericKeyWideningSource(int columnType) {
+        final int tag = ColumnType.tagOf(columnType);
+        return tag == ColumnType.BYTE || tag == ColumnType.SHORT || tag == ColumnType.INT
+                || tag == ColumnType.LONG || tag == ColumnType.FLOAT;
     }
 
     /**
