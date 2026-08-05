@@ -3004,7 +3004,9 @@ public class ConcurrentLongHashMap<V> implements Serializable {
                         waiter = Thread.currentThread();
                     }
                 } else if (waiting)
-                    LockSupport.park(this);
+                    // Not LockSupport.park(): it returns immediately, without clearing,
+                    // while the caller's interrupt flag is set, which spins a whole core.
+                    Os.park();
             }
         }
 
