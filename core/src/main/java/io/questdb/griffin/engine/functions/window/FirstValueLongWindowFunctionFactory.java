@@ -801,7 +801,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 if (!frameLoBounded && size > 0) {
                     if (firstIdx == 0) { // use firstIdx as a flag
                         long ts = memory.getLong(startOffset);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             firstIdx = 1;
                             firstValue = memory.getLong(startOffset + Long.BYTES);
                             mapValue.putLong(3, firstIdx);
@@ -821,11 +821,11 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             findNewFirstValue = true;
                             this.firstValue = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         }
@@ -1197,7 +1197,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             if (!frameLoBounded && size > 0) {
                 if (firstIdx == 0) { // use firstIdx as a flag firstValue has in frame.
                     long ts = memory.getLong(startOffset);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         firstIdx = 1;
                         firstValue = memory.getLong(startOffset + Long.BYTES);
                     } else {
@@ -1216,11 +1216,11 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) > maxDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                     newFirstIdx = (idx + 1) % capacity;
                     size--;
                 } else {
-                    if (Math.abs(timestamp - ts) >= minDiff) { // find the first not null value
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) { // find the first not null value
                         findNewFirstValue = true;
                         this.firstValue = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
                     }
@@ -1976,7 +1976,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             if (frameSize > 0) {
                                 frameSize--;
                             }
@@ -2008,7 +2008,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                         if (diff <= maxDiff && diff >= minDiff) {
                             frameSize++;
@@ -2020,7 +2020,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                     if (size > 0) {
                         long idx = firstIdx % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             frameSize++;
                             newFirstIdx = idx;
                         }
@@ -2751,7 +2751,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         if (frameSize > 0) {
                             frameSize--;
                         }
@@ -2794,7 +2794,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 for (long i = frameSize, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
                         frameSize++;
@@ -2806,7 +2806,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 if (size > 0) {
                     long idx = firstIdx % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         frameSize++;
                         newFirstIdx = idx;
                     }

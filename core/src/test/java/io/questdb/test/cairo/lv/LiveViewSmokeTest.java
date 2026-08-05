@@ -1587,38 +1587,60 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     /**
-     * Drives the fixture both stale-percent cases share and asserts what the trigger did with
-     * it. Eight partitions open in day 1, five follow the frontier into day 2, and one day-3 row
-     * then puts the other three a full bucket behind it: stalePartitionCount 3 against an
-     * eight-entry map. The absolute threshold sits at 2, so both count arms are clear and the
+     * Drives the fixture the stale-percent cases share and asserts what the trigger did with
+     * it. Eight partitions open in day 1, {@code dayTwoSymCount} of them follow the frontier
+     * into day 2, and one day-3 row then puts the rest a full bucket behind it:
+     * stalePartitionCount {@code 8 - dayTwoSymCount} against an eight-entry map.
+     * {@code compactThreshold} sits at or below that count, so both count arms are clear and the
      * stale-percent arm alone decides.
+     * <p>
+     * The stale share is a parameter because a single share cannot pin an endpoint: at three
+     * of eight the arm fires for every setting up to 37 and holds for every setting from 38,
+     * so a case there says nothing a case at 25 or 50 has not already said. One of eight and
+     * seven of eight are what put each endpoint on its own side of a boundary.
      */
-    private void assertFrontierSweepStalePercentTrigger(long expectedSweeps, long expectedAnchorMapSize) throws Exception {
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+    private void assertFrontierSweepStalePercentTrigger(
+            int dayTwoSymCount,
+            int compactThreshold,
+            long expectedSweeps,
+            long expectedAnchorMapSize
+    ) throws Exception {
+        // Single-digit hours below, and sym 1 needs a day-2 row before its day-3 row.
+        assert dayTwoSymCount >= 1 && dayTwoSymCount <= 8;
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, compactThreshold);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
+            // The anchor buckets by day, so each row's own value is its whole frame and the
+            // answers below are the inserts read back - which is the point: a sweep reclaims
+            // state no live row depends on, so it can never move a result.
+            final StringBuilder dayOne = new StringBuilder("INSERT INTO base (ts, x, sym) VALUES ");
+            final StringBuilder later = new StringBuilder("INSERT INTO base (ts, x, sym) VALUES ");
+            final StringBuilder expected = new StringBuilder("ts\tsym\ts\n");
+            for (int i = 1; i <= 8; i++) {
+                dayOne.append(i > 1 ? ", " : "")
+                        .append("('2026-08-01T0").append(i - 1).append(":00:00.000000Z', ")
+                        .append(10 * i).append(", ").append(i).append(')');
+                expected.append("2026-08-01T0").append(i - 1).append(":00:00.000000Z\t")
+                        .append(i).append('\t').append(10 * i).append(".0\n");
+            }
+            for (int i = 1; i <= dayTwoSymCount; i++) {
+                later.append(i > 1 ? ", " : "")
+                        .append("('2026-08-02T0").append(i - 1).append(":00:00.000000Z', ")
+                        .append(10 * i + 1).append(", ").append(i).append(')');
+                expected.append("2026-08-02T0").append(i - 1).append(":00:00.000000Z\t")
+                        .append(i).append('\t').append(10 * i + 1).append(".0\n");
+            }
+            later.append(", ('2026-08-03T00:00:00.000000Z', 12, 1)");
+            expected.append("2026-08-03T00:00:00.000000Z\t1\t12.0\n");
+
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 setCurrentMicros(0L);
-                execute("INSERT INTO base (ts, x, sym) VALUES " +
-                        "('2026-08-01T00:00:00.000000Z', 10, 1), " +
-                        "('2026-08-01T01:00:00.000000Z', 20, 2), " +
-                        "('2026-08-01T02:00:00.000000Z', 30, 3), " +
-                        "('2026-08-01T03:00:00.000000Z', 40, 4), " +
-                        "('2026-08-01T04:00:00.000000Z', 50, 5), " +
-                        "('2026-08-01T05:00:00.000000Z', 60, 6), " +
-                        "('2026-08-01T06:00:00.000000Z', 70, 7), " +
-                        "('2026-08-01T07:00:00.000000Z', 80, 8)");
-                execute("INSERT INTO base (ts, x, sym) VALUES " +
-                        "('2026-08-02T00:00:00.000000Z', 11, 1), " +
-                        "('2026-08-02T01:00:00.000000Z', 21, 2), " +
-                        "('2026-08-02T02:00:00.000000Z', 31, 3), " +
-                        "('2026-08-02T03:00:00.000000Z', 41, 4), " +
-                        "('2026-08-02T04:00:00.000000Z', 51, 5), " +
-                        "('2026-08-03T00:00:00.000000Z', 12, 1)");
+                execute(dayOne.toString());
+                execute(later.toString());
                 drainWalQueue();
                 drainJob(job);
                 drainWalQueue();
@@ -1626,32 +1648,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 LiveViewWindow window = engine.getLiveViewRegistry().getViewInstance("lv").getAnchorWindow();
                 Assert.assertNotNull(window);
                 Assert.assertEquals(
-                        "the stale-percent arm decides whether three of eight is enough",
+                        "the stale-percent arm decides whether " + (8 - dayTwoSymCount) + " of eight is enough",
                         expectedSweeps,
                         window.getCompactionCount()
                 );
                 Assert.assertEquals(expectedAnchorMapSize, window.getAnchorMapSize());
-                // Whichever way the trigger went, the view's answers are the same: a sweep
-                // reclaims state no live row depends on, so it can never move a result.
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts, sym")
                         .noLeakCheck()
                         .timestamp("ts")
                         .expectSize()
-                        .returns("ts\tsym\ts\n" +
-                                "2026-08-01T00:00:00.000000Z\t1\t10.0\n" +
-                                "2026-08-01T01:00:00.000000Z\t2\t20.0\n" +
-                                "2026-08-01T02:00:00.000000Z\t3\t30.0\n" +
-                                "2026-08-01T03:00:00.000000Z\t4\t40.0\n" +
-                                "2026-08-01T04:00:00.000000Z\t5\t50.0\n" +
-                                "2026-08-01T05:00:00.000000Z\t6\t60.0\n" +
-                                "2026-08-01T06:00:00.000000Z\t7\t70.0\n" +
-                                "2026-08-01T07:00:00.000000Z\t8\t80.0\n" +
-                                "2026-08-02T00:00:00.000000Z\t1\t11.0\n" +
-                                "2026-08-02T01:00:00.000000Z\t2\t21.0\n" +
-                                "2026-08-02T02:00:00.000000Z\t3\t31.0\n" +
-                                "2026-08-02T03:00:00.000000Z\t4\t41.0\n" +
-                                "2026-08-02T04:00:00.000000Z\t5\t51.0\n" +
-                                "2026-08-03T00:00:00.000000Z\t1\t12.0\n");
+                        .returns(expected.toString());
             }
 
             execute("DROP LIVE VIEW lv");
@@ -12701,7 +12707,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // about the arm rather than about the frontier accounting: a change to the accounting
         // would move both numbers together and break both tests.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT, 25);
-        assertFrontierSweepStalePercentTrigger(1L, 5L);
+        assertFrontierSweepStalePercentTrigger(5, 2, 1L, 5L);
+    }
+
+    @Test
+    public void testFrontierSweepStalePercentDefaultFiresOnANearlyWhollyStaleMap() throws Exception {
+        // The contrast the 100 case needs. Seven of eight is 87.5%, which the 50 default
+        // accepts, so the sweep drops all seven and leaves the one partition still following
+        // the frontier. Without this, the 100 case below would only be repeating what the
+        // default already refuses at three of eight.
+        assertFrontierSweepStalePercentTrigger(1, 2, 1L, 1L);
     }
 
     @Test
@@ -12710,7 +12725,36 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // then leaves stalePartitionCount at 3 against an eight-entry map, which clears the
         // absolute threshold (2) and leaves the stale-percent arm alone to decide. At the 50
         // default 3/8 is not enough and no sweep fires.
-        assertFrontierSweepStalePercentTrigger(0L, 8L);
+        assertFrontierSweepStalePercentTrigger(5, 2, 0L, 8L);
+    }
+
+    @Test
+    public void testFrontierSweepStalePercentHundredHoldsBelowAWhollyStaleMap() throws Exception {
+        // The upper endpoint. At 100 the arm reads stalePartitionCount >= mapSize, so a map
+        // one entry short of wholly stale still does not sweep - the same seven of eight the
+        // default fires on above. That pair is what makes this about the endpoint: every
+        // setting up to 87 compacts this workload and only 88 upwards refuses it.
+        //
+        // The share is in fact unreachable: the row that reaches the trigger has just put its
+        // own partition in the current bucket, and the map is the three buckets added up, so
+        // stalePartitionCount is at most mapSize - 1 whenever the arm is read and 100 disables
+        // the sweep outright. The case pins the refusal either way, which is what the setting
+        // has to mean.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT, 100);
+        assertFrontierSweepStalePercentTrigger(1, 2, 0L, 8L);
+    }
+
+    @Test
+    public void testFrontierSweepStalePercentZeroLeavesTheCountArmsToDecide() throws Exception {
+        // The lower endpoint, at the thinnest stale share the fixture can produce: one of
+        // eight, 12.5%, which every setting from 13 upwards refuses. At 0 the arm reads
+        // stalePartitionCount * 100 >= 0, which no stale count can fail, so the two count
+        // arms - the absolute threshold, dropped to 1 here, and a non-empty stale set - are
+        // all that remains between a frontier move and a sweep, and the one stale partition
+        // goes. That a *zero* stale count still does not sweep is the threshold arm's doing,
+        // not this one's, so that half of "the gate is removed" is not observable here.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT, 0);
+        assertFrontierSweepStalePercentTrigger(7, 1, 1L, 7L);
     }
 
     @Test

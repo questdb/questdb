@@ -737,7 +737,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -767,7 +767,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -1110,7 +1110,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -1152,7 +1152,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -1858,7 +1858,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -1873,7 +1873,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -2466,7 +2466,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -2481,7 +2481,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {

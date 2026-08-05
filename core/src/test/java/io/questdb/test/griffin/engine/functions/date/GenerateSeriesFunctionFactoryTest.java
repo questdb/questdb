@@ -883,6 +883,51 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testTimestampSeriesAtTheEdgesOfTheLongRange() throws Exception {
+        // A series that walks off the end of the long range. The last row is the top of it,
+        // and one more step wraps to the bottom - which is still inside the series by any
+        // comparison, so a walk that advances first and asks afterwards never terminates and
+        // emits the whole negative half of the range on the way, NULL sentinel included.
+        assertQuery("generate_series(9223372036854775806::timestamp, 9223372036854775807::timestamp, 1L)")
+                .timestamp("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        294247-01-10T04:00:54.775806Z
+                        294247-01-10T04:00:54.775807Z
+                        """);
+
+        // toTop() parks the record one step before the first row, which for a descending
+        // series anchored at the top of the range is itself off the end of it. The wrap in
+        // toTop() and the wrap in the first advance cancel, so advancing first happens to
+        // land right here - but reading that sentinel as a position does not, and this is
+        // the shape that catches a walk which compares before it advances.
+        assertQuery("generate_series(9223372036854775805::timestamp, 9223372036854775801::timestamp, -3L)")
+                .timestampDesc("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        294247-01-10T04:00:54.775805Z
+                        294247-01-10T04:00:54.775802Z
+                        """);
+
+        // A span wider than a signed long can hold: the row count has to divide it as
+        // unsigned - Math.abs(end - start) is negative here - and the walk has to stop
+        // rather than wrap round and run forever.
+        assertQuery("generate_series((-4611686018427387904)::timestamp, 4611686018427387904::timestamp, 2305843009213693952L)")
+                .timestamp("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        -144169-06-28T09:59:32.612096Z
+                        -71100-09-29T04:59:46.306048Z
+                        1970-01-01T00:00:00.000000Z
+                        75039-04-04T19:00:13.693952Z
+                        148108-07-06T14:00:27.387904Z
+                        """);
+    }
+
+    @Test
     public void testTimestampStringBindVariables() throws Exception {
         bindVariableService.setStr("t1", "2025-01-01");
         bindVariableService.setStr("t2", "2025-02-01");

@@ -989,6 +989,20 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testLiveViewPartitionCompactStalePercentAcceptsBothEndpoints() throws Exception {
+        // 0 and 100 are the two values the trigger gives their own meaning to - 0 leaves the
+        // percentage arm satisfied by anything, 100 satisfies it only when every entry in the
+        // map is stale - so both have to survive parse time. Only the values outside the range
+        // are rejected, and the sibling case below is what pins that.
+        for (String value : new String[]{"0", "100"}) {
+            final Properties properties = new Properties();
+            properties.setProperty("cairo.live.view.partition.compact.stale.percent", value);
+            final CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+            Assert.assertEquals(Integer.parseInt(value), cairo.getLiveViewPartitionCompactStalePercent());
+        }
+    }
+
+    @Test
     public void testLiveViewPartitionCompactStalePercentRejectsOutOfRange() throws Exception {
         // It is a share of the anchor map and stalePartitionCount counts entries of that same
         // map, so only 0..100 means anything. Parse time is where a value outside the range

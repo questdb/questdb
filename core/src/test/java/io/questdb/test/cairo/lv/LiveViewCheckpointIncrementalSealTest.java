@@ -275,6 +275,98 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     @Test
+    public void testASweepThenAFailedPublishKeepsItsRemovalsForTheRetry() throws Exception {
+        // The two halves the pair beside this one covers separately: a seal that dies after
+        // durable metadata, and a sweep that fills the dirty sets with removals. Together
+        // they are the case where what the failed seal owed the root is not a handful of
+        // touched keys but every key the sweep dropped - and the runtime's only record of
+        // them is the eviction markers and the inflated capacity holding them. Clearing
+        // either on the way out of a failure would leave the root naming partitions no map
+        // has, and no later seal would go looking.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            createViewWithGeneratedSeed(MIDNIGHT_ANCHOR, SWEEP_CAPACITY_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+                Assert.assertEquals(SWEEP_CAPACITY_ACCOUNTS, anchorWindow().getAnchorMapSize());
+
+                // One account follows the frontier into the next bucket, leaving the other
+                // 1999 a bucket behind. This one seals cleanly; the readings that the failure
+                // must not disturb are taken after it, not before.
+                commit("('2026-01-02T01:00:00.000000Z', 'acct-1', 1.0)", job);
+                assertDirtySetsClearedByPublish();
+                final LongList capacityBefore = readDirtySetKeyCapacities();
+                final long baselineGeneration = anchorWindow().getCheckpointBaselineGeneration();
+                final long sealFailuresBefore = viewInstance().getCheckpointSealFailures();
+
+                // The second advance is what sweeps, and at one boundary per row the same
+                // cadence seals - so the seal carrying 1999 removals is the one that dies.
+                job.setCheckpointTimelineTestFailureStage(
+                        LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH
+                );
+                commit("('2026-01-03T01:00:00.000000Z', 'acct-1', 2.0)", job);
+
+                Assert.assertEquals(1, anchorWindow().getCompactionCount());
+                Assert.assertEquals(
+                        SWEEP_CAPACITY_ACCOUNTS - 1,
+                        anchorWindow().getCompactedPartitionCount()
+                );
+                Assert.assertEquals(1, anchorWindow().getAnchorMapSize());
+                Assert.assertTrue(
+                        "the injected failure must be counted as a failed seal",
+                        viewInstance().getCheckpointSealFailures() > sealFailuresBefore
+                );
+                Assert.assertEquals(
+                        "a failed publish must not adopt a new baseline",
+                        baselineGeneration,
+                        anchorWindow().getCheckpointBaselineGeneration()
+                );
+                // Every removal the failed seal was going to write is still marked, and the
+                // capacity holding them is still standing - a shrink here would drop them.
+                assertEvictionMarkerCount(SWEEP_CAPACITY_ACCOUNTS - 1);
+                final LongList capacityDuring = readDirtySetKeyCapacities();
+                boolean isInflated = false;
+                for (int i = 0, n = capacityBefore.size(); i < n; i++) {
+                    isInflated |= capacityDuring.getQuick(i) > capacityBefore.getQuick(i);
+                }
+                Assert.assertTrue("the sweep's removals must still be held", isInflated);
+
+                // The retry is what publishes them, and only then does the capacity go back.
+                job.setCheckpointTimelineTestFailureStage(0);
+                commit("('2026-01-03T02:00:00.000000Z', 'acct-1', 3.0)", job);
+                assertDirtySetsClearedByPublish();
+                assertEvictionMarkerCount(0);
+                Assert.assertTrue(
+                        "the recovering seal must publish a new generation",
+                        anchorWindow().getCheckpointBaselineGeneration() > baselineGeneration
+                );
+                final LongList capacityAfter = readDirtySetKeyCapacities();
+                for (int i = 0, n = capacityBefore.size(); i < n; i++) {
+                    Assert.assertTrue(
+                            "dirty set " + i + " kept the sweep's capacity: before="
+                                    + capacityBefore.getQuick(i) + " after=" + capacityAfter.getQuick(i),
+                            capacityAfter.getQuick(i) <= capacityBefore.getQuick(i)
+                    );
+                }
+                assertViewMatchesRecompute(MIDNIGHT_ANCHOR);
+            }
+
+            // The proof the removals reached the root rather than merely leaving the maps:
+            // a restart reads the root and nothing else, and must find only the survivor.
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                Assert.assertEquals(1, anchorWindow().getAnchorMapSize());
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(MIDNIGHT_ANCHOR);
+            }
+        });
+    }
+
+    @Test
     public void testDirtyKeyMissingWithoutASweepStillFails() throws Exception {
         // Four rows per boundary, so the three rows below leave the dirty sets standing
         // and the fourth is what seals.

@@ -67,6 +67,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.zip.CRC32;
 
 /**
  * Coverage for the fused window-state root: one persistent partition map holding an
@@ -321,6 +322,112 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAWindowRootHeaderIsValidatedFieldByField() throws Exception {
+        assertMemoryLeak(() -> {
+            final LiveViewCheckpointPageRef rootRef = new LiveViewCheckpointPageRef();
+            buildDirectRoot(1, new LiveViewCheckpointPageRef(), sumCountManifest(), true, builder -> {
+                builder.putPartition(directKey(1), sumCountPayload(100, 1.5, 3), false);
+                builder.putPartition(directKey(2), sumCountPayload(200, -2.5, 7), false);
+            }, rootRef);
+
+            // The fixture reads clean, so every rejection below is the patch's doing.
+            openDirectRoot(rootRef);
+
+            // Every case patches one field and re-checksums the page. If the reseal did not
+            // reproduce the writer's checksum byte for byte, each case would stop at the page
+            // CRC and never reach the field it means to test - so prove the reseal first, by
+            // running it over an unpatched copy and requiring the file back unchanged.
+            final byte[] pristine = readMetaSegment(rootRef.getSegmentId());
+            final byte[] resealed = Arrays.copyOf(pristine, pristine.length);
+            resealPage(resealed, (int) rootRef.getOffset(), rootRef.getLength());
+            Assert.assertArrayEquals(
+                    "the reseal must reproduce the writer's page checksum",
+                    pristine,
+                    resealed
+            );
+
+            // A root written by a build that does not exist yet.
+            assertRootFieldRejected(rootRef, 0, 2, "window state root format version mismatch");
+
+            // Widths the reader would slice an entry by. Out of bounds first, then the
+            // narrower "present but unusable" shapes each of the three parts has.
+            assertRootFieldRejected(rootRef, 3 * Integer.BYTES, -1, "window state identity length out of bounds");
+            assertRootFieldRejected(rootRef, 4 * Integer.BYTES, -1, "window state key schema length out of bounds");
+            assertRootFieldRejected(rootRef, 5 * Integer.BYTES, -1, "window state manifest length out of bounds");
+            assertRootFieldRejected(
+                    rootRef,
+                    3 * Integer.BYTES,
+                    0,
+                    "window state root identity, key schema or manifest invalid"
+            );
+            assertRootFieldRejected(
+                    rootRef,
+                    4 * Integer.BYTES,
+                    Integer.BYTES - 1,
+                    "window state root identity, key schema or manifest invalid"
+            );
+            assertRootFieldRejected(
+                    rootRef,
+                    5 * Integer.BYTES,
+                    0,
+                    "window state root identity, key schema or manifest invalid"
+            );
+
+            // An inline width at or below the anchor's own leaves no room for a component,
+            // and the leaf carries no length of its own to contradict it.
+            assertRootFieldRejected(
+                    rootRef,
+                    2 * Integer.BYTES,
+                    LiveViewWindowStatePlan.ANCHOR_STATE_BYTES,
+                    "window state root inline payload width invalid"
+            );
+
+            // Segment counts on both sides of the accepted range.
+            assertRootFieldRejected(rootRef, 6 * Integer.BYTES, -1, "window state root segment count invalid");
+            assertRootFieldRejected(rootRef, 6 * Integer.BYTES, (1 << 20) + 1, "window state root segment count invalid");
+
+            // A width the header states and the page does not carry: the parts have to add
+            // back up to the payload the page framing recorded.
+            assertRootFieldRejected(
+                    rootRef,
+                    3 * Integer.BYTES,
+                    DIRECT_WINDOW_IDENTITY.length + 1,
+                    "window state root payload length mismatch"
+            );
+
+            // The catalogue follows the three variable-length parts, so its first pair starts
+            // where they end. One pair, so `previous` is still -1 and the ordering arm reads
+            // as "not negative" here; the pair after it is what an unsorted catalogue needs
+            // and this fixture has only the one.
+            try (
+                    LiveViewCheckpointWindowRoot root = new LiveViewCheckpointWindowRoot(configuration);
+                    Path dir = new Path()
+            ) {
+                directRootDir(dir);
+                root.of(dir, rootRef);
+                Assert.assertEquals("the fixture names one data segment", 1, root.getSegmentUseCountSize());
+            }
+            final int catalogueOffset = 7 * Integer.BYTES + LiveViewCheckpointPageRef.BYTES
+                    + DIRECT_WINDOW_IDENTITY.length + DIRECT_KEY_SCHEMA.length
+                    + sumCountManifest().getEncoded().length;
+            assertRootLongFieldRejected(
+                    rootRef,
+                    catalogueOffset,
+                    -1,
+                    "window state root segment catalogue invalid"
+            );
+            // A use count of zero names a segment nothing holds, which is a pair the fold
+            // should have dropped rather than written.
+            assertRootLongFieldRejected(
+                    rootRef,
+                    catalogueOffset + Long.BYTES,
+                    0,
+                    "window state root segment catalogue invalid"
+            );
+        });
+    }
+
+    @Test
     public void testDerivedProjectionsSealOneAccumulatorAndRestoreFromItsFields() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();
@@ -518,6 +625,54 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         }
     }
 
+    /**
+     * Patches one little-endian int field of the window root's page payload, re-checksums the
+     * page, and requires the read to name {@code message}. The segment file goes back to its
+     * pristine bytes afterwards, so the cases are order-independent.
+     */
+    private static void assertRootFieldRejected(
+            LiveViewCheckpointPageRef rootRef,
+            int payloadOffset,
+            int patched,
+            CharSequence message
+    ) {
+        final java.nio.file.Path file = metaSegmentFile(rootRef.getSegmentId());
+        final byte[] pristine = readMetaSegment(rootRef.getSegmentId());
+        final byte[] corrupted = Arrays.copyOf(pristine, pristine.length);
+        final int pageOffset = (int) rootRef.getOffset();
+        writeIntLe(corrupted, pageOffset + LiveViewCheckpointLayout.PAGE_HEADER_SIZE + payloadOffset, patched);
+        resealPage(corrupted, pageOffset, rootRef.getLength());
+        try {
+            writeMetaSegment(file, corrupted);
+            assertInvalid(() -> openDirectRoot(rootRef), message);
+        } finally {
+            writeMetaSegment(file, pristine);
+        }
+    }
+
+    /**
+     * The {@link #assertRootFieldRejected} of a 64-bit field, for the segment catalogue.
+     */
+    private static void assertRootLongFieldRejected(
+            LiveViewCheckpointPageRef rootRef,
+            int payloadOffset,
+            long patched,
+            CharSequence message
+    ) {
+        final java.nio.file.Path file = metaSegmentFile(rootRef.getSegmentId());
+        final byte[] pristine = readMetaSegment(rootRef.getSegmentId());
+        final byte[] corrupted = Arrays.copyOf(pristine, pristine.length);
+        final int pageOffset = (int) rootRef.getOffset();
+        writeLongLe(corrupted, pageOffset + LiveViewCheckpointLayout.PAGE_HEADER_SIZE + payloadOffset, patched);
+        resealPage(corrupted, pageOffset, rootRef.getLength());
+        try {
+            writeMetaSegment(file, corrupted);
+            assertInvalid(() -> openDirectRoot(rootRef), message);
+        } finally {
+            writeMetaSegment(file, pristine);
+        }
+    }
+
     private static void buildDirectRoot(
             long segmentId,
             LiveViewCheckpointPageRef oldRootRef,
@@ -644,6 +799,24 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         );
     }
 
+    private static java.nio.file.Path metaSegmentFile(long segmentId) {
+        try (Path dir = new Path(); Path file = new Path()) {
+            directRootDir(dir);
+            LiveViewCheckpointLayout.metaSegmentPath(file, dir, segmentId);
+            return java.nio.file.Paths.get(file.toString());
+        }
+    }
+
+    private static void openDirectRoot(LiveViewCheckpointPageRef rootRef) {
+        try (
+                LiveViewCheckpointWindowRoot root = new LiveViewCheckpointWindowRoot(configuration);
+                Path dir = new Path()
+        ) {
+            directRootDir(dir);
+            root.of(dir, rootRef);
+        }
+    }
+
     private static byte[] otherWindowIdentity() {
         return LiveViewWindowStatePlan.encodeWindowIdentity("w2", "1:3:cod_acct_no;", "1:2:created_at:1;");
     }
@@ -662,6 +835,25 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             value |= (bytes[offset + i] & 0xFFL) << (8 * i);
         }
         return value;
+    }
+
+    private static byte[] readMetaSegment(long segmentId) {
+        try {
+            return java.nio.file.Files.readAllBytes(metaSegmentFile(segmentId));
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /**
+     * Rewrites the page checksum the reader verifies before it looks at any field: CRC32 over
+     * the length, the kind and the payload, which is everything past the checksum itself.
+     */
+    private static void resealPage(byte[] segment, int pageOffset, int pageTotalLength) {
+        final CRC32 crc = new CRC32();
+        final int from = pageOffset + LiveViewCheckpointLayout.PAGE_LENGTH_OFFSET;
+        crc.update(segment, from, pageOffset + pageTotalLength - from);
+        writeIntLe(segment, pageOffset + LiveViewCheckpointLayout.PAGE_CRC_OFFSET, (int) crc.getValue());
     }
 
     private static LiveViewWindowStateManifest sumCountManifest() {
@@ -683,9 +875,23 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
     }
 
+    private static void writeIntLe(byte[] target, int offset, int value) {
+        for (int i = 0; i < Integer.BYTES; i++) {
+            target[offset + i] = (byte) (value >>> (8 * i));
+        }
+    }
+
     private static void writeLongLe(byte[] target, int offset, long value) {
         for (int i = 0; i < Long.BYTES; i++) {
             target[offset + i] = (byte) (value >>> (8 * i));
+        }
+    }
+
+    private static void writeMetaSegment(java.nio.file.Path file, byte[] bytes) {
+        try {
+            java.nio.file.Files.write(file, bytes);
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
         }
     }
 

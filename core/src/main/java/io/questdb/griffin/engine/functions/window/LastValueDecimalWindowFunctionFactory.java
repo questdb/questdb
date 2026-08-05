@@ -61,6 +61,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -1921,7 +1922,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -1948,7 +1949,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -2303,7 +2304,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -2337,7 +2338,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -3004,7 +3005,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -3018,7 +3019,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -3622,7 +3623,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -3636,7 +3637,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -4161,7 +4162,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -4188,7 +4189,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -4528,7 +4529,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -4562,7 +4563,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -5201,7 +5202,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -5215,7 +5216,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -5800,7 +5801,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -5814,7 +5815,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -6351,7 +6352,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -6378,7 +6379,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -6739,7 +6740,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -6773,7 +6774,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -7456,7 +7457,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -7470,7 +7471,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -8080,7 +8081,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -8094,7 +8095,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -8625,7 +8626,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long j = 0, n = size; j < n; j++) {
                         long idx = (firstIdx + j) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -8652,7 +8653,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long j = 0, n = size; j < n; j++) {
                     long idx = (firstIdx + j) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -8992,7 +8993,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long j = 0, n = size; j < n; j++) {
                     long idx = (firstIdx + j) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -9026,7 +9027,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long j = 0, n = size; j < n; j++) {
                 long idx = (firstIdx + j) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -9665,7 +9666,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long j = 0, n = size; j < n; j++) {
                         long idx = (firstIdx + j) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -9679,7 +9680,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long j = 0, n = size; j < n; j++) {
                     long idx = (firstIdx + j) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -10264,7 +10265,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long j = 0, n = size; j < n; j++) {
                     long idx = (firstIdx + j) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -10278,7 +10279,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long j = 0, n = size; j < n; j++) {
                 long idx = (firstIdx + j) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -10788,7 +10789,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -10815,7 +10816,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -11155,7 +11156,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -11189,7 +11190,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -11823,7 +11824,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -11837,7 +11838,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -12422,7 +12423,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -12436,7 +12437,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -12941,7 +12942,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -12968,7 +12969,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -13308,7 +13309,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -13342,7 +13343,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -13981,7 +13982,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -13995,7 +13996,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -14580,7 +14581,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -14594,7 +14595,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
