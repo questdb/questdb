@@ -39,6 +39,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.QwpWalAppender;
 import io.questdb.cutlass.line.tcp.SymbolCache;
@@ -396,6 +397,7 @@ public class QwpTudCache implements QuietCloseable {
         if (key < 0) {
             WalTableUpdateDetails tud = tableUpdateDetails.valueAt(key);
             if (!isTableTokenStale(tud)) {
+                applyPendingStructureChanges(tud);
                 return tud;
             }
 
@@ -553,6 +555,42 @@ public class QwpTudCache implements QuietCloseable {
             return null;
         }
         return tableToken;
+    }
+
+    /**
+     * Bring a cached table's writer up to date with structure changes committed
+     * since it was last refreshed.
+     * <p>
+     * Nothing else on this path does. {@link #isTableTokenStale} only notices a
+     * change of table IDENTITY -- a DROP mints a new {@link TableToken} -- while
+     * {@code ALTER TABLE ... ALTER COLUMN ... TYPE} keeps the token and merely
+     * bumps the metadata version. The cached writer therefore kept the column's
+     * old type indefinitely, and rows of the new type were converted against it:
+     * refused on QWP/WebSocket, and silently dropped on QWP/UDP, which has no
+     * ack channel to refuse through. The UDP receiver makes that unbounded --
+     * it holds ONE cache for every sender, with no reconnect to heal it.
+     * <p>
+     * Gated on the sequencer's transaction counter, which an ALTER advances, so
+     * the change log is only opened when something has actually been committed
+     * since the last look -- not on every frame.
+     * <p>
+     * A table dropped concurrently makes {@code goActive} throw, which refuses
+     * the frame rather than acknowledging it -- the safe direction, and the next
+     * call finds the token stale and takes the eviction path above.
+     */
+    private void applyPendingStructureChanges(WalTableUpdateDetails tud) {
+        final TableWriterAPI writer = tud.getWriter();
+        if (!(writer instanceof WalWriter)) {
+            return;
+        }
+        final long seqTxn = engine.getTableSequencerAPI()
+                .getTxnTracker(tud.getTableToken())
+                .getSeqTxn();
+        if (seqTxn == tud.getLastStructureCheckSeqTxn()) {
+            return;
+        }
+        tud.setLastStructureCheckSeqTxn(seqTxn);
+        ((WalWriter) writer).goActive();
     }
 
     private boolean isTableTokenStale(WalTableUpdateDetails tud) {

@@ -1378,6 +1378,45 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUdpAlterColumnTypeRefreshesCachedTableUpdateDetails() throws Exception {
+        // ALTER COLUMN ... TYPE keeps the table's TableToken and only bumps its
+        // metadata version. Staleness was judged by token identity alone, which
+        // catches a DROP but never an ALTER -- so the cached details, and the
+        // writer they hold, kept the old column type. On UDP that is unbounded:
+        // the receiver has ONE cache for every sender and no reconnect to heal
+        // it, so a single ALTER silently corrupts or refuses that column's rows
+        // from then on.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                execute("CREATE TABLE alter_type (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("alter_type").longColumn("v", 1).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                execute("ALTER TABLE alter_type ALTER COLUMN v TYPE DOUBLE");
+                drainWalQueue();
+
+                // A fresh sender, so the CLIENT's per-buffer type binding is new
+                // and the only stale view left is the receiver's cached one.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("alter_type").doubleColumn("v", 2.5).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                assertQuery("SELECT v FROM alter_type ORDER BY timestamp")
+                        .noLeakCheck()
+                        .returnsOnce("v\n1.0\n2.5\n");
+            }
+        });
+    }
+
+    @Test
     public void testUdpDropEvictsOnlyDroppedTableCoCachedTableSurvives() throws Exception {
         // A dropped table must be evicted without disturbing other tables cached
         // in the same receiver: the survivor keeps its data and remains writable.
