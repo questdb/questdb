@@ -139,6 +139,8 @@ import java.util.stream.Stream;
 public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     // fds are tracked so fsync can map a fd back to its file; only fsync advances durableSize.
     private final Map<Long, String> fdToPath = new HashMap<>();
+    // fd -> path for descriptors closed by forceClose(), so a later use is attributable.
+    private final Map<Long, String> forceClosedFds = new HashMap<>();
     // Non-cached opens (openRWNoCache/openRONoCache): tracked separately so the sweep driver can reclaim any
     // left open by an fsync-interrupted operation. No-cache DIRECTORY fds are also mapped in fdToPath: their
     // fsync persists namespace entries even though ordinary no-cache file fds remain outside the content model.
@@ -216,6 +218,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         long fd = super.openAppend(name);
         if (fd > -1) {
             fdToPath.put(fd, toAbsPath(name));
+            forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
         }
         return fd;
     }
@@ -225,6 +228,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         long fd = super.openCleanRW(name, size);
         if (fd > -1) {
             fdToPath.put(fd, toAbsPath(name));
+            forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
         }
         return fd;
     }
@@ -234,6 +238,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         long fd = super.openRW(name, opts);
         if (fd > -1) {
             fdToPath.put(fd, toAbsPath(name));
+            forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
         }
         return fd;
     }
@@ -243,6 +248,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         long fd = super.openRO(name);
         if (fd > -1) {
             fdToPath.put(fd, toAbsPath(name));
+            forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
         }
         return fd;
     }
@@ -253,6 +259,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (fd > -1) {
             noCacheOpenFds.add(fd);
             fdToPath.put(fd, toAbsPath(name));
+            forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
         }
         return fd;
     }
@@ -263,6 +270,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (fd > -1) {
             noCacheOpenFds.add(fd);
             fdToPath.put(fd, toAbsPath(name));
+            forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
         }
         return fd;
     }
@@ -376,6 +384,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public void fdatasync(long fd) {
+        assertNotForceClosed(fd, "fdatasync");
         super.fdatasync(fd);
         String p = fdToPath.get(fd);
         if (p != null) {
@@ -429,6 +438,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public void fsync(long fd) {
+        assertNotForceClosed(fd, "fsync");
         super.fsync(fd);
         String p = fdToPath.get(fd);
         final boolean directory = p != null && Files.isDirectory(Paths.get(p));
@@ -553,6 +563,28 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             // prefix, for a directory rename -- to the new one. Without this a synced-then-renamed file is
             // wrongly seen as never-synced and crash() truncates it to 0.
             rekeyDurability(fromPath, toPath);
+            // Re-key LIVE MAPPINGS too. mmapAddrToPath is populated at mmap time, so without this a
+            // mapping opened before the rename keeps resolving to the OLD name: every later msync through
+            // it advances writtenDataEnd/syncedDataEnd on a path that no longer exists, while the renamed
+            // file accumulates none. crash() then truncates a file whose bytes ARE on disk back to zero,
+            // and WAL apply reports "WAL segment column too short for committed row range [... actual=0]".
+            // Renaming a column file with its column memory still open is exactly what WalWriter does.
+            for (Map.Entry<Long, String> e : mmapAddrToPath.entrySet()) {
+                final String remapped = remapKey(e.getValue(), fromPath, toPath);
+                if (remapped != null) {
+                    e.setValue(remapped);
+                }
+            }
+            // Same staleness for fd-keyed accounting: fdToPath is populated at OPEN, so an fd held across
+            // a rename keeps attributing its write()/fsync()/fdatasync() to the old name. WalWriter renames
+            // a WAL column file with its column memory (and fd) still open, so without this every barrier
+            // the renamed column pays lands on a path that no longer exists.
+            for (Map.Entry<Long, String> e : fdToPath.entrySet()) {
+                final String remapped = remapKey(e.getValue(), fromPath, toPath);
+                if (remapped != null) {
+                    e.setValue(remapped);
+                }
+            }
             duplicateDurableNamespaceDescendants(fromPath, toPath);
             if (restoreImage != null) {
                 pendingRenameTargetImages.put(toPath, restoreImage);
@@ -739,6 +771,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      */
     public void reset() {
         fdToPath.clear();
+        forceClosedFds.clear();
         noCacheOpenFds.clear();
         durableSize.clear();
         tornTails.clear();
@@ -995,11 +1028,35 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      * fine here (it means the OS descriptor is already reclaimed). Tracking is dropped regardless.
      */
     public void forceClose(long fd) {
+        final String path = fdToPath.get(fd);
         try {
             close(fd);
         } catch (IllegalStateException | AssertionError alreadyGone) {
             noCacheOpenFds.remove(fd);
             fdToPath.remove(fd);
+        }
+        forceClosedFds.put(fd, path == null ? "<unknown path>" : path);
+    }
+
+    /**
+     * Fail LOUDLY and locally if a force-closed fd is used again.
+     * <p>
+     * {@link #forceClose(long)} exists to model the OS reclaiming fds a simulated crash stranded. If it
+     * ever closes an fd a LIVE object still owns, the owner's next operation runs on a dead descriptor —
+     * and the only symptom is an {@code "Invalid fd=..., not found in cache"} assertion raised deep inside
+     * {@code FdCache}, from whatever unrelated code touches it next, potentially thousands of crash points
+     * later. That is what made the writer-release ordering bug in
+     * {@code AbstractAdaptiveCrashTest#releaseEngineHandles} so expensive to attribute. Naming the reclaim
+     * at the point of misuse turns that into a one-line diagnosis.
+     */
+    private void assertNotForceClosed(long fd, String op) {
+        final String path = forceClosedFds.get(fd);
+        if (path != null) {
+            throw new AssertionError("USE AFTER FORCE-CLOSE: " + op + " on fd=" + fd + " (" + path
+                    + "), which reclaimLingeringNonCacheFds/forceClose already closed. The fd was still "
+                    + "owned by a live object when the reclaim ran - release engine handles BEFORE "
+                    + "reclaiming, and release table writers LAST (the WAL/sequencer releases can re-open "
+                    + "one). See AbstractAdaptiveCrashTest#releaseEngineHandles.");
         }
     }
 

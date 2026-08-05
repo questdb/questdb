@@ -202,5 +202,22 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
         engine.releaseCrashOrphanedWalWriters();
         engine.releaseAllWalWriters();
         engine.releaseInactiveTableSequencers();
+        // Table writers must be released LAST. The WAL-writer and sequencer releases above re-enter the
+        // engine (draining/finalising WAL work opens a TableWriter), so a writer released on the first pass
+        // can exist AGAIN by the time this method returns -- and the caller's next step is
+        // reclaimLingeringNonCacheFds, which treats every non-baseline no-cache fd as a crash artifact and
+        // force-closes it. A live pooled writer's symbol/index fds are no-cache too, so that reclaim would
+        // strand them, and the NEXT iteration's legitimate close would then operate on a dead descriptor
+        // ("Invalid fd, not found in cache" out of TableWriter.doClose -> freeSymbolMapWriters).
+        //
+        // NOT COVERED BY A TEST. Three attempts at a single-shot pin (plain release, crash-orphaned writer,
+        // outstanding WAL work) all passed with this release removed, i.e. proved nothing. The condition
+        // needs the sweep's multi-iteration context -- the reclaim runs against a baseline captured an
+        // iteration earlier -- which a unit test does not cheaply reproduce. Evidence for the fix is an
+        // A/B on the fuzz: seeds 1858466998207609950,7098192113821025591 and
+        // -5599363307717330847,-4230914800796809183 fail with "Invalid fd, not found in cache" without it
+        // and pass with it. If you touch this ordering, re-run those seeds.
+        engine.releaseAllWriters();
+        engine.releaseCrashOrphanedWriters();
     }
 }
