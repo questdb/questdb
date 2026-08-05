@@ -13286,7 +13286,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         execute("create table tabb (b1 int, b2 long, ts2 timestamp) timestamp(ts2)");
         execute("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
-        String asofJoinType = isFastAsOfJoin ? " Fast" : (isLight ? "Light" : "");
+        // Keyed ASOF now defaults to the Dense cursor (was Fast) for non-symbol keys.
+        String asofJoinType = isFastAsOfJoin ? " Dense" : (isLight ? "Light" : "");
         assertQuery("select * " + "from taba " + "left join tabb on a1=b1 " + "asof join tabc on b1=c1")
                 .withCompiler(compiler)
                 .noLeakCheck()

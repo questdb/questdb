@@ -92,6 +92,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
                     slaveFactory.getMetadata().getTimestampType(),
                     new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN)
             );
+            this.cursor.setAdaptiveBackScanBudget(configuration.getSqlAsOfAdaptiveBackScanBudget());
         } catch (Throwable th) {
             Misc.free(bwdScanKeyToRowId);
             Misc.free(fwdScanKeyToRowId);

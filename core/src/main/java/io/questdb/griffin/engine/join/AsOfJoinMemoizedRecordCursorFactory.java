@@ -85,6 +85,7 @@ import org.jetbrains.annotations.Nullable;
 public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
     private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
+    private final int denseRunThreshold;
     private final boolean driveByCaching;
     private final int slaveSymbolColumnIndex;
     private final SymbolJoinKeyMapping symbolJoinKeyMapping;
@@ -109,17 +110,27 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         this.toleranceInterval = toleranceInterval;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         this.driveByCaching = driveByCaching;
+        this.denseRunThreshold = configuration.getSqlAsOfMemoizedDenseRunThreshold();
+        Map fwdScanKeyToRowId = null;
+        Map bwdScanKeyToRowId = null;
         try {
+            fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, AbstractDenseScanAsOfJoinRecordCursor.DENSE_SCAN_TYPES_KEY, AbstractDenseScanAsOfJoinRecordCursor.DENSE_SCAN_TYPES_VALUE, false, false);
+            bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, AbstractDenseScanAsOfJoinRecordCursor.DENSE_SCAN_TYPES_KEY, AbstractDenseScanAsOfJoinRecordCursor.DENSE_SCAN_TYPES_VALUE, false, false);
             this.cursor = new AsOfJoinMemoizedRecordCursor(
                     configuration,
                     columnSplit,
+                    fwdScanKeyToRowId,
+                    bwdScanKeyToRowId,
                     NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                     masterFactory.getMetadata().getTimestampIndex(),
                     masterFactory.getMetadata().getTimestampType(),
                     slaveFactory.getMetadata().getTimestampIndex(),
                     slaveFactory.getMetadata().getTimestampType()
             );
+            this.cursor.setDenseRunThreshold(configuration.getSqlAsOfMemoizedDenseRunThreshold());
         } catch (Throwable t) {
+            Misc.free(bwdScanKeyToRowId);
+            Misc.free(fwdScanKeyToRowId);
             close();
             throw t;
         }
@@ -165,6 +176,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         sink.type("AsOf Join Memoized Scan");
         sink.attr("condition").val(joinContext);
         sink.attr("driveByCache").val(driveByCaching);
+        sink.attr("denseRunThreshold").val(denseRunThreshold);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -178,13 +190,20 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    private class AsOfJoinMemoizedRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
+    private class AsOfJoinMemoizedRecordCursor extends AbstractDenseScanAsOfJoinRecordCursor {
         private static final long NOT_REMEMBERED = Long.MIN_VALUE;
         private static final int SLOT_REMEMBERED_ROWID = 0;
         private static final int SLOT_VALIDITY_PERIOD_END = 2;
         private static final int SLOT_VALIDITY_PERIOD_START = 1;
 
         private final Map rememberedSymbols;
+        // Dense-timestamp guard: once a single performKeyMatching back-scan crosses more than
+        // denseRunThreshold rows sharing one timestamp, memoization is not paying off (dense-ts cliff),
+        // so we switch permanently to the resilient shared Dense forward scan for the remaining rows.
+        private boolean denseFallbackMode;
+        private int denseRunLen;
+        private long denseRunPrevTs = Long.MIN_VALUE;
+        private int denseRunThreshold = Integer.MAX_VALUE;
         private long earliestRowId = Long.MIN_VALUE;
         // These track a contiguous range of slave timestamps that we've already scanned.
         // This range doesn't cover everything we've scanned (there may be many disjoint ranges),
@@ -198,6 +217,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         public AsOfJoinMemoizedRecordCursor(
                 CairoConfiguration configuration,
                 int columnSplit,
+                Map fwdScanKeyToRowId,
+                Map bwdScanKeyToRowId,
                 Record nullRecord,
                 int masterTimestampIndex,
                 int masterTimestampType,
@@ -206,6 +227,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         ) {
             super(
                     columnSplit,
+                    fwdScanKeyToRowId,
+                    bwdScanKeyToRowId,
                     nullRecord,
                     masterTimestampIndex,
                     masterTimestampType,
@@ -216,6 +239,10 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             this.rememberedSymbols = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE, false, false);
         }
 
+        void setDenseRunThreshold(int denseRunThreshold) {
+            this.denseRunThreshold = denseRunThreshold;
+        }
+
         @Override
         public void close() {
             Misc.free(rememberedSymbols);
@@ -223,10 +250,25 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         }
 
         @Override
+        public boolean hasNext() {
+            // Once the dense-timestamp guard has tripped, serve remaining master rows via the resilient
+            // shared Dense forward scan; otherwise use the memoized keyed back-scan.
+            if (denseFallbackMode) {
+                return denseScanHasNext();
+            }
+            return super.hasNext();
+        }
+
+        @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            // Reopen rememberedSymbols before super.of() adopts the cursors so an open-time breach frees it exactly once.
+            // Reopen the maps before super.of() adopts the cursors so an open-time breach frees each exactly once.
             rememberedSymbols.reopen();
             rememberedSymbols.clear();
+            reopenAndClearDenseScanMaps();
+            resetDenseScanState();
+            denseFallbackMode = false;
+            denseRunLen = 0;
+            denseRunPrevTs = Long.MIN_VALUE;
             super.of(masterCursor, slaveCursor, circuitBreaker);
             symbolJoinKeyMapping.of(slaveCursor);
             earliestRowId = Long.MIN_VALUE;
@@ -234,7 +276,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
         @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            // Bound lazily before of() reopens it; map malloc/free nets on the per-query counter.
+            // Bound lazily before of() reopens them; map malloc/free nets on the per-query counter.
+            super.setMemoryTracker(tracker);
             rememberedSymbols.setMemoryTracker(tracker);
         }
 
@@ -244,9 +287,58 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             if (rememberedSymbols.isOpen()) {
                 rememberedSymbols.clear();
             }
+            clearDenseScanMapsIfOpen();
+            resetDenseScanState();
+            denseFallbackMode = false;
+            denseRunLen = 0;
+            denseRunPrevTs = Long.MIN_VALUE;
             scannedRangeMinRowId = Long.MAX_VALUE;
             scannedRangeMinTimestamp = Long.MAX_VALUE;
             scannedRangeMaxTimestamp = Long.MIN_VALUE;
+        }
+
+        // Master-iteration entry point for the Dense fallback (mirrors AsOfJoinDenseRecordCursorBase.hasNext,
+        // non-adaptive path): advance the master row and resolve it via the shared resilient scan.
+        private boolean denseScanHasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            if (!masterCursor.hasNext()) {
+                return false;
+            }
+            final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
+            final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL
+                    ? Long.MIN_VALUE
+                    : masterTimestamp - toleranceInterval;
+            int slaveKeyToFind = setupSymbolKeyToFind();
+            if (slaveKeyToFind == StaticSymbolTable.VALUE_NOT_FOUND) {
+                record.hasSlave(false);
+                return true;
+            }
+            return resolveViaDenseScan(masterTimestamp, minSlaveTimestamp, slaveKeyToFind);
+        }
+
+        @Override
+        protected int getSlaveJoinKey() {
+            return slaveRecB.getInt(slaveSymbolColumnIndex);
+        }
+
+        @Override
+        protected boolean joinKeysMatch(int slaveKeyToFind, int slaveKey) {
+            return slaveKeyToFind == slaveKey;
+        }
+
+        @Override
+        protected void putSlaveJoinKey(MapKey key) {
+            key.putInt(slaveRecB.getInt(slaveSymbolColumnIndex));
+        }
+
+        @Override
+        protected void putSlaveKeyToFind(MapKey key, int slaveKeyToFind) {
+            key.putInt(slaveKeyToFind);
+        }
+
+        @Override
+        protected int setupSymbolKeyToFind() {
+            return symbolJoinKeyMapping.getSlaveKey(masterRecord);
         }
 
         private void carefullyExtendScannedRange(long masterTimestamp, long slaveTimestamp, long rowId) {
@@ -358,6 +450,9 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
+            // Reset the per-master-row equal-timestamp run counter used by the dense-timestamp guard.
+            denseRunLen = 0;
+            denseRunPrevTs = Long.MIN_VALUE;
             int slaveSymbolKey = symbolJoinKeyMapping.getSlaveKey(masterRecord);
             if (slaveSymbolKey == StaticSymbolTable.VALUE_NOT_FOUND) {
                 // The master record's symbol does not match any symbol in the slave table,
@@ -385,6 +480,24 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             boolean didJumpOverScannedRange = false;
             for (; ; ) {
                 long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+                // Dense-timestamp guard: if this single back-scan crosses more than denseRunThreshold rows
+                // sharing one timestamp, memoization is not helping - switch to the resilient Dense scan for
+                // the remaining master rows (the current row still finishes on the memoized path).
+                if (slaveTimestamp == denseRunPrevTs) {
+                    if (!denseFallbackMode && ++denseRunLen > denseRunThreshold) {
+                        denseFallbackMode = true;
+                        // Reset the fast-cursor lookahead so resolveViaDenseScan re-initialises cleanly.
+                        slaveFrameRow = Long.MIN_VALUE;
+                        slaveFrameIndex = -1;
+                        lookaheadTimestamp = Long.MIN_VALUE;
+                        origSlaveRowId = -1;
+                        origSlaveFrameIndex = -1;
+                        origHasSlave = false;
+                    }
+                } else {
+                    denseRunPrevTs = slaveTimestamp;
+                    denseRunLen = 1;
+                }
                 if (slaveTimestamp >= validityPeriodStart && slaveTimestamp <= validityPeriodEnd) {
                     // Our search is now either within the validity period of the remembered symbol
                     // or within the remembered scanned range. Let's apply this knowledge.
