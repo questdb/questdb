@@ -107,9 +107,8 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
 
     @Test
     public void testAllThreadSafeWideProjectionAllocatesNoIndexList() throws Exception {
+        final ThreadMXBean threadMXBean = TestUtils.threadAllocationBean();
         assertMemoryLeak(() -> {
-            final ThreadMXBean threadMXBean = TestUtils.threadAllocationBean();
-
             final int columnCount = 1_000_000;
             final CountingFunctionParser parser = new CountingFunctionParser();
             final ObjectPool<QueryColumn> queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 4);

@@ -720,6 +720,64 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLogicReleasesLocksWhenDeleteThrows() {
+        ObjList<Integer> unlocked = new ObjList<>();
+        TestDeleter deleter = new TestDeleter() {
+            @Override
+            public void deleteWalDirectory(int walId) {
+                throw new RuntimeException("delete failed");
+            }
+
+            @Override
+            public void unlock(int walId) {
+                unlocked.add(walId);
+            }
+        };
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
+        TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
+        logic.reset(tableToken);
+
+        int idx1 = logic.trackDiscoveredWal(1);
+        logic.endWalTracking(idx1, WalUtils.SEG_NONE_ID, true);
+        int idx2 = logic.trackDiscoveredWal(2);
+        logic.endWalTracking(idx2, WalUtils.SEG_NONE_ID, true);
+
+        try {
+            logic.run();
+            Assert.fail("expected delete failure to propagate");
+        } catch (RuntimeException e) {
+            Assert.assertEquals("delete failed", e.getMessage());
+        }
+
+        Assert.assertEquals(2, unlocked.size());
+        Assert.assertEquals(1, (int) unlocked.get(0));
+        Assert.assertEquals(2, (int) unlocked.get(1));
+    }
+
+    @Test
+    public void testLogicWaitsBeforeDelete() {
+        TestDeleter deleter = new TestDeleter();
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 200);
+        TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
+
+        logic.reset(tableToken);
+        long time = System.nanoTime();
+        logic.run();
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time);
+        Assert.assertTrue("empty run waited " + elapsedMs + "ms", elapsedMs < 200);
+
+        logic.reset(tableToken);
+        int idx = logic.trackDiscoveredWal(1);
+        logic.endWalTracking(idx, WalUtils.SEG_NONE_ID, true);
+        time = System.nanoTime();
+        logic.run();
+        elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time);
+        Assert.assertTrue("run waited only " + elapsedMs + "ms", elapsedMs >= 200);
+        Assert.assertEquals(1, deleter.events.size());
+        Assert.assertEquals(new DeletionEvent(1), deleter.events.get(0));
+    }
+
+    @Test
     public void testNoWalDeletionWhenEngineClosesMidSweep() throws Exception {
         // Regression test for a data-loss hole in the engine-close tolerance: a replica downloads a WAL
         // segment ahead of WAL apply, then a primary->replica demote starts closing the engine while a

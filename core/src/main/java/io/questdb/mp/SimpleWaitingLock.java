@@ -67,12 +67,7 @@ public final class SimpleWaitingLock {
                     return true;
                 }
                 // CAS succeeded, but there was an owner before -> we are a waiter
-                if (Thread.currentThread().isInterrupted()) {
-                    // parkNanos returns immediately, without clearing, while the interrupt flag is set
-                    Os.sleep(1);
-                } else {
-                    LockSupport.parkNanos(remainingNanos);
-                }
+                Os.parkNanos(remainingNanos);
             }
             expectedOwner = ownerOrWaiter.get();
         }

@@ -259,11 +259,24 @@ public final class Os {
     public static native long malloc(long size);
 
     public static void park() {
-        // parkNanos returns immediately, without clearing, while the interrupt flag is set
+        parkNanos(PARK_NANOS_MAX);
+    }
+
+    /**
+     * Parks the calling thread for up to {@code nanos} nanoseconds, waking early
+     * when another thread unparks it. While the caller's interrupt flag is set,
+     * {@code LockSupport.parkNanos} returns immediately without clearing it, so
+     * this method backs off through {@link #sleep(long)} instead: an interrupted
+     * waiter wakes ~1000 times/s rather than spinning. Does not clear the
+     * interrupt flag.
+     */
+    public static void parkNanos(long nanos) {
         if (Thread.currentThread().isInterrupted()) {
-            sleep(1);
+            if (nanos > 0) {
+                sleep(1);
+            }
         } else {
-            LockSupport.parkNanos(Os.PARK_NANOS_MAX);
+            LockSupport.parkNanos(nanos);
         }
     }
 

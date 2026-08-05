@@ -25,14 +25,20 @@
 package io.questdb.test.mp;
 
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Os;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadMXBean;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 public class SOCountDownLatchTest {
@@ -60,6 +66,46 @@ public class SOCountDownLatchTest {
         // now we have 0 count, so await() should return immediately, we still wait for a bit
         // to prevent false negative due to OS/JVM hiccups
         Assert.assertTrue(latch.await(TimeUnit.SECONDS.toNanos(5)));
+    }
+
+    @Test
+    public void testAwaitTimeoutWhileInterrupted() throws Exception {
+        ThreadMXBean bean = ManagementFactory.getThreadMXBean();
+        Assume.assumeTrue(bean.isCurrentThreadCpuTimeSupported());
+
+        SOCountDownLatch latch = new SOCountDownLatch(1);
+        AtomicBoolean isPhase1Done = new AtomicBoolean();
+        AtomicBoolean hasTimedOut = new AtomicBoolean();
+        AtomicBoolean hasSeenCountDown = new AtomicBoolean();
+        AtomicLong cpuNanos = new AtomicLong();
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        Thread waiter = new Thread(() -> {
+            try {
+                Thread.currentThread().interrupt();
+                long cpu = bean.getCurrentThreadCpuTime();
+                hasTimedOut.set(!latch.await(TimeUnit.MILLISECONDS.toNanos(500)));
+                cpuNanos.set(bean.getCurrentThreadCpuTime() - cpu);
+                isPhase1Done.set(true);
+                hasSeenCountDown.set(latch.await(TimeUnit.SECONDS.toNanos(30)));
+            } catch (Throwable th) {
+                error.set(th);
+            }
+        });
+        waiter.start();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!isPhase1Done.get() && System.nanoTime() < deadline) {
+            Os.pause();
+        }
+        Assert.assertTrue(isPhase1Done.get());
+        latch.countDown();
+        waiter.join(TimeUnit.SECONDS.toMillis(10));
+
+        Assert.assertFalse(waiter.isAlive());
+        Assert.assertNull(error.get());
+        Assert.assertTrue("timed await did not time out", hasTimedOut.get());
+        Assert.assertTrue("await did not observe countDown", hasSeenCountDown.get());
+        Assert.assertTrue("interrupted await burned " + cpuNanos.get() + "ns of CPU time",
+                cpuNanos.get() < TimeUnit.MILLISECONDS.toNanos(100));
     }
 
     @Test

@@ -29,6 +29,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -40,7 +41,6 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.concurrent.locks.LockSupport;
 
 public class LogAlertSocket implements Closeable {
 
@@ -364,7 +364,7 @@ public class LogAlertSocket implements Closeable {
     }
 
     private void onReconnect() {
-        LockSupport.parkNanos(reconnectDelay);
+        Os.sleep(Math.max(1, reconnectDelay / 1_000_000));
     }
 
     private void parseAlertTargets() {

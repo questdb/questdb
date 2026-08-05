@@ -92,6 +92,13 @@ public class OsSleepBenchmark {
     }
 
     @Benchmark
+    @Fork(value = 1, jvmArgsAppend = "-XX:TieredStopAtLevel=1")
+    @OutputTimeUnit(TimeUnit.NANOSECONDS)
+    public void testLegacyPauseC1() {
+        legacyPause();
+    }
+
+    @Benchmark
     public void testLegacySleep1() {
         legacySleep(1);
     }
@@ -104,6 +111,13 @@ public class OsSleepBenchmark {
     @Benchmark
     @OutputTimeUnit(TimeUnit.NANOSECONDS)
     public void testOsPause() {
+        Os.pause();
+    }
+
+    @Benchmark
+    @Fork(value = 1, jvmArgsAppend = "-XX:TieredStopAtLevel=1")
+    @OutputTimeUnit(TimeUnit.NANOSECONDS)
+    public void testOsPauseC1() {
         Os.pause();
     }
 

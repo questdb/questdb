@@ -94,20 +94,27 @@ public class OsTest {
     @Test
     public void testParkDoesNotSpinWhenInterrupted() throws Exception {
         AtomicLong iterations = new AtomicLong();
+        AtomicReference<Throwable> error = new AtomicReference<>();
         Thread t = new Thread(() -> {
-            Thread.currentThread().interrupt();
-            long deadline = System.currentTimeMillis() + 500;
-            long n = 0;
-            while (System.currentTimeMillis() < deadline) {
-                Os.park();
-                n++;
+            try {
+                Thread.currentThread().interrupt();
+                long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(500);
+                long n = 0;
+                while (System.nanoTime() < deadline) {
+                    Os.park();
+                    n++;
+                }
+                iterations.set(n);
+            } catch (Throwable th) {
+                error.set(th);
             }
-            iterations.set(n);
         });
         t.start();
         t.join(TimeUnit.SECONDS.toMillis(10));
 
         Assert.assertFalse(t.isAlive());
+        Assert.assertNull(error.get());
+        assertTrue("park() did not run", iterations.get() >= 1);
         assertTrue("parked " + iterations.get() + " times in 500ms", iterations.get() < 100_000);
     }
 
@@ -137,7 +144,7 @@ public class OsTest {
         long allocated = bean.getCurrentThreadAllocatedBytes() - before;
         // Thread.sleep(0), which pause() used to call, allocates a 40-byte ThreadSleepEvent
         // per call on JDK 25. The loop must stay cold: C2 eliminates that allocation once
-        // the call site compiles, so a hot loop cannot detect a regression.
+        // Thread.sleep compiles, so a hot fork cannot detect a regression.
         assertTrue("Os.pause() allocated " + allocated + " bytes over 128 calls", allocated < 1280);
     }
 
@@ -147,7 +154,7 @@ public class OsTest {
         // Warm past the downcall handle bootstrap and the LambdaForm customization the
         // JDK triggers at invocation CUSTOMIZE_THRESHOLD + 1 (128 by default). The loop
         // must stay cold overall: C2 eliminates the legacy Thread.sleep allocation once
-        // the call site compiles, so a hot loop cannot detect a regression.
+        // Thread.sleep compiles, so a hot fork cannot detect a regression.
         for (int i = 0; i < 256; i++) {
             Os.sleep(1);
         }
@@ -161,6 +168,11 @@ public class OsTest {
 
     @Test
     public void testSleepDoesNotBlockSafepoints() throws Exception {
+        System.gc();
+        long time = System.nanoTime();
+        System.gc();
+        long baselineMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time);
+
         CyclicBarrier barrier = new CyclicBarrier(2);
         Thread t = new Thread(() -> {
             TestUtils.await(barrier);
@@ -168,16 +180,30 @@ public class OsTest {
         });
         t.start();
         TestUtils.await(barrier);
-        // let the peer enter the native sleep
-        Os.sleep(200);
+        // a Linker.Option.critical binding stalls this stack probe until the sleep ends,
+        // so the Os.sleep frame is never observed
+        boolean isSleeping = false;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        while (!isSleeping && System.nanoTime() < deadline) {
+            for (StackTraceElement e : t.getStackTrace()) {
+                if (Os.class.getName().equals(e.getClassName()) && "sleep".equals(e.getMethodName())) {
+                    isSleeping = true;
+                    break;
+                }
+            }
+            Os.pause();
+        }
+        assertTrue("peer never observed inside Os.sleep", isSleeping);
 
-        long time = System.currentTimeMillis();
+        time = System.nanoTime();
         System.gc();
-        long gcTime = System.currentTimeMillis() - time;
-        t.join();
+        long gcMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time);
+        t.join(TimeUnit.SECONDS.toMillis(10));
+        Assert.assertFalse(t.isAlive());
         // a Linker.Option.critical binding would keep the sleeper in _thread_in_Java
-        // and stall the GC safepoint for the remaining ~1800ms
-        assertTrue("System.gc() took " + gcTime + "ms with a peer in Os.sleep", gcTime < 1000);
+        // and stall the GC safepoint for the remaining sleep
+        assertTrue("System.gc() took " + gcMs + "ms (baseline " + baselineMs + "ms) with a peer in Os.sleep",
+                gcMs < baselineMs + 900);
     }
 
     @Test
@@ -193,7 +219,7 @@ public class OsTest {
             }
         });
 
-        long time = System.currentTimeMillis();
+        long time = System.nanoTime();
         t.start();
 
         TestUtils.await(barrier);
@@ -202,28 +228,42 @@ public class OsTest {
 
         Assert.assertFalse(t.isAlive());
         Assert.assertNull(error.get());
-        long sleepTime = System.currentTimeMillis() - time;
-        assertTrue("slept only " + sleepTime + "ms", sleepTime >= 1000);
+        long sleepTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time);
+        assertTrue("slept only " + sleepTimeMs + "ms", sleepTimeMs >= 1000);
     }
 
     @Test
-    public void testSleepNonPositiveReturnsImmediately() {
-        long time = System.currentTimeMillis();
-        Os.sleep(0);
-        Os.sleep(-1);
-        Os.sleep(Long.MIN_VALUE);
-        long elapsed = System.currentTimeMillis() - time;
-        assertTrue("non-positive sleep took " + elapsed + "ms", elapsed < 500);
+    public void testSleepNonPositiveReturnsImmediately() throws Exception {
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        Thread t = new Thread(() -> {
+            try {
+                Os.sleep(0);
+                Os.sleep(-1);
+                Os.sleep(Long.MIN_VALUE);
+            } catch (Throwable th) {
+                error.set(th);
+            }
+        });
+        t.setDaemon(true);
+        long time = System.nanoTime();
+        t.start();
+        t.join(TimeUnit.SECONDS.toMillis(5));
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time);
+
+        Assert.assertFalse(t.isAlive());
+        Assert.assertNull(error.get());
+        assertTrue("non-positive sleep took " + elapsedMs + "ms", elapsedMs < 500);
     }
 
     @Test
     public void testSleepSleepsAtLeastRequested() {
-        long time = System.currentTimeMillis();
+        long time = System.nanoTime();
         for (int i = 0; i < 50; i++) {
             Os.sleep(1);
         }
-        long elapsed = System.currentTimeMillis() - time;
-        assertTrue("50 x Os.sleep(1) took only " + elapsed + "ms", elapsed >= 50);
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time);
+        assertTrue("50 x Os.sleep(1) took only " + elapsedMs + "ms", elapsedMs >= 50);
+        assertTrue("50 x Os.sleep(1) took " + elapsedMs + "ms", elapsedMs < 10_000);
     }
 
     @Test

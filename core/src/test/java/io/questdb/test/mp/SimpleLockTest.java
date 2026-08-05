@@ -27,10 +27,15 @@ package io.questdb.test.mp;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.Os;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadMXBean;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 public class SimpleLockTest {
@@ -263,5 +268,47 @@ public class SimpleLockTest {
             lock.unlock();
             thread.join();
         }
+    }
+
+    @Test
+    public void testTryLockWhileInterrupted() throws Exception {
+        ThreadMXBean bean = ManagementFactory.getThreadMXBean();
+        Assume.assumeTrue(bean.isCurrentThreadCpuTimeSupported());
+
+        SimpleWaitingLock lock = new SimpleWaitingLock();
+        Assert.assertTrue(lock.tryLock());
+        AtomicBoolean isPhase1Done = new AtomicBoolean();
+        AtomicBoolean hasTimedOut = new AtomicBoolean();
+        AtomicBoolean hasAcquired = new AtomicBoolean();
+        AtomicLong cpuNanos = new AtomicLong();
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        Thread waiter = new Thread(() -> {
+            try {
+                Thread.currentThread().interrupt();
+                long cpu = bean.getCurrentThreadCpuTime();
+                hasTimedOut.set(!lock.tryLock(500, TimeUnit.MILLISECONDS));
+                cpuNanos.set(bean.getCurrentThreadCpuTime() - cpu);
+                isPhase1Done.set(true);
+                hasAcquired.set(lock.tryLock(30, TimeUnit.SECONDS));
+            } catch (Throwable th) {
+                error.set(th);
+            }
+        });
+        waiter.start();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!isPhase1Done.get() && System.nanoTime() < deadline) {
+            Os.pause();
+        }
+        Assert.assertTrue(isPhase1Done.get());
+        lock.unlock();
+        waiter.join(TimeUnit.SECONDS.toMillis(10));
+
+        Assert.assertFalse(waiter.isAlive());
+        Assert.assertNull(error.get());
+        Assert.assertTrue("timed tryLock did not time out", hasTimedOut.get());
+        Assert.assertTrue("waiter did not acquire after unlock", hasAcquired.get());
+        Assert.assertTrue("interrupted tryLock burned " + cpuNanos.get() + "ns of CPU time",
+                cpuNanos.get() < TimeUnit.MILLISECONDS.toNanos(100));
+        lock.unlock();
     }
 }
