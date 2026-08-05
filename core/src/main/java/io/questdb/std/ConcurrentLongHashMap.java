@@ -2990,23 +2990,31 @@ public class ConcurrentLongHashMap<V> implements Serializable {
          * Possibly blocks awaiting root lock.
          */
         private void contendedLock() {
-            boolean waiting = false;
-            for (int s; ; ) {
-                if (((s = lockState) & ~WAITER) == 0) {
-                    if (Unsafe.cas(this, LOCKSTATE, s, WRITER)) {
-                        if (waiting)
-                            waiter = null;
-                        return;
+            boolean isInterrupted = false;
+            boolean isWaiting = false;
+            try {
+                for (int s; ; ) {
+                    if (((s = lockState) & ~WAITER) == 0) {
+                        if (Unsafe.cas(this, LOCKSTATE, s, WRITER)) {
+                            if (isWaiting)
+                                waiter = null;
+                            return;
+                        }
+                    } else if ((s & WAITER) == 0) {
+                        if (Unsafe.cas(this, LOCKSTATE, s, s | WAITER)) {
+                            isWaiting = true;
+                            waiter = Thread.currentThread();
+                        }
+                    } else if (isWaiting) {
+                        LockSupport.park(this);
+                        // Consume interrupts so the next park can block; restore the flag on exit.
+                        isInterrupted |= Thread.interrupted();
                     }
-                } else if ((s & WAITER) == 0) {
-                    if (Unsafe.cas(this, LOCKSTATE, s, s | WAITER)) {
-                        waiting = true;
-                        waiter = Thread.currentThread();
-                    }
-                } else if (waiting)
-                    // Not LockSupport.park(): it returns immediately, without clearing,
-                    // while the caller's interrupt flag is set, which spins a whole core.
-                    Os.park();
+                }
+            } finally {
+                if (isInterrupted) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
 

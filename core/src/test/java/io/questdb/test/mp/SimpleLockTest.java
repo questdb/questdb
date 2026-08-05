@@ -26,11 +26,10 @@ package io.questdb.test.mp;
 
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.Os;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 
-import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -273,8 +272,7 @@ public class SimpleLockTest {
 
     @Test
     public void testTryLockWhileInterrupted() throws Exception {
-        ThreadMXBean bean = ManagementFactory.getThreadMXBean();
-        Assume.assumeTrue(bean.isCurrentThreadCpuTimeSupported());
+        ThreadMXBean bean = TestUtils.threadCpuTimeBean();
         Os.sleep(1);
 
         SimpleWaitingLock lock = new SimpleWaitingLock();
@@ -287,9 +285,12 @@ public class SimpleLockTest {
         Thread waiter = new Thread(() -> {
             try {
                 Thread.currentThread().interrupt();
-                long cpu = bean.getCurrentThreadCpuTime();
+                long cpuBefore = bean.getCurrentThreadCpuTime();
+                Assert.assertTrue("CPU time measurement is disabled", cpuBefore >= 0);
                 hasTimedOut.set(!lock.tryLock(500, TimeUnit.MILLISECONDS));
-                cpuNanos.set(bean.getCurrentThreadCpuTime() - cpu);
+                long cpuAfter = bean.getCurrentThreadCpuTime();
+                Assert.assertTrue("CPU time moved backwards", cpuAfter >= cpuBefore);
+                cpuNanos.set(cpuAfter - cpuBefore);
                 phase1Done.countDown();
                 hasAcquired.set(lock.tryLock(30, TimeUnit.SECONDS));
             } catch (Throwable th) {
@@ -297,6 +298,7 @@ public class SimpleLockTest {
                 phase1Done.countDown();
             }
         });
+        waiter.setDaemon(true);
         waiter.start();
         boolean isPhase1Done = phase1Done.await(10, TimeUnit.SECONDS);
         if (error.get() != null) {

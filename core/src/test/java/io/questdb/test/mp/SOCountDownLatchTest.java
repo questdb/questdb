@@ -26,11 +26,10 @@ package io.questdb.test.mp;
 
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 
-import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
@@ -71,8 +70,7 @@ public class SOCountDownLatchTest {
 
     @Test
     public void testAwaitTimeoutWhileInterrupted() throws Exception {
-        ThreadMXBean bean = ManagementFactory.getThreadMXBean();
-        Assume.assumeTrue(bean.isCurrentThreadCpuTimeSupported());
+        ThreadMXBean bean = TestUtils.threadCpuTimeBean();
         Os.sleep(1);
 
         SOCountDownLatch latch = new SOCountDownLatch(1);
@@ -84,9 +82,12 @@ public class SOCountDownLatchTest {
         Thread waiter = new Thread(() -> {
             try {
                 Thread.currentThread().interrupt();
-                long cpu = bean.getCurrentThreadCpuTime();
+                long cpuBefore = bean.getCurrentThreadCpuTime();
+                Assert.assertTrue("CPU time measurement is disabled", cpuBefore >= 0);
                 hasTimedOut.set(!latch.await(TimeUnit.MILLISECONDS.toNanos(500)));
-                cpuNanos.set(bean.getCurrentThreadCpuTime() - cpu);
+                long cpuAfter = bean.getCurrentThreadCpuTime();
+                Assert.assertTrue("CPU time moved backwards", cpuAfter >= cpuBefore);
+                cpuNanos.set(cpuAfter - cpuBefore);
                 phase1Done.countDown();
                 hasSeenCountDown.set(latch.await(TimeUnit.SECONDS.toNanos(30)));
             } catch (Throwable th) {
@@ -94,6 +95,7 @@ public class SOCountDownLatchTest {
                 phase1Done.countDown();
             }
         });
+        waiter.setDaemon(true);
         waiter.start();
         boolean isPhase1Done = phase1Done.await(10, TimeUnit.SECONDS);
         if (error.get() != null) {

@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
@@ -1332,21 +1331,17 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testSegmentScanFailureReleasesLocks() throws Exception {
-        // Regression test for the endWalTracking finally in discoverWalSegments(): a throw
-        // mid-segment-scan used to leave a partial (walId, 0, 0, segmentId...) entry whose
-        // zero segment-count desyncs the stride walk in releaseLocks(), which then reads a
-        // segment id as a walId, unlocks a WAL the sweep never locked, and aborts with an
-        // out-of-bounds read that replaces the original error.
         final String tableName = testName.getMethodName();
         final String tableDirName = tableName + "~1";
-        final AtomicBoolean armed = new AtomicBoolean(false);
+        final AtomicBoolean isArmed = new AtomicBoolean(false);
+        final RuntimeException segmentScanFailure = new RuntimeException("segment scan failure");
         final FilesFacade testFf = new TestFilesFacadeImpl() {
             long segmentScanPtr = -1;
 
             @Override
             public long findFirst(LPSZ path) {
                 long ptr = super.findFirst(path);
-                if (armed.get() && Utf8s.containsAscii(path, tableDirName) && Utf8s.endsWithAscii(path, "wal1")) {
+                if (isArmed.get() && Utf8s.containsAscii(path, tableDirName) && Utf8s.endsWithAscii(path, "wal1")) {
                     segmentScanPtr = ptr;
                 }
                 return ptr;
@@ -1357,7 +1352,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 int r = super.findNext(findPtr);
                 if (r <= 0 && findPtr == segmentScanPtr) {
                     segmentScanPtr = -1;
-                    throw CairoException.critical(0).put("segment scan failure");
+                    throw segmentScanFailure;
                 }
                 return r;
             }
@@ -1380,15 +1375,16 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
 
-            // The sweep fails mid-scan; with the finally in place the injected CairoException
-            // surfaces through the per-table handler and the sweep releases its locks. Without
-            // it the desynced walk escalates to an ArrayIndexOutOfBoundsException that escapes
-            // the purge job and fails this call.
-            armed.set(true);
+            // Cleanup must release the acquired lock without masking the scan failure.
+            isArmed.set(true);
             try {
-                TestUtils.drainPurgeJob(engine, testFf);
+                RuntimeException e = Assert.assertThrows(
+                        RuntimeException.class,
+                        () -> TestUtils.drainPurgeJob(engine, testFf)
+                );
+                Assert.assertSame(segmentScanFailure, e);
             } finally {
-                armed.set(false);
+                isArmed.set(false);
             }
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);

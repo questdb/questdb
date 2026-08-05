@@ -56,6 +56,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.log.HttpLogRecordUtf8Sink.CRLF;
@@ -233,7 +234,7 @@ public class LogAlertSocketTest {
                     return -1;
                 }
             };
-            try (LogAlertSocket alertSkt = new LogAlertSocket(
+            final LogAlertSocket alertSkt = new LogAlertSocket(
                     nf,
                     "localhost:1234",
                     LogAlertSocket.IN_BUFFER_SIZE,
@@ -242,35 +243,50 @@ public class LogAlertSocketTest {
                     LogAlertSocket.DEFAULT_HOST,
                     LogAlertSocket.DEFAULT_PORT,
                     LOG
-            )) {
+            );
+            Thread thread = null;
+            try {
                 final HttpLogRecordUtf8Sink builder = new HttpLogRecordUtf8Sink(alertSkt)
                         .putHeader("localhost")
                         .setMark();
                 builder.rewindToMark().put("Something").put(CRLF).$();
 
                 AtomicBoolean hasSent = new AtomicBoolean(true);
+                AtomicBoolean isInterrupted = new AtomicBoolean();
+                AtomicLong elapsedNanos = new AtomicLong();
                 AtomicReference<Throwable> error = new AtomicReference<>();
-                long time = System.nanoTime();
-                // Run on a bounded helper thread: a broken nanos-to-millis conversion turns
-                // the reconnect delay into a multi-day sleep, which must fail the test
-                // instead of hanging the fork.
-                Thread t = new Thread(() -> {
+                // A bounded helper thread makes a broken nanos-to-millis conversion fail
+                // the test instead of hanging the fork for multiple days.
+                thread = new Thread(() -> {
+                    Thread.currentThread().interrupt();
+                    long start = System.nanoTime();
                     try {
                         hasSent.set(alertSkt.send(builder.size()));
                     } catch (Throwable th) {
                         error.set(th);
+                    } finally {
+                        elapsedNanos.set(System.nanoTime() - start);
+                        isInterrupted.set(Thread.currentThread().isInterrupted());
                     }
                 });
-                t.setDaemon(true);
-                t.start();
-                t.join(TimeUnit.SECONDS.toMillis(10));
-                long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time);
+                thread.setDaemon(true);
+                thread.start();
+                thread.join(TimeUnit.SECONDS.toMillis(10));
 
-                Assert.assertFalse(t.isAlive());
+                Assert.assertFalse(thread.isAlive());
                 Assert.assertNull(error.get());
                 Assert.assertFalse(hasSent.get());
+                Assert.assertTrue(isInterrupted.get());
                 // single host, two attempts -> the reconnect delay is paid twice
-                Assert.assertTrue("send waited only " + elapsedMs + "ms across reconnects", elapsedMs >= 400);
+                Assert.assertTrue(
+                        "send waited only " + TimeUnit.NANOSECONDS.toMillis(elapsedNanos.get()) + "ms across reconnects",
+                        elapsedNanos.get() >= 2 * reconnectDelayNanos
+                );
+            } finally {
+                // Closing the native buffers while send() is still using them can crash the JVM.
+                if (thread == null || !thread.isAlive()) {
+                    alertSkt.close();
+                }
             }
         });
     }

@@ -2282,6 +2282,16 @@ public final class TestUtils {
         return bean;
     }
 
+    public static java.lang.management.ThreadMXBean threadCpuTimeBean() {
+        java.lang.management.ThreadMXBean bean = ManagementFactory.getThreadMXBean();
+        Assume.assumeTrue("current thread CPU time measurement not supported", bean.isCurrentThreadCpuTimeSupported());
+        if (!bean.isThreadCpuTimeEnabled()) {
+            bean.setThreadCpuTimeEnabled(true);
+        }
+        Assume.assumeTrue("thread CPU time measurement not enabled", bean.isThreadCpuTimeEnabled());
+        return bean;
+    }
+
     public static long toMemory(CharSequence sequence) {
         long ptr = Unsafe.malloc(sequence.length(), MemoryTag.NATIVE_DEFAULT);
         Utf8s.strCpyAscii(sequence, sequence.length(), ptr);

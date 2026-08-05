@@ -92,30 +92,14 @@ public class OsTest {
     }
 
     @Test
-    public void testParkDoesNotSpinWhenInterrupted() throws Exception {
-        AtomicLong iterations = new AtomicLong();
-        AtomicReference<Throwable> error = new AtomicReference<>();
-        Thread t = new Thread(() -> {
-            try {
-                Thread.currentThread().interrupt();
-                long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(500);
-                long n = 0;
-                while (System.nanoTime() < deadline) {
-                    Os.park();
-                    n++;
-                }
-                iterations.set(n);
-            } catch (Throwable th) {
-                error.set(th);
-            }
-        });
-        t.start();
-        t.join(TimeUnit.SECONDS.toMillis(10));
-
-        Assert.assertFalse(t.isAlive());
-        Assert.assertNull(error.get());
-        assertTrue("park() did not run", iterations.get() >= 1);
-        assertTrue("parked " + iterations.get() + " times in 500ms", iterations.get() < 100_000);
+    public void testParkPreservesInterruptFlag() {
+        Thread.currentThread().interrupt();
+        try {
+            Os.park();
+            assertTrue("park() cleared the interrupt flag", Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
     }
 
     @Test
@@ -225,26 +209,32 @@ public class OsTest {
     @Test
     public void testSleepEnds() throws Exception {
         CyclicBarrier barrier = new CyclicBarrier(2);
+        AtomicLong sleepNanos = new AtomicLong();
         AtomicReference<Throwable> error = new AtomicReference<>();
         Thread t = new Thread(() -> {
             try {
                 TestUtils.await(barrier);
-                Os.sleep(1000);
+                long start = System.nanoTime();
+                try {
+                    Os.sleep(1000);
+                } finally {
+                    sleepNanos.set(System.nanoTime() - start);
+                }
             } catch (Throwable th) {
                 error.set(th);
             }
         });
 
+        t.setDaemon(true);
         t.start();
 
         TestUtils.await(barrier);
-        long time = System.nanoTime();
         t.interrupt();
         t.join(TimeUnit.SECONDS.toMillis(10));
 
         Assert.assertFalse(t.isAlive());
         Assert.assertNull(error.get());
-        long sleepTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time);
+        long sleepTimeMs = TimeUnit.NANOSECONDS.toMillis(sleepNanos.get());
         assertTrue("slept only " + sleepTimeMs + "ms", sleepTimeMs >= 1000);
     }
 

@@ -47,12 +47,20 @@ public class SOCountDownLatch implements CountDownLatchSPI {
 
     public void await() {
         this.waiter = Thread.currentThread();
-        while (getCount() > 0) {
-            // Don't use LockSupport.park() here.
-            // Once in a while there can be a delay between check of this.count > -count
-            // and parking and unparkWaiter() will be called before park().
-            // Limit the parking time by using Os.park() instead of LockSupport.park()
-            Os.park();
+        boolean isInterrupted = false;
+        try {
+            while (getCount() > 0) {
+                // Don't use LockSupport.park() here.
+                // Once in a while there can be a delay between check of this.count > -count
+                // and parking and unparkWaiter() will be called before park().
+                // Limit the parking time by using Os.park() instead of LockSupport.park()
+                Os.park();
+                isInterrupted |= Thread.interrupted();
+            }
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -62,19 +70,27 @@ public class SOCountDownLatch implements CountDownLatchSPI {
             return true;
         }
 
-        while (true) {
-            long start = System.nanoTime();
-            Os.parkNanos(nanos);
-            long elapsed = System.nanoTime() - start;
+        boolean isInterrupted = false;
+        try {
+            while (true) {
+                long start = System.nanoTime();
+                Os.parkNanos(nanos);
+                isInterrupted |= Thread.interrupted();
+                long elapsed = System.nanoTime() - start;
 
-            if (elapsed < nanos) {
-                if (getCount() == 0) {
-                    return true;
+                if (elapsed < nanos) {
+                    if (getCount() == 0) {
+                        return true;
+                    } else {
+                        nanos -= elapsed;
+                    }
                 } else {
-                    nanos -= elapsed;
+                    return getCount() == 0;
                 }
-            } else {
-                return getCount() == 0;
+            }
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
             }
         }
     }
