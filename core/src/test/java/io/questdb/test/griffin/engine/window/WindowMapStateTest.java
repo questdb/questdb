@@ -111,6 +111,15 @@ public class WindowMapStateTest extends AbstractCairoTest {
             """;
     private static final String WINDOW =
             "window w as (partition by k order by ts rows between unbounded preceding and current row)";
+    /**
+     * The same window keyed by an expression over two of the base's columns rather than by one
+     * of them. {@code concat} over a SYMBOL pair is the shape worth running: it reads two
+     * columns, it answers for a NULL rather than propagating it, and no column of the record
+     * carries its value - so the group has to evaluate it to find its key at all.
+     */
+    private static final String EXPRESSION_WINDOW =
+            "window w as (partition by concat(k, k2) order by ts "
+                    + "rows between unbounded preceding and current row)";
 
     @Test
     public void testABoundFunctionsPrivateMapNeverOpens() throws Exception {
@@ -1406,6 +1415,103 @@ public class WindowMapStateTest extends AbstractCairoTest {
                     // on its own.
                     Assert.assertNotNull(state.getMapImplementation());
                     Assert.assertTrue(state.getUnorderedMapMaxEntrySize() > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAnExpressionKeyIsEvaluatedOnceForTheWholeGroup() throws Exception {
+        // A key no column carries. What the group removes here is one more thing than it
+        // removes from a column-keyed query: the members would each have evaluated the
+        // expression a row through a partitionByRecord of their own, and the group evaluates
+        // it once through the terms it borrows from one of them.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertKeyShapes();
+            final String sql = "select ts, sum(x) over w, avg(x) over w, count(y) over w from t "
+                    + EXPRESSION_WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 1);
+                final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                // sum and avg on one component, count(y) on its own - the sharing is the
+                // arguments' business and the key is the window's.
+                Assert.assertEquals(2, state.getPlan().getComponentCount());
+                Assert.assertEquals(3, state.getPlan().getProjectionCount());
+                Assert.assertTrue(state.getPlan().getSpec().hasExpressionPartitionKey());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
+                    Assert.assertEquals(rows, state.getLookupCount());
+                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
+                }
+            }
+            // And the answers are the unfused path's, over the shapes an expression key is
+            // most able to get wrong: a NULL in one of the columns it reads, which concat
+            // answers for rather than propagates, and a partition of a single row.
+            assertFusedMatchesUnfusedOnWindow(
+                    "t",
+                    EXPRESSION_WINDOW,
+                    "sum(x) over w",
+                    "avg(x) over w",
+                    "count(y) over w"
+            );
+            assertFusedMatchesUnfusedOnWindow(
+                    "t",
+                    EXPRESSION_WINDOW,
+                    "count(*) over w",
+                    "row_number() over w",
+                    "max(l) over w"
+            );
+            // A second cursor over the same factory: the group positions its borrowed record
+            // on every row of every traversal rather than once, so a rewind that re-read a
+            // stale one would show here.
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final StringSink first = new StringSink();
+                final StringSink second = new StringSink();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    CursorPrinter.println(cursor, factory.getMetadata(), first, true, false);
+                    cursor.toTop();
+                    CursorPrinter.println(cursor, factory.getMetadata(), second, true, false);
+                }
+                TestUtils.assertEquals(first, second);
+            }
+        });
+    }
+
+    @Test
+    public void testAnExpressionKeyAndItsColumnsAreTwoGroups() throws Exception {
+        // concat(k, k2) is not k, and nothing about the two rendered identities could make it
+        // one - which is the negative control an expression key needs and a column key has in
+        // testTwoWindowsGetTwoGroupsAndShareNothing.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertOrdinaryRows();
+            final String sql = "select ts, sum(x) over w, count(y) over w, sum(x) over w2, count(y) over w2 from t "
+                    + "window w as (partition by concat(k, k2) order by ts "
+                    + "rows between unbounded preceding and current row), "
+                    + "w2 as (partition by k order by ts rows between unbounded preceding and current row)";
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                assertBoundGroupCount(windowFactory, 2);
+                final ObjList<WindowMapState> states = windowFactory.getWindowMapStates();
+                Assert.assertFalse(
+                        states.getQuick(0).getPlan().getSpec().isSameSpec(states.getQuick(1).getPlan().getSpec())
+                );
+                // One of the two writes its key through compiled terms and the other off the
+                // record's own columns, which is the two ways a group has of doing it.
+                Assert.assertNotEquals(
+                        states.getQuick(0).getPlan().getSpec().hasExpressionPartitionKey(),
+                        states.getQuick(1).getPlan().getSpec().hasExpressionPartitionKey()
+                );
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final long rows = drain(cursor);
+                    Assert.assertEquals(rows, states.getQuick(0).getLookupCount());
+                    Assert.assertEquals(rows, states.getQuick(1).getLookupCount());
                 }
             }
         });

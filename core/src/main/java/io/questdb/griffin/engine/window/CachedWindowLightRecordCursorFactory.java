@@ -660,10 +660,12 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
                 reopen(allFunctions);
                 if (windowMapGroups != null) {
-                    // After the functions and needing nothing from Function.init below: a
-                    // group's key projection reads the record's own columns, so unlike a
-                    // projection through compiled PARTITION BY functions it has no symbol
-                    // source to be bound to.
+                    // After the functions and needing nothing from Function.init below: what
+                    // this allocates is map backing, and nothing here evaluates a key. An
+                    // expression-keyed group does read through compiled PARTITION BY terms,
+                    // and they are a member function's own, borrowed - so the Function.init
+                    // below binds them along with that function, well before the first
+                    // traversal reads a row.
                     windowMapGroups.reopen(memoryTracker);
                 }
             }

@@ -102,9 +102,14 @@ public final class WindowAccumulatorPlanBuilder {
         // The whole of a group's key is its spec's, so one guard serves every function this
         // builder is offered. A live view has no spec and offers no guarded projection through
         // this path: its own compiler resolves the candidate and passes a guard of its own.
+        //
+        // The key term has to be a column before it can be the argument's: an expression term
+        // answers -1, which is a column no argument names, and the explicit test is what keeps
+        // that from resting on the caller having resolved its argument first.
         this.partitionKeyGuard = (function, argumentColumnIndex, rowCountHost) -> spec != null
                 && spec.getPartitionColumnCount() == 1
                 && spec.getKeyColumnCount() == 1
+                && spec.getPartitionColumnIndex(0) >= 0
                 && spec.getPartitionColumnIndex(0) == argumentColumnIndex;
     }
 

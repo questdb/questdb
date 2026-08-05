@@ -35,7 +35,9 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -78,13 +80,25 @@ import org.jetbrains.annotations.TestOnly;
  * {@code close()} still frees exactly what it always freed and the group's
  * {@link #close()} frees exactly one thing more.
  * <p>
- * The key projection reads the record's own columns rather than a function's
- * {@code partitionByRecord}, which is what makes that separation possible - and what keeps the
- * group out of the cursor's initialization order, since such a sink has nothing to bind to a
- * symbol source. The first slice admits only direct-column partition keys (see
- * {@link WindowMapSpec}), so there is nothing else such a sink could need. Which record that
- * is belongs to the owner: the base record on the streaming cursor, and the sorted chain
- * record on a cached one, both of which the group's PARTITION BY terms were resolved against.
+ * The key is written one of two ways, and which one is the spec's answer rather than the
+ * owner's:
+ * <ul>
+ *     <li><b>direct columns</b> - a sink over the record's own column indexes, called with the
+ *     row record itself. It borrows nothing and has nothing to bind to a symbol source, which
+ *     is what keeps such a group out of the cursor's initialization order entirely;</li>
+ *     <li><b>an expression key</b> - a sink over the compiled PARTITION BY terms, called with
+ *     a {@link VirtualRecord} of this group's own positioned on the row. The terms are
+ *     <b>borrowed</b> from the function the spec was snapshotted for and are never freed here,
+ *     which is why the wrapper is this group's rather than that function's: a
+ *     {@code VirtualRecord}'s own {@code close()} frees the functions inside it, and this one
+ *     must never be closed. That the borrowed terms are initialized by the time a row arrives
+ *     follows from the owner's order - every window function's {@code init} runs before the
+ *     first row of any traversal, and the terms are that function's own.</li>
+ * </ul>
+ * Which record the row arrives on belongs to the owner: the base record on the streaming
+ * cursor, and the sorted chain record on a cached one, both of which the group's PARTITION BY
+ * terms were resolved against. One evaluation of an expression key a row serves the whole
+ * group, which is a saving the direct-column case has no equivalent of.
  *
  * <h2>What this binds</h2>
  * Every plan the compiler produces, whether its outputs each keep a component of their own -
@@ -120,6 +134,13 @@ import org.jetbrains.annotations.TestOnly;
  */
 public final class WindowMapState implements QuietCloseable, Reopenable {
     private final int componentCount;
+    /**
+     * The group's own wrapper over the borrowed PARTITION BY terms, or null when the key is
+     * direct columns and the row record carries it. Deliberately never closed: closing a
+     * {@link VirtualRecord} frees the functions inside it, and these are the compiling
+     * function's.
+     */
+    private final VirtualRecord keyRecord;
     private final RecordSink keySink;
     private final Map map;
     private final WindowAccumulatorPlan plan;
@@ -150,17 +171,32 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         this.twoPass = spec.getPassCount() > WindowFunction.ONE_PASS;
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         appendKeyTypes(spec, keyTypes);
+        final ObjList<? extends Function> keyFunctions = spec.getPartitionByFunctions();
         final ListColumnFilter keyColumnFilter = new ListColumnFilter();
-        for (int i = 0, n = spec.getPartitionColumnCount(); i < n; i++) {
-            // The RecordSink contract: the filter holds 1-based indexes into the source
-            // record's metadata, and the ColumnTypes argument carries that whole metadata's
-            // types rather than the filtered subset's.
-            keyColumnFilter.add(spec.getPartitionColumnIndex(i) + 1);
+        final ColumnTypes sinkTypes;
+        if (keyFunctions != null) {
+            // An expression key: the sink reads the group's own virtual record, whose columns
+            // are the terms themselves and whose types are therefore the key's own - so the
+            // filter is the identity over them, exactly as the compiler builds each function's.
+            this.keyRecord = new VirtualRecord(keyFunctions);
+            sinkTypes = keyTypes;
+            for (int i = 0, n = spec.getKeyColumnCount(); i < n; i++) {
+                keyColumnFilter.add(i + 1);
+            }
+        } else {
+            this.keyRecord = null;
+            sinkTypes = recordTypes;
+            for (int i = 0, n = spec.getPartitionColumnCount(); i < n; i++) {
+                // The RecordSink contract: the filter holds 1-based indexes into the source
+                // record's metadata, and the ColumnTypes argument carries that whole metadata's
+                // types rather than the filtered subset's.
+                keyColumnFilter.add(spec.getPartitionColumnIndex(i) + 1);
+            }
         }
         final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
         plan.buildMapValueTypes(valueTypes);
         // Built before the map so a failure here cannot strand a tracked allocation.
-        this.keySink = RecordSinkFactory.getInstance(configuration, asm, recordTypes, keyColumnFilter, null);
+        this.keySink = RecordSinkFactory.getInstance(configuration, asm, sinkTypes, keyColumnFilter, null);
         // Lazily opened, like every other tracker-aware window state: the owning cursor binds
         // the per-query MemoryTracker and only then reopens, so the backing's malloc and its
         // free are charged to the same counter.
@@ -178,10 +214,11 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * {@link WindowFunction#isWindowStateOwned()}.
      *
      * @param plans       the compiled groups, or null when the query formed none
-     * @param recordTypes the types, by index, of the record the key projection reads - the
+     * @param recordTypes the types, by index, of the record the group is driven with - the
      *                    base record for a streaming compile and the chain record for a
      *                    cached one, both of which the group's PARTITION BY terms were
-     *                    resolved against
+     *                    resolved against. Read to build a direct-column key sink; an
+     *                    expression key's sink is built over the terms' own types instead
      */
     public static @Nullable ObjList<WindowMapState> createGroups(
             @NotNull CairoConfiguration configuration,
@@ -256,7 +293,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      */
     public void computeNext(Record record) {
         final MapKey key = map.withKey();
-        key.put(record, keySink);
+        putKey(key, record);
         final MapValue value = key.createValue();
         if (value.isNew()) {
             for (int c = 0; c < componentCount; c++) {
@@ -361,7 +398,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      */
     public void projectPass2(Record record) {
         final MapKey key = map.withKey();
-        key.put(record, keySink);
+        putKey(key, record);
         final MapValue value = key.findValue();
         // Pass 1 walked the same rows and created an entry for each, so the key is there.
         assert value != null;
@@ -410,6 +447,22 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     private void bindProjectionFunctions() {
         for (int i = 0; i < projectionCount; i++) {
             plan.getProjectionFunction(i).bindWindowStateSlots(plan.getProjection(i));
+        }
+    }
+
+    /**
+     * Writes the row's key onto {@code key}, through the compiled PARTITION BY terms where the
+     * key is an expression and off the record's own columns where it is not.
+     * <p>
+     * The virtual record is positioned on every row rather than once: it is this group's, but
+     * the row it reads is the traversal's, and a group is driven from more than one of them.
+     */
+    private void putKey(MapKey key, Record record) {
+        if (keyRecord != null) {
+            keyRecord.of(record);
+            key.put(keyRecord, keySink);
+        } else {
+            key.put(record, keySink);
         }
     }
 

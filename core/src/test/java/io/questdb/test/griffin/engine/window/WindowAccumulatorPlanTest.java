@@ -102,16 +102,68 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAnExpressionPartitionKeyProducesNoGroup() throws Exception {
+    public void testAnExpressionPartitionKeyGroupsOnItsIdentity() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();
-            // No canonical, type-resolved fingerprint proves two compiled expressions
-            // equivalent, and the rendered SQL is not that proof - so an expression key
-            // declines in this release and the functions keep the maps they have today.
+            // One expression, two spellings of it, and a second reference to the name - the
+            // same test two direct-column spellings get, over a key no column carries. The
+            // inline one differs in case throughout, which is what a resolved-column identity
+            // normalizes and a rendering of the SQL would not.
+            assertPlans(
+                    "select ts, sum(x) over w, "
+                            + "count(y) over (partition by CONCAT(K, 'z') order by ts "
+                            + "rows between unbounded preceding and current row), "
+                            + "avg(x) over w from base " + expressionWindow("concat(k, 'z')"),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(2, plan.getComponentCount());
+                        Assert.assertEquals(3, plan.getProjectionCount());
+                        // The key is an expression: no term names a column, and the group has
+                        // to evaluate the compiled terms to write it.
+                        Assert.assertTrue(plan.getSpec().hasExpressionPartitionKey());
+                        Assert.assertEquals(-1, plan.getSpec().getPartitionColumnIndex(0));
+                        Assert.assertNotNull(plan.getSpec().getPartitionByFunctions());
+                    }
+            );
+            // Two expressions that differ anywhere are two key domains, exactly as two columns
+            // are. The pair here differs in one constant, which is the whole difference
+            // between two partitions of the same rows.
+            assertPlans(
+                    "select ts, sum(x) over w1, avg(x) over w1, sum(x) over w2, avg(x) over w2 from base "
+                            + "window w1 as (partition by concat(k, 'z') order by ts "
+                            + "rows between unbounded preceding and current row), "
+                            + "w2 as (partition by concat(k, 'y') order by ts "
+                            + "rows between unbounded preceding and current row)",
+                    plans -> {
+                        Assert.assertNotNull(plans);
+                        Assert.assertEquals(2, plans.size());
+                        Assert.assertFalse(
+                                plans.getQuick(0).getSpec().isSameSpec(plans.getQuick(1).getSpec())
+                        );
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testAPartitionKeyWithNoCanonicalIdentityProducesNoGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // A tree the identity renders and a function that answers differently on every
+            // evaluation. Two calls over it partition the rows two different ways, and one
+            // shared evaluation would be neither of them.
             assertPlans(
                     "select ts, sum(x) over w, avg(x) over w from base "
-                            + "window w as (partition by concat(k, 'z') order by ts "
-                            + "rows between unbounded preceding and current row)",
+                            + expressionWindow("rnd_int()"),
+                    Assert::assertNull
+            );
+            // A node kind the identity does not name. It could be given one later; it cannot
+            // be given one by omission.
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "z");
+            assertPlans(
+                    "select ts, sum(x) over w, avg(x) over w from base "
+                            + expressionWindow("concat(k, $1)"),
                     Assert::assertNull
             );
         });
@@ -983,6 +1035,15 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
      */
     private static String window() {
         return "window w as (partition by k order by ts rows between unbounded preceding and current row)";
+    }
+
+    /**
+     * The reference window keyed by {@code term} rather than by a column, which is the same
+     * cumulative shape every case above runs over: what changes is only how the key is written.
+     */
+    private static String expressionWindow(String term) {
+        return "window w as (partition by " + term + " order by ts "
+                + "rows between unbounded preceding and current row)";
     }
 
     /**

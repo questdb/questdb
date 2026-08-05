@@ -9983,6 +9983,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (windowMapSpecs != null) {
                             windowMapSpecs.extendAndSet(i, WindowMapSpec.of(
                                     executionContext.getWindowContext(),
+                                    ac.getPartitionBy(),
                                     ac.getOrderBy(),
                                     ac.getOrderByDirection(),
                                     dismissOrder,
@@ -10371,6 +10372,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             cachedWindowSpecFunctions.add(af);
                             cachedWindowMapSpecs.add(WindowMapSpec.of(
                                     executionContext.getWindowContext(),
+                                    ac.getPartitionBy(),
                                     ac.getOrderBy(),
                                     ac.getOrderByDirection(),
                                     dismissOrder,

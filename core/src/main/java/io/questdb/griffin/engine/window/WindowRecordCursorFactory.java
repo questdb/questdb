@@ -430,11 +430,15 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
          * in that order, so the malloc and the free that {@link #close()} performs land on the
          * same counter.
          * <p>
-         * It runs after {@code reopen(functions)} and needs nothing from
-         * {@link Function#init}: a group's key projection reads the base record's own columns,
-         * so unlike a projection through compiled PARTITION BY functions it has no symbol
-         * source to be bound to. That is what keeps the group out of the initialization order
-         * {@code of} and {@code ofIncremental} otherwise differ on.
+         * It runs after {@code reopen(functions)} and needs nothing from {@link Function#init}:
+         * what it allocates is map backing, and nothing here evaluates a key.
+         * <p>
+         * A group whose key is an expression does read through compiled PARTITION BY functions,
+         * and they are bound to the symbol source by the {@code Function.init} below - they are
+         * a member function's own terms, borrowed, so initializing that function initializes
+         * them. That ordering holds for {@code of}, which inits every row's worth of function
+         * before the first {@code hasNext}; {@code ofIncremental} is a live-view entry point
+         * and no live-view compile produces a group at all.
          */
         private void openWindowMapStates(MemoryTracker memoryTracker) {
             for (int i = 0; i < windowMapStatesCount; i++) {

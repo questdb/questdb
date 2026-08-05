@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -50,10 +51,12 @@ import org.jetbrains.annotations.Nullable;
  *
  * <h2>What the identity carries, and why each part is in it</h2>
  * <ul>
- *     <li><b>the direct-column partition indexes, in order, and the map key column types.</b>
- *     The indexes are the key's semantics and the types are its physical layout; the two are
- *     separate because a live-view compile writes a SYMBOL key through its resolved string,
- *     so one column list can produce two key layouts and those cannot share a map;</li>
+ *     <li><b>the canonical identity of the partition terms, in order, and the map key column
+ *     types.</b> The terms are the key's semantics and the types are its physical layout; the
+ *     two are separate because a live-view compile writes a SYMBOL key through its resolved
+ *     string, so one term list can produce two key layouts and those cannot share a map. A
+ *     term is a resolved column index where it is a direct column reference and a
+ *     {@link WindowKeyExpressionIdentity rendered expression} where it is not;</li>
  *     <li><b>the effective order column indexes and directions, and whether the order was
  *     dismissed</b> against the base cursor's own scan. A cumulative frame's contents are
  *     the rows the traversal has already passed, so two functions agree on that frame only
@@ -82,15 +85,22 @@ import org.jetbrains.annotations.Nullable;
  *     <li><b>an unpartitioned window.</b> A cumulative function with no PARTITION BY keeps
  *     its state in scalar fields and owns no map at all, so there is nothing to co-locate
  *     and a group would only add a probe;</li>
- *     <li><b>a PARTITION BY term that is not a direct compiled column</b> of the base
- *     metadata's own type. There is no canonical, type-resolved fingerprint that proves two
- *     compiled expressions equivalent, and rendering the SQL text is not that proof;</li>
- *     <li><b>an ORDER BY term that is not a direct base column</b>, for the same reason: the
- *     spec would then claim two windows are ordered alike on the strength of two expressions
- *     nothing compared.</li>
+ *     <li><b>a PARTITION BY term {@link WindowKeyExpressionIdentity} cannot name</b> - a bind
+ *     variable, a subquery, a random call, an unresolvable column. An expression term that it
+ *     can name joins on that identity rather than on being a column;</li>
+ *     <li><b>an ORDER BY term that is not a direct base column.</b> The identity above would
+ *     name one, and what has not been worked out is the rest: an ordered group is a cached
+ *     factory's sort bucket, and whether two expression orders that render alike are sorted
+ *     alike is that factory's question rather than this one.</li>
  * </ul>
- * Both expression cases are the conservative first slice rather than a permanent rule, and
- * both are what a canonical compiled expression identity would later admit.
+ *
+ * <h2>An expression key is a borrowed projection</h2>
+ * A spec whose terms are all direct columns says everything the group's key projection needs -
+ * the columns, and the record they are read off. An expression-keyed one does not, so it also
+ * carries the <b>compiled</b> terms of the function it was snapshotted for, non-owning, for
+ * {@link WindowMapState} to evaluate the key through. They stay that function's to free, and
+ * they are alive and initialized for exactly as long as the group is: both are the factory's,
+ * and every window function's {@code init} runs before the first row of any traversal.
  */
 public final class WindowMapSpec {
     private final int exclusionKind;
@@ -99,7 +109,9 @@ public final class WindowMapSpec {
     private final IntList orderColumnIndexes;
     private final IntList orderDirections;
     private final boolean orderDismissed;
+    private final ObjList<? extends Function> partitionByFunctions;
     private final IntList partitionColumnIndexes;
+    private final String partitionKeyIdentity;
     private final WindowFunction.Pass1ScanDirection pass1ScanDirection;
     private final int passCount;
     private final long rowsHi;
@@ -110,6 +122,8 @@ public final class WindowMapSpec {
 
     private WindowMapSpec(
             IntList partitionColumnIndexes,
+            String partitionKeyIdentity,
+            ObjList<? extends Function> partitionByFunctions,
             IntList keyColumnTypes,
             IntList orderColumnIndexes,
             IntList orderDirections,
@@ -125,6 +139,8 @@ public final class WindowMapSpec {
             int timestampType
     ) {
         this.partitionColumnIndexes = partitionColumnIndexes;
+        this.partitionKeyIdentity = partitionKeyIdentity;
+        this.partitionByFunctions = partitionByFunctions;
         this.keyColumnTypes = keyColumnTypes;
         this.orderColumnIndexes = orderColumnIndexes;
         this.orderDirections = orderDirections;
@@ -152,13 +168,20 @@ public final class WindowMapSpec {
      *
      * @param context           the window context {@code function} was compiled under,
      *                          still configured
+     * @param partitionBy       the window's PARTITION BY terms, as parsed, in the order the
+     *                          context's compiled functions were built from them. They are read
+     *                          here and not retained: the identity rendered off them is
+     *                          {@link WindowKeyExpressionIdentity}'s string, so a pooled node
+     *                          the compiler recycles after this statement is never referenced
+     *                          again
      * @param orderBy           the window's ORDER BY terms, as written
      * @param orderByDirections one direction per term
      * @param orderDismissed    whether the compiler proved the base cursor already
      *                          produces this order, so no sort stands between the two
      * @param function          the compiled window function, read for its pass structure
      * @param baseMetadata      the metadata the window's expressions were compiled against,
-     *                          which is what an ORDER BY term's name resolves through
+     *                          which is what a term's name resolves through - an ORDER BY one,
+     *                          and a column inside an expression PARTITION BY term
      * @param recordTypes       the types of the record those expressions read, by index. It
      *                          is {@code baseMetadata} itself for a streaming compile; a
      *                          cached compile passes the record chain's own type list,
@@ -167,6 +190,7 @@ public final class WindowMapSpec {
      */
     public static @Nullable WindowMapSpec of(
             @NotNull WindowContext context,
+            @NotNull ObjList<ExpressionNode> partitionBy,
             @NotNull ObjList<ExpressionNode> orderBy,
             @NotNull IntList orderByDirections,
             boolean orderDismissed,
@@ -184,18 +208,39 @@ public final class WindowMapSpec {
         }
         final ObjList<? extends Function> partitionByFunctions = partitionByRecord.getFunctions();
         final int partitionCount = partitionByFunctions == null ? 0 : partitionByFunctions.size();
-        if (partitionCount == 0 || contextKeyTypes.getColumnCount() != partitionCount) {
+        if (partitionCount == 0
+                || contextKeyTypes.getColumnCount() != partitionCount
+                || partitionBy.size() != partitionCount) {
             return null;
         }
         final IntList partitionColumnIndexes = new IntList(partitionCount);
         final IntList keyColumnTypes = new IntList(partitionCount);
+        final StringSink identity = new StringSink();
+        boolean expressionKey = false;
         for (int i = 0; i < partitionCount; i++) {
-            final int columnIndex = WindowAccumulatorDescriptor.directColumnIndex(
-                    partitionByFunctions.getQuick(i),
-                    recordTypes
-            );
-            if (columnIndex < 0) {
-                return null;
+            final Function term = partitionByFunctions.getQuick(i);
+            final int columnIndex = WindowAccumulatorDescriptor.directColumnIndex(term, recordTypes);
+            if (i > 0) {
+                identity.putAscii(WindowKeyExpressionIdentity.TERM_SEPARATOR);
+            }
+            // A direct column term renders through the same identity an expression one does, so
+            // a group's key is one string however its terms were written - but off the compiled
+            // function rather than off the tree. Both routes answer the same thing for such a
+            // term, and reading it off the function is what makes this build's admissions a
+            // superset of the last one's: a key that bound before cannot stop binding because
+            // its name resolves some way this rendering does not.
+            //
+            // What the index beside the identity adds is the term's own answer to "which column
+            // is this" - the key projection reads it, and so does the guard that lets a count
+            // over the partition key join a row count - and an expression term answers -1 to
+            // both.
+            if (columnIndex >= 0) {
+                WindowKeyExpressionIdentity.renderColumn(columnIndex, term.getType(), identity);
+            } else {
+                if (!WindowKeyExpressionIdentity.render(partitionBy.getQuick(i), term, baseMetadata, identity)) {
+                    return null;
+                }
+                expressionKey = true;
             }
             partitionColumnIndexes.add(columnIndex);
             keyColumnTypes.add(contextKeyTypes.getColumnType(i));
@@ -217,6 +262,10 @@ public final class WindowMapSpec {
         }
         return new WindowMapSpec(
                 partitionColumnIndexes,
+                identity.toString(),
+                // Kept only where the key cannot be written off the record's own columns. The
+                // reference is the compiling function's and is never freed here.
+                expressionKey ? partitionByFunctions : null,
                 keyColumnTypes,
                 orderColumnIndexes,
                 orderDirections,
@@ -279,16 +328,45 @@ public final class WindowMapSpec {
         return passCount;
     }
 
+    /**
+     * The compiled PARTITION BY terms a group has to evaluate to write its key, or null when
+     * the key is direct columns and the record carries it already.
+     * <p>
+     * <b>Non-owning.</b> They belong to the window function this spec was snapshotted for,
+     * which frees them, initializes them and outlives every group built on this spec.
+     */
+    public @Nullable ObjList<? extends Function> getPartitionByFunctions() {
+        return partitionByFunctions;
+    }
+
     public int getPartitionColumnCount() {
         return partitionColumnIndexes.size();
     }
 
     /**
-     * Returns PARTITION BY term {@code index}'s column in the base metadata. Every term is
-     * a direct column, or {@link #of} would have declined the whole spec.
+     * Returns PARTITION BY term {@code index}'s column in the base metadata, or {@code -1}
+     * when the term is an expression rather than a direct column of that metadata's own type.
      */
     public int getPartitionColumnIndex(int index) {
         return partitionColumnIndexes.getQuick(index);
+    }
+
+    /**
+     * The canonical identity of the whole PARTITION BY list - one
+     * {@link WindowKeyExpressionIdentity rendered term} per column, separated by
+     * {@link WindowKeyExpressionIdentity#TERM_SEPARATOR}. It is the whole of the key half of
+     * {@link #isSameSpec}.
+     */
+    public String getPartitionKeyIdentity() {
+        return partitionKeyIdentity;
+    }
+
+    /**
+     * Whether any PARTITION BY term is an expression rather than a direct column, which is
+     * what decides how a group writes its key - see {@link #getPartitionByFunctions()}.
+     */
+    public boolean hasExpressionPartitionKey() {
+        return partitionByFunctions != null;
     }
 
     public long getRowsHi() {
@@ -339,7 +417,9 @@ public final class WindowMapSpec {
                 && pass1ScanDirection == other.pass1ScanDirection
                 && timestampIndex == other.timestampIndex
                 && timestampType == other.timestampType
-                && partitionColumnIndexes.equals(other.partitionColumnIndexes)
+                // The identity subsumes the column indexes beside it: a direct column term
+                // renders as the index it resolved to and the type it reads it as.
+                && partitionKeyIdentity.equals(other.partitionKeyIdentity)
                 && keyColumnTypes.equals(other.keyColumnTypes)
                 && orderColumnIndexes.equals(other.orderColumnIndexes)
                 && orderDirections.equals(other.orderDirections));
@@ -347,7 +427,8 @@ public final class WindowMapSpec {
 
     @Override
     public String toString() {
-        return "WindowMapSpec{partitionColumns=" + partitionColumnIndexes
+        return "WindowMapSpec{partitionKey=" + partitionKeyIdentity
+                + ", partitionColumns=" + partitionColumnIndexes
                 + ", keyColumnTypes=" + keyColumnTypes
                 + ", orderColumns=" + orderColumnIndexes
                 + ", orderDirections=" + orderDirections

@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
@@ -69,6 +70,12 @@ public class WindowMapSpecTest {
     private static final int COLUMN_TS = 0;
     private static final int COLUMN_X = 2;
     private static final int COLUMN_Y = 3;
+    /**
+     * The nodes every fixture's terms are built from. Never released, so each {@code next()}
+     * is a fresh one - these trees stand in for what the parser hands the compiler, and the
+     * spec is required to keep nothing of them.
+     */
+    private static final ObjectPool<ExpressionNode> NODES = new ObjectPool<>(ExpressionNode.FACTORY, 16);
 
     @Test
     public void testAnExpressionOrderTermDeclines() throws SqlException {
@@ -80,11 +87,61 @@ public class WindowMapSpecTest {
     }
 
     @Test
-    public void testAnExpressionPartitionTermDeclines() throws SqlException {
-        // A constant stands in for any compiled expression: what the spec requires is a
-        // direct column reference, because no canonical fingerprint proves two compiled
-        // expressions equivalent.
-        Assert.assertNull(spec(builder().partitionBy(IntConstant.newInstance(1), ColumnType.INT)));
+    public void testAnExpressionPartitionTermJoinsOnItsRenderedIdentity() throws SqlException {
+        // Two windows keyed by x + 1, written and compiled separately. What makes them one
+        // group is that their parsed trees render the same identity against one metadata -
+        // not that anything compared two compiled functions, which nothing can do.
+        final WindowMapSpec left = spec(builder().partitionBy(sum(literal("x"), constant("1"))));
+        final WindowMapSpec right = spec(builder().partitionBy(sum(literal("x"), constant("1"))));
+        Assert.assertNotNull(left);
+        Assert.assertNotNull(right);
+        Assert.assertTrue(left.isSameSpec(right));
+        // An expression term is a term with no column of its own, and the runtime has to
+        // evaluate it: the spec says both, and the compiled terms it carries for that are the
+        // ones the window function it was snapshotted for owns.
+        Assert.assertTrue(left.hasExpressionPartitionKey());
+        Assert.assertEquals(-1, left.getPartitionColumnIndex(0));
+        Assert.assertNotNull(left.getPartitionByFunctions());
+        // The rendering itself, pinned once: the operation's own token, its arity, and the
+        // resolved column beside the literal constant.
+        Assert.assertEquals("!+/2(#2:" + ColumnType.DOUBLE + ",=1)", left.getPartitionKeyIdentity());
+
+        // The operation is part of the identity rather than only its operands, which is the
+        // one thing Function.isEquivalentTo cannot say - two BinaryFunctions over one pair of
+        // columns answer true to it whether they add or subtract.
+        assertDistinct(left, builder().partitionBy(difference(literal("x"), constant("1"))));
+        // ... and so are the operands, their order, and every constant in them.
+        assertDistinct(left, builder().partitionBy(sum(literal("x"), constant("2"))));
+        assertDistinct(left, builder().partitionBy(sum(constant("1"), literal("x"))));
+        assertDistinct(left, builder().partitionBy(sum(literal("y"), constant("1"))));
+        // A direct column renders through the same identity, so a spec is one string however
+        // its terms were written - and a column term is never an expression one.
+        final WindowMapSpec column = spec(builder());
+        Assert.assertNotNull(column);
+        Assert.assertFalse(column.hasExpressionPartitionKey());
+        Assert.assertNull(column.getPartitionByFunctions());
+        Assert.assertEquals("#" + COLUMN_K + ":" + ColumnType.VARCHAR, column.getPartitionKeyIdentity());
+        Assert.assertFalse(column.isSameSpec(left));
+    }
+
+    @Test
+    public void testAPartitionTermThisBuildCannotNameDeclines() throws SqlException {
+        // A node kind the identity does not name. Each of these could be given one later, and
+        // none of them can be given one by omission - so the window forms no group and its
+        // functions keep the maps they own outside one.
+        Assert.assertNull(spec(builder().partitionBy(node(ExpressionNode.BIND_VARIABLE, "$1"))));
+        Assert.assertNull(spec(builder().partitionBy(node(ExpressionNode.QUERY, "select"))));
+        // A name that resolves to no column of the metadata the term was compiled against.
+        Assert.assertNull(spec(builder().partitionBy(literal("absent"))));
+        // A tree this build renders perfectly well, whose compiled function answers a
+        // different partition on every evaluation. Sharing one evaluation between two calls
+        // would be a different query, so the term declines on the function rather than on the
+        // tree.
+        Assert.assertNull(spec(builder().partitionBy(
+                node(ExpressionNode.FUNCTION, "rnd_int"),
+                new RandomStub(),
+                ColumnType.INT
+        )));
     }
 
     @Test
@@ -102,7 +159,7 @@ public class WindowMapSpecTest {
         // The key domain: which columns, and how they are written. The two are separate
         // because a live-view compile resolves a SYMBOL key through its string, so one
         // column list can produce two key layouts and those cannot share a map.
-        assertDistinct(reference, builder().partitionBy(new VarcharColumn(COLUMN_Y), ColumnType.VARCHAR));
+        assertDistinct(reference, builder().partitionBy(literal("y"), new VarcharColumn(COLUMN_Y), ColumnType.VARCHAR));
         assertDistinct(reference, builder().keyColumnType(ColumnType.STRING));
 
         // The row order the cumulative frame is accumulated in.
@@ -196,8 +253,36 @@ public class WindowMapSpecTest {
         return new Fixture();
     }
 
+    private static ExpressionNode constant(CharSequence token) {
+        return node(ExpressionNode.CONSTANT, token);
+    }
+
+    /**
+     * {@code left - right}, which is {@link #sum}'s tree with one token changed - the whole of
+     * the difference two calls fused on their operands alone would miss.
+     */
+    private static ExpressionNode difference(ExpressionNode left, ExpressionNode right) {
+        return operation("-", left, right);
+    }
+
     private static ExpressionNode literal(CharSequence token) {
-        return new ObjectPool<>(ExpressionNode.FACTORY, 1).next().of(ExpressionNode.LITERAL, token, 0, 0);
+        return node(ExpressionNode.LITERAL, token);
+    }
+
+    private static ExpressionNode node(int type, CharSequence token) {
+        return NODES.next().of(type, token, 0, 0);
+    }
+
+    private static ExpressionNode operation(CharSequence token, ExpressionNode left, ExpressionNode right) {
+        final ExpressionNode node = node(ExpressionNode.OPERATION, token);
+        node.lhs = left;
+        node.rhs = right;
+        node.paramCount = 2;
+        return node;
+    }
+
+    private static ExpressionNode sum(ExpressionNode left, ExpressionNode right) {
+        return operation("+", left, right);
     }
 
     private static RecordMetadata metadata() {
@@ -228,6 +313,7 @@ public class WindowMapSpecTest {
         private WindowFunction.Pass1ScanDirection pass1ScanDirection = WindowFunction.Pass1ScanDirection.FORWARD;
         private int passCount = WindowFunction.ZERO_PASS;
         private Function partitionByFunction = new VarcharColumn(COLUMN_K);
+        private ExpressionNode partitionByNode = literal("k");
         private long rowsHi = 0;
         private char rowsHiUnit = 0;
         private long rowsLo = Long.MIN_VALUE;
@@ -239,10 +325,12 @@ public class WindowMapSpecTest {
         WindowMapSpec build() throws SqlException {
             final VirtualRecord partitionByRecord;
             final ColumnTypes keyTypes;
+            final ObjList<ExpressionNode> partitionBy = new ObjList<>();
             if (partitionByFunction == null) {
                 partitionByRecord = null;
                 keyTypes = null;
             } else {
+                partitionBy.add(partitionByNode);
                 final ObjList<Function> partitionByFunctions = new ObjList<>();
                 partitionByFunctions.add(partitionByFunction);
                 partitionByRecord = new VirtualRecord(partitionByFunctions);
@@ -277,6 +365,7 @@ public class WindowMapSpecTest {
             );
             return WindowMapSpec.of(
                     context,
+                    partitionBy,
                     orderBy,
                     orderByDirections,
                     orderDismissed,
@@ -306,6 +395,7 @@ public class WindowMapSpecTest {
 
         Fixture noPartitionBy() {
             this.partitionByFunction = null;
+            this.partitionByNode = null;
             return this;
         }
 
@@ -320,7 +410,17 @@ public class WindowMapSpecTest {
             return this;
         }
 
-        Fixture partitionBy(Function function, int keyColumnType) {
+        /**
+         * An expression term, standing on its parsed tree alone: the compiled function beside
+         * it is a constant, which is what any expression looks like to the one question the
+         * spec asks a compiled term - whether it is a direct column, which it is not.
+         */
+        Fixture partitionBy(ExpressionNode node) {
+            return partitionBy(node, IntConstant.newInstance(1), ColumnType.DOUBLE);
+        }
+
+        Fixture partitionBy(ExpressionNode node, Function function, int keyColumnType) {
+            this.partitionByNode = node;
             this.partitionByFunction = function;
             this.keyColumnType = keyColumnType;
             return this;
@@ -377,6 +477,23 @@ public class WindowMapSpecTest {
             final ObjList<ExpressionNode> nodes = new ObjList<>();
             nodes.add(node);
             return nodes;
+        }
+    }
+
+    /**
+     * A compiled term whose tree is canonical and whose value is not: the identity renders it
+     * and the spec still declines, because two calls sharing one evaluation of it would be a
+     * different query from two calls evaluating it each.
+     */
+    private static final class RandomStub extends IntFunction {
+        @Override
+        public int getInt(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
         }
     }
 

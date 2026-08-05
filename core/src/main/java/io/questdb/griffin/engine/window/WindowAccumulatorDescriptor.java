@@ -58,9 +58,12 @@ import org.jetbrains.annotations.Nullable;
  * <ul>
  *     <li>the <b>argument</b>, as a {@code (base column index, column type)} pair.
  *     Only a direct compiled column reference gets a key at all - see
- *     {@link #directColumnIndex} - because a canonical, type-resolved fingerprint for
- *     arbitrary expressions does not exist yet, and rendering the SQL text is not a proof
- *     of expression equivalence. A family {@link #familyTakesArgument} says takes none
+ *     {@link #directColumnIndex} - because that pair is the whole of the room this
+ *     identity has for one. {@link WindowKeyExpressionIdentity} names an expression a
+ *     PARTITION BY term may be, and admitting one here is a wider identity rather than a
+ *     use of that name: it is also what {@code nth_value(x, n)} needs, whose state is keyed
+ *     by a compiled constant as well as by a column. A family
+ *     {@link #familyTakesArgument} says takes none
  *     carries the fixed {@code (NO_ARGUMENT_COLUMN_INDEX, UNDEFINED)} pair instead, so its
  *     identity is one exact value rather than an absence;</li>
  *     <li>the <b>contribution predicate</b>, because two counters over the same window can

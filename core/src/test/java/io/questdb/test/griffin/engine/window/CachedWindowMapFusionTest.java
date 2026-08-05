@@ -84,6 +84,15 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     // one of those in the SELECT list is what the streaming fast path declines on.
     private static final String NATURAL_WINDOW =
             " from t window w as (partition by k order by ts rows between unbounded preceding and current row)";
+    // The two windows above keyed by an expression over two columns rather than by one of
+    // them, which is a key the record does not carry: the group evaluates the compiled terms
+    // through a virtual record of its own, positioned on whichever row the traversal is on.
+    private static final String ORDERED_EXPRESSION_WINDOW =
+            " from t window w as (partition by concat(k, k2) order by ts desc "
+                    + "rows between unbounded preceding and current row)";
+    private static final String NATURAL_EXPRESSION_WINDOW =
+            " from t window w as (partition by concat(k, k2) order by ts "
+                    + "rows between unbounded preceding and current row)";
     // The bounded-ROWS spellings of the two windows above. Their families are ring-backed: the
     // group's map value addresses a ring in the contributing function's own arena, and a cached
     // traversal reaches that contributor through the sorted chain rather than off the base scan -
@@ -361,6 +370,20 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                             "first_value(x) over w",
                             "first_value(ts) ignore nulls over w"
                     );
+                    // An expression key, in both buckets. What it adds is the one thing a
+                    // cached traversal does to a key that a streaming one does not: the terms
+                    // are evaluated against the sorted chain record rather than the base scan's,
+                    // through a virtual record the group positions on every row of both passes.
+                    final String expressionWindow = natural == 0
+                            ? ORDERED_EXPRESSION_WINDOW
+                            : NATURAL_EXPRESSION_WINDOW;
+                    assertFusedMatchesUnfused(
+                            expressionWindow,
+                            lead,
+                            "sum(x) over w",
+                            "avg(x) over w",
+                            "count(y) over w"
+                    );
                 }
                 // The ring-backed families, in all three bucket spellings a bounded frame reaches
                 // here. What they add to the differential is an accumulator whose state is partly
@@ -473,6 +496,23 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     );
                     assertFusedMatchesUnfused(window, "", "sum(x)" + over, "count(y)" + over);
                     assertFusedMatchesUnfused(window, "", "count(*)" + over, "count(k)" + over);
+                    // The same over an expression key, which is the shape that probes a
+                    // borrowed key projection twice a row: once as pass 1 absorbs the row and
+                    // once as pass 2 materializes the outputs off the finished accumulator.
+                    final String expressionOver = ordered == 0
+                            ? " over (partition by concat(k, k2))"
+                            : " over q";
+                    final String expressionWindow = ordered == 0
+                            ? PARTITION_WINDOW
+                            : " from t window q as (partition by concat(k, k2) order by ts desc "
+                            + "rows between unbounded preceding and unbounded following)";
+                    assertFusedMatchesUnfused(
+                            expressionWindow,
+                            "",
+                            "sum(x)" + expressionOver,
+                            "avg(x)" + expressionOver,
+                            "count(x)" + expressionOver
+                    );
                 }
             }
         });

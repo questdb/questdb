@@ -90,8 +90,11 @@ public interface WindowFunction extends Function {
      * frees it, and the compiler only reads the argument's identity off it. Only a
      * direct compiled column reference produces a usable argument key today; an
      * expression - including an implicit cast a signature match inserted - is not one,
-     * because there is no canonical type-resolved fingerprint that would prove two
-     * expressions equivalent, and SQL text equality is not that proof.
+     * because a component's identity carries its argument as a
+     * {@code (column index, column type)} pair and nothing narrower would fit in it.
+     * A PARTITION BY term is no longer in the same position - see
+     * {@link WindowKeyExpressionIdentity}, which names one - and widening the argument
+     * key to the same identity is work of its own rather than a consequence of that.
      * <p>
      * Null is <b>required</b> rather than merely permitted of a function declaring a
      * family {@link WindowAccumulatorDescriptor#familyTakesArgument} says takes none:

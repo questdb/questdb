@@ -96,6 +96,12 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
     private static final int ITERATIONS = 40;
     private static final String[] KEY_COLUMNS = {"ki", "ks", "kv"};
     /**
+     * Keys no column of the base carries, over the same columns the plain keys use - so a
+     * window keyed by one of these partitions the same rows differently, and a fused arm that
+     * read the key off a column would answer visibly wrong rather than subtly so.
+     */
+    private static final String[] KEY_EXPRESSIONS = {"concat(ks, kv)", "ki + 1", "concat(ks, 'z')"};
+    /**
      * Calls whose class declares an accumulator family, so a group can carry them. The
      * arguments are direct columns of their own type, which is what the first slice admits.
      */
@@ -487,7 +493,14 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             } else {
                 frame = "unbounded preceding and current row";
             }
-            specs[w] = "partition by " + KEY_COLUMNS[rnd.nextInt(KEY_COLUMNS.length)]
+            // A key is a column or an expression over one or two of them, and which it is
+            // decides how the group writes it: off the record's own columns, or through the
+            // compiled terms it borrows from a member. The expressions are deliberately ones
+            // whose value no column carries, so the two arms cannot agree by accident.
+            final String key = rnd.nextInt(4) == 0
+                    ? KEY_EXPRESSIONS[rnd.nextInt(KEY_EXPRESSIONS.length)]
+                    : KEY_COLUMNS[rnd.nextInt(KEY_COLUMNS.length)];
+            specs[w] = "partition by " + key
                     + " order by ts "
                     + (range ? "range" : "rows")
                     + " between "
