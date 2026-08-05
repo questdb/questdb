@@ -38,6 +38,8 @@ import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.lang.ref.Reference;
+
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
 import static io.questdb.std.Misc.getThreadLocalUtf8Sink;
@@ -838,6 +840,11 @@ public final class Utf8s {
 
     private static boolean isAsciiBytes0(@NotNull Utf8Sequence utf8) {
         final int size = utf8.size();
+        if (utf8 instanceof DirectUtf8Sequence direct) {
+            final boolean ascii = isAscii(direct.ptr(), size);
+            Reference.reachabilityFence(direct);
+            return ascii;
+        }
         if (size >= Long.BYTES) {
             int i = 0;
             for (int longLimit = size - Long.BYTES; i <= longLimit; i += Long.BYTES) {
@@ -864,10 +871,15 @@ public final class Utf8s {
 
     public static boolean isAscii(long ptr, int size) {
         long i = 0;
-        for (; i + 7 < size; i += 8) {
-            if (!isAscii(Unsafe.getLong(ptr + i))) {
-                return false;
+        if (size >= Long.BYTES) {
+            for (long longLimit = size - Long.BYTES; i <= longLimit; i += Long.BYTES) {
+                if (!isAscii(Unsafe.getLong(ptr + i))) {
+                    return false;
+                }
             }
+            // Check a trailing partial word with one overlapping load instead
+            // of up to seven individual byte loads.
+            return i >= size || isAscii(Unsafe.getLong(ptr + size - Long.BYTES));
         }
         for (; i < size; i++) {
             if (Unsafe.getByte(ptr + i) < 0) {
@@ -1433,6 +1445,14 @@ public final class Utf8s {
         return true;
     }
 
+    private static boolean utf8ToUtf16(@NotNull DirectUtf8Sequence seq, @NotNull Utf16Sink sink) {
+        try {
+            return utf8ToUtf16(seq.lo(), seq.hi(), sink);
+        } finally {
+            Reference.reachabilityFence(seq);
+        }
+    }
+
     /**
      * Decodes bytes from the given UTF-8 sink into char sink.
      * Note: operation might fail in the middle and leave sink in inconsistent state.
@@ -1514,7 +1534,7 @@ public final class Utf8s {
         }
         decodeSink.clear();
         final boolean valid = seq instanceof DirectUtf8Sequence direct
-                ? utf8ToUtf16(direct.lo(), direct.hi(), decodeSink)
+                ? utf8ToUtf16(direct, decodeSink)
                 : utf8ToUtf16(seq, decodeSink);
         return valid ? decodeSink : null;
     }
@@ -1608,7 +1628,7 @@ public final class Utf8s {
      */
     public static void utf8ToUtf16Unchecked(@NotNull DirectUtf8Sequence utf8CharSeq, @NotNull MutableUtf16Sink tempSink) {
         tempSink.clear();
-        if (!utf8ToUtf16(utf8CharSeq.lo(), utf8CharSeq.hi(), tempSink)) {
+        if (!utf8ToUtf16(utf8CharSeq, tempSink)) {
             throw CairoException.nonCritical().put("invalid UTF8 in value for ").put(utf8CharSeq);
         }
     }

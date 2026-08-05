@@ -1029,6 +1029,45 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testIsAsciiDirectSequenceUsesPointerScan() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(24)) {
+            sink.put("123456781234567812345678");
+
+            class CountingDirectUtf8Sequence implements DirectUtf8Sequence {
+                private int longAtCallCount;
+                private int ptrCallCount;
+
+                @Override
+                public CharSequence asAsciiCharSequence() {
+                    return "";
+                }
+
+                @Override
+                public long longAt(int offset) {
+                    longAtCallCount++;
+                    return DirectUtf8Sequence.super.longAt(offset);
+                }
+
+                @Override
+                public long ptr() {
+                    ptrCallCount++;
+                    return sink.ptr();
+                }
+
+                @Override
+                public int size() {
+                    return sink.size();
+                }
+            }
+
+            CountingDirectUtf8Sequence sequence = new CountingDirectUtf8Sequence();
+            Assert.assertTrue(Utf8s.isAscii(sequence));
+            Assert.assertEquals(0, sequence.longAtCallCount);
+            Assert.assertEquals(1, sequence.ptrCallCount);
+        }
+    }
+
+    @Test
     public void testIsAsciiTrailingNonAscii() {
         // Non-ASCII byte in the trailing bytes after the 8-byte loop
         // 9 bytes: 8 ASCII + 1 non-ASCII in the tail
