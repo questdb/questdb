@@ -191,7 +191,8 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                             initialBufferSize,
                             timestampIndex,
                             partitionByKeyTypes,
-                            liveView
+                            liveView,
+                            configuration
                     );
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
@@ -406,7 +407,8 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                             initialBufferSize,
                             timestampIndex,
                             partitionByKeyTypes,
-                            liveView
+                            liveView,
+                            configuration
                     );
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
@@ -606,10 +608,22 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx,
-                    partitionByKeyTypes, liveView);
+                    partitionByKeyTypes, liveView, configuration);
+        }
+
+        /**
+         * IGNORE NULLS drops the frame-size slot the parent carries, so every geometry slot
+         * shifts down by one: slot 0 is the ring's start offset, slot 2 its capacity. Declared
+         * here rather than inherited, because inheriting the parent's pair would read
+         * {@code size} as an offset and {@code firstIdx} as a capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 0, 2, RECORD_SIZE);
         }
 
         @Override
@@ -1414,6 +1428,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
     public static class FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
@@ -1442,7 +1459,8 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -1451,6 +1469,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             this.memory = memory;
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
+            this.configuration = configuration;
 
             frameIncludesCurrentValue = rangeHi == 0;
 
@@ -1479,6 +1498,43 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 1 is the ring's start offset,
+         * slot 3 its capacity. The IGNORE NULLS subclass shifts both down by one and overrides
+         * this with its own pair.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 1, 3, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override

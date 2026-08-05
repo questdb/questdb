@@ -255,7 +255,8 @@ public class FirstValueWindowFunctionFactoryHelper {
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 partitionByKeyTypes,
-                                liveView
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -506,7 +507,8 @@ public class FirstValueWindowFunctionFactoryHelper {
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 partitionByKeyTypes,
-                                liveView
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -666,6 +668,9 @@ public class FirstValueWindowFunctionFactoryHelper {
         WindowFunction newFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg);
     }
 
+    // Carries the configuration on top of the live-view snapshot args, because the RANGE
+    // shape is ring-backed: the frontier sweep sizes both of its scratch containers - the
+    // state map and the ring arena - from it.
     @FunctionalInterface
     interface PartitionRangeConstructor {
         WindowFunction newFunction(
@@ -679,7 +684,8 @@ public class FirstValueWindowFunctionFactoryHelper {
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         );
     }
 
@@ -848,10 +854,22 @@ public class FirstValueWindowFunctionFactoryHelper {
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx,
-                    partitionByKeyTypes, liveView);
+                    partitionByKeyTypes, liveView, configuration);
+        }
+
+        /**
+         * IGNORE NULLS drops the frame-size slot the parent carries, so every geometry slot
+         * shifts down by one: slot 0 is the ring's start offset, slot 2 its capacity. Declared
+         * here rather than inherited, because inheriting the parent's pair would read
+         * {@code size} as an offset and {@code firstIdx} as a capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 0, 2, RECORD_SIZE);
         }
 
         /**
@@ -1980,6 +1998,9 @@ public class FirstValueWindowFunctionFactoryHelper {
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     abstract static class FirstValueOverPartitionRangeFrameBase extends BasePartitionedWindowFunction {
         protected static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
@@ -2027,7 +2048,8 @@ public class FirstValueWindowFunctionFactoryHelper {
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -2036,6 +2058,7 @@ public class FirstValueWindowFunctionFactoryHelper {
             this.memory = memory;
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
+            this.configuration = configuration;
 
             frameIncludesCurrentValue = rangeHi == 0;
 
@@ -2069,6 +2092,44 @@ public class FirstValueWindowFunctionFactoryHelper {
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 1 is the ring's start offset,
+         * slot 3 its capacity. Declared on this base rather than on the DATE and TIMESTAMP
+         * leaves because the layout is this class's - the leaves add only a getter - but the
+         * IGNORE NULLS base shifts both slots and overrides with its own pair.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 1, 3, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         /**
