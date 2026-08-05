@@ -47,8 +47,8 @@ import io.questdb.std.Unsafe;
  *   <li>{@link #initialiseEmpty} — for a fresh .pk: writes the empty
  *       header pages and resets the in-memory state.</li>
  *   <li>{@link #openExisting} — for an existing .pk: reads the header
- *       and the head entry into in-memory state; rejects non-V2
- *       formats.</li>
+ *       and the head entry into in-memory state; rejects format
+ *       versions outside {@link PostingIndexUtils#isSupportedFormatVersion}.</li>
  *   <li>{@link #recoveryDropAbandoned} — if the writer was reopened
  *       after a crash, drops chain entries that were published but never
  *       committed (txnAtSeal &gt; current table _txn).</li>
@@ -69,6 +69,13 @@ public final class PostingIndexChainWriter {
     private long activePageOffset;
     private long currentTxnAtSeal;
     private long entryCount;
+    // FORMAT_VERSION written on every publish. Starts at V2_FORMAT_VERSION and
+    // becomes V3_FORMAT_VERSION as soon as this file gains a de-aliased
+    // covering entry, which a pre-de-alias build would read with the gen-dir at
+    // the wrong offset. It never goes back down: a superseded format-1 entry
+    // stays reachable through the head's prev pointer, so an older build must
+    // keep failing on the file even once the head is format 0 again.
+    private long formatVersion;
     private long genCounter;
     private long headEntryOffset;
     // Cached sealTxn of the current head entry. Distinct from genCounter:
@@ -157,6 +164,7 @@ public final class PostingIndexChainWriter {
                     .put(", attempted=").put(sealTxn).put(']');
         }
         int coverCount = coverEndOffsets != null ? coverEndOffsets.size() : 0;
+        raiseFormatVersionFor(coveringFormat, coverCount);
         long entryOffset = regionLimit;
         long prevHead = headEntryOffset;
         PostingIndexChainEntry.writeHeader(
@@ -186,6 +194,7 @@ public final class PostingIndexChainWriter {
         activePageOffset = PostingIndexChainHeader.publish(
                 keyMem,
                 activePageOffset,
+                formatVersion,
                 headEntryOffset,
                 entryCount,
                 regionBase,
@@ -206,7 +215,7 @@ public final class PostingIndexChainWriter {
             long newValueMemSize,
             long newMaxValue
     ) {
-        extendHead(keyMem, newGenCount, newKeyCount, newValueMemSize, newMaxValue, null);
+        extendHead(keyMem, newGenCount, newKeyCount, newValueMemSize, newMaxValue, null, PostingIndexUtils.COVERING_FORMAT_LEGACY);
     }
 
     /**
@@ -233,7 +242,8 @@ public final class PostingIndexChainWriter {
             int newKeyCount,
             long newValueMemSize,
             long newMaxValue,
-            LongList newCoverEndOffsets
+            LongList newCoverEndOffsets,
+            int coveringFormat
     ) {
         if (headEntryOffset == PostingIndexUtils.V2_NO_HEAD) {
             throw new IllegalStateException("posting index chain is empty; no head entry to extend");
@@ -255,10 +265,14 @@ public final class PostingIndexChainWriter {
         keyMem.putLong(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, newLen);
         keyMem.putLong(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE, newValueMemSize);
         keyMem.putLong(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE, newMaxValue);
-        // Cover end-offset footer slots are at offset
-        // (header + newGenCount * GEN_DIR_ENTRY_SIZE). The footer's location
-        // depends on newGenCount, so we must write the cover sizes at the
-        // location matching the GEN_COUNT we are about to publish.
+        // Cover end-offset footer. In format 1 (de-aliased) the footer is at the
+        // FIXED offset entry+56, independent of newGenCount, so appending gen
+        // (newGenCount-1)'s gen-dir slot never overwrites it — this is the fix
+        // for the concurrent covered-read OOB. In format 0 (legacy) the footer
+        // trails the gen-dir at header+newGenCount*GEN_DIR_ENTRY_SIZE (the
+        // aliasing layout; only reached when extending a not-yet-migrated head).
+        // The writes stay BEFORE the storeFence/GEN_COUNT store so the new
+        // sidecar extents publish atomically with the new GEN_COUNT.
         if (coverCount > 0) {
             for (int c = 0; c < coverCount; c++) {
                 PostingIndexChainEntry.writeCoverEndOffset(
@@ -266,7 +280,8 @@ public final class PostingIndexChainWriter {
                         headEntryOffset,
                         newGenCount,
                         c,
-                        newCoverEndOffsets.getQuick(c)
+                        newCoverEndOffsets.getQuick(c),
+                        coveringFormat
                 );
             }
         }
@@ -281,6 +296,7 @@ public final class PostingIndexChainWriter {
         activePageOffset = PostingIndexChainHeader.publish(
                 keyMem,
                 activePageOffset,
+                formatVersion,
                 headEntryOffset,
                 entryCount,
                 regionBase,
@@ -344,12 +360,16 @@ public final class PostingIndexChainWriter {
         if (headEntryOffset == PostingIndexUtils.V2_NO_HEAD || entryCount < 2) {
             return -1L;
         }
+        // Head read: only prevEntryOffset (a header field) is used, so coverCount
+        // is irrelevant here. The predecessor read consumes slot[0]'s txnAtSeal,
+        // so it must resolve the gen-dir at the format-aware offset.
         PostingIndexChainEntry.read(keyMem, headEntryOffset, 0, entryScratch);
         long prevOffset = entryScratch.prevEntryOffset;
         if (prevOffset == PostingIndexUtils.V2_NO_HEAD) {
             return -1L;
         }
-        PostingIndexChainEntry.read(keyMem, prevOffset, 0, entryScratch);
+        PostingIndexChainEntry.read(keyMem, prevOffset,
+                PostingIndexChainEntry.resolveEntryCoverCount(keyMem, prevOffset), entryScratch);
         return entryScratch.txnAtSeal;
     }
 
@@ -400,21 +420,149 @@ public final class PostingIndexChainWriter {
     }
 
     /**
+     * Crash-safe copy-on-write migration of the current head from the legacy
+     * format-0 (aliased trailing footer) layout to the de-aliased format-1
+     * (fixed footer at {@code entry+56}) layout, keeping ALL gens and reusing
+     * the SAME {@code sealTxn} / {@code .pv.{sealTxn}} / {@code .pc{i}.{sealTxn}}
+     * files. Only the {@code .pk} entry byte-layout changes; the sidecar data is
+     * format-agnostic, so nothing is rebuilt, resealed or purged.
+     * <p>
+     * A fresh format-1 entry is written into virgin space at {@code regionLimit}
+     * (nothing before the head is touched), then the chain header is published
+     * atomically via the two-page seqlock. A crash before the publish leaves the
+     * untouched format-0 head as the valid, readable head; a crash after leaves
+     * the fully-written format-1 head. The superseded format-0 entry becomes an
+     * unreachable gap that shares its {@code sealTxn} with the new head -- exactly
+     * as {@link #applyHeadTrim}'s trimmed copy does, so the existing recovery and
+     * seal-purge accounting (which key on reachable chain entries, and never on a
+     * distinct sealTxn here since the sealTxn is unchanged) tolerate it unchanged.
+     * <p>
+     * The new head REPLACES the old one in the chain ({@code prevEntryOffset} =
+     * the old head's predecessor, {@code entryCount} unchanged), so the head's
+     * predecessor -- and thus the seal-purge visibility-window lower bound -- is
+     * unchanged. Single-threaded writer context only.
+     */
+    public void migrateHeadToFormat1(MemoryARW keyMem) {
+        long sourceOffset = headEntryOffset;
+        if (sourceOffset == PostingIndexUtils.V2_NO_HEAD) {
+            throw new IllegalStateException("posting index chain is empty; no head entry to migrate");
+        }
+        int rawFormat = keyMem.getInt(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT);
+        int sourceFormat = PostingIndexChainEntry.unpackCoveringFormat(rawFormat);
+        int genCount = keyMem.getInt(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
+        // Limited by regionLimit: an interrupted extendHead leaves this format-0 head with
+        // a LEN sized for a gen its GEN_COUNT never published, and an unbounded
+        // derivation would mint a packed cover count 5-6 too high into the format-1
+        // entry every later read then treats as authoritative.
+        int coverCount = PostingIndexChainEntry.resolveEntryCoverCount(keyMem, sourceOffset, regionLimit);
+        // The caller (PostingIndexWriter.isHeadCoveringFormatLegacy) gates this to
+        // format-0 covering heads; assert the precondition rather than silently
+        // corrupting a format-1 or non-covering head.
+        assert sourceFormat == PostingIndexUtils.COVERING_FORMAT_LEGACY && coverCount > 0
+                : "migrateHeadToFormat1 requires a legacy covering head [format=" + sourceFormat + ", coverCount=" + coverCount + ']';
+        // The publish below is the point where this file stops being readable by
+        // a pre-de-alias build, so raise the version before that publish, not after.
+        raiseFormatVersionFor(PostingIndexUtils.COVERING_FORMAT_DEALIASED, coverCount);
+
+        long destOffset = regionLimit;
+        // Total size is layout-independent: entrySize(genCount, coverCount) is the
+        // same for both formats, so regionLimit advances by exactly one entry.
+        long newLen = PostingIndexChainEntry.entrySize(genCount, coverCount);
+
+        // Header: copy every field verbatim except COVERING_FORMAT, which becomes
+        // the format-1 discriminator with the entry's own coverCount packed in.
+        keyMem.putLong(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, newLen);
+        keyMem.putLong(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_SEAL_TXN,
+                keyMem.getLong(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_SEAL_TXN));
+        keyMem.putLong(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE,
+                keyMem.getLong(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE));
+        keyMem.putLong(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE,
+                keyMem.getLong(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE));
+        keyMem.putInt(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT,
+                keyMem.getInt(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT));
+        keyMem.putInt(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT, genCount);
+        keyMem.putInt(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_BLOCK_CAPACITY,
+                keyMem.getInt(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_BLOCK_CAPACITY));
+        keyMem.putInt(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT,
+                PostingIndexChainEntry.packCoveringFormat(PostingIndexUtils.COVERING_FORMAT_DEALIASED, coverCount));
+        keyMem.putLong(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET,
+                keyMem.getLong(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET));
+
+        // Gen-dir: source (format 0, gen-dir directly after the 56-byte header) ->
+        // dest (format 1, gen-dir shifted past the fixed coverCount*8 footer
+        // reserve). Same GEN_DIR_ENTRY_SIZE stride; copy field-by-field (mixed
+        // long/int) so the whole slot, including per-slot TXN_AT_SEAL (slot[0]
+        // carries the entry-level txnAtSeal), migrates intact.
+        long sourceGenDir = PostingIndexChainEntry.resolveGenDirOffset(sourceOffset, 0, PostingIndexUtils.COVERING_FORMAT_LEGACY, coverCount);
+        long destGenDir = PostingIndexChainEntry.resolveGenDirOffset(destOffset, 0, PostingIndexUtils.COVERING_FORMAT_DEALIASED, coverCount);
+        for (int g = 0; g < genCount; g++) {
+            long sSlot = sourceGenDir + (long) g * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            long dSlot = destGenDir + (long) g * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            keyMem.putLong(dSlot + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET,
+                    keyMem.getLong(sSlot + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
+            keyMem.putLong(dSlot + PostingIndexUtils.GEN_DIR_OFFSET_SIZE,
+                    keyMem.getLong(sSlot + PostingIndexUtils.GEN_DIR_OFFSET_SIZE));
+            keyMem.putInt(dSlot + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT,
+                    keyMem.getInt(sSlot + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT));
+            keyMem.putInt(dSlot + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY,
+                    keyMem.getInt(sSlot + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY));
+            keyMem.putInt(dSlot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY,
+                    keyMem.getInt(sSlot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY));
+            keyMem.putLong(dSlot + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL,
+                    keyMem.getLong(sSlot + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL));
+            keyMem.putLong(dSlot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE,
+                    keyMem.getLong(sSlot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE));
+        }
+
+        // Cover footer: source trailing (entry+56+genCount*44) -> dest fixed
+        // (entry+56). Values are byte-identical; only the location moves.
+        long sourceFooter = PostingIndexChainEntry.resolveCoverFooterOffset(sourceOffset, genCount, PostingIndexUtils.COVERING_FORMAT_LEGACY);
+        long destFooter = PostingIndexChainEntry.resolveCoverFooterOffset(destOffset, genCount, PostingIndexUtils.COVERING_FORMAT_DEALIASED);
+        for (int c = 0; c < coverCount; c++) {
+            keyMem.putLong(destFooter + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE,
+                    keyMem.getLong(sourceFooter + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE));
+        }
+
+        // Publish the fully-written format-1 entry as the new head. The two-page
+        // header publish is the atomic flip: readers and a post-crash reopen see
+        // either the untouched format-0 head or the complete format-1 head. Same
+        // sealTxn -> genCounter/headSealTxn/currentTxnAtSeal unchanged; replace
+        // (not stack) -> entryCount unchanged.
+        Unsafe.storeFence();
+        headEntryOffset = destOffset;
+        regionLimit = destOffset + newLen;
+        activePageOffset = PostingIndexChainHeader.publish(
+                keyMem,
+                activePageOffset,
+                formatVersion,
+                headEntryOffset,
+                entryCount,
+                regionBase,
+                regionLimit,
+                genCounter
+        );
+    }
+
+    /**
      * Open an existing .pk file: read the chain header, populate the in-memory
-     * state from the header and the head entry. Rejects {@code FORMAT_VERSION}
-     * values other than {@link PostingIndexUtils#V2_FORMAT_VERSION} with a
-     * {@link CairoException}.
+     * state from the header and the head entry. Rejects a {@code FORMAT_VERSION}
+     * that {@link PostingIndexUtils#isSupportedFormatVersion} does not accept
+     * with a {@link CairoException}, and carries the accepted value so later
+     * publishes cannot lower the version already on the file.
      */
     public void openExisting(MemoryR keyMem) {
         if (!PostingIndexChainHeader.readUnderSeqlock(keyMem, headerScratch)) {
             throw CairoException.critical(0).put("posting index header unreadable");
         }
-        if (headerScratch.formatVersion != PostingIndexUtils.V2_FORMAT_VERSION) {
+        if (!PostingIndexUtils.isSupportedFormatVersion(headerScratch.formatVersion)) {
             throw CairoException.critical(0)
                     .put("Unsupported Posting index version [expected=")
                     .put(PostingIndexUtils.V2_FORMAT_VERSION)
+                    .put(" or ").put(PostingIndexUtils.V3_FORMAT_VERSION)
                     .put(", actual=").put(headerScratch.formatVersion).put(']');
         }
+        // Keep the version already on the file so later publishes never lower it.
+        formatVersion = headerScratch.formatVersion;
         activePageOffset = headerScratch.pageOffset;
         headEntryOffset = headerScratch.headEntryOffset;
         regionBase = headerScratch.regionBase;
@@ -472,10 +620,11 @@ public final class PostingIndexChainWriter {
         if (!PostingIndexChainHeader.readUnderSeqlock(keyMem, headerScratch)) {
             throw CairoException.critical(0).put("posting index header unreadable");
         }
-        if (headerScratch.formatVersion != PostingIndexUtils.V2_FORMAT_VERSION) {
+        if (!PostingIndexUtils.isSupportedFormatVersion(headerScratch.formatVersion)) {
             throw CairoException.critical(0)
                     .put("Unsupported Posting index version [expected=")
                     .put(PostingIndexUtils.V2_FORMAT_VERSION)
+                    .put(" or ").put(PostingIndexUtils.V3_FORMAT_VERSION)
                     .put(", actual=").put(headerScratch.formatVersion).put(']');
         }
         if (headerScratch.regionBase < PostingIndexUtils.KEY_FILE_RESERVED
@@ -517,10 +666,15 @@ public final class PostingIndexChainWriter {
         }
         long headOffset = headEntryOffset;
         int genCount = keyMem.getInt(headOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
-        long len = keyMem.getLong(headOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN);
-        long footerOffset = PostingIndexChainEntry.resolveCoverFooterOffset(headOffset, genCount);
-        long footerBytesAvailable = Math.max(0L, headOffset + len - footerOffset);
-        int coverCount = (int) (footerBytesAvailable / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE);
+        int coveringFormat = PostingIndexChainEntry.unpackCoveringFormat(keyMem.getInt(headOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT));
+        // The head is exactly the entry an interrupted extendHead can leave with a LEN
+        // that outruns its GEN_COUNT, so take the count the entry itself records,
+        // bounded by the published regionLimit for the format-0 case.
+        int coverCount = PostingIndexChainEntry.resolveEntryCoverCount(keyMem, headOffset, regionLimit);
+        if (coverCount <= 0) {
+            return;
+        }
+        long footerOffset = PostingIndexChainEntry.resolveCoverFooterOffset(headOffset, genCount, coveringFormat);
         for (int c = 0; c < coverCount; c++) {
             out.add(keyMem.getLong(footerOffset + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE));
         }
@@ -579,12 +733,29 @@ public final class PostingIndexChainWriter {
                         .put(offset).put(", regionBase=").put(regionBase)
                         .put(", regionLimit=").put(newRegionLimit).put(']');
             }
-            PostingIndexChainEntry.read(keyMem, offset, 0, entryScratch);
+            // Take the entry's OWN cover count so read() and the tail-trim
+            // resolve the gen-dir at the correct (format-aware) offset. This is
+            // precisely the path that meets an interrupted extendHead -- an entry whose
+            // LEN was grown for a gen its GEN_COUNT never published -- so it must
+            // not re-derive the count from that pair. read() then reports the
+            // resolved count back through entryScratch.coverCount, which is what
+            // the trim consumes.
+            // newRegionLimit is this entry's end at the moment we visit it: it
+            // starts at the head's end and rewinds onto each dropped entry's
+            // start. That limits the format-0 derivation against an interrupted
+            // extendHead. Address order and chain order can diverge -- migrate and
+            // head-trim both leave a superseded entry behind as a gap -- but the
+            // walk never rewinds across one, because every operation that creates
+            // a gap leaves an entry whose txnAtSeal is already committed, so the
+            // walk breaks at it rather than dropping it. A future change that lets
+            // an uncommitted entry supersede another would invalidate this bound.
+            int recCoverCount = PostingIndexChainEntry.resolveEntryCoverCount(keyMem, offset, newRegionLimit);
+            PostingIndexChainEntry.read(keyMem, offset, recCoverCount, entryScratch);
             if (entryScratch.txnAtSeal <= currentTableTxn) {
                 // entry-level visible, but fast-path may have stuffed
                 // in-flight gens in this entry's tail via extendHead. Trim
                 // them off via per-slot TXN_AT_SEAL.
-                int trimmedTo = trimInFlightTailGens(keyMem, offset, entryScratch.genCount, currentTableTxn);
+                int trimmedTo = trimInFlightTailGens(keyMem, offset, entryScratch.genCount, currentTableTxn, entryScratch.coveringFormat, entryScratch.coverCount);
                 if (trimmedTo == 0) {
                     orphanSealTxns.add(entryScratch.sealTxn);
                     newHead = entryScratch.prevEntryOffset;
@@ -605,7 +776,7 @@ public final class PostingIndexChainWriter {
                     // the head, so the source and every dropped entry stay
                     // byte-intact as unreachable gaps until GC.
                     long copyAt = regionLimit;
-                    long copyLen = applyHeadTrim(keyMem, offset, trimmedTo, entryScratch.len, copyAt);
+                    long copyLen = applyHeadTrim(keyMem, offset, trimmedTo, entryScratch.coverCount, copyAt);
                     newHead = copyAt;
                     newRegionLimit = copyAt + copyLen;
                 }
@@ -639,6 +810,7 @@ public final class PostingIndexChainWriter {
         activePageOffset = PostingIndexChainHeader.publish(
                 keyMem,
                 activePageOffset,
+                formatVersion,
                 headEntryOffset,
                 entryCount,
                 regionBase,
@@ -656,6 +828,9 @@ public final class PostingIndexChainWriter {
      */
     public void resetState() {
         activePageOffset = PostingIndexUtils.PAGE_A_OFFSET;
+        // An empty chain holds no de-aliased entry, so it stays downgrade-safe
+        // until the first covering append or COW migration raises it.
+        formatVersion = PostingIndexUtils.V2_FORMAT_VERSION;
         headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
         regionBase = PostingIndexUtils.V2_ENTRY_REGION_BASE;
         regionLimit = PostingIndexUtils.V2_ENTRY_REGION_BASE;
@@ -688,6 +863,7 @@ public final class PostingIndexChainWriter {
         activePageOffset = PostingIndexChainHeader.publish(
                 keyMem,
                 activePageOffset,
+                formatVersion,
                 headEntryOffset,
                 entryCount,
                 regionBase,
@@ -710,35 +886,36 @@ public final class PostingIndexChainWriter {
      * value-file ranges. The source's bytes remain in the region as an
      * unreachable gap (no entry's {@code prevEntryOffset} points at it).
      */
-    private long applyHeadTrim(MemoryARW keyMem, long sourceOffset, int keepGenCount, long sourceLen, long destOffset) {
+    private long applyHeadTrim(MemoryARW keyMem, long sourceOffset, int keepGenCount, int coverCount, long destOffset) {
         assert keepGenCount >= 1;
-        long lastSlot = sourceOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
-                + (long) (keepGenCount - 1) * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        int oldGenCount = keyMem.getInt(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
+        // coverCount comes from the caller's already-resolved read of this entry.
+        // Working it out again here from (GEN_COUNT, LEN) would reopen the
+        // interrupted-extendHead problem on exactly the entry most likely to have it.
+        // The trimmed copy keeps the source's format, so source and dest gen-dir
+        // bases share the same fixed-footer reserve. Read format BEFORE any
+        // gen-dir access.
+        int coveringFormat = PostingIndexChainEntry.unpackCoveringFormat(
+                keyMem.getInt(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT));
+        long sourceGenDir = PostingIndexChainEntry.resolveGenDirOffset(sourceOffset, 0, coveringFormat, coverCount);
+        long destGenDir = PostingIndexChainEntry.resolveGenDirOffset(destOffset, 0, coveringFormat, coverCount);
+
+        long lastSlot = sourceGenDir + (long) (keepGenCount - 1) * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
         long lastFileOffset = keyMem.getLong(lastSlot + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
         long lastSize = keyMem.getLong(lastSlot + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
         long lastMaxValue = keyMem.getLong(lastSlot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE);
         int newKeyCount = 0;
         for (int g = 0; g < keepGenCount; g++) {
-            long slot = sourceOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
-                    + (long) g * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            long slot = sourceGenDir + (long) g * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
             int slotMaxKey = keyMem.getInt(slot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
             if (slotMaxKey + 1 > newKeyCount) {
                 newKeyCount = slotMaxKey + 1;
             }
         }
-        // coverPlusPadding's up-to-7-byte trailing pad rounds down on / 8.
-        int oldGenCount = keyMem.getInt(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
-        long coverPlusPadding = sourceLen
-                - PostingIndexUtils.V2_ENTRY_HEADER_SIZE
-                - (long) oldGenCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
-        int coverCount = coverPlusPadding > 0
-                ? (int) (coverPlusPadding / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE)
-                : 0;
         long newLen = PostingIndexChainEntry.entrySize(keepGenCount, coverCount);
 
         long sourceSealTxn = keyMem.getLong(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_SEAL_TXN);
         int blockCapacity = keyMem.getInt(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_BLOCK_CAPACITY);
-        int coveringFormat = keyMem.getInt(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT);
         long sourcePrevEntryOffset = keyMem.getLong(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET);
 
         keyMem.putLong(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, newLen);
@@ -748,12 +925,16 @@ public final class PostingIndexChainWriter {
         keyMem.putInt(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT, newKeyCount);
         keyMem.putInt(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT, keepGenCount);
         keyMem.putInt(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_BLOCK_CAPACITY, blockCapacity);
-        keyMem.putInt(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT, coveringFormat);
+        // Re-pack rather than copying rawCoveringFormat verbatim: the dest is laid
+        // out from the resolved coverCount, so its packed count must be that same
+        // value. Copying the source's would make the dest correct only as long as
+        // the two happen to agree.
+        keyMem.putInt(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT,
+                PostingIndexChainEntry.packCoveringFormat(coveringFormat, coverCount));
         keyMem.putLong(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET, sourcePrevEntryOffset);
 
         // Slot layout mixes long and int fields; copy field-by-field.
-        long sourceGenDir = sourceOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
-        long destGenDir = destOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+        // sourceGenDir / destGenDir were resolved format-aware above.
         for (int g = 0; g < keepGenCount; g++) {
             long sSlot = sourceGenDir + (long) g * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
             long dSlot = destGenDir + (long) g * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
@@ -774,10 +955,8 @@ public final class PostingIndexChainWriter {
         }
 
         if (coverCount > 0) {
-            long sourceFooterOffset = sourceOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
-                    + (long) oldGenCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
-            long destFooterOffset = destOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
-                    + (long) keepGenCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            long sourceFooterOffset = PostingIndexChainEntry.resolveCoverFooterOffset(sourceOffset, oldGenCount, coveringFormat);
+            long destFooterOffset = PostingIndexChainEntry.resolveCoverFooterOffset(destOffset, keepGenCount, coveringFormat);
             for (int c = 0; c < coverCount; c++) {
                 keyMem.putLong(destFooterOffset + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE,
                         keyMem.getLong(sourceFooterOffset + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE));
@@ -789,15 +968,28 @@ public final class PostingIndexChainWriter {
     }
 
     /**
+     * Raise formatVersion when the entry about to be written is
+     * one a pre-de-alias build cannot read. Only a de-aliased entry that
+     * actually carries covers moves bytes: with {@code coverCount == 0} the
+     * footer reserve is empty and the two layouts are byte-identical, so a
+     * non-covering .pk stays at {@link PostingIndexUtils#V2_FORMAT_VERSION} and
+     * an older build keeps opening it.
+     */
+    private void raiseFormatVersionFor(int coveringFormat, int coverCount) {
+        if (coveringFormat == PostingIndexUtils.COVERING_FORMAT_DEALIASED && coverCount > 0) {
+            formatVersion = PostingIndexUtils.V3_FORMAT_VERSION;
+        }
+    }
+
+    /**
      * Returns the number of head-entry gen-dir slots to keep, trimming the
      * tail of slots whose TXN_AT_SEAL exceeds {@code currentTableTxn}.
      */
-    private int trimInFlightTailGens(MemoryARW keyMem, long entryOffset, int genCount, long currentTableTxn) {
+    private int trimInFlightTailGens(MemoryARW keyMem, long entryOffset, int genCount, long currentTableTxn, int coveringFormat, int coverCount) {
         Unsafe.loadFence();
         int keep = genCount;
         while (keep > 0) {
-            long slotOffset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
-                    + (long) (keep - 1) * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            long slotOffset = PostingIndexChainEntry.resolveGenDirOffset(entryOffset, keep - 1, coveringFormat, coverCount);
             long slotTxnAtSeal = keyMem.getLong(slotOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
             if (slotTxnAtSeal <= currentTableTxn) {
                 break;
