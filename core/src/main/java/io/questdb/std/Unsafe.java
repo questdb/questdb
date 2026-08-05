@@ -25,6 +25,8 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandles;
@@ -58,6 +60,7 @@ public final class Unsafe {
     public static final long MEMORY_TRACKER_USED_OFFSET = 0;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
     private static final long FREE_COUNT_ADDR;
+    private static final Log LOG = LogFactory.getLog(Unsafe.class);
     private static final long MALLOC_COUNT_ADDR;
     private static final long[] NATIVE_ALLOCATORS = new long[MemoryTag.SIZE - NATIVE_DEFAULT];
     private static final long[] NATIVE_MEM_COUNTER_ADDRS = new long[MemoryTag.SIZE];
@@ -379,13 +382,15 @@ public final class Unsafe {
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [RSS_MEM_USED=")
-                    .put(getRssMemUsed())
+                    .putSize(getRssMemUsed())
+                    .put(", RSS_MEM_LIMIT=")
+                    .putSize(getRssMemLimit())
                     .put(", size=")
-                    .put(size)
+                    .putSize(size)
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
                     .put(oom.getMessage());
-            System.err.println(e.getFlyweightMessage());
+            LOG.error().$(e.getFlyweightMessage()).$();
             throw e;
         }
     }
@@ -424,14 +429,15 @@ public final class Unsafe {
                     .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [workload=")
                     .put(tracker.getWorkload().name())
                     .put(", queryId=").put(tracker.getQueryId())
-                    .put(", trackerUsed=").put(tracker.getUsed())
-                    .put(", trackerLimit=").put(tracker.getLimit())
-                    .put(", RSS_MEM_USED=").put(getRssMemUsed())
-                    .put(", size=").put(size)
+                    .put(", trackerUsed=").putSize(tracker.getUsed())
+                    .put(", trackerLimit=").putSize(tracker.getLimit())
+                    .put(", RSS_MEM_USED=").putSize(getRssMemUsed())
+                    .put(", RSS_MEM_LIMIT=").putSize(getRssMemLimit())
+                    .put(", size=").putSize(size)
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
                     .put(oom.getMessage());
-            System.err.println(e.getFlyweightMessage());
+            LOG.error().$(e.getFlyweightMessage()).$();
             throw e;
         }
     }
@@ -511,15 +517,17 @@ public final class Unsafe {
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [RSS_MEM_USED=")
-                    .put(getRssMemUsed())
+                    .putSize(getRssMemUsed())
+                    .put(", RSS_MEM_LIMIT=")
+                    .putSize(getRssMemLimit())
                     .put(", oldSize=")
-                    .put(oldSize)
+                    .putSize(oldSize)
                     .put(", newSize=")
-                    .put(newSize)
+                    .putSize(newSize)
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
                     .put(oom.getMessage());
-            System.err.println(e.getFlyweightMessage());
+            LOG.error().$(e.getFlyweightMessage()).$();
             throw e;
         }
     }
@@ -555,15 +563,16 @@ public final class Unsafe {
                     .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [workload=")
                     .put(tracker.getWorkload().name())
                     .put(", queryId=").put(tracker.getQueryId())
-                    .put(", trackerUsed=").put(tracker.getUsed())
-                    .put(", trackerLimit=").put(tracker.getLimit())
-                    .put(", RSS_MEM_USED=").put(getRssMemUsed())
-                    .put(", oldSize=").put(oldSize)
-                    .put(", newSize=").put(newSize)
+                    .put(", trackerUsed=").putSize(tracker.getUsed())
+                    .put(", trackerLimit=").putSize(tracker.getLimit())
+                    .put(", RSS_MEM_USED=").putSize(getRssMemUsed())
+                    .put(", RSS_MEM_LIMIT=").putSize(getRssMemLimit())
+                    .put(", oldSize=").putSize(oldSize)
+                    .put(", newSize=").putSize(newSize)
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
                     .put(oom.getMessage());
-            System.err.println(e.getFlyweightMessage());
+            LOG.error().$(e.getFlyweightMessage()).$();
             throw e;
         }
     }
