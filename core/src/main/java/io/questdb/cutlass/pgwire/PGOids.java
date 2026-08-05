@@ -46,8 +46,13 @@ public class PGOids {
     public static final int BINARY_TYPE_DECIMAL8 = (1 << 31) | ColumnType.DECIMAL8;
     public static final int BINARY_TYPE_DOUBLE = (1 << 31) | ColumnType.DOUBLE;
     public static final int BINARY_TYPE_FLOAT = (1 << 31) | ColumnType.FLOAT;
+    public static final int BINARY_TYPE_GEOBYTE = (1 << 31) | ColumnType.GEOBYTE;
+    public static final int BINARY_TYPE_GEOINT = (1 << 31) | ColumnType.GEOINT;
+    public static final int BINARY_TYPE_GEOLONG = (1 << 31) | ColumnType.GEOLONG;
+    public static final int BINARY_TYPE_GEOSHORT = (1 << 31) | ColumnType.GEOSHORT;
     public static final int BINARY_TYPE_INT = (1 << 31) | ColumnType.INT;
     public static final int BINARY_TYPE_INTERVAL = (1 << 31) | ColumnType.INTERVAL;
+    public static final int BINARY_TYPE_IPv4 = (1 << 31) | ColumnType.IPv4;
     public static final int BINARY_TYPE_LONG = (1 << 31) | ColumnType.LONG;
     public static final int BINARY_TYPE_LONG256 = (1 << 31) | ColumnType.LONG256;
     public static final int BINARY_TYPE_SHORT = (1 << 31) | ColumnType.SHORT;

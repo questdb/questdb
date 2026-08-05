@@ -1414,7 +1414,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             final long columnValueSize;
             // if column is not variable size and format code is text, we can't calculate size
             if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
-                columnValueSize = estimateColumnTxtSize(record, i, typeTag);
+                columnValueSize = estimateColumnTxtSize(record, i, columnType);
             } else {
                 columnValueSize = calculateColumnBinSize(this, record, i, columnType, geohashSize, Long.MAX_VALUE, -1);
             }
@@ -2766,7 +2766,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case ColumnType.INT:
                         outColTxtInt(utf8Sink, record, colIndex);
                         break;
+                    // pgwire advertises IPv4 as PG_VARCHAR, whose binary encoding is the text bytes,
+                    // so both format codes render identically. calculateColumnBinSize() already
+                    // sizes IPv4 that way; without the binary label here the switch fell through to
+                    // "default", emitting no bytes at all for a field the DataRow header still
+                    // counts, which desynchronises the client.
                     case ColumnType.IPv4:
+                    case BINARY_TYPE_IPv4:
                         outColTxtIPv4(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.INTERVAL:
@@ -2853,16 +2859,22 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case BINARY_TYPE_LONG256:
                         outColTxtLong256(utf8Sink, record, colIndex);
                         break;
+                    // pgwire advertises every geohash width as PG_VARCHAR, so, as with IPv4, the two
+                    // format codes render the same bytes and both labels share an arm.
                     case ColumnType.GEOBYTE:
+                    case BINARY_TYPE_GEOBYTE:
                         outColTxtGeoByte(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
                         break;
                     case ColumnType.GEOSHORT:
+                    case BINARY_TYPE_GEOSHORT:
                         outColTxtGeoShort(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
                         break;
                     case ColumnType.GEOINT:
+                    case BINARY_TYPE_GEOINT:
                         outColTxtGeoInt(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
                         break;
                     case ColumnType.GEOLONG:
+                    case BINARY_TYPE_GEOLONG:
                         outColTxtGeoLong(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
                         break;
                     case ColumnType.NULL:
@@ -3556,6 +3568,16 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     //       so we always serialize them in text format, we return false for that and true for everything else
     private boolean txtAndBinSizesCanBeDifferent(int columnType) {
         final int typeTag = ColumnType.tagOf(columnType);
+        if (typeTag == ColumnType.ARRAY) {
+            // ARRAY is var-size, but unlike the other var-size types its text encoding is not the
+            // raw bytes: outColTxtArr() writes a PostgreSQL array literal ("{1.0,2.0}"), whose size
+            // is unrelated to the binary array wire size calculateColumnBinSize() computes. Letting
+            // the binary size stand in for the text size makes calculateRecordTailSize() patch a
+            // wrong length into a DataRow header that has already been flushed to the client. When
+            // the binary size is the larger of the two, the client blocks forever waiting for bytes
+            // the server never sends, and the connection dies on the idle timeout.
+            return true;
+        }
         return !ColumnType.isVarSize(typeTag)
                 && !ColumnType.isGeoHash(columnType)
                 && typeTag != ColumnType.BOOLEAN

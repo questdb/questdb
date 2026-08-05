@@ -215,9 +215,21 @@ class PGUtils {
     public static long estimateColumnTxtSize(
             Record record,
             int columnIndex,
-            int typeTag
+            int columnType
     ) {
+        final int typeTag = ColumnType.tagOf(columnType);
         return switch (typeTag) {
+            case ColumnType.ARRAY -> {
+                final ArrayView array = record.getArray(columnIndex, columnType);
+                if (array.isNull()) {
+                    yield Integer.BYTES;
+                }
+                // outColTxtArr() renders a PostgreSQL array literal. Elements are DOUBLE or LONG and
+                // the double literal is the wider of the two; each element contributes at most one
+                // literal, one separator and one pair of nesting braces, which bounds the whole
+                // literal from above without walking the array shape.
+                yield Integer.BYTES + (long) array.getCardinality() * (MAX_DOUBLE_TEXT_LEN + 3L) + 2L;
+            }
             case ColumnType.NULL -> Integer.BYTES;
             case ColumnType.BOOLEAN -> Integer.BYTES + Byte.BYTES;
             case ColumnType.BYTE -> Integer.BYTES + MAX_BYTE_TEXT_LEN;
