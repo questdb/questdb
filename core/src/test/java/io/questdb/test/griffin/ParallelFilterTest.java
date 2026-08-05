@@ -372,8 +372,8 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             "= '2026-07-22T13:17:26'::timestamp";
                     final String asciiFilter =
                             "to_date(ascii_date_value, 'yyyy-MM-dd') = '2026-07-22'::date " +
-                            "AND to_timestamp(ascii_timestamp_value, 'yyyy-MM-dd HH:mm:ss') " +
-                            "= '2026-07-22T13:17:26'::timestamp";
+                                    "AND to_timestamp(ascii_timestamp_value, 'yyyy-MM-dd HH:mm:ss') " +
+                                    "= '2026-07-22T13:17:26'::timestamp";
                     final String asciiQuery = "SELECT count() FROM x WHERE " + asciiFilter;
 
                     assertQuery(utf8Query)
