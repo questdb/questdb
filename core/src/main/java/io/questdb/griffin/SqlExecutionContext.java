@@ -228,6 +228,18 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
     }
 
+    /**
+     * Tells the context which name the statement being compiled uses for the table it targets - the
+     * table named by {@code UPDATE <name>} or {@code ALTER TABLE <name>}. Called before that name,
+     * or any other table in the statement, is resolved.
+     * <p>
+     * Only contexts that resolve a target differently from the name in the SQL need this; for
+     * everything else it is a no-op. See {@code WalApplySqlExecutionContext}, where the stored SQL
+     * may name a table that has since been renamed, or whose name now belongs to a different table.
+     */
+    default void setStatementTargetTableName(CharSequence tableName) {
+    }
+
     WindowContext getWindowContext();
 
     int hasInterval();

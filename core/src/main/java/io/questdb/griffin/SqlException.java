@@ -42,6 +42,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     private static final int EXCEPTION_WAL_RECOVERABLE = EXCEPTION_MAT_VIEW_DOES_NOT_EXIST - 1;
     private static final CarrierLocal<SqlException> tlException = new CarrierLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
+    private final StringSink tableName = new StringSink();
     private int error;
     private int position;
 
@@ -146,7 +147,14 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     }
 
     public static SqlException tableDoesNotExist(int position, CharSequence tableName) {
-        return position(position).errorCode(EXCEPTION_TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
+        final SqlException ex = position(position).errorCode(EXCEPTION_TABLE_DOES_NOT_EXIST);
+        // Cleared at the write, not remotely in position(): the sink is written in exactly one
+        // place, so clearing it here is what makes it impossible for a name left by an earlier
+        // throw on this carrier to be appended to. Copied, not referenced, because callers hand
+        // over a lexer flyweight that parsing goes on reusing.
+        ex.tableName.clear();
+        ex.tableName.put(tableName);
+        return ex.put("table does not exist [table=").put(tableName).put(']');
     }
 
     public static SqlException unexpectedToken(int position, CharSequence token) {
@@ -196,6 +204,23 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         // This is to have correct stack trace reported in CI
         assert (result = super.getStackTrace()) != null;
         return result;
+    }
+
+    /**
+     * Returns the name of the table this exception says does not exist, or an empty sequence when
+     * the exception names no table. WAL apply reads it to tell the statement's own target apart
+     * from another table the statement references: only the former can be recovered by refreshing
+     * the target's token.
+     * <p>
+     * The sequence is a flyweight over this exception, which is itself a per-carrier flyweight, so
+     * read it before the carrier throws again - same contract as {@link #getFlyweightMessage()}.
+     */
+    public CharSequence getTableName() {
+        // Gated on the error code rather than trusting the sink to have been reset: with assertions
+        // off the instance is reused across throws, and only tableDoesNotExist ever writes the
+        // sink, so an exception that names no table must not be able to hand back the name the
+        // previous one left there.
+        return isTableDoesNotExist() ? tableName : "";
     }
 
     public boolean isTableDoesNotExist() {

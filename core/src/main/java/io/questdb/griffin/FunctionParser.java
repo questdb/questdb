@@ -163,6 +163,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final IntStack positionStack = new IntStack();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntList undefinedVariables = new IntList();
+    private boolean cursorFunctionInstantiated;
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
@@ -229,6 +230,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         this.positionStack.clear();
         this.functionStack.clear();
         this.sqlExecutionContext = null;
+        this.cursorFunctionInstantiated = false;
     }
 
     public Function createBindVariable(SqlExecutionContext sqlExecutionContext, int position, CharSequence name, int expressionType) throws SqlException {
@@ -276,6 +278,40 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionFactoryCache;
+    }
+
+    /**
+     * Whether a function factory has produced a CURSOR-typed function since the last
+     * {@link #resetCursorFunctionInstantiated()}. The flag is raised on the <em>instantiated</em>
+     * function rather than on the factory or the name, because the same name can be either: the
+     * {@code sleep} factory yields a cursor in one signature and a plain boolean in another, and only
+     * the boolean one is legal in a WAL {@code UPDATE}. It is also raised wherever the function
+     * stands - a FROM source, a projected column or a predicate operand all reach
+     * {@code checkAndCreateFunction} - which is what makes the WAL {@code UPDATE} check that reads it
+     * position-independent.
+     * <p>
+     * A sub-query written as {@code (SELECT ...)} does not raise it: that is an
+     * {@link ExpressionNode#QUERY} node, not a factory call, and the tables it names are visible in
+     * the model tree and checked there.
+     *
+     * @see SqlCompilerImpl#generateUpdate
+     * @see #markCursorFunctionInstantiated()
+     */
+    public boolean isCursorFunctionInstantiated() {
+        return cursorFunctionInstantiated;
+    }
+
+    /**
+     * Raises the same flag {@link #isCursorFunctionInstantiated()} reports for a cursor the compiler
+     * builds without going through a function factory. {@code SHOW} is the case that exists:
+     * {@code SqlOptimiser#parseFunctionAndEnumerateColumns} constructs the factory for it directly
+     * and hands it to {@code IQueryModel#setTableNameFunction}, so nothing here would ever see it.
+     * The invariant the flag stands for is "the compiler materialised a cursor for this statement",
+     * not "a function factory was called", and this keeps the two construction paths on the same
+     * side of it.
+     */
+    public void markCursorFunctionInstantiated() {
+        cursorFunctionInstantiated = true;
     }
 
     /**
@@ -346,6 +382,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 this.metadata = metadataStack.poll();
             }
         }
+    }
+
+    public void resetCursorFunctionInstantiated() {
+        cursorFunctionInstantiated = false;
     }
 
     public void setSqlCodeGenerator(SqlCodeGenerator sqlCodeGenerator) {
@@ -671,6 +711,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
+        }
+        if (ColumnType.isCursor(function.getType())) {
+            cursorFunctionInstantiated = true;
         }
         return function;
     }

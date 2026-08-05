@@ -920,6 +920,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     if (!ex.isTableDoesNotExist()) {
                         throw ex;
                     }
+                    // The recovery below refreshes the target's token, so it can only help when the
+                    // name that failed to resolve is the one the statement declared as its target.
+                    // Any other table the statement names - a sub-query's - stays missing however
+                    // often the target token is refreshed, and the retry then re-notifies itself
+                    // forever: the table applies nothing further yet is never suspended, so nothing
+                    // reports the stall. Rethrow instead, so handleWalApplyFailure suspends the
+                    // table; that is visible in wal_tables() and recoverable with RESUME WAL once
+                    // the missing table is back. A statement that declared no target answers false
+                    // here and takes the same route, for the same reason: with nothing to match, no
+                    // token refresh can resolve the name either.
+                    final CharSequence missingTableName = ex.getTableName();
+                    if (!operationExecutor.isStatementTargetTableName(missingTableName)) {
+                        throw ex;
+                    }
                 } catch (TableReferenceOutOfDateException ex) {
                     // Fall through to refresh table token and retry.
                 } catch (CairoException ex) {
