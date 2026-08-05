@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.map.Map;
@@ -141,8 +142,11 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
                                         Function arg,
                                         boolean ignoreNulls,
                                         Function defaultValue,
-                                        long offset) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+                                        long offset,
+                                        ColumnTypes partitionByKeyTypes,
+                                        boolean liveView) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset,
+                    partitionByKeyTypes, liveView);
             this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
             if (defaultValue != null) {
                 this.defaultValueTimestampType = ColumnType.getTimestampType(defaultValue.getType());
