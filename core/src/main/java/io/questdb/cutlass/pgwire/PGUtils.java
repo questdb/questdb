@@ -392,7 +392,7 @@ class PGUtils {
                         if (array.getLong(flatIndex) != Numbers.LONG_NULL) {
                             count++;
                         }
-                    }
+                }
                 flatIndex += stride;
             }
         } else {

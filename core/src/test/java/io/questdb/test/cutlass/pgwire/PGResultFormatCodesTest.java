@@ -556,7 +556,9 @@ public class PGResultFormatCodesTest extends BasePGTest {
         }
     }
 
-    /** Renders one value through a query small enough to fit the send buffer, and measures it. */
+    /**
+     * Renders one value through a query small enough to fit the send buffer, and measures it.
+     */
     private static int renderedByteLength(Connection connection, String sql) throws Exception {
         try (PreparedStatement stmt = connection.prepareStatement(sql);
              ResultSet rs = stmt.executeQuery()) {
