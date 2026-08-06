@@ -55,6 +55,7 @@ public class SOCountDownLatch implements CountDownLatchSPI {
                 // and parking and unparkWaiter() will be called before park().
                 // Limit the parking time by using Os.park() instead of LockSupport.park()
                 Os.park();
+                // Consume interrupts so the next park can block; restore the flag on exit.
                 isInterrupted |= Thread.interrupted();
             }
         } finally {
@@ -74,7 +75,8 @@ public class SOCountDownLatch implements CountDownLatchSPI {
         try {
             while (true) {
                 long start = System.nanoTime();
-                Os.parkNanos(nanos);
+                LockSupport.parkNanos(nanos);
+                // Consume interrupts so the next park can block; restore the flag on exit.
                 isInterrupted |= Thread.interrupted();
                 long elapsed = System.nanoTime() - start;
 

@@ -25,20 +25,15 @@
 package io.questdb.test.mp;
 
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.management.ThreadMXBean;
 import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 public class SOCountDownLatchTest {
@@ -70,47 +65,13 @@ public class SOCountDownLatchTest {
 
     @Test
     public void testAwaitTimeoutWhileInterrupted() throws Exception {
-        ThreadMXBean bean = TestUtils.threadCpuTimeBean();
-        Os.sleep(1);
-
-        SOCountDownLatch latch = new SOCountDownLatch(1);
-        CountDownLatch phase1Done = new CountDownLatch(1);
-        AtomicBoolean hasTimedOut = new AtomicBoolean();
-        AtomicBoolean hasSeenCountDown = new AtomicBoolean();
-        AtomicLong cpuNanos = new AtomicLong();
-        AtomicReference<Throwable> error = new AtomicReference<>();
-        Thread waiter = new Thread(() -> {
-            try {
-                Thread.currentThread().interrupt();
-                long cpuBefore = bean.getCurrentThreadCpuTime();
-                Assert.assertTrue("CPU time measurement is disabled", cpuBefore >= 0);
-                hasTimedOut.set(!latch.await(TimeUnit.MILLISECONDS.toNanos(500)));
-                long cpuAfter = bean.getCurrentThreadCpuTime();
-                Assert.assertTrue("CPU time moved backwards", cpuAfter >= cpuBefore);
-                cpuNanos.set(cpuAfter - cpuBefore);
-                phase1Done.countDown();
-                hasSeenCountDown.set(latch.await(TimeUnit.SECONDS.toNanos(30)));
-            } catch (Throwable th) {
-                error.set(th);
-                phase1Done.countDown();
-            }
-        });
-        waiter.setDaemon(true);
-        waiter.start();
-        boolean isPhase1Done = phase1Done.await(10, TimeUnit.SECONDS);
-        if (error.get() != null) {
-            throw new AssertionError(error.get());
-        }
-        Assert.assertTrue("phase 1 did not complete", isPhase1Done);
-        latch.countDown();
-        waiter.join(TimeUnit.SECONDS.toMillis(10));
-
-        Assert.assertFalse(waiter.isAlive());
-        Assert.assertNull(error.get());
-        Assert.assertTrue("timed await did not time out", hasTimedOut.get());
-        Assert.assertTrue("await did not observe countDown", hasSeenCountDown.get());
-        Assert.assertTrue("interrupted await burned " + cpuNanos.get() + "ns of CPU time",
-                cpuNanos.get() < TimeUnit.MILLISECONDS.toNanos(100));
+        final SOCountDownLatch latch = new SOCountDownLatch(1);
+        TestUtils.assertInterruptedWaitTimesOutWithoutSpin(
+                "SOCountDownLatch await",
+                () -> latch.await(TimeUnit.MILLISECONDS.toNanos(500)),
+                () -> latch.await(TimeUnit.SECONDS.toNanos(30)),
+                latch::countDown
+        );
     }
 
     @Test

@@ -157,7 +157,12 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
+import java.util.function.BooleanSupplier;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.test.AbstractTest.CLOSEABLE;
@@ -166,7 +171,13 @@ import static org.junit.Assert.assertNotNull;
 public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
+    private static boolean isThreadAllocationInitiallyEnabled;
+    private static boolean isThreadCpuTimeInitiallyEnabled;
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
+    private static final Object threadAllocationLock = new Object();
+    private static int threadAllocationScopeCount;
+    private static final Object threadCpuTimeLock = new Object();
+    private static int threadCpuTimeScopeCount;
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
 
     private TestUtils() {
@@ -884,6 +895,40 @@ public final class TestUtils {
         }
     }
 
+    public static void assertInterruptedWaitDoesNotSpin(
+            String operation,
+            Runnable wait,
+            Runnable release
+    ) throws Exception {
+        assertInterruptedWaitDoesNotSpin(operation, wait, null, release);
+    }
+
+    public static void assertInterruptedWaitDoesNotSpin(
+            String operation,
+            Runnable wait,
+            @Nullable EventualCode waitReady,
+            Runnable release
+    ) throws Exception {
+        assertWaitDoesNotSpin(operation, wait, waitReady, release, true);
+    }
+
+    public static void assertInterruptedWaitTimesOutWithoutSpin(
+            String operation,
+            BooleanSupplier timedWait,
+            BooleanSupplier releasedWait,
+            Runnable release
+    ) throws Exception {
+        try (ThreadMetricsScope<java.lang.management.ThreadMXBean> scope = threadCpuTimeScope()) {
+            assertInterruptedWaitTimesOutWithoutSpin0(
+                    scope.getBean(),
+                    operation,
+                    timedWait,
+                    releasedWait,
+                    release
+            );
+        }
+    }
+
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
         try (LeakCheck ignore = new LeakCheck()) {
             try {
@@ -893,6 +938,14 @@ public final class TestUtils {
                 throw e;
             }
         }
+    }
+
+    public static void assertNonInterruptedWaitDoesNotSpin(
+            String operation,
+            Runnable wait,
+            Runnable release
+    ) throws Exception {
+        assertWaitDoesNotSpin(operation, wait, null, release, false);
     }
 
     /**
@@ -1231,6 +1284,25 @@ public final class TestUtils {
             Assert.assertEquals(expectedInvalid, viewState.isInvalid());
         } finally {
             viewState.unlockAfterRead();
+        }
+    }
+
+    public static void assertWaitDoesNotSpin(
+            String operation,
+            Runnable wait,
+            @Nullable EventualCode waitReady,
+            Runnable release,
+            boolean isInitiallyInterrupted
+    ) throws Exception {
+        try (ThreadMetricsScope<java.lang.management.ThreadMXBean> scope = threadCpuTimeScope()) {
+            assertWaitDoesNotSpin0(
+                    scope.getBean(),
+                    operation,
+                    wait,
+                    waitReady,
+                    release,
+                    isInitiallyInterrupted
+            );
         }
     }
 
@@ -2271,25 +2343,48 @@ public final class TestUtils {
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
     }
 
-    public static ThreadMXBean threadAllocationBean() {
+    /**
+     * Enables the JVM-wide thread-allocation counter, or skips the calling test when
+     * the JVM does not support it. Closing the returned scope restores the setting
+     * that the first overlapping scope observed.
+     */
+    public static ThreadMetricsScope<ThreadMXBean> threadAllocationScope() {
         if (!(ManagementFactory.getThreadMXBean() instanceof ThreadMXBean bean)) {
             throw new AssumptionViolatedException("thread allocation measurement not supported");
         }
         Assume.assumeTrue("thread allocation measurement not supported", bean.isThreadAllocatedMemorySupported());
-        if (!bean.isThreadAllocatedMemoryEnabled()) {
-            bean.setThreadAllocatedMemoryEnabled(true);
+        synchronized (threadAllocationLock) {
+            if (threadAllocationScopeCount == 0) {
+                isThreadAllocationInitiallyEnabled = bean.isThreadAllocatedMemoryEnabled();
+                if (!isThreadAllocationInitiallyEnabled) {
+                    bean.setThreadAllocatedMemoryEnabled(true);
+                }
+            }
+            Assume.assumeTrue("thread allocation measurement not enabled", bean.isThreadAllocatedMemoryEnabled());
+            threadAllocationScopeCount++;
         }
-        return bean;
+        return new ThreadMetricsScope<>(bean, () -> releaseThreadAllocationScope(bean));
     }
 
-    public static java.lang.management.ThreadMXBean threadCpuTimeBean() {
+    /**
+     * Enables the JVM-wide thread CPU-time counter, or skips the calling test when
+     * the JVM does not support it. Closing the returned scope restores the setting
+     * that the first overlapping scope observed.
+     */
+    public static ThreadMetricsScope<java.lang.management.ThreadMXBean> threadCpuTimeScope() {
         java.lang.management.ThreadMXBean bean = ManagementFactory.getThreadMXBean();
         Assume.assumeTrue("current thread CPU time measurement not supported", bean.isCurrentThreadCpuTimeSupported());
-        if (!bean.isThreadCpuTimeEnabled()) {
-            bean.setThreadCpuTimeEnabled(true);
+        synchronized (threadCpuTimeLock) {
+            if (threadCpuTimeScopeCount == 0) {
+                isThreadCpuTimeInitiallyEnabled = bean.isThreadCpuTimeEnabled();
+                if (!isThreadCpuTimeInitiallyEnabled) {
+                    bean.setThreadCpuTimeEnabled(true);
+                }
+            }
+            Assume.assumeTrue("thread CPU time measurement not enabled", bean.isThreadCpuTimeEnabled());
+            threadCpuTimeScopeCount++;
         }
-        Assume.assumeTrue("thread CPU time measurement not enabled", bean.isThreadCpuTimeEnabled());
-        return bean;
+        return new ThreadMetricsScope<>(bean, () -> releaseThreadCpuTimeScope(bean));
     }
 
     public static long toMemory(CharSequence sequence) {
@@ -2549,6 +2644,73 @@ public final class TestUtils {
         }
     }
 
+    private static void assertInterruptedWaitTimesOutWithoutSpin0(
+            java.lang.management.ThreadMXBean bean,
+            String operation,
+            BooleanSupplier timedWait,
+            BooleanSupplier releasedWait,
+            Runnable release
+    ) throws Exception {
+        // Resolve Os native and FFM bindings before the measured thread starts.
+        Os.sleep(1);
+
+        final AtomicLong cpuNanos = new AtomicLong(-1);
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final AtomicBoolean hasCompletedAfterRelease = new AtomicBoolean();
+        final AtomicBoolean hasTimedOut = new AtomicBoolean();
+        final AtomicBoolean isInterruptedAfter = new AtomicBoolean();
+        final AtomicBoolean isInterruptedAfterTimeout = new AtomicBoolean();
+        final CountDownLatch timeoutComplete = new CountDownLatch(1);
+        final Thread waiter = new Thread(() -> {
+            try {
+                Thread.currentThread().interrupt();
+                final long cpuBefore = bean.getCurrentThreadCpuTime();
+                Assert.assertTrue("CPU time measurement is disabled", cpuBefore >= 0);
+                hasTimedOut.set(!timedWait.getAsBoolean());
+                final long cpuAfter = bean.getCurrentThreadCpuTime();
+                Assert.assertTrue("CPU time moved backwards", cpuAfter >= cpuBefore);
+                cpuNanos.set(cpuAfter - cpuBefore);
+                isInterruptedAfterTimeout.set(Thread.currentThread().isInterrupted());
+                timeoutComplete.countDown();
+                hasCompletedAfterRelease.set(releasedWait.getAsBoolean());
+            } catch (Throwable th) {
+                failure.set(th);
+                timeoutComplete.countDown();
+            } finally {
+                isInterruptedAfter.set(Thread.currentThread().isInterrupted());
+            }
+        }, "interrupted-timed-waiter");
+        waiter.setDaemon(true);
+        waiter.start();
+
+        final boolean isTimeoutComplete;
+        try {
+            isTimeoutComplete = timeoutComplete.await(10, TimeUnit.SECONDS);
+        } finally {
+            try {
+                release.run();
+            } finally {
+                LockSupport.unpark(waiter);
+                waiter.join(TimeUnit.SECONDS.toMillis(10));
+            }
+        }
+
+        if (failure.get() != null) {
+            throw new AssertionError(operation + " waiter failed", failure.get());
+        }
+        Assert.assertTrue(operation + " timeout did not complete", isTimeoutComplete);
+        Assert.assertFalse(operation + " waiter did not stop", waiter.isAlive());
+        Assert.assertTrue(operation + " did not time out", hasTimedOut.get());
+        Assert.assertTrue(operation + " did not complete after release", hasCompletedAfterRelease.get());
+        Assert.assertTrue(operation + " did not restore the interrupt flag on timeout", isInterruptedAfterTimeout.get());
+        Assert.assertTrue(operation + " did not preserve the interrupt flag", isInterruptedAfter.get());
+        Assert.assertTrue(operation + " CPU time was not recorded", cpuNanos.get() >= 0);
+        Assert.assertTrue(
+                operation + " burned " + cpuNanos.get() + "ns of CPU time",
+                cpuNanos.get() < TimeUnit.MILLISECONDS.toNanos(100)
+        );
+    }
+
     private static void assertStringEquals(
             RecordMetadata metaL, RecordMetadata metaR, Record lr, Record rr, boolean genericStringMatch, int col
     ) {
@@ -2590,6 +2752,80 @@ public final class TestUtils {
             default:
                 throw new UnsupportedOperationException("Unexpected column type: " + ColumnType.nameOf(colTypeL));
         }
+    }
+
+    private static void assertWaitDoesNotSpin0(
+            java.lang.management.ThreadMXBean bean,
+            String operation,
+            Runnable wait,
+            @Nullable EventualCode waitReady,
+            Runnable release,
+            boolean isInitiallyInterrupted
+    ) throws Exception {
+        // Resolve Os native and FFM bindings before the measured thread starts.
+        Os.sleep(1);
+
+        final AtomicLong cpuNanos = new AtomicLong(-1);
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final AtomicBoolean isInterruptedAfter = new AtomicBoolean();
+        final AtomicBoolean isWaitComplete = new AtomicBoolean();
+        final CountDownLatch waiterStarted = new CountDownLatch(1);
+        final Thread waiter = new Thread(() -> {
+            if (isInitiallyInterrupted) {
+                Thread.currentThread().interrupt();
+            }
+            final long cpuBefore = bean.getCurrentThreadCpuTime();
+            waiterStarted.countDown();
+            try {
+                Assert.assertTrue("CPU time measurement is disabled", cpuBefore >= 0);
+                wait.run();
+                isWaitComplete.set(true);
+                final long cpuAfter = bean.getCurrentThreadCpuTime();
+                Assert.assertTrue("CPU time moved backwards", cpuAfter >= cpuBefore);
+                cpuNanos.set(cpuAfter - cpuBefore);
+            } catch (Throwable th) {
+                failure.set(th);
+            } finally {
+                isInterruptedAfter.set(Thread.currentThread().isInterrupted());
+            }
+        }, "waiter");
+        waiter.setDaemon(true);
+        waiter.start();
+
+        try {
+            Assert.assertTrue(
+                    operation + " waiter did not start",
+                    waiterStarted.await(10, TimeUnit.SECONDS)
+            );
+            if (waitReady != null) {
+                assertEventually(waitReady, 5);
+            }
+            Os.sleep(500);
+            Assert.assertFalse(operation + " returned before release", isWaitComplete.get());
+        } finally {
+            try {
+                release.run();
+            } finally {
+                LockSupport.unpark(waiter);
+                waiter.join(TimeUnit.SECONDS.toMillis(10));
+            }
+        }
+
+        Assert.assertFalse(operation + " waiter did not stop", waiter.isAlive());
+        if (failure.get() != null) {
+            throw new AssertionError(operation + " waiter failed", failure.get());
+        }
+        Assert.assertTrue(operation + " did not complete", isWaitComplete.get());
+        Assert.assertEquals(
+                operation + " changed the interrupt flag",
+                isInitiallyInterrupted,
+                isInterruptedAfter.get()
+        );
+        Assert.assertTrue(operation + " CPU time was not recorded", cpuNanos.get() >= 0);
+        Assert.assertTrue(
+                operation + " burned " + cpuNanos.get() + "ns of CPU time",
+                cpuNanos.get() < TimeUnit.MILLISECONDS.toNanos(100)
+        );
     }
 
     private static Object[][] cartesianProduct(Object[][] values, int offset) {
@@ -2764,6 +3000,24 @@ public final class TestUtils {
             }
         }
         return sink.toString();
+    }
+
+    private static void releaseThreadAllocationScope(ThreadMXBean bean) {
+        synchronized (threadAllocationLock) {
+            assert threadAllocationScopeCount > 0;
+            if (--threadAllocationScopeCount == 0 && !isThreadAllocationInitiallyEnabled) {
+                bean.setThreadAllocatedMemoryEnabled(false);
+            }
+        }
+    }
+
+    private static void releaseThreadCpuTimeScope(java.lang.management.ThreadMXBean bean) {
+        synchronized (threadCpuTimeLock) {
+            assert threadCpuTimeScopeCount > 0;
+            if (--threadCpuTimeScopeCount == 0 && !isThreadCpuTimeInitiallyEnabled) {
+                bean.setThreadCpuTimeEnabled(false);
+            }
+        }
     }
 
     private static CharSequence reverseLines(CharSequence expected) {
@@ -2964,6 +3218,29 @@ public final class TestUtils {
 
         public void skipChecks() {
             skipChecksOnClose = true;
+        }
+    }
+
+    public static final class ThreadMetricsScope<T extends java.lang.management.ThreadMXBean> implements AutoCloseable {
+        private final T bean;
+        private boolean isClosed;
+        private final Runnable release;
+
+        private ThreadMetricsScope(T bean, Runnable release) {
+            this.bean = bean;
+            this.release = release;
+        }
+
+        @Override
+        public void close() {
+            if (!isClosed) {
+                isClosed = true;
+                release.run();
+            }
+        }
+
+        public T getBean() {
+            return bean;
         }
     }
 }

@@ -684,36 +684,38 @@ public class LiveViewSymbolCacheConcurrencyTest {
         // must stay sparse across that gap too, and both bands must still resolve -
         // a cursor pinned before the jump reads the low ids, one pinned after reads
         // the high ones.
-        final ThreadMXBean threadMXBean = TestUtils.threadAllocationBean();
-        final IntList columnTypes = new IntList();
-        columnTypes.add(ColumnType.SYMBOL);
-        warmUpInterning();
+        try (TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            final ThreadMXBean threadMXBean = scope.getBean();
+            final IntList columnTypes = new IntList();
+            columnTypes.add(ColumnType.SYMBOL);
+            warmUpInterning();
 
-        final int committedCount = 4_000_000;
-        try (LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes)) {
-            Assert.assertEquals(0, cache.intern(COL, "before-0", NOT_FOUND_READER));
-            Assert.assertEquals(1, cache.intern(COL, "before-1", NOT_FOUND_READER));
-            cache.onO3();
-            cache.anchor(COL, committedCount);
+            final int committedCount = 4_000_000;
+            try (LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes)) {
+                Assert.assertEquals(0, cache.intern(COL, "before-0", NOT_FOUND_READER));
+                Assert.assertEquals(1, cache.intern(COL, "before-1", NOT_FOUND_READER));
+                cache.onO3();
+                cache.anchor(COL, committedCount);
 
-            final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
-            final int id = cache.intern(COL, "after", NOT_FOUND_READER);
-            final long allocated = threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore;
+                final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+                final int id = cache.intern(COL, "after", NOT_FOUND_READER);
+                final long allocated = threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore;
 
-            Assert.assertEquals(committedCount, id);
-            Assert.assertTrue(
-                    "an id gap of " + committedCount + " must not be materialized as array slots"
-                            + " [allocated=" + allocated + " bytes]",
-                    allocated < MAX_SPARSE_INTERN_BYTES
-            );
+                Assert.assertEquals(committedCount, id);
+                Assert.assertTrue(
+                        "an id gap of " + committedCount + " must not be materialized as array slots"
+                                + " [allocated=" + allocated + " bytes]",
+                        allocated < MAX_SPARSE_INTERN_BYTES
+                );
 
-            // Both bands resolve, and the gap between them is empty.
-            Assert.assertEquals("before-0", cache.newSymbolValueOf(COL, 0).toString());
-            Assert.assertEquals("before-1", cache.newSymbolValueOf(COL, 1).toString());
-            Assert.assertEquals("after", cache.newSymbolValueOf(COL, id).toString());
-            Assert.assertNull(cache.newSymbolValueOf(COL, 2));
-            Assert.assertNull(cache.newSymbolValueOf(COL, committedCount / 2));
-            Assert.assertEquals(committedCount + 1, cache.newSymbolMaxIdExclusive(COL));
+                // Both bands resolve, and the gap between them is empty.
+                Assert.assertEquals("before-0", cache.newSymbolValueOf(COL, 0).toString());
+                Assert.assertEquals("before-1", cache.newSymbolValueOf(COL, 1).toString());
+                Assert.assertEquals("after", cache.newSymbolValueOf(COL, id).toString());
+                Assert.assertNull(cache.newSymbolValueOf(COL, 2));
+                Assert.assertNull(cache.newSymbolValueOf(COL, committedCount / 2));
+                Assert.assertEquals(committedCount + 1, cache.newSymbolMaxIdExclusive(COL));
+            }
         }
     }
 
@@ -725,35 +727,37 @@ public class LiveViewSymbolCacheConcurrencyTest {
         // un-flushed lead must not make the store materialize a slot per committed
         // symbol - that is tens of megabytes of nulls for one string, retained until
         // the view closes.
-        final ThreadMXBean threadMXBean = TestUtils.threadAllocationBean();
-        final IntList columnTypes = new IntList();
-        columnTypes.add(ColumnType.SYMBOL);
-        warmUpInterning();
+        try (TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            final ThreadMXBean threadMXBean = scope.getBean();
+            final IntList columnTypes = new IntList();
+            columnTypes.add(ColumnType.SYMBOL);
+            warmUpInterning();
 
-        // A dense CharSequence[] over this id space costs 16MB (compressed oops).
-        final int committedCount = 4_000_000;
-        try (LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes)) {
-            cache.anchor(COL, committedCount);
+            // A dense CharSequence[] over this id space costs 16MB (compressed oops).
+            final int committedCount = 4_000_000;
+            try (LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes)) {
+                cache.anchor(COL, committedCount);
 
-            final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
-            final int id = cache.intern(COL, "lead-value", NOT_FOUND_READER);
-            final long allocated = threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore;
+                final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+                final int id = cache.intern(COL, "lead-value", NOT_FOUND_READER);
+                final long allocated = threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore;
 
-            Assert.assertEquals(committedCount, id);
-            Assert.assertTrue(
-                    "one lead symbol past a " + committedCount + "-value committed dictionary must not"
-                            + " allocate a slot per committed symbol [allocated=" + allocated + " bytes]",
-                    allocated < MAX_SPARSE_INTERN_BYTES
-            );
+                Assert.assertEquals(committedCount, id);
+                Assert.assertTrue(
+                        "one lead symbol past a " + committedCount + "-value committed dictionary must not"
+                                + " allocate a slot per committed symbol [allocated=" + allocated + " bytes]",
+                        allocated < MAX_SPARSE_INTERN_BYTES
+                );
 
-            // The assignment still resolves, and no committed-only id below it does -
-            // those fall back to the disk symbol table.
-            Assert.assertEquals("lead-value", cache.newSymbolValueOf(COL, id).toString());
-            Assert.assertEquals(id, cache.newSymbolKeyOf(COL, "lead-value", committedCount, id + 1));
-            Assert.assertNull(cache.newSymbolValueOf(COL, 0));
-            Assert.assertNull(cache.newSymbolValueOf(COL, id - 1));
-            Assert.assertNull(cache.newSymbolValueOf(COL, id + 1));
-            Assert.assertEquals(committedCount + 1, cache.newSymbolMaxIdExclusive(COL));
+                // The assignment still resolves, and no committed-only id below it does -
+                // those fall back to the disk symbol table.
+                Assert.assertEquals("lead-value", cache.newSymbolValueOf(COL, id).toString());
+                Assert.assertEquals(id, cache.newSymbolKeyOf(COL, "lead-value", committedCount, id + 1));
+                Assert.assertNull(cache.newSymbolValueOf(COL, 0));
+                Assert.assertNull(cache.newSymbolValueOf(COL, id - 1));
+                Assert.assertNull(cache.newSymbolValueOf(COL, id + 1));
+                Assert.assertEquals(committedCount + 1, cache.newSymbolMaxIdExclusive(COL));
+            }
         }
     }
 

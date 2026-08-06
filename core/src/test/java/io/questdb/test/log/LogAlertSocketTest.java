@@ -24,6 +24,7 @@
 
 package io.questdb.test.log;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.log.HttpLogRecordUtf8Sink;
 import io.questdb.log.Log;
@@ -35,8 +36,10 @@ import io.questdb.log.LogRecordUtf8Sink;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -90,6 +93,37 @@ public class LogAlertSocketTest {
                     Assert.assertEquals(expectedHosts[i], socket.getAlertHosts()[i]);
                     Assert.assertEquals(expectedPorts[i], socket.getAlertPorts()[i]);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorFreesInputBufferWhenOutputAllocationFails() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int inBufferSize = 4 * 1024 * 1024;
+            final int outBufferSize = 16 * 1024 * 1024;
+            final long memoryBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LOGGER);
+            final long previousRssLimit = Unsafe.getRssMemLimit();
+            try {
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 2L * inBufferSize);
+                try (LogAlertSocket ignored = new LogAlertSocket(
+                        NetworkFacadeImpl.INSTANCE,
+                        "",
+                        inBufferSize,
+                        outBufferSize,
+                        0,
+                        LogAlertSocket.DEFAULT_HOST,
+                        LogAlertSocket.DEFAULT_PORT,
+                        LOG
+                )) {
+                    Assert.fail("expected output buffer allocation to exceed the RSS limit");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "size=16777216");
+                }
+                Assert.assertEquals(memoryBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LOGGER));
+            } finally {
+                Unsafe.setRssMemLimit(previousRssLimit);
             }
         });
     }
@@ -508,6 +542,44 @@ public class LogAlertSocketTest {
                 "Added default alert manager [0] 127.0.0.1:9093\r\n" +
                         "Received [0] 127.0.0.1:9093: {\"status\":\"success\"}\r\n"
         );
+    }
+
+    @Test
+    public void testReconnectDelayRoundsUpToMillis() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long[] reconnectDelayNanos = {
+                    Long.MIN_VALUE,
+                    0,
+                    1,
+                    999_999,
+                    1_000_000,
+                    1_000_001,
+                    Long.MAX_VALUE
+            };
+            final long[] expectedDelayMillis = {
+                    0,
+                    0,
+                    1,
+                    1,
+                    1,
+                    2,
+                    9_223_372_036_855L
+            };
+            for (int i = 0; i < reconnectDelayNanos.length; i++) {
+                try (LogAlertSocket socket = new LogAlertSocket(
+                        NetworkFacadeImpl.INSTANCE,
+                        "",
+                        1,
+                        1,
+                        reconnectDelayNanos[i],
+                        LogAlertSocket.DEFAULT_HOST,
+                        LogAlertSocket.DEFAULT_PORT,
+                        LOG
+                )) {
+                    Assert.assertEquals(expectedDelayMillis[i], socket.getReconnectDelayMillis());
+                }
+            }
+        });
     }
 
     private void assertLogError(String socketAddress, String expected) throws Exception {

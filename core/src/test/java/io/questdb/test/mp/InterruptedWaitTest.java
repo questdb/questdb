@@ -32,75 +32,70 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 public class InterruptedWaitTest {
 
     @Test
     public void testCountDownLatchTimedAwait() throws Exception {
         final SOCountDownLatch latch = new SOCountDownLatch(1);
-        assertInterruptedWait(
+        TestUtils.assertInterruptedWaitDoesNotSpin(
+                "timed SOCountDownLatch await",
                 () -> Assert.assertTrue(latch.await(TimeUnit.SECONDS.toNanos(30))),
                 latch::countDown
+        );
+
+        final SOCountDownLatch nonInterruptedLatch = new SOCountDownLatch(1);
+        TestUtils.assertNonInterruptedWaitDoesNotSpin(
+                "non-interrupted timed SOCountDownLatch await",
+                () -> Assert.assertTrue(nonInterruptedLatch.await(TimeUnit.SECONDS.toNanos(30))),
+                nonInterruptedLatch::countDown
         );
     }
 
     @Test
     public void testCountDownLatchUntimedAwait() throws Exception {
         final SOCountDownLatch latch = new SOCountDownLatch(1);
-        assertInterruptedWait(latch::await, latch::countDown);
+        TestUtils.assertInterruptedWaitDoesNotSpin("SOCountDownLatch await", latch::await, latch::countDown);
+
+        final SOCountDownLatch nonInterruptedLatch = new SOCountDownLatch(1);
+        TestUtils.assertNonInterruptedWaitDoesNotSpin(
+                "non-interrupted SOCountDownLatch await",
+                nonInterruptedLatch::await,
+                nonInterruptedLatch::countDown
+        );
     }
 
     @Test
     public void testSimpleWaitingLock() throws Exception {
         final SimpleWaitingLock lock = new SimpleWaitingLock();
         Assert.assertTrue(lock.tryLock());
-        assertInterruptedWait(() -> {
+        TestUtils.assertInterruptedWaitDoesNotSpin("SimpleWaitingLock tryLock", () -> {
             Assert.assertTrue(lock.tryLock(30, TimeUnit.SECONDS));
             lock.unlock();
         }, lock::unlock);
+
+        final SimpleWaitingLock nonInterruptedLock = new SimpleWaitingLock();
+        Assert.assertTrue(nonInterruptedLock.tryLock());
+        TestUtils.assertNonInterruptedWaitDoesNotSpin("non-interrupted SimpleWaitingLock tryLock", () -> {
+            Assert.assertTrue(nonInterruptedLock.tryLock(30, TimeUnit.SECONDS));
+            nonInterruptedLock.unlock();
+        }, nonInterruptedLock::unlock);
     }
 
     @Test
     public void testUnboundedCountDownLatch() throws Exception {
         final SOUnboundedCountDownLatch latch = new SOUnboundedCountDownLatch();
-        assertInterruptedWait(() -> latch.await(1), latch::countDown);
-    }
+        TestUtils.assertInterruptedWaitDoesNotSpin(
+                "SOUnboundedCountDownLatch await",
+                () -> latch.await(1),
+                latch::countDown
+        );
 
-    private static void assertInterruptedWait(Runnable wait, Runnable release) throws Exception {
-        final AtomicReference<Throwable> failure = new AtomicReference<>();
-        final AtomicBoolean isInterruptedAfter = new AtomicBoolean();
-        final AtomicBoolean isWaitComplete = new AtomicBoolean();
-        final Thread waiter = new Thread(() -> {
-            Thread.currentThread().interrupt();
-            try {
-                wait.run();
-                isWaitComplete.set(true);
-            } catch (Throwable th) {
-                failure.set(th);
-            } finally {
-                isInterruptedAfter.set(Thread.currentThread().isInterrupted());
-            }
-        }, "interrupted-waiter");
-        waiter.setDaemon(true);
-        waiter.start();
-
-        try {
-            TestUtils.assertEventually(
-                    () -> Assert.assertEquals(Thread.State.TIMED_WAITING, waiter.getState()),
-                    5
-            );
-        } finally {
-            release.run();
-            waiter.join(TimeUnit.SECONDS.toMillis(5));
-        }
-
-        Assert.assertFalse("interrupted waiter did not stop", waiter.isAlive());
-        if (failure.get() != null) {
-            throw new AssertionError("interrupted waiter failed", failure.get());
-        }
-        Assert.assertTrue(isWaitComplete.get());
-        Assert.assertTrue(isInterruptedAfter.get());
+        final SOUnboundedCountDownLatch nonInterruptedLatch = new SOUnboundedCountDownLatch();
+        TestUtils.assertNonInterruptedWaitDoesNotSpin(
+                "non-interrupted SOUnboundedCountDownLatch await",
+                () -> nonInterruptedLatch.await(1),
+                nonInterruptedLatch::countDown
+        );
     }
 }

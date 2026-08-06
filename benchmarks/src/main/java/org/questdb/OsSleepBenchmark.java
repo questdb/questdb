@@ -112,6 +112,12 @@ public class OsSleepBenchmark {
     }
 
     @Benchmark
+    @Fork(value = 1, jvmArgsAppend = {"-XX:TieredStopAtLevel=1", "--enable-native-access=ALL-UNNAMED"})
+    public void testLegacySleep1C1() {
+        legacySleep(1);
+    }
+
+    @Benchmark
     @OutputTimeUnit(TimeUnit.NANOSECONDS)
     public void testOsPause() {
         Os.pause();
@@ -132,6 +138,12 @@ public class OsSleepBenchmark {
     @Benchmark
     public void testOsSleep10() {
         Os.sleep(10);
+    }
+
+    @Benchmark
+    @Fork(value = 1, jvmArgsAppend = {"-XX:TieredStopAtLevel=1", "--enable-native-access=ALL-UNNAMED"})
+    public void testOsSleep1C1() {
+        Os.sleep(1);
     }
 
     private static void legacyPause() {

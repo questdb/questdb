@@ -62,6 +62,7 @@ import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -77,6 +78,7 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.nio.file.Paths;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -399,6 +401,85 @@ public class LogFactoryTest {
                 TestUtils.assertContains(sink, " C x message A");
             }
         }
+    }
+
+    @Test
+    public void testLogSequenceIsReleasedWhenRecoveryEolThrows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
+            try (LogFactory factory = new LogFactory()) {
+                factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
+                    consumerSequence.set(seq);
+                    return new LogWriter() {
+                        @Override
+                        public void bindProperties(LogFactory factory) {
+                        }
+
+                        @Override
+                        public boolean run(@NotNull WorkerContext workerContext) {
+                            return false;
+                        }
+                    };
+                }));
+                factory.bind();
+
+                final Log logger = factory.create("x");
+                final LogRecord record = logger.info();
+                final RuntimeException messageFailure = new RuntimeException("message failure");
+                final Throwable throwable = new Throwable() {
+                    @Override
+                    public String getMessage() {
+                        throw messageFailure;
+                    }
+                };
+                try {
+                    record.$(throwable);
+                    Assert.fail("expected Throwable.getMessage() to fail");
+                } catch (RuntimeException e) {
+                    Assert.assertSame(messageFailure, e);
+                }
+
+                final Class<?> recordClass = record.getClass();
+                final Field dejaVuField = recordClass.getDeclaredField("dejaVu");
+                dejaVuField.setAccessible(true);
+                final Set<?> dejaVu = (Set<?>) dejaVuField.get(record);
+                Assert.assertEquals(1, dejaVu.size());
+
+                final RuntimeException eolFailure = new RuntimeException("EOL failure");
+                final Field sinkField = recordClass.getDeclaredField("sink");
+                sinkField.setAccessible(true);
+                sinkField.set(record, new LogRecordUtf8Sink(0, 0) {
+                    @Override
+                    public Utf8Sink putEOL() {
+                        throw eolFailure;
+                    }
+                });
+
+                try {
+                    logger.info();
+                    Assert.fail("expected abandoned-record recovery to fail while appending EOL");
+                } catch (RuntimeException e) {
+                    Assert.assertSame(eolFailure, e);
+                }
+
+                Assert.assertTrue(dejaVu.isEmpty());
+                final Field isLogRecordInProgressField = recordClass.getDeclaredField("isLogRecordInProgress");
+                isLogRecordInProgressField.setAccessible(true);
+                Assert.assertFalse(isLogRecordInProgressField.getBoolean(record));
+
+                final SCSequence sequence = consumerSequence.get();
+                for (int expectedCursor = 0; expectedCursor < 2; expectedCursor++) {
+                    final long cursor = sequence.next();
+                    Assert.assertEquals(expectedCursor, cursor);
+                    sequence.done(cursor);
+                }
+
+                logger.info().$("after recovery").$();
+                final long cursor = sequence.next();
+                Assert.assertEquals(2, cursor);
+                sequence.done(cursor);
+            }
+        });
     }
 
     @Test

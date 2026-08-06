@@ -44,10 +44,23 @@
 use std::thread;
 use std::time::Duration;
 
+const MAX_SLEEP_MILLIS: u64 = u32::MAX as u64 - 1;
+
 #[no_mangle]
 pub extern "C" fn qdb_sleep_millis(millis: i64) {
     if millis > 0 {
-        thread::sleep(Duration::from_millis(millis as u64));
+        sleep_millis(millis as u64, thread::sleep);
+    }
+}
+
+fn sleep_millis(mut millis: u64, mut sleep: impl FnMut(Duration)) {
+    // Windows reserves u32::MAX milliseconds for INFINITE. The finite bound
+    // also keeps oversized durations out of platform sleep conversions that
+    // can panic inside this extern "C" call.
+    while millis > 0 {
+        let chunk_millis = millis.min(MAX_SLEEP_MILLIS);
+        sleep(Duration::from_millis(chunk_millis));
+        millis -= chunk_millis;
     }
 }
 
@@ -78,5 +91,19 @@ mod tests {
             let _ = tx.send(());
         });
         assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok());
+    }
+
+    #[test]
+    fn splits_long_sleeps_into_finite_chunks() {
+        let mut chunks = Vec::new();
+        sleep_millis(u32::MAX as u64, |duration| chunks.push(duration));
+
+        assert_eq!(
+            chunks,
+            [
+                Duration::from_millis(u32::MAX as u64 - 1),
+                Duration::from_millis(1),
+            ]
+        );
     }
 }

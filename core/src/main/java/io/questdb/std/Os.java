@@ -67,7 +67,6 @@ public final class Os {
      * the caller in {@code _thread_in_Java} for the duration, so every safepoint --
      * and therefore every GC -- would wait out the sleep. The plain binding
      * transitions to {@code _thread_in_native}, which the VM can safepoint over.
-     * Remains {@code null} on 32-bit JVMs, which load no native library.
      */
     private static final MethodHandle SLEEP_MILLIS;
 
@@ -265,17 +264,7 @@ public final class Os {
      * the flag once that wait finishes.
      */
     public static void park() {
-        parkNanos(PARK_NANOS_MAX);
-    }
-
-    /**
-     * Parks the calling thread for up to {@code nanos} nanoseconds. An interrupt
-     * causes an immediate return without clearing the interrupt flag. Callers that
-     * loop must consume interrupts during the logical wait and restore the flag
-     * once that wait finishes.
-     */
-    public static void parkNanos(long nanos) {
-        LockSupport.parkNanos(nanos);
+        LockSupport.parkNanos(PARK_NANOS_MAX);
     }
 
     /**
@@ -299,6 +288,12 @@ public final class Os {
      * Sleeps for at least {@code millis}, returning immediately when {@code millis}
      * is not positive. Interrupting the calling thread does not cut the sleep short,
      * and does not clear the thread's interrupt flag.
+     * <p>
+     * The native implementation avoids {@link Thread#sleep(long)}'s per-call JFR
+     * allocation without consuming a {@link LockSupport} permit or serializing callers
+     * on a shared Java monitor. During the downcall, the JVM reports a platform thread
+     * as {@link Thread.State#RUNNABLE} and emits no {@code jdk.ThreadSleep} event. A
+     * virtual thread remains mounted on its carrier until the sleep ends.
      */
     public static void sleep(long millis) {
         if (millis <= 0) {

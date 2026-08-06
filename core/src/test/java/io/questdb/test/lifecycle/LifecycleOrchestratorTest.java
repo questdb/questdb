@@ -17,13 +17,70 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class LifecycleOrchestratorTest {
 
     @Rule
     public Timeout timeout = Timeout.builder().withTimeout(30, TimeUnit.SECONDS).withLookingForStuckThread(true).build();
+
+    @Test
+    public void testCloseDrainsInFlightWorkWhenCallerIsInterrupted() throws Exception {
+        CountDownLatch awaitEntered = new CountDownLatch(1);
+        CountDownLatch drainComplete = new CountDownLatch(1);
+        AtomicBoolean hasAwaitCompleted = new AtomicBoolean();
+        AtomicBoolean isDrainCompleteAtStop = new AtomicBoolean();
+        AtomicReference<Throwable> releaserFailure = new AtomicReference<>();
+        LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null) {
+            @Override
+            protected boolean awaitInFlightWork() {
+                awaitEntered.countDown();
+                try {
+                    boolean hasDrained = drainComplete.await(5, TimeUnit.SECONDS);
+                    hasAwaitCompleted.set(hasDrained);
+                    return hasDrained;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        };
+        orch.setPreStopHook(() -> isDrainCompleteAtStop.set(hasAwaitCompleted.get()));
+        orch.run();
+
+        Thread releaser = new Thread(() -> {
+            try {
+                if (!awaitEntered.await(10, TimeUnit.SECONDS)) {
+                    throw new AssertionError("close() did not enter the in-flight drain");
+                }
+                drainComplete.countDown();
+            } catch (Throwable th) {
+                releaserFailure.set(th);
+            }
+        }, "lifecycle-drain-releaser");
+        releaser.setDaemon(true);
+        releaser.start();
+
+        try {
+            Thread.currentThread().interrupt();
+            orch.close();
+            Assert.assertTrue("close() did not restore the caller interrupt flag", Thread.interrupted());
+            releaser.join(TimeUnit.SECONDS.toMillis(10));
+            Assert.assertFalse("lifecycle drain releaser did not stop", releaser.isAlive());
+            if (releaserFailure.get() != null) {
+                throw new AssertionError("lifecycle drain releaser failed", releaserFailure.get());
+            }
+            Assert.assertTrue("close() entered pre-stop before in-flight work drained", isDrainCompleteAtStop.get());
+        } finally {
+            Thread.interrupted();
+            drainComplete.countDown();
+            releaser.join(TimeUnit.SECONDS.toMillis(10));
+            orch.close();
+        }
+    }
 
     @Test
     public void testEnvelopeExtraDepsInjection() {

@@ -103,24 +103,24 @@ public class LogAlertSocket implements Closeable {
         this.defaultPort = defaultPort;
         parseAlertTargets();
         this.inBufferSize = inBufferSize;
-        this.inBufferPtr = Unsafe.malloc(inBufferSize, MemoryTag.NATIVE_LOGGER);
         this.outBufferSize = outBufferSize;
-        this.outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_LOGGER);
         this.reconnectDelay = reconnectDelay;
-        this.reconnectDelayMillis = Math.max(1, reconnectDelay / 1_000_000);
+        // Os.sleep accepts whole milliseconds. Round every positive remainder up
+        // so reconnects never run sooner than the configured nanosecond delay.
+        this.reconnectDelayMillis = reconnectDelay > 0 ? 1 + (reconnectDelay - 1) / 1_000_000 : 0;
+        try {
+            this.inBufferPtr = Unsafe.malloc(inBufferSize, MemoryTag.NATIVE_LOGGER);
+            this.outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_LOGGER);
+        } catch (Throwable th) {
+            freeBuffers();
+            throw th;
+        }
     }
 
     @Override
     public void close() {
         freeSocketAndAddress();
-        if (outBufferPtr != 0) {
-            Unsafe.free(outBufferPtr, outBufferSize, MemoryTag.NATIVE_LOGGER);
-            outBufferPtr = 0;
-        }
-        if (inBufferPtr != 0) {
-            Unsafe.free(inBufferPtr, inBufferSize, MemoryTag.NATIVE_LOGGER);
-            inBufferPtr = 0;
-        }
+        freeBuffers();
     }
 
     public void connect() {
@@ -186,6 +186,11 @@ public class LogAlertSocket implements Closeable {
 
     public int getOutBufferSize() {
         return outBufferSize;
+    }
+
+    @TestOnly
+    public long getReconnectDelayMillis() {
+        return reconnectDelayMillis;
     }
 
     @TestOnly
@@ -348,6 +353,17 @@ public class LogAlertSocket implements Closeable {
 
     private LogRecord $currentAlertHost(LogRecord logRecord) {
         return $alertHost(alertHostIdx, logRecord);
+    }
+
+    private void freeBuffers() {
+        if (outBufferPtr != 0) {
+            Unsafe.free(outBufferPtr, outBufferSize, MemoryTag.NATIVE_LOGGER);
+            outBufferPtr = 0;
+        }
+        if (inBufferPtr != 0) {
+            Unsafe.free(inBufferPtr, inBufferSize, MemoryTag.NATIVE_LOGGER);
+            inBufferPtr = 0;
+        }
     }
 
     private void freeSocketAndAddress() {

@@ -53,10 +53,12 @@ public class OsTest {
         if (Os.arch != Os.ARCH_AARCH64 || Os.type != Os.DARWIN) {
             AtomicInteger cpu0Result = new AtomicInteger(-1);
             AtomicInteger cpu1Result = new AtomicInteger(-1);
+            AtomicInteger noAffinityResult = new AtomicInteger(-1);
 
             // Run on a spawned thread: pinning the JUnit runner thread would serialize
             // every subsequent test in this fork onto one CPU.
             Thread t = new Thread(() -> {
+                noAffinityResult.set(Os.setCurrentThreadAffinity(-1));
                 cpu0Result.set(Os.setCurrentThreadAffinity(0));
                 cpu1Result.set(Os.setCurrentThreadAffinity(1));
             });
@@ -64,6 +66,7 @@ public class OsTest {
             t.join(TimeUnit.SECONDS.toMillis(10));
 
             Assert.assertFalse(t.isAlive());
+            Assert.assertEquals(0, noAffinityResult.get());
             Assert.assertEquals(0, cpu0Result.get());
             Assert.assertEquals(0, cpu1Result.get());
         }
@@ -117,53 +120,62 @@ public class OsTest {
 
     @Test
     public void testPauseDoesNotAllocate() {
-        ThreadMXBean bean = TestUtils.threadAllocationBean();
-        for (int i = 0; i < 128; i++) {
-            Os.pause();
+        try (TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            ThreadMXBean bean = scope.getBean();
+            for (int i = 0; i < 128; i++) {
+                Os.pause();
+            }
+            long before = bean.getCurrentThreadAllocatedBytes();
+            for (int i = 0; i < 128; i++) {
+                Os.pause();
+            }
+            long allocated = bean.getCurrentThreadAllocatedBytes() - before;
+            // Thread.sleep(0), which pause() used to call, allocates a 40-byte ThreadSleepEvent
+            // per call since JDK 24. The loop must stay cold: C2 eliminates that allocation once
+            // Thread.sleep compiles, so a hot fork cannot detect a regression.
+            assertTrue("Os.pause() allocated " + allocated + " bytes over 128 calls", allocated < 1280);
         }
-        long before = bean.getCurrentThreadAllocatedBytes();
-        for (int i = 0; i < 128; i++) {
-            Os.pause();
-        }
-        long allocated = bean.getCurrentThreadAllocatedBytes() - before;
-        // Thread.sleep(0), which pause() used to call, allocates a 40-byte ThreadSleepEvent
-        // per call since JDK 24. The loop must stay cold: C2 eliminates that allocation once
-        // Thread.sleep compiles, so a hot fork cannot detect a regression.
-        assertTrue("Os.pause() allocated " + allocated + " bytes over 128 calls", allocated < 1280);
     }
 
     @Test
     public void testSleepDoesNotAllocate() {
-        ThreadMXBean bean = TestUtils.threadAllocationBean();
-        // Warm past the downcall handle bootstrap and the LambdaForm customization the
-        // JDK triggers at invocation CUSTOMIZE_THRESHOLD + 1 (128 by default). The loop
-        // must stay cold overall: C2 eliminates the legacy Thread.sleep allocation once
-        // Thread.sleep compiles, so a hot fork cannot detect a regression.
-        for (int i = 0; i < 256; i++) {
-            Os.sleep(1);
+        try (TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            ThreadMXBean bean = scope.getBean();
+            // Warm past the downcall handle bootstrap and the LambdaForm customization the
+            // JDK triggers at invocation CUSTOMIZE_THRESHOLD + 1 (128 by default). The loop
+            // must stay cold overall: C2 eliminates the legacy Thread.sleep allocation once
+            // Thread.sleep compiles, so a hot fork cannot detect a regression.
+            for (int i = 0; i < 256; i++) {
+                Os.sleep(1);
+            }
+            long before = bean.getCurrentThreadAllocatedBytes();
+            for (int i = 0; i < 128; i++) {
+                Os.sleep(1);
+            }
+            long allocated = bean.getCurrentThreadAllocatedBytes() - before;
+            assertTrue("Os.sleep(1) allocated " + allocated + " bytes over 128 calls", allocated < 1280);
         }
-        long before = bean.getCurrentThreadAllocatedBytes();
-        for (int i = 0; i < 128; i++) {
-            Os.sleep(1);
-        }
-        long allocated = bean.getCurrentThreadAllocatedBytes() - before;
-        assertTrue("Os.sleep(1) allocated " + allocated + " bytes over 128 calls", allocated < 1280);
     }
 
     @Test
     public void testSleepDoesNotBlockSafepoints() throws Exception {
+        // Warm the downcall adapter so method isolation exercises the steady-state binding.
+        for (int i = 0; i < 256; i++) {
+            Os.sleep(1);
+        }
         CyclicBarrier barrier = new CyclicBarrier(2);
         AtomicLong wakeNanos = new AtomicLong();
         AtomicReference<Throwable> error = new AtomicReference<>();
         Thread t = new Thread(() -> {
             try {
                 TestUtils.await(barrier);
-                Os.sleep(2000);
+                Os.sleep(5_000);
                 wakeNanos.set(System.nanoTime());
             } catch (Throwable th) {
                 error.set(th);
             }
         });
+        t.setDaemon(true);
         t.start();
         TestUtils.await(barrier);
         // a Linker.Option.critical binding stalls this stack probe until the sleep ends,

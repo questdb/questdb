@@ -359,6 +359,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             int maxSegmentLocked = walLocker.lockPurge(tableToken, walId);
 
                             int trackerIdx = logic.trackDiscoveredWal(walId);
+                            boolean isTrackingComplete = false;
                             boolean walLocked = maxSegmentLocked == WalUtils.SEG_NONE_ID;
 
                             try {
@@ -413,8 +414,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                         ff.findClose(sp);
                                     }
                                 }
+                                isTrackingComplete = true;
                             } finally {
-                                logic.endWalTracking(trackerIdx, maxSegmentLocked, walLocked);
+                                logic.endWalTracking(trackerIdx, maxSegmentLocked, walLocked && isTrackingComplete);
                             }
                             hasPendingTasks |= !walLocked;
                         } catch (NumericException ne) {
@@ -775,6 +777,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         public void run() {
             int i = 0, n = discovered.size();
             try {
+                // Keep the delay in the cleanup scope so a downcall failure still releases every discovered lock.
                 if (n > 0 && waitBeforeDelete > 0) {
                     Os.sleep(waitBeforeDelete);
                 }
@@ -813,10 +816,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             }
                         }
                     }
+                    deleter.unlock(walId);
                     // Move to next discovered entry, wal entries are composed of 3 + nSegments longs:
                     // (walId, maxSegmentLocked, nSegments, segmentId...)
                     i += 3 + nSegments;
-                    deleter.unlock(walId);
                 }
             } finally {
                 unlockDiscovered(i);
@@ -918,21 +921,33 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         private void unlockDiscovered(int fromIndex) {
             for (int i = fromIndex, n = discovered.size(); i < n; ) {
-                final int walId = (int) discovered.get(i);
+                final int walId = (int) discovered.getQuick(i);
                 if (walId != WalUtils.METADATA_WALID) {
+                    int nextIndex = n;
+                    if (i + 2 < n) {
+                        final long nSegments = discovered.getQuick(i + 2);
+                        final long candidate = (long) i + 3 + nSegments;
+                        if (nSegments >= 0 && candidate <= n) {
+                            nextIndex = (int) candidate;
+                        }
+                    }
                     // We've a valid WAL entry, unlock it
                     try {
                         deleter.unlock(walId);
                     } catch (Throwable th) {
-                        LOG.error().$("could not unlock WAL [table=").$(tableToken)
-                                .$(", walId=").$(walId)
-                                .$(", error=").$(th)
-                                .I$();
+                        try {
+                            LOG.error().$("could not unlock WAL [table=").$(tableToken)
+                                    .$(", walId=").$(walId)
+                                    .$(", error=").$(th)
+                                    .I$();
+                        } catch (Throwable ignored) {
+                        }
+                    } finally {
+                        i = nextIndex;
                     }
-                    i += 3 + (int) discovered.get(i + 2);
                 } else {
                     // If walId is METADATA_WALID, it's a sequencer part, skip it
-                    i += 2;
+                    i = i + 2 <= n ? i + 2 : n;
                 }
             }
         }

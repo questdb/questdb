@@ -213,8 +213,8 @@ final class AsyncLogRecord implements LogRecord {
 
     @Override
     public void $() {
-        sink.putEOL();
         try {
+            sink.putEOL();
             if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
                 validateUtf8(sink);
             }

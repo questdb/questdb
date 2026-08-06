@@ -28,10 +28,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.continuation.DelayedFireable;
 import io.questdb.mp.continuation.TimerShards;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
+import java.lang.management.ThreadMXBean;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -57,6 +60,51 @@ public class TimerShardsTest {
             }
             Assert.assertTrue("not all entries fired in time", latch.await(5, TimeUnit.SECONDS));
             Assert.assertEquals(n, fires.get());
+        } finally {
+            shards.shutdown();
+        }
+    }
+
+    @Test
+    public void testInterruptDoesNotSpinAndShardKeepsRunning() throws Exception {
+        final String threadName = "test-interrupted-timer-0";
+        TimerShards shards = new TimerShards(1, "test-interrupted-timer", LOG);
+        shards.start();
+        try {
+            shards.register(new TestEntry(System.currentTimeMillis() + 60_000, null, null));
+
+            Thread timerThread = null;
+            for (Thread thread : Thread.getAllStackTraces().keySet()) {
+                if (threadName.equals(thread.getName())) {
+                    timerThread = thread;
+                    break;
+                }
+            }
+            Assert.assertNotNull("timer thread not found", timerThread);
+            final Thread timer = timerThread;
+            TestUtils.assertEventually(
+                    () -> Assert.assertEquals(Thread.State.TIMED_WAITING, timer.getState()),
+                    5
+            );
+
+            try (TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadCpuTimeScope()) {
+                ThreadMXBean bean = scope.getBean();
+                Assume.assumeTrue("thread CPU time measurement not supported", bean.isThreadCpuTimeSupported());
+                long cpuBefore = bean.getThreadCpuTime(timer.threadId());
+                Assert.assertTrue("CPU time measurement is disabled", cpuBefore >= 0);
+                timer.interrupt();
+                Thread.sleep(500);
+                long cpuAfter = bean.getThreadCpuTime(timer.threadId());
+                Assert.assertTrue("CPU time moved backwards", cpuAfter >= cpuBefore);
+                Assert.assertTrue(
+                        "interrupted timer burned " + (cpuAfter - cpuBefore) + "ns of CPU time",
+                        cpuAfter - cpuBefore < TimeUnit.MILLISECONDS.toNanos(100)
+                );
+            }
+
+            CountDownLatch fired = new CountDownLatch(1);
+            shards.register(new TestEntry(System.currentTimeMillis(), fired::countDown, null));
+            Assert.assertTrue("interrupted shard stopped firing entries", fired.await(5, TimeUnit.SECONDS));
         } finally {
             shards.shutdown();
         }

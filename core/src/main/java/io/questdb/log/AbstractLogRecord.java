@@ -159,7 +159,18 @@ abstract class AbstractLogRecord implements Log {
         // It's important to detect abandoned-record state BEFORE assigning the
         // new cursor/seq/ring/sink: the recovery path needs the previous chain's
         // sink and cursor to write the ABANDONED marker and release the stuck slot.
-        LogError logError = rec.detectAbandonedLogRecord();
+        final LogError logError;
+        try {
+            logError = rec.detectAbandonedLogRecord();
+        } catch (Throwable th) {
+            // next()/nextBully() reserved this cursor before recovery. Publish an
+            // empty record so consumers can advance past the abandoned attempt.
+            final LogRecordUtf8Sink sink = ring.get(cursor);
+            sink.setLevel(level);
+            sink.clear();
+            seq.done(cursor);
+            throw th;
+        }
         rec.cursor = cursor;
         rec.seq = seq;
         rec.ring = ring;

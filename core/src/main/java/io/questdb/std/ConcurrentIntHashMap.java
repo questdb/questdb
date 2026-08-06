@@ -3009,6 +3009,8 @@ public class ConcurrentIntHashMap<V> implements Serializable {
                         LockSupport.park(this);
                         // Consume interrupts so the next park can block; restore the flag on exit.
                         isInterrupted |= Thread.interrupted();
+                    } else {
+                        Thread.onSpinWait();
                     }
                 }
             } finally {

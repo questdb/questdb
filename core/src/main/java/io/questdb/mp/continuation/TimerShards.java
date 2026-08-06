@@ -216,6 +216,7 @@ public final class TimerShards {
 
     private void runShard(DelayHeap<DelayedFireable> shard) {
         CarrierIdentity.bind();
+        boolean isInterrupted = false;
         try {
             while (running) {
                 try {
@@ -234,7 +235,7 @@ public final class TimerShards {
                     }
                     e.expire();
                 } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
+                    isInterrupted = true;
                     if (!running) {
                         return;
                     }
@@ -245,7 +246,13 @@ public final class TimerShards {
         } finally {
             // Release the CarrierLocal row pinned to this shard thread's id so
             // it does not survive across engine restarts in long-running JVMs.
-            CarrierIdentity.unbind();
+            try {
+                CarrierIdentity.unbind();
+            } finally {
+                if (isInterrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
     }
 

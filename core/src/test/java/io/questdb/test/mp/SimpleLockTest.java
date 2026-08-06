@@ -30,12 +30,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.management.ThreadMXBean;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 public class SimpleLockTest {
@@ -272,48 +268,19 @@ public class SimpleLockTest {
 
     @Test
     public void testTryLockWhileInterrupted() throws Exception {
-        ThreadMXBean bean = TestUtils.threadCpuTimeBean();
-        Os.sleep(1);
-
-        SimpleWaitingLock lock = new SimpleWaitingLock();
+        final SimpleWaitingLock lock = new SimpleWaitingLock();
         Assert.assertTrue(lock.tryLock());
-        CountDownLatch phase1Done = new CountDownLatch(1);
-        AtomicBoolean hasTimedOut = new AtomicBoolean();
-        AtomicBoolean hasAcquired = new AtomicBoolean();
-        AtomicLong cpuNanos = new AtomicLong();
-        AtomicReference<Throwable> error = new AtomicReference<>();
-        Thread waiter = new Thread(() -> {
-            try {
-                Thread.currentThread().interrupt();
-                long cpuBefore = bean.getCurrentThreadCpuTime();
-                Assert.assertTrue("CPU time measurement is disabled", cpuBefore >= 0);
-                hasTimedOut.set(!lock.tryLock(500, TimeUnit.MILLISECONDS));
-                long cpuAfter = bean.getCurrentThreadCpuTime();
-                Assert.assertTrue("CPU time moved backwards", cpuAfter >= cpuBefore);
-                cpuNanos.set(cpuAfter - cpuBefore);
-                phase1Done.countDown();
-                hasAcquired.set(lock.tryLock(30, TimeUnit.SECONDS));
-            } catch (Throwable th) {
-                error.set(th);
-                phase1Done.countDown();
+        try {
+            TestUtils.assertInterruptedWaitTimesOutWithoutSpin(
+                    "SimpleWaitingLock tryLock",
+                    () -> lock.tryLock(500, TimeUnit.MILLISECONDS),
+                    () -> lock.tryLock(30, TimeUnit.SECONDS),
+                    lock::unlock
+            );
+        } finally {
+            if (lock.isLocked()) {
+                lock.unlock();
             }
-        });
-        waiter.setDaemon(true);
-        waiter.start();
-        boolean isPhase1Done = phase1Done.await(10, TimeUnit.SECONDS);
-        if (error.get() != null) {
-            throw new AssertionError(error.get());
         }
-        Assert.assertTrue("phase 1 did not complete", isPhase1Done);
-        lock.unlock();
-        waiter.join(TimeUnit.SECONDS.toMillis(10));
-
-        Assert.assertFalse(waiter.isAlive());
-        Assert.assertNull(error.get());
-        Assert.assertTrue("timed tryLock did not time out", hasTimedOut.get());
-        Assert.assertTrue("waiter did not acquire after unlock", hasAcquired.get());
-        Assert.assertTrue("interrupted tryLock burned " + cpuNanos.get() + "ns of CPU time",
-                cpuNanos.get() < TimeUnit.MILLISECONDS.toNanos(100));
-        lock.unlock();
     }
 }

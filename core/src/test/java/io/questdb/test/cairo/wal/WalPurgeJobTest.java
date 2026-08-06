@@ -39,6 +39,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
@@ -52,6 +53,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
+import java.lang.reflect.Field;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -721,6 +723,57 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLogicReleaseLocksContinuesWhenErrorLoggingFails() {
+        TestDeleter deleter = new TestDeleter() {
+            @Override
+            public void unlock(int walId) {
+                if (walId == 1) {
+                    throw new RuntimeException("unlock failed") {
+                        @Override
+                        public String getMessage() {
+                            throw new RuntimeException("message failed");
+                        }
+                    };
+                }
+                if (walId == 2) {
+                    throw new RuntimeException("second unlock failed");
+                }
+                super.unlock(walId);
+            }
+        };
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
+        TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
+        logic.reset(tableToken);
+
+        logic.endWalTracking(logic.trackDiscoveredWal(1), WalUtils.SEG_NONE_ID, true);
+        logic.endWalTracking(logic.trackDiscoveredWal(2), WalUtils.SEG_NONE_ID, true);
+        logic.endWalTracking(logic.trackDiscoveredWal(3), WalUtils.SEG_NONE_ID, true);
+
+        logic.releaseLocks();
+
+        Assert.assertEquals(1, deleter.unlocked.size());
+        Assert.assertEquals(3, deleter.unlocked.getQuick(0));
+    }
+
+    @Test
+    public void testLogicReleaseLocksHandlesTruncatedWalEntry() throws ReflectiveOperationException {
+        TestDeleter deleter = new TestDeleter();
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
+        TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
+        logic.reset(tableToken);
+
+        logic.trackDiscoveredWal(1);
+        Field discoveredField = WalPurgeJob.Logic.class.getDeclaredField("discovered");
+        discoveredField.setAccessible(true);
+        ((LongList) discoveredField.get(logic)).setPos(1);
+
+        logic.releaseLocks();
+
+        Assert.assertEquals(1, deleter.unlocked.size());
+        Assert.assertEquals(1, deleter.unlocked.getQuick(0));
+    }
+
+    @Test
     public void testLogicReleaseLocksSwallowsUnlockFailure() {
         TestDeleter deleter = new TestDeleter() {
             @Override
@@ -784,13 +837,14 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testLogicReleasesRemainingLocksWhenUnlockThrows() {
+        final AtomicBoolean isFirstUnlockAttempt = new AtomicBoolean(true);
         TestDeleter deleter = new TestDeleter() {
             @Override
             public void unlock(int walId) {
-                super.unlock(walId);
-                if (walId == 1) {
+                if (walId == 1 && isFirstUnlockAttempt.compareAndSet(true, false)) {
                     throw new RuntimeException("unlock failed");
                 }
+                super.unlock(walId);
             }
         };
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
@@ -1348,43 +1402,63 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             }
 
             @Override
-            public int findNext(long findPtr) {
-                int r = super.findNext(findPtr);
-                if (r <= 0 && findPtr == segmentScanPtr) {
+            public int findType(long findPtr) {
+                if (findPtr == segmentScanPtr) {
                     segmentScanPtr = -1;
                     throw segmentScanFailure;
                 }
-                return r;
+                return super.findType(findPtr);
             }
         };
 
         assertMemoryLeak(testFf, () -> {
-            execute("create table " + tableName + "("
-                    + "x long,"
-                    + "ts timestamp"
-                    + ") timestamp(ts) partition by DAY WAL");
-            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
-            execute("alter table " + tableName + " add column s1 string");
-            execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
+            execute("""
+                    CREATE TABLE %s (
+                        x LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """.formatted(tableName));
+            execute("""
+                    INSERT INTO %s VALUES (1, '2022-02-24T00:00:00.000000Z')
+                    """.formatted(tableName));
+            // ALTER starts a new WAL segment, so the INSERT statements intentionally straddle it.
+            execute("""
+                    ALTER TABLE %s ADD COLUMN s1 STRING
+                    """.formatted(tableName));
+            execute("""
+                    INSERT INTO %s VALUES (2, '2022-02-24T00:00:01.000000Z', 'x')
+                    """.formatted(tableName));
 
-            // Release the writer: an exclusive purge lock tracks both segments with
-            // positive ids, the encoding the broken stride walk misreads as WAL ids.
+            // Release the writer so the purge job acquires an exclusive lock. The
+            // injected failure happens before the scan records any segment.
             engine.releaseInactive();
             assertWalNotLocked(tableName, 1);
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
 
-            // Cleanup must release the acquired lock without masking the scan failure.
+            // Cleanup must release the acquired lock without masking the scan failure,
+            // and the partial entry must not retain the delete-everything encoding.
             isArmed.set(true);
-            try {
-                RuntimeException e = Assert.assertThrows(
-                        RuntimeException.class,
-                        () -> TestUtils.drainPurgeJob(engine, testFf)
-                );
-                Assert.assertSame(segmentScanFailure, e);
-            } finally {
-                isArmed.set(false);
+            try (WalPurgeJob job = new WalPurgeJob(
+                    engine,
+                    testFf,
+                    engine.getConfiguration().getMicrosecondClock()
+            )) {
+                try {
+                    RuntimeException e = Assert.assertThrows(RuntimeException.class, () -> job.drain(0));
+                    Assert.assertSame(segmentScanFailure, e);
+                } finally {
+                    isArmed.set(false);
+                }
+
+                Field logicField = WalPurgeJob.class.getDeclaredField("logic");
+                logicField.setAccessible(true);
+                WalPurgeJob.Logic logic = (WalPurgeJob.Logic) logicField.get(job);
+                Field discoveredField = WalPurgeJob.Logic.class.getDeclaredField("discovered");
+                discoveredField.setAccessible(true);
+                LongList discovered = (LongList) discoveredField.get(logic);
+                Assert.assertEquals(-WalUtils.SEG_NONE_ID - 1L, discovered.getQuick(1));
             }
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);

@@ -52,6 +52,7 @@ public class SOUnboundedCountDownLatch implements CountDownLatchSPI {
                 // and parking and unparkWaiter() will be called before park().
                 // Limit the parking time by using Os.park() instead of LockSupport.park()
                 Os.park();
+                // Consume interrupts so the next park can block; restore the flag on exit.
                 isInterrupted |= Thread.interrupted();
             }
         } finally {

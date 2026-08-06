@@ -37,9 +37,6 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 public class ConcurrentHashMapTreeBinTest {
@@ -101,68 +98,53 @@ public class ConcurrentHashMapTreeBinTest {
 
     private static void assertInterruptedTreeBinWait(Object map, Runnable operation) throws Exception {
         final Object treeBin = findTreeBin(map);
-        final sun.misc.Unsafe unsafe = Unsafe.getUnsafe();
         final long lockStateOffset = Unsafe.getFieldOffset(treeBin.getClass(), "lockState");
         final long waiterOffset = Unsafe.getFieldOffset(treeBin.getClass(), "waiter");
-        final AtomicReference<Throwable> failure = new AtomicReference<>();
-        final AtomicBoolean isInterruptedAfter = new AtomicBoolean();
-        final AtomicBoolean isOperationComplete = new AtomicBoolean();
 
-        unsafe.putIntVolatile(treeBin, lockStateOffset, READER);
-        final Thread contender = new Thread(() -> {
-            Thread.currentThread().interrupt();
-            try {
-                operation.run();
-                isOperationComplete.set(true);
-            } catch (Throwable th) {
-                failure.set(th);
-            } finally {
-                isInterruptedAfter.set(Thread.currentThread().isInterrupted());
-            }
-        }, "tree-bin-contender");
-        contender.setDaemon(true);
-        contender.start();
-
-        boolean isReaderReleased = false;
-        try {
-            TestUtils.assertEventually(() -> {
-                Assert.assertSame(contender, unsafe.getObjectVolatile(treeBin, waiterOffset));
-                Assert.assertEquals(Thread.State.WAITING, contender.getState());
-                Assert.assertSame(treeBin, LockSupport.getBlocker(contender));
-            }, 5);
-            Assert.assertTrue(unsafe.compareAndSwapInt(treeBin, lockStateOffset, READER_AND_WAITER, WAITER));
-            isReaderReleased = true;
-            LockSupport.unpark(contender);
-        } finally {
-            if (!isReaderReleased) {
-                unsafe.putIntVolatile(treeBin, lockStateOffset, 0);
-                LockSupport.unpark(contender);
-            }
-            contender.join(TimeUnit.SECONDS.toMillis(5));
-        }
-
-        Assert.assertFalse("tree-bin contender did not stop", contender.isAlive());
-        if (failure.get() != null) {
-            throw new AssertionError("tree-bin contender failed", failure.get());
-        }
-        Assert.assertTrue(isOperationComplete.get());
-        Assert.assertTrue(isInterruptedAfter.get());
+        setLockState(treeBin, lockStateOffset, READER);
+        TestUtils.assertInterruptedWaitDoesNotSpin(
+                "tree-bin contended lock",
+                operation,
+                () -> {
+                    final Object waiter = Unsafe.getObjectVolatile(treeBin, waiterOffset);
+                    if (!(waiter instanceof Thread waiterThread)) {
+                        Assert.fail("tree-bin waiter was not registered");
+                        return;
+                    }
+                    Assert.assertSame(treeBin, LockSupport.getBlocker(waiterThread));
+                },
+                () -> {
+                    final boolean isWaiterRegistered = Unsafe.cas(
+                            treeBin,
+                            lockStateOffset,
+                            READER_AND_WAITER,
+                            WAITER
+                    );
+                    if (!isWaiterRegistered) {
+                        setLockState(treeBin, lockStateOffset, 0);
+                    }
+                    Assert.assertTrue("tree-bin waiter was not registered", isWaiterRegistered);
+                }
+        );
     }
 
     private static Object findTreeBin(Object map) {
         final long tableOffset = Unsafe.getFieldOffset(map.getClass(), "table");
-        final sun.misc.Unsafe unsafe = Unsafe.getUnsafe();
-        final Object[] table = (Object[]) unsafe.getObjectVolatile(map, tableOffset);
-        final long arrayOffset = unsafe.arrayBaseOffset(Object[].class);
-        final long arrayScale = unsafe.arrayIndexScale(Object[].class);
-        for (int i = 0, n = table.length; i < n; i++) {
-            final Object bin = unsafe.getObjectVolatile(table, arrayOffset + i * arrayScale);
-            if (bin != null && bin.getClass().getSimpleName().equals("TreeBin")) {
+        final Object[] table = (Object[]) Unsafe.getObjectVolatile(map, tableOffset);
+        for (Object bin : table) {
+            if (bin != null) {
                 return bin;
             }
         }
         Assert.fail("map did not treeify a bin");
         return null;
+    }
+
+    private static void setLockState(Object treeBin, long lockStateOffset, int value) {
+        int current;
+        do {
+            current = Unsafe.getIntVolatile(treeBin, lockStateOffset);
+        } while (!Unsafe.cas(treeBin, lockStateOffset, current, value));
     }
 
     private static int spread(int hash) {
