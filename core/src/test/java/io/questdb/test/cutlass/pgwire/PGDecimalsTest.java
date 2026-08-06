@@ -43,22 +43,22 @@ public class PGDecimalsTest extends BasePGTest {
                 (connection, _, _, _) -> {
                     try (PreparedStatement statement = connection.prepareStatement(
                             """
-                                    select x,
-                                        lpad('', 600, 'x')::varchar,
-                                        decimal_value::decimal(18, 4),
-                                        decimal_value::decimal(2, 1),
-                                        decimal_value::decimal(4, 2),
-                                        decimal_value::decimal(9, 4),
-                                        decimal_value::decimal(38, 18),
-                                        decimal_value::decimal(76, 38)
-                                    from (
-                                        select x,
-                                            case
-                                                when x % 10 = 0 then null
-                                                when x % 2 = 0 then x % 9
-                                                else -(x % 9)
-                                            end decimal_value
-                                        from long_sequence(100)
+                                    SELECT x,
+                                        lpad('', 600, 'x')::VARCHAR,
+                                        decimal_value::DECIMAL(18, 4),
+                                        decimal_value::DECIMAL(2, 1),
+                                        decimal_value::DECIMAL(4, 2),
+                                        decimal_value::DECIMAL(9, 4),
+                                        decimal_value::DECIMAL(38, 18),
+                                        decimal_value::DECIMAL(76, 38)
+                                    FROM (
+                                        SELECT x,
+                                            CASE
+                                                WHEN x % 10 = 0 THEN null
+                                                WHEN x % 2 = 0 THEN x % 9
+                                                ELSE -(x % 9)
+                                            END decimal_value
+                                        FROM long_sequence(100)
                                     )
                                     """
                     )) {
@@ -575,7 +575,11 @@ public class PGDecimalsTest extends BasePGTest {
     public void testTextResultReportsRequiredSizeWithDecimal() throws Exception {
         // The reported size must be a send buffer size the row actually fits into, so the second half of this test
         // runs the same query again at exactly that size and reads the row back.
-        final String query = "SELECT lpad('', 950, 'x')::VARCHAR, '0.1'::DECIMAL(76, 75)";
+        // A negative value at the widest precision drives the tightest text: sign + '0' + '.' + scale fraction
+        // digits, one byte inside the precision + 3 estimateColumnTxtSize reserves (scale == precision, which would
+        // consume the bound exactly, is not a convertible decimal type). This exercises the sign and the fraction
+        // padding the original positive case did not.
+        final String query = "SELECT lpad('', 950, 'x')::VARCHAR, '-0.1'::DECIMAL(76, 75)";
         final int requiredSize = 1044;
         assertWithPgServer(
                 Mode.SIMPLE,
@@ -604,7 +608,7 @@ public class PGDecimalsTest extends BasePGTest {
                          ResultSet resultSet = statement.executeQuery(query)) {
                         Assert.assertTrue(resultSet.next());
                         Assert.assertEquals("x".repeat(950), resultSet.getString(1));
-                        Assert.assertEquals(new BigDecimal("0.1").setScale(75), resultSet.getBigDecimal(2));
+                        Assert.assertEquals(new BigDecimal("-0.1").setScale(75), resultSet.getBigDecimal(2));
                         Assert.assertFalse(resultSet.next());
                     }
                 },

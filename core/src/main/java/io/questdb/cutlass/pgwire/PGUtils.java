@@ -525,7 +525,6 @@ public final class PGUtils {
         int weight = 0;
         int pow = precision;
 
-
         // We start with the whole part of the decimal
         final int wholePartPrecision = precision - scale;
         for (int i = wholePartPrecision - 1; i >= 0; i--) {
