@@ -231,6 +231,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS("cairo.mat.view.refresh.max.clusters"),
     CAIRO_MAT_VIEW_MAX_REFRESH_STEP("cairo.mat.view.max.refresh.step"),
     CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD("cairo.mat.view.refresh.intervals.update.period"),
+    CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED("cairo.mat.view.refresh.limit.wall.clock.enabled"),
     CAIRO_LIVE_VIEW_CHECKPOINT_COMPACTION_INTERVAL("cairo.live.view.checkpoint.compaction.interval"),
     CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS("cairo.live.view.checkpoint.max.duration.micros"),
     CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL("cairo.live.view.checkpoint.purge.interval"),

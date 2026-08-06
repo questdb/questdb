@@ -458,7 +458,9 @@ public class QwpTudCache implements QuietCloseable {
             }
             tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
         }
-        if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE) {
+        // A mat view with a REFRESH LIMIT accepts direct backfill into its frozen zone,
+        // so it is the one non-TABLE kind this gate lets through.
+        if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE && !engine.isBackfillableMatView(tableToken)) {
             // schemaMismatch(), not a bare nonCritical(): the target's kind is a property of
             // the name the frame carries, so byte-identical replay hits the same refusal
             // forever. QwpIngressProcessorState.cairoExceptionStatus maps an unmarked

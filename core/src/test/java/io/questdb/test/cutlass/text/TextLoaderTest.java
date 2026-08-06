@@ -2396,6 +2396,37 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOverwriteBackfillableMatViewRejected() throws Exception {
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE base_price (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base_price VALUES ('1970-01-01T02:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW test AS (SELECT ts, count() cnt FROM base_price SAMPLE BY 1h)");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW test SET REFRESH LIMIT 1 HOUR");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue(engine.isBackfillableMatView(engine.verifyTableName("test")));
+
+            configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW, true);
+            textLoader.setForceHeaders(true);
+            try {
+                playText0(
+                        textLoader,
+                        "ts,cnt\n1970-01-01T00:01:40.000000Z,99\n",
+                        1024,
+                        NOOP_TRANSFORMER
+                );
+                Assert.fail("overwrite import must reject materialized views");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify materialized view [view=test]");
+            }
+
+            Assert.assertTrue(engine.verifyTableName("test").isMatView());
+            assertQuery("SELECT count() FROM test").noRandomAccess().expectSize().returns("count\n1\n");
+        });
+    }
+
+    @Test
     public void testOverwriteTable() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = """

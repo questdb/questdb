@@ -489,7 +489,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             }
                             continue; // go for another spin
                         }
-                        if (tableToken.getType() != TableToken.Type.TABLE) {
+                        // A mat view with a REFRESH LIMIT accepts direct backfill into its frozen
+                        // zone, so it is the one non-TABLE kind this gate lets through.
+                        if (tableToken.getType() != TableToken.Type.TABLE && !engine.isBackfillableMatView(tableToken)) {
                             throw CairoException.nonCritical()
                                     .put("cannot modify ").put(tableToken.getType().keyword()).put(" [view=")
                                     .put(tableToken.getTableName())
