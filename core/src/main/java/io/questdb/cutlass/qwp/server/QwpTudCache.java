@@ -397,7 +397,21 @@ public class QwpTudCache implements QuietCloseable {
         if (key < 0) {
             WalTableUpdateDetails tud = tableUpdateDetails.valueAt(key);
             if (!isTableTokenStale(tud)) {
-                applyPendingStructureChanges(tud);
+                try {
+                    applyPendingStructureChanges(tud);
+                } catch (Throwable th) {
+                    // goActive() failed: the writer is distressed (the flag never
+                    // clears) while the table is alive, so no staleness check would
+                    // ever evict this entry and the table would be wedged on this
+                    // receiver until restart. Evict and free it -- rolling back any
+                    // buffered rows -- and rethrow so the QWP layer refuses the
+                    // frame (the deferred-ack clamp holds; the client replays). The
+                    // next lookup acquires a fresh writer from the pool.
+                    tableUpdateDetails.removeAt(key);
+                    cachedTableCount = tableUpdateDetails.size();
+                    Misc.free(tud);
+                    throw th;
+                }
                 return tud;
             }
             evictStaleTud(key, tableNameUtf8, tud);
@@ -506,9 +520,15 @@ public class QwpTudCache implements QuietCloseable {
      * the change log is only opened when something has actually been committed
      * since the last look -- not on every frame.
      * <p>
-     * A table dropped concurrently makes {@code goActive} throw, which refuses
-     * the frame rather than acknowledging it -- the safe direction, and the next
-     * call finds the token stale and takes the eviction path above.
+     * Any failure here -- a table dropped concurrently, or a transient I/O error
+     * reading the change log -- makes {@code goActive} throw and leaves the
+     * writer permanently distressed. The gate is advanced only after a
+     * successful call, so a failed replay is retried by the next lookup rather
+     * than latched as done; the caller evicts and frees this entry on failure
+     * and rethrows, refusing the frame rather than acknowledging it -- the safe
+     * direction. Relying on {@link #isTableTokenStale} alone would not do: a
+     * transient failure leaves the table alive, so the token never goes stale
+     * and the entry would stay wedged in the cache with a distressed writer.
      * <p>
      * A renamed table's writer is deliberately left untouched: the change log
      * carries the RENAME TABLE entry, and replaying it here would rebind the
@@ -536,8 +556,10 @@ public class QwpTudCache implements QuietCloseable {
         if (seqTxn == tud.getLastStructureCheckSeqTxn()) {
             return;
         }
-        tud.setLastStructureCheckSeqTxn(seqTxn);
         walWriter.goActive();
+        // Only a successful replay advances the gate: a failure must be retried
+        // by the next lookup, not latched as done.
+        tud.setLastStructureCheckSeqTxn(seqTxn);
     }
 
     // Evicts a stale cached entry (see isTableTokenStale): either the table was

@@ -55,9 +55,12 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -66,6 +69,7 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
@@ -2310,6 +2314,65 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                             reader.getMetadata().getColumnType(tsIndex)
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsEvictsEntryWhenGoActiveFails() throws Exception {
+        // C2: goActive() marks the writer distressed on ANY failure and the flag
+        // never clears. The table is alive, so no staleness check would ever
+        // evict the entry -- without eviction here the table is wedged on this
+        // receiver until restart. The lookup must evict + free the entry on
+        // goActive() failure and rethrow; the next lookup heals with a fresh
+        // writer from the pool.
+        final AtomicBoolean failNextChangeLogOpen = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, "_txnlog.meta.d")
+                        && failNextChangeLogOpen.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE go_fail (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("go_fail"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                Assert.assertEquals(1, cache.size());
+
+                // Advance the table's seqTxn so the next lookup re-checks the
+                // change log, and arm the one-shot open failure.
+                execute("ALTER TABLE go_fail ALTER COLUMN val TYPE LONG");
+                drainWalQueue();
+                failNextChangeLogOpen.set(true);
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("go_fail"), null, null, 1
+                    );
+                    Assert.fail("a failed goActive() must propagate");
+                } catch (CairoException ignore) {
+                }
+                Assert.assertEquals("failed entry must be evicted", 0, cache.size());
+
+                // The next lookup heals with a fresh writer and ingestion works.
+                WalTableUpdateDetails healed = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("go_fail"), null, null, 1
+                );
+                Assert.assertNotNull(healed);
+                Assert.assertNotSame(tud, healed);
             }
         });
     }
