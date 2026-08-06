@@ -1402,8 +1402,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
                 // A fresh sender, so the CLIENT's per-buffer type binding is new
                 // and the only stale view left is the receiver's cached one.
+                // The 2.5 value MUST stay non-integral: a stale LONG writer
+                // refuses a precision-losing double, so the datagram drops and
+                // unfixed code goes red. The integral 3.0 covers the other
+                // failure half -- unfixed code silently coerces it to LONG 3.
+                // Both rows travel in one datagram to avoid a receive race.
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("alter_type").doubleColumn("v", 2.5).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.table("alter_type").doubleColumn("v", 3.0).at(3_000_000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
                 drainReceiver(receiver);
@@ -1411,7 +1417,8 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
                 assertQuery("SELECT v FROM alter_type ORDER BY timestamp")
                         .noLeakCheck()
-                        .returnsOnce("v\n1.0\n2.5\n");
+                        .expectSize()
+                        .returns("v\n1.0\n2.5\n3.0\n");
             }
         });
     }
