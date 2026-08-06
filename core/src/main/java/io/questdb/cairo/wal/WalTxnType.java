@@ -30,6 +30,7 @@ package io.questdb.cairo.wal;
 // delegated to a CairoEngine.getWalTxnTypeHandler() at apply time.
 public class WalTxnType {
     public static final byte DATA = 0;
+    public static final byte LIVE_VIEW_DATA = 6;
     public static final byte MAT_VIEW_DATA = 3;
     public static final byte MAT_VIEW_INVALIDATE = 4;
     public static final byte NONE = -1;
@@ -38,7 +39,7 @@ public class WalTxnType {
     public static final byte VIEW_DEFINITION = 5;
 
     public static boolean isDataType(byte type) {
-        return type == DATA || type == MAT_VIEW_DATA;
+        return type == DATA || type == MAT_VIEW_DATA || type == LIVE_VIEW_DATA;
     }
 
     public static boolean isDownstreamType(byte type) {

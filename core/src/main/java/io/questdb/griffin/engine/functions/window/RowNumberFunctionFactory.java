@@ -24,11 +24,17 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
-import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.lv.LiveViewCheckpointDependency;
+import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -46,14 +52,20 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 public class RowNumberFunctionFactory implements FunctionFactory {
 
     public static final String NAME = "row_number";
-    private static final SingleColumnType LONG_COLUMN_TYPE = new SingleColumnType(ColumnType.LONG);
+    // Base value layout for regular queries: [rowNumber:LONG]. When compiling
+    // inside a live view, RowNumberFunction appends a BYTE tombstone slot
+    // consumed by anchor-driven compaction. The slot is omitted for
+    // non-live-view queries to avoid the per-partition-key overhead.
+    private static final int ROW_NUMBER_VALUE_INDEX = 0;
     private static final String SIGNATURE = NAME + "()";
 
     @Override
@@ -80,15 +92,35 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         if (windowContext.getPartitionByRecord() != null) {
+            // The WindowContext's partitionByKeyTypes is a transient buffer owned by
+            // SqlCodeGenerator that gets cleared on every window function compile.
+            // The live-view frontier sweep needs to allocate a scratch Map with the same
+            // key shape after compilation has moved on, so take our own copy.
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            ColumnTypes contextKeyTypes = windowContext.getPartitionByKeyTypes();
+            for (int i = 0, n = contextKeyTypes.getColumnCount(); i < n; i++) {
+                keyTypes.add(contextKeyTypes.getColumnType(i));
+            }
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG); // rowNumber
+            int tombstoneValueIndex = -1;
+            if (windowContext.isLiveView()) {
+                valueTypes.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
+                tombstoneValueIndex = 1;
+            }
             Map map = MapFactory.createUnorderedMap(
                     configuration,
-                    windowContext.getPartitionByKeyTypes(),
-                    LONG_COLUMN_TYPE
+                    keyTypes,
+                    valueTypes
             );
             return new RowNumberFunction(
                     map,
                     windowContext.getPartitionByRecord(),
-                    windowContext.getPartitionBySink()
+                    windowContext.getPartitionBySink(),
+                    keyTypes,
+                    valueTypes,
+                    tombstoneValueIndex,
+                    configuration
             );
         }
 
@@ -96,23 +128,91 @@ public class RowNumberFunctionFactory implements FunctionFactory {
     }
 
     private static class RowNumberFunction extends LongFunction implements WindowFunction, Reopenable {
-        private final Map map;
+        private final CairoConfiguration configuration;
+        private final ColumnTypes keyColumnTypes;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
+        // -1 outside live-view mode; index of the BYTE tombstone slot in LV mode.
+        private final int tombstoneValueIndex;
+        private final ColumnTypes valueColumnTypes;
+        private LiveViewCheckpointDependency checkpointDependency;
+        private LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity;
         private int columnIndex;
-
+        // Reusable second map for the live-view frontier sweep; ping-pongs with map
+        // so a sweep never allocates. Allocated once on the first sweep.
+        private Map compactionScratch;
+        private Map map;
+        // The per-query MemoryTracker bound by setMemoryTracker; retained so
+        // retainPartitions can charge the lazily-created compaction scratch too.
+        private MemoryTracker memoryTracker;
         private long rowNumber;
+        // Single-writer (refresh worker), not volatile.
+        private long tombstoneCount;
 
-        public RowNumberFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink) {
+        public RowNumberFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                ColumnTypes keyColumnTypes,
+                ColumnTypes valueColumnTypes,
+                int tombstoneValueIndex,
+                CairoConfiguration configuration
+        ) {
             this.map = map;
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;
+            this.keyColumnTypes = keyColumnTypes;
+            this.valueColumnTypes = valueColumnTypes;
+            this.tombstoneValueIndex = tombstoneValueIndex;
+            this.configuration = configuration;
+            // Start the map closed (lazy): the owning cursor binds the per-query
+            // MemoryTracker via setMemoryTracker() before reopen() allocates the
+            // backing under it, so a high-cardinality PARTITION BY is charged to the
+            // per-query limit. reset() frees it symmetrically at cursor close.
+            this.map.close();
         }
 
         @Override
         public void close() {
             Misc.free(map);
+            Misc.free(compactionScratch);
             Misc.freeObjList(partitionByRecord.getFunctions());
+        }
+
+        @Override
+        public LiveViewCheckpointDependency checkpointDependency() {
+            return checkpointDependency;
+        }
+
+        @Override
+        public LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity() {
+            return checkpointFunctionIdentity;
+        }
+
+        @Override
+        public void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
+            // RowNumber implements WindowFunction directly (no BasePartitionedWindowFunction),
+            // so it overrides retainPartitions itself. The reusable scratch ping-pongs
+            // with map; only the first sweep allocates.
+            if (compactionScratch == null) {
+                compactionScratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, valueColumnTypes);
+                // createUnorderedMap returns an OPEN map allocated under no tracker.
+                // Free that untracked backing, bind the tracker, then reopen so the
+                // scratch's malloc and free stay symmetric on the per-query counter
+                // once the ping-pong swap below promotes it to the live map.
+                if (memoryTracker != null) {
+                    compactionScratch.close();
+                    compactionScratch.setMemoryTracker(memoryTracker);
+                    compactionScratch.reopen();
+                }
+            } else {
+                compactionScratch.clear();
+            }
+            PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, survivingKeys, survivingKeySink);
+            Map old = map;
+            map = compactionScratch;
+            compactionScratch = old;
+            tombstoneCount = 0;
         }
 
         @Override
@@ -123,12 +223,32 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             MapValue value = key.createValue();
             long x;
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 x = 0;
             } else {
-                x = value.getLong(0);
+                x = value.getLong(ROW_NUMBER_VALUE_INDEX);
             }
             rowNumber = x + 1;
-            value.putLong(0, rowNumber);
+            value.putLong(ROW_NUMBER_VALUE_INDEX, rowNumber);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's row counter back to
+            // zero so the next computeNext sees x=0 and emits 1.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(ROW_NUMBER_VALUE_INDEX, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
         }
 
         @Override
@@ -142,9 +262,64 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return valueColumnTypes.getColumnCount();
+        }
+
+        @Override
+        public long getTombstoneCount() {
+            return tombstoneCount;
+        }
+
+        @Override
+        public int getTombstoneValueIndex() {
+            return tombstoneValueIndex;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+        }
+
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+        }
+
+        @Override
+        public void markPartitionAlive(Record record) {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null && value.getByte(tombstoneValueIndex) == 1) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            // The map starts closed (lazy) and the live-view restore path can run
+            // before any cursor of()/ofIncremental reopens it, so reopen() first;
+            // it allocates the backing when closed and is a no-op when already open.
+            map.reopen();
+            map.clear();
+            tombstoneCount = 0;
         }
 
         @Override
@@ -156,17 +331,71 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void reopen() {
             rowNumber = 0;
+            tombstoneCount = 0;
             map.reopen();
         }
 
         @Override
         public void reset() {
             map.close();
+            compactionScratch = Misc.free(compactionScratch);
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putLong(ROW_NUMBER_VALUE_INDEX, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
         }
 
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void setCheckpointCompilerMetadata(
+                LiveViewCheckpointFunctionIdentity identity,
+                LiveViewCheckpointDependency dependency
+        ) {
+            if (checkpointFunctionIdentity != null || checkpointDependency != null) {
+                throw new IllegalStateException("live view checkpoint compiler metadata already set");
+            }
+            checkpointFunctionIdentity = identity;
+            checkpointDependency = dependency;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            // Retain the tracker so retainPartitions can charge the compaction scratch
+            // to it, and bind it on the lazily-allocated map before the cursor's
+            // reopen() allocates the backing under it.
+            this.memoryTracker = tracker;
+            map.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(ROW_NUMBER_VALUE_INDEX));
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            // tombstoneValueIndex >= 0 marks a live-view compile; this class has no
+            // dedicated liveView flag, so it stands in for the guard the other
+            // window families carry.
+            return tombstoneValueIndex >= 0
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -181,17 +410,30 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void toTop() {
             rowNumber = 0;
+            tombstoneCount = 0;
             map.clear();
         }
     }
 
     private static class SequenceRowNumberFunction extends LongFunction implements WindowFunction, Reopenable {
+        private LiveViewCheckpointDependency checkpointDependency;
+        private LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity;
         private int columnIndex;
         private long rowNumber = 0;
 
         @Override
         public void computeNext(Record record) {
             ++rowNumber;
+        }
+
+        @Override
+        public LiveViewCheckpointDependency checkpointDependency() {
+            return checkpointDependency;
+        }
+
+        @Override
+        public LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity() {
+            return checkpointFunctionIdentity;
         }
 
         @Override
@@ -225,8 +467,41 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            rowNumber = source.getLong(offset);
+            return offset + Long.BYTES;
+        }
+
+        @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void setCheckpointCompilerMetadata(
+                LiveViewCheckpointFunctionIdentity identity,
+                LiveViewCheckpointDependency dependency
+        ) {
+            if (checkpointFunctionIdentity != null || checkpointDependency != null) {
+                throw new IllegalStateException("live view checkpoint compiler metadata already set");
+            }
+            checkpointFunctionIdentity = identity;
+            checkpointDependency = dependency;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(rowNumber);
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return true;
         }
 
         @Override

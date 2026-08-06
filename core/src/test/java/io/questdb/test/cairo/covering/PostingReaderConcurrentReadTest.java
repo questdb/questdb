@@ -35,7 +35,6 @@ import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -51,7 +50,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
 
@@ -214,6 +214,131 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
     }
 
     /**
+     * CRITICAL parallel-decode race (single sparse gen). The old populateCacheForKey bailed when
+     * genCount &lt;= 1, leaving a single SPARSE gen cold, so concurrent detached worker cursors
+     * raced on the shared genLookup putCacheEntries. This reproduces the PRODUCTION path -- warm via
+     * populateCacheForKey (NOT the test-only warmForKeys), freeze, then hammer the frozen reader
+     * with many detached cursors across many iterations. The fix (a) warms the single sparse gen so
+     * workers replay read-only, and (b) forbids detached cursors from writing the cache; the
+     * frozen-write assert turns any regression into a loud, deterministic failure. Every pass must
+     * equal the cold reference and the cursor pool must never be touched.
+     */
+    @Test
+    public void testConcurrentDetachedCursorsSingleSparseGenProductionWarm() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "conc_single_sparse";
+                final int plen = path.size();
+                // ONE clearly-sparse gen: keys {0,50,100} over [0,100] (single commit, no seal).
+                final int[] sparseKeys = {0, 50, 100};
+                final int rowsPerKey = 40;
+                final int totalRows = sparseKeys.length * rowsPerKey;
+                final long colBytes = (long) totalRows * Long.BYTES;
+                final long colAddr = Unsafe.malloc(colBytes, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < totalRows; i++) {
+                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
+                    }
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr}, new long[]{0}, new int[]{3}, new int[]{1}, new int[]{ColumnType.LONG}, 1);
+                        int row = 0;
+                        for (int r = 0; r < rowsPerKey; r++) {
+                            for (int sk : sparseKeys) {
+                                writer.add(sk, row++);
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit(); // single commit -> single sparse gen
+                    }
+
+                    final RecordMetadata md = coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG});
+                    final int[] required = {0};
+                    final int probeKey = 50;
+
+                    // Cold single-threaded reference for the probe key.
+                    final LongList expRows = new LongList();
+                    final LongList expVals = new LongList();
+                    try (PostingIndexFwdReader cold = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
+                        CoveringRowCursor cc = (CoveringRowCursor) cold.getCursor(probeKey, 0, Long.MAX_VALUE, required);
+                        while (cc.hasNext()) {
+                            expRows.add(cc.next());
+                            expVals.add(cc.getCoveredLong(0));
+                        }
+                        Misc.free(cc);
+                    }
+                    assertTrue("probe key must yield rows", expRows.size() > 0);
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
+                        reader.reloadConditionally();
+                        // Cheap-path prep: open a pooled cursor to MAP the required covered sidecars
+                        // (production's openOrContinueCoveringCursor maps them before workers run),
+                        // reading one row to force the mapping but NOT draining it -- the cheap path is
+                        // metadata-only and leaves gen-cache warming to populateCacheForKey, so the
+                        // cache stays cold here. Then warm (the single-sparse-gen path under test) + freeze.
+                        CoveringRowCursor prep = (CoveringRowCursor) reader.getCursor(probeKey, 0, Long.MAX_VALUE, required);
+                        if (prep.hasNext()) {
+                            prep.next();
+                            prep.getCoveredLong(0);
+                        }
+                        Misc.free(prep);
+                        reader.populateCacheForKey(probeKey);
+                        reader.setFrozen(true);
+                        final int poolAfterWarm = freeCursorsSize(reader);
+
+                        final int threads = 6;
+                        final int iterations = 300;
+                        final AtomicReference<Throwable> error = new AtomicReference<>();
+                        final CyclicBarrier start = new CyclicBarrier(threads);
+                        final Thread[] ts = new Thread[threads];
+                        for (int t = 0; t < threads; t++) {
+                            ts[t] = new Thread(() -> {
+                                try {
+                                    start.await();
+                                    for (int it = 0; it < iterations && !Thread.interrupted(); it++) {
+                                        try (CoveringRowCursor cc = (CoveringRowCursor)
+                                                reader.getDetachedCursor(probeKey, 0, Long.MAX_VALUE, required)) {
+                                            int i = 0;
+                                            while (cc.hasNext()) {
+                                                long r = cc.next();
+                                                long v = cc.getCoveredLong(0);
+                                                assertTrue("more rows than cold at idx " + i, i < expRows.size());
+                                                assertEquals("row id mismatch at idx " + i, expRows.getQuick(i), r);
+                                                assertEquals("covered value mismatch at idx " + i, expVals.getQuick(i), v);
+                                                i++;
+                                            }
+                                            assertEquals("fewer rows than cold", expRows.size(), i);
+                                        }
+                                    }
+                                } catch (Throwable e) {
+                                    error.compareAndSet(null, e);
+                                }
+                            }, "sparse-worker-" + t);
+                        }
+                        for (Thread th : ts) {
+                            th.start();
+                        }
+                        for (Thread th : ts) {
+                            th.join();
+                        }
+
+                        Throwable e = error.get();
+                        if (e != null) {
+                            throw new AssertionError("concurrent single-sparse-gen detached decode failure", e);
+                        }
+                        assertEquals("detached cursors must not push to freeCursors", poolAfterWarm, freeCursorsSize(reader));
+                        reader.setFrozen(false);
+                    }
+                } finally {
+                    Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * THE WARM INVARIANT for Task 7 (metadata-only single-key frame production).
      * Single-key frame production no longer materializes covered values; it only
      * TRAVERSES the covering cursor ({@code while (hasNext()) next();}) to natural
@@ -323,23 +448,19 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
     }
 
     /**
-     * Two DETACHED (non-pooled) cursors over the SAME warmed reader and SAME key,
-     * driven from two threads that overlap their iteration via a CyclicBarrier.
-     * Each detached cursor owns its private decode scratch and never touches the
-     * reader's freeCursors pool, so the two passes must not cross-talk: each thread
-     * sees the full, identical (rowId, coveredValue) sequence that a single-threaded
-     * cold reader produces. Warming first is the precondition that makes the shared
-     * state (genLookup, valueMem, sidecarMems) read-only for the duration.
+     * Concurrent-path coverage for the BACKWARD reader's {@code getDetachedCursor}, which is
+     * provided for API symmetry but is not exercised by the (forward-only) covered-decode
+     * pipeline. Two threads each open a detached BWD cursor over the same warmed reader and the
+     * same key and iterate in lockstep; each must reproduce the cold backward cursor's full
+     * (descending) (rowId, coveredValue) sequence, and neither may push to the shared cursor pool.
      */
     @Test
-    public void testTwoDetachedCursorsSameKeyConcurrent() throws Exception {
+    public void testTwoDetachedBwdCursorsSameKeyConcurrent() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
-                final String name = "detached_posting";
+                final String name = "detached_bwd_posting";
                 final int plen = path.size();
 
-                // Same multi-gen sparse layout as the warm test: a dense base gen
-                // touching every key, then several sparse gens touching a subset.
                 final int keyCount = 4;
                 final int extraGens = 4;
                 final int sparseKeyCount = 2;
@@ -353,16 +474,9 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                     for (int i = 0; i < totalRows; i++) {
                         Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
                     }
-
                     try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
                         writer.configureCovering(
-                                new long[]{colAddr},
-                                new long[]{0},
-                                new int[]{3},
-                                new int[]{1},
-                                new int[]{ColumnType.LONG},
-                                1
-                        );
+                                new long[]{colAddr}, new long[]{0}, new int[]{3}, new int[]{1}, new int[]{ColumnType.LONG}, 1);
                         int row = 0;
                         for (int j = 0; j < baseRows; j++) {
                             writer.add(j % keyCount, row++);
@@ -384,16 +498,12 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                         keys[k] = k;
                     }
                     final int[] required = {0};
-
-                    // Key 0 appears in the dense base AND every sparse gen, so its
-                    // posting list spans the most code paths (dense + multiple sparse
-                    // gens + cache replay) — the strongest target for cross-talk.
                     final int probeKey = 0;
 
-                    // Cold single-threaded reference for the probe key.
+                    // Cold single-threaded BACKWARD reference (descending row ids).
                     final LongList expectedRows = new LongList();
                     final LongList expectedVals = new LongList();
-                    try (PostingIndexFwdReader cold = new PostingIndexFwdReader(
+                    try (PostingIndexBwdReader cold = new PostingIndexBwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
                         CoveringRowCursor cc = (CoveringRowCursor) cold.getCursor(probeKey, 0, Long.MAX_VALUE, required);
                         while (cc.hasNext()) {
@@ -404,51 +514,38 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                     }
                     assertTrue("probe key must yield rows for a meaningful test", expectedRows.size() > 0);
 
-                    try (PostingIndexFwdReader warm = new PostingIndexFwdReader(
+                    try (PostingIndexBwdReader warm = new PostingIndexBwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
                         warm.warmForKeys(keys, required);
-
-                        // Baseline: warming drives a pooled cursor per key and closes it,
-                        // so the pool legitimately holds some cursors now. The detached
-                        // cursors below must leave this count unchanged (they never pool).
-                        final int poolSizeAfterWarm = freeCursorsSize(warm);
+                        final int poolSizeAfterWarm = bwdFreeCursorsSize(warm);
 
                         final CyclicBarrier barrier = new CyclicBarrier(2);
                         final AtomicReference<Throwable> error = new AtomicReference<>();
-
                         final Runnable worker = () -> {
                             try {
-                                // Overlap the two passes: both threads reach here,
-                                // open their detached cursor, then iterate in lockstep
-                                // start so decode runs concurrently on shared mmap.
                                 barrier.await();
-                                CoveringRowCursor cc = (CoveringRowCursor)
-                                        warm.getDetachedCursor(probeKey, 0, Long.MAX_VALUE, required);
-                                try {
+                                try (CoveringRowCursor cc = (CoveringRowCursor)
+                                        warm.getDetachedCursor(probeKey, 0, Long.MAX_VALUE, required)) {
                                     int i = 0;
                                     while (cc.hasNext()) {
                                         long r = cc.next();
                                         long v = cc.getCoveredLong(0);
-                                        assertTrue("detached cursor produced more rows than cold (idx " + i + ")",
+                                        assertTrue("detached bwd cursor produced more rows than cold (idx " + i + ")",
                                                 i < expectedRows.size());
-                                        assertEquals("row id mismatch at idx " + i,
-                                                expectedRows.getQuick(i), r);
-                                        assertEquals("covered value mismatch at idx " + i,
-                                                expectedVals.getQuick(i), v);
+                                        assertEquals("bwd row id mismatch at idx " + i, expectedRows.getQuick(i), r);
+                                        assertEquals("bwd covered value mismatch at idx " + i, expectedVals.getQuick(i), v);
                                         i++;
                                     }
-                                    assertEquals("detached cursor produced fewer rows than cold",
+                                    assertEquals("detached bwd cursor produced fewer rows than cold",
                                             expectedRows.size(), i);
-                                } finally {
-                                    cc.close();
                                 }
                             } catch (Throwable t) {
                                 error.compareAndSet(null, t);
                             }
                         };
 
-                        Thread t1 = new Thread(worker, "detached-worker-1");
-                        Thread t2 = new Thread(worker, "detached-worker-2");
+                        Thread t1 = new Thread(worker, "detached-bwd-1");
+                        Thread t2 = new Thread(worker, "detached-bwd-2");
                         t1.start();
                         t2.start();
                         t1.join();
@@ -456,142 +553,10 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
 
                         Throwable t = error.get();
                         if (t != null) {
-                            throw new AssertionError("concurrent detached cursor failure", t);
+                            throw new AssertionError("concurrent detached bwd cursor failure", t);
                         }
-
-                        // Detached cursors must NOT have re-pooled: the pool size is
-                        // exactly what warming left it, with no contribution from the
-                        // two detached cursors (which free their scratch directly).
-                        assertEquals("detached cursors must not push to freeCursors",
-                                poolSizeAfterWarm, freeCursorsSize(warm));
-                    }
-                } finally {
-                    Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
-                }
-            }
-        });
-    }
-
-    /**
-     * CRITICAL parallel-decode race (single sparse gen). The old populateCacheForKey bailed when
-     * genCount &lt;= 1, leaving a single SPARSE gen cold, so concurrent detached worker cursors
-     * raced on the shared genLookup putCacheEntries. This reproduces the PRODUCTION path -- warm via
-     * populateCacheForKey (NOT the test-only warmForKeys), freeze, then hammer the frozen reader
-     * with many detached cursors across many iterations. The fix (a) warms the single sparse gen so
-     * workers replay read-only, and (b) forbids detached cursors from writing the cache; the
-     * frozen-write assert turns any regression into a loud, deterministic failure. Every pass must
-     * equal the cold reference and the cursor pool must never be touched.
-     */
-    @Test
-    public void testConcurrentDetachedCursorsSingleSparseGenProductionWarm() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final String name = "conc_single_sparse";
-                final int plen = path.size();
-                // ONE clearly-sparse gen: keys {0,50,100} over [0,100] (single commit, no seal).
-                final int[] sparseKeys = {0, 50, 100};
-                final int rowsPerKey = 40;
-                final int totalRows = sparseKeys.length * rowsPerKey;
-                final long colBytes = (long) totalRows * Long.BYTES;
-                final long colAddr = Unsafe.malloc(colBytes, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    for (int i = 0; i < totalRows; i++) {
-                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
-                    }
-                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
-                        writer.configureCovering(
-                                new long[]{colAddr}, new long[]{0}, new int[]{3}, new int[]{1}, new int[]{ColumnType.LONG}, 1);
-                        int row = 0;
-                        for (int r = 0; r < rowsPerKey; r++) {
-                            for (int sk : sparseKeys) {
-                                writer.add(sk, row++);
-                            }
-                        }
-                        writer.setMaxValue(row - 1);
-                        writer.commit(); // single commit -> single sparse gen
-                    }
-
-                    final RecordMetadata md = coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG});
-                    final int[] required = {0};
-                    final int probeKey = 50;
-
-                    // Cold single-threaded reference for the probe key.
-                    final LongList expRows = new LongList();
-                    final LongList expVals = new LongList();
-                    try (PostingIndexFwdReader cold = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
-                        CoveringRowCursor cc = (CoveringRowCursor) cold.getCursor(probeKey, 0, Long.MAX_VALUE, required);
-                        while (cc.hasNext()) {
-                            expRows.add(cc.next());
-                            expVals.add(cc.getCoveredLong(0));
-                        }
-                        Misc.free(cc);
-                    }
-                    assertTrue("probe key must yield rows", expRows.size() > 0);
-
-                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
-                        reader.reloadConditionally();
-                        // Cheap-path prep: open a pooled cursor to MAP the required covered sidecars
-                        // (production's openOrContinueCoveringCursor maps them before workers run),
-                        // reading one row to force the mapping but NOT draining it -- the cheap path is
-                        // metadata-only and leaves gen-cache warming to populateCacheForKey, so the
-                        // cache stays cold here. Then warm (the single-sparse-gen path under test) + freeze.
-                        CoveringRowCursor prep = (CoveringRowCursor) reader.getCursor(probeKey, 0, Long.MAX_VALUE, required);
-                        if (prep.hasNext()) {
-                            prep.next();
-                            prep.getCoveredLong(0);
-                        }
-                        Misc.free(prep);
-                        reader.populateCacheForKey(probeKey, Long.MAX_VALUE);
-                        reader.setFrozen(true);
-                        final int poolAfterWarm = freeCursorsSize(reader);
-
-                        final int threads = 6;
-                        final int iterations = 300;
-                        final AtomicReference<Throwable> error = new AtomicReference<>();
-                        final CyclicBarrier start = new CyclicBarrier(threads);
-                        final Thread[] ts = new Thread[threads];
-                        for (int t = 0; t < threads; t++) {
-                            ts[t] = new Thread(() -> {
-                                try {
-                                    start.await();
-                                    for (int it = 0; it < iterations && !Thread.interrupted(); it++) {
-                                        CoveringRowCursor cc = (CoveringRowCursor)
-                                                reader.getDetachedCursor(probeKey, 0, Long.MAX_VALUE, required);
-                                        try {
-                                            int i = 0;
-                                            while (cc.hasNext()) {
-                                                long r = cc.next();
-                                                long v = cc.getCoveredLong(0);
-                                                assertTrue("more rows than cold at idx " + i, i < expRows.size());
-                                                assertEquals("row id mismatch at idx " + i, expRows.getQuick(i), r);
-                                                assertEquals("covered value mismatch at idx " + i, expVals.getQuick(i), v);
-                                                i++;
-                                            }
-                                            assertEquals("fewer rows than cold", expRows.size(), i);
-                                        } finally {
-                                            cc.close();
-                                        }
-                                    }
-                                } catch (Throwable e) {
-                                    error.compareAndSet(null, e);
-                                }
-                            }, "sparse-worker-" + t);
-                        }
-                        for (Thread th : ts) {
-                            th.start();
-                        }
-                        for (Thread th : ts) {
-                            th.join();
-                        }
-
-                        Throwable e = error.get();
-                        if (e != null) {
-                            throw new AssertionError("concurrent single-sparse-gen detached decode failure", e);
-                        }
-                        assertEquals("detached cursors must not push to freeCursors", poolAfterWarm, freeCursorsSize(reader));
-                        reader.setFrozen(false);
+                        assertEquals("detached bwd cursors must not push to freeCursors",
+                                poolSizeAfterWarm, bwdFreeCursorsSize(warm));
                     }
                 } finally {
                     Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
@@ -796,19 +761,23 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
     }
 
     /**
-     * Concurrent-path coverage for the BACKWARD reader's {@code getDetachedCursor}, which is
-     * provided for API symmetry but is not exercised by the (forward-only) covered-decode
-     * pipeline. Two threads each open a detached BWD cursor over the same warmed reader and the
-     * same key and iterate in lockstep; each must reproduce the cold backward cursor's full
-     * (descending) (rowId, coveredValue) sequence, and neither may push to the shared cursor pool.
+     * Two DETACHED (non-pooled) cursors over the SAME warmed reader and SAME key,
+     * driven from two threads that overlap their iteration via a CyclicBarrier.
+     * Each detached cursor owns its private decode scratch and never touches the
+     * reader's freeCursors pool, so the two passes must not cross-talk: each thread
+     * sees the full, identical (rowId, coveredValue) sequence that a single-threaded
+     * cold reader produces. Warming first is the precondition that makes the shared
+     * state (genLookup, valueMem, sidecarMems) read-only for the duration.
      */
     @Test
-    public void testTwoDetachedBwdCursorsSameKeyConcurrent() throws Exception {
+    public void testTwoDetachedCursorsSameKeyConcurrent() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
-                final String name = "detached_bwd_posting";
+                final String name = "detached_posting";
                 final int plen = path.size();
 
+                // Same multi-gen sparse layout as the warm test: a dense base gen
+                // touching every key, then several sparse gens touching a subset.
                 final int keyCount = 4;
                 final int extraGens = 4;
                 final int sparseKeyCount = 2;
@@ -822,9 +791,16 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                     for (int i = 0; i < totalRows; i++) {
                         Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
                     }
+
                     try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
                         writer.configureCovering(
-                                new long[]{colAddr}, new long[]{0}, new int[]{3}, new int[]{1}, new int[]{ColumnType.LONG}, 1);
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{1},
+                                new int[]{ColumnType.LONG},
+                                1
+                        );
                         int row = 0;
                         for (int j = 0; j < baseRows; j++) {
                             writer.add(j % keyCount, row++);
@@ -846,12 +822,16 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                         keys[k] = k;
                     }
                     final int[] required = {0};
+
+                    // Key 0 appears in the dense base AND every sparse gen, so its
+                    // posting list spans the most code paths (dense + multiple sparse
+                    // gens + cache replay) — the strongest target for cross-talk.
                     final int probeKey = 0;
 
-                    // Cold single-threaded BACKWARD reference (descending row ids).
+                    // Cold single-threaded reference for the probe key.
                     final LongList expectedRows = new LongList();
                     final LongList expectedVals = new LongList();
-                    try (PostingIndexBwdReader cold = new PostingIndexBwdReader(
+                    try (PostingIndexFwdReader cold = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
                         CoveringRowCursor cc = (CoveringRowCursor) cold.getCursor(probeKey, 0, Long.MAX_VALUE, required);
                         while (cc.hasNext()) {
@@ -862,41 +842,48 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                     }
                     assertTrue("probe key must yield rows for a meaningful test", expectedRows.size() > 0);
 
-                    try (PostingIndexBwdReader warm = new PostingIndexBwdReader(
+                    try (PostingIndexFwdReader warm = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
                         warm.warmForKeys(keys, required);
-                        final int poolSizeAfterWarm = bwdFreeCursorsSize(warm);
+
+                        // Baseline: warming drives a pooled cursor per key and closes it,
+                        // so the pool legitimately holds some cursors now. The detached
+                        // cursors below must leave this count unchanged (they never pool).
+                        final int poolSizeAfterWarm = freeCursorsSize(warm);
 
                         final CyclicBarrier barrier = new CyclicBarrier(2);
                         final AtomicReference<Throwable> error = new AtomicReference<>();
+
                         final Runnable worker = () -> {
                             try {
+                                // Overlap the two passes: both threads reach here,
+                                // open their detached cursor, then iterate in lockstep
+                                // start so decode runs concurrently on shared mmap.
                                 barrier.await();
-                                CoveringRowCursor cc = (CoveringRowCursor)
-                                        warm.getDetachedCursor(probeKey, 0, Long.MAX_VALUE, required);
-                                try {
+                                try (CoveringRowCursor cc = (CoveringRowCursor)
+                                        warm.getDetachedCursor(probeKey, 0, Long.MAX_VALUE, required)) {
                                     int i = 0;
                                     while (cc.hasNext()) {
                                         long r = cc.next();
                                         long v = cc.getCoveredLong(0);
-                                        assertTrue("detached bwd cursor produced more rows than cold (idx " + i + ")",
+                                        assertTrue("detached cursor produced more rows than cold (idx " + i + ")",
                                                 i < expectedRows.size());
-                                        assertEquals("bwd row id mismatch at idx " + i, expectedRows.getQuick(i), r);
-                                        assertEquals("bwd covered value mismatch at idx " + i, expectedVals.getQuick(i), v);
+                                        assertEquals("row id mismatch at idx " + i,
+                                                expectedRows.getQuick(i), r);
+                                        assertEquals("covered value mismatch at idx " + i,
+                                                expectedVals.getQuick(i), v);
                                         i++;
                                     }
-                                    assertEquals("detached bwd cursor produced fewer rows than cold",
+                                    assertEquals("detached cursor produced fewer rows than cold",
                                             expectedRows.size(), i);
-                                } finally {
-                                    cc.close();
                                 }
                             } catch (Throwable t) {
                                 error.compareAndSet(null, t);
                             }
                         };
 
-                        Thread t1 = new Thread(worker, "detached-bwd-1");
-                        Thread t2 = new Thread(worker, "detached-bwd-2");
+                        Thread t1 = new Thread(worker, "detached-worker-1");
+                        Thread t2 = new Thread(worker, "detached-worker-2");
                         t1.start();
                         t2.start();
                         t1.join();
@@ -904,10 +891,14 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
 
                         Throwable t = error.get();
                         if (t != null) {
-                            throw new AssertionError("concurrent detached bwd cursor failure", t);
+                            throw new AssertionError("concurrent detached cursor failure", t);
                         }
-                        assertEquals("detached bwd cursors must not push to freeCursors",
-                                poolSizeAfterWarm, bwdFreeCursorsSize(warm));
+
+                        // Detached cursors must NOT have re-pooled: the pool size is
+                        // exactly what warming left it, with no contribution from the
+                        // two detached cursors (which free their scratch directly).
+                        assertEquals("detached cursors must not push to freeCursors",
+                                poolSizeAfterWarm, freeCursorsSize(warm));
                     }
                 } finally {
                     Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
