@@ -128,7 +128,7 @@ public final class QwpConstants {
     /**
      * Maximum symbol dictionary entries per column or per connection.
      */
-    public static final int MAX_SYMBOL_DICTIONARY_SIZE = 1_000_000;
+    public static final int MAX_SYMBOL_DICTIONARY_SIZE = 2_000_000;
     /**
      * Maximum table name length in bytes.
      */
