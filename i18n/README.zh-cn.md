@@ -134,41 +134,52 @@ questdb stop
 
 若需完整入门指引，建议从我们的简洁版 [快速入门指南](https://questdb.com/docs/getting-started/quick-start/)开始。
 
-### 原生数据写入客户端
+### 官方客户端
 
-支持通过 InfluxDB Line Protocol（以下简称 ILP 协议） 进行数据写入的 QuestDB 客户端：
+支持通过 QuestDB Wire Protocol 进行数据写入和查询的 QuestDB 客户端：
 
-- [Python](https://questdb.com/docs/ingestion/clients/python/)
-- [.NET](https://questdb.com/docs/ingestion/clients/dotnet/)
-- [C/C++](https://questdb.com/docs/ingestion/clients/c-and-cpp/)
-- [Go](https://questdb.com/docs/ingestion/clients/go/)
-- [Java](https://questdb.com/docs/ingestion/clients/java/)
-- [NodeJS](https://questdb.com/docs/ingestion/clients/nodejs/)
-- [Rust](https://questdb.com/docs/ingestion/clients/rust/)
+- [Python](https://questdb.com/docs/connect/clients/python/)
+- [.NET](https://questdb.com/docs/connect/clients/dotnet/)
+- [C/C++](https://questdb.com/docs/connect/clients/c-and-cpp/)
+- [Go](https://questdb.com/docs/connect/clients/go/)
+- [Java](https://questdb.com/docs/connect/clients/java/)
+- [NodeJS](https://questdb.com/docs/connect/clients/nodejs/)
+- [Rust](https://questdb.com/docs/connect/clients/rust/)
 
 ### 连接 QuestDB
 
-提供多种方式与 QuestDB 交互：
+完整介绍请参阅[连接概览](https://questdb.com/docs/connect/overview/)。
 
-- [Web 控制台](https://questdb.com/docs/getting-started/web-console/overview/) 提供交互式 SQL 编辑器和 CSV 导入功能
-- [InfluxDB Line Protocol](https://questdb.com/docs/ingestion/ilp/overview/) 支持 ILP 协议格式的流式数据写入
-- [PostgreSQL Wire Protocol](https://questdb.com/docs/query/pgwire/overview/) 兼容 PG 协议，可使用任意 PG 的客户端对
-  QuestDB 进行连接
-- [REST API](https://questdb.com/docs/query/rest-api/) 支持通过 HTTP(S) 进行 CSV 导入和运行 SQL 查询
+**QuestDB Wire Protocol（QWP）** 是 QuestDB 的原生协议，也是推荐的连接方式。它采用
+二进制格式，在端口 `9000` 上通过单个连接实现双向流式传输，并用同一个连接字符串同时
+覆盖数据写入和查询。上面列出的官方客户端均使用该协议。
+
+QuestDB 同时支持以下兼容协议，现有工具链无需改动即可接入：
+
+- [InfluxDB Line Protocol](https://questdb.com/docs/connect/compatibility/ilp/overview/)
+  适用于已经输出 ILP 格式的采集器和数据管道，端口 `9000`
+- [PostgreSQL Wire Protocol](https://questdb.com/docs/connect/compatibility/pgwire/overview/)
+  适用于 PG 客户端、BI 工具和 ORM，端口 `8812`
+- [REST API](https://questdb.com/docs/connect/compatibility/rest-api/)
+  适用于 HTTP 脚本、cURL 和 CSV 导入，端口 `9000`
+
+如需交互式操作，
+[Web 控制台](https://questdb.com/docs/getting-started/web-console/overview/)
+在端口 `9000` 上提供 SQL 编辑器、图表和 CSV 导入功能。
 
 ### 常用第三方工具
 
 可与 QuestDB 集成的流行工具包括：
 
-- [Kafka](https://questdb.com/docs/ingestion/message-brokers/kafka/)
-- [Redpanda](https://questdb.com/docs/ingestion/message-brokers/redpanda/)
+- [Kafka](https://questdb.com/docs/connect/message-brokers/kafka/)
+- [Redpanda](https://questdb.com/docs/connect/message-brokers/redpanda/)
 - [Grafana](https://questdb.com/docs/integrations/visualization/grafana/)
 - [Polars](https://questdb.com/docs/integrations/data-processing/polars/)
 - [Pandas](https://questdb.com/docs/integrations/data-processing/pandas/)
 - [PowerBI](https://questdb.com/docs/integrations/visualization/powerbi/)
 - [Superset](https://questdb.com/docs/integrations/visualization/superset/)
-- [Apache Flink](https://questdb.com/docs/ingestion/message-brokers/flink/)
-- [Telegraf](https://questdb.com/docs/ingestion/message-brokers/telegraf/)
+- [Apache Flink](https://questdb.com/docs/connect/message-brokers/flink/)
+- [Telegraf](https://questdb.com/docs/connect/message-brokers/telegraf/)
 - [MindsDB](https://questdb.com/docs/integrations/other/mindsdb/)
 
 ### 端到端代码示例
@@ -212,11 +223,15 @@ questdb stop
 
 ### 🚢 部署 QuestDB
 
-- [AWS](https://questdb.com/docs/deployment/aws/)
-- [Google Cloud Platform](https://questdb.com/docs/deployment/gcp/)
 - [官方 Docker 镜像](https://questdb.com/docs/deployment/docker/)
-- [DigitalOcean](https://questdb.com/docs/deployment/digital-ocean/)
 - [Kubernetes Helm 图表](https://questdb.com/docs/deployment/kubernetes/)
+- [systemd](https://questdb.com/docs/deployment/systemd/)
+- [AWS](https://questdb.com/docs/deployment/aws/)
+- [Azure](https://questdb.com/docs/deployment/azure/)
+- [Google Cloud Platform](https://questdb.com/docs/deployment/gcp/)
+- [DigitalOcean](https://questdb.com/docs/deployment/digital-ocean/)
+- [Hetzner](https://questdb.com/docs/deployment/hetzner/)
+- [ZFS 压缩](https://questdb.com/docs/deployment/compression-zfs/)
 
 ## 参与贡献
 
