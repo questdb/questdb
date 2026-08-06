@@ -226,7 +226,8 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                                 timestampIndex,
                                 n,
                                 partitionByKeyTypes,
-                                liveView
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable t) {
                         Misc.free(map);
@@ -533,15 +534,18 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
     public static class NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         // list of [capacity, startOffset] pairs marking free space within memory.
         // Populated by expandRingBuffer alone (the slab being grown out of);
         // expandRingBuffer pops a pair whose capacity matches the target
         // post-double capacity. NOT populated by retainPartitions: the frontier
-        // sweep rebuilds the partition Map but leaves the evicted partitions'
-        // slabs stranded in the arena, so the arena still grows with lifetime
-        // partition cardinality. See PartitionStateEvictor.
+        // sweep re-homes the surviving slabs into a scratch arena and truncates
+        // this one back to what they occupy, so the evicted partitions' bytes come
+        // back rather than being pooled here. See PartitionStateEvictor.
         protected final LongList freeList = new LongList();
         protected final int initialBufferSize;
         protected final ArrayColumnTypes keyColumnTypes;
@@ -570,7 +574,8 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                 int timestampIdx,
                 int n,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -580,6 +585,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
             this.n = n;
+            this.configuration = configuration;
             frameIncludesCurrentValue = rangeHi == 0;
             this.liveView = liveView;
             if (liveView) {
@@ -606,6 +612,43 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 1 is the ring's start offset,
+         * slot 3 its capacity, with the frame size ahead of them at slot 0. {@code nth_value}
+         * has no IGNORE NULLS spelling, so no subclass shifts the pair.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 1, 3, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override

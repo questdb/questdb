@@ -701,6 +701,109 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
     }
 
     /**
+     * The same sweep over the {@code nth_value} family: 9 classes, and no subclass anywhere -
+     * {@code nth_value} refuses IGNORE NULLS at validation, so the parent/child hazard C2.2 met
+     * cannot arise here and every one of the 9 carries the hooks itself.
+     * <p>
+     * What this family adds over the other two is the locked read. Once the frame holds n rows
+     * an unbounded-preceding {@code nth_value} freezes its answer: {@code computeNext} returns
+     * early, reading the ring's geometry out of the map value and the value out of the arena
+     * and writing nothing back. The fixture's last row takes that path over a slab the sweep
+     * re-homed, which neither {@code first_value} nor {@code last_value} has an equivalent of.
+     */
+    @Test
+    public void testFrontierSweepReclaimsEveryNthValueRingArena() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            // One column per implementation family: DOUBLE and LONG carry their own classes,
+            // DATE routes through the shared helper base, and the six decimal widths pick six
+            // more pairs (precision 2 -> DECIMAL8, 4 -> DECIMAL16, 9 -> DECIMAL32,
+            // 18 -> DECIMAL64, 38 -> DECIMAL128, 75 -> DECIMAL256).
+            execute("""
+                    CREATE TABLE base (
+                        ts TIMESTAMP, sym SYMBOL, y DOUBLE, n LONG, dt DATE,
+                        d8 DECIMAL(2, 1), d16 DECIMAL(4, 1), d32 DECIMAL(9, 1),
+                        d64 DECIMAL(18, 1), d128 DECIMAL(38, 1), d256 DECIMAL(75, 1)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("INSERT INTO base (ts, sym, y, n, dt, d8, d16, d32, d64, d128, d256) VALUES "
+                    + positionalValueRow("2026-01-01T11:00:00.000000Z", "a", "1") + ", "
+                    + positionalValueRow("2026-01-01T11:00:01.000000Z", "b", "2") + ", "
+                    + positionalValueRow("2026-01-01T11:00:02.000000Z", "c", "3") + ", "
+                    + positionalValueRow("2026-01-01T11:00:03.000000Z", "d", "4"));
+            drainWalQueue();
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, sym,
+                           nth_value(y, 2) OVER w AS vy, nth_value(n, 2) OVER w AS vn,
+                           nth_value(dt, 2) OVER w AS vt,
+                           nth_value(d8, 2) OVER w AS v8, nth_value(d16, 2) OVER w AS v16,
+                           nth_value(d32, 2) OVER w AS v32, nth_value(d64, 2) OVER w AS v64,
+                           nth_value(d128, 2) OVER w AS v128, nth_value(d256, 2) OVER w AS v256
+                    FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts
+                                 RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW
+                                 ANCHOR DAILY '00:00')""");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' must be registered", instance);
+                final ObjList<WindowFunction> anchorable = anchorableFunctions(instance);
+                Assert.assertEquals("the anchored window carries all 9 nth_value calls", 9, anchorable.size());
+                final long[] fourPartitionArenaBytes = captureRingArenas(anchorable, 4);
+
+                final LiveViewWindow window = instance.getAnchorWindow();
+                Assert.assertNotNull("the view must carry an anchored window", window);
+                Assert.assertEquals(4, window.getAnchorMapSize());
+
+                commitPositionalValues(positionalValueRow("2026-01-02T01:00:00.000000Z", "a", "5"), job);
+                commitPositionalValues(positionalValueRow("2026-01-03T01:00:00.000000Z", "a", "6") + ", "
+                        + positionalValueRow("2026-01-03T02:00:00.000000Z", "a", "8"), job);
+
+                Assert.assertEquals(1, window.getCompactionCount());
+                Assert.assertEquals(
+                        "only the account that followed the frontier survives in the anchor map",
+                        1,
+                        window.getAnchorMapSize()
+                );
+                assertRingArenasReclaimed(anchorable, fourPartitionArenaBytes);
+
+                // Two rows past the sweep, not one: the first still appends to the re-homed
+                // slab and completes the frame, the second finds it already n rows deep and
+                // takes the locked early return over the same slab.
+                commitPositionalValues(positionalValueRow("2026-01-03T03:00:00.000000Z", "a", "9") + ", "
+                        + positionalValueRow("2026-01-03T04:00:00.000000Z", "a", "7"), job);
+
+                assertNoRefreshFaults("lv");
+                // The anchor resets every ring at each bucket crossing, and n is 2 over a frame
+                // that excludes the current row, so a bucket's first two rows answer NULL and
+                // every row after that names the bucket's SECOND row - 8 here, not 6 and not the
+                // row's own predecessor, which is what tells this expected table apart from the
+                // first_value and last_value ones over the same fixture.
+                assertQuery("""
+                        SELECT ts, sym, vy, vn, vt, v8, v16, v32, v64, v128, v256
+                        FROM lv ORDER BY sym, ts""")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tvy\tvn\tvt\tv8\tv16\tv32\tv64\tv128\tv256
+                                2026-01-01T11:00:00.000000Z\ta\tnull\tnull\t\t\t\t\t\t\t
+                                2026-01-02T01:00:00.000000Z\ta\tnull\tnull\t\t\t\t\t\t\t
+                                2026-01-03T01:00:00.000000Z\ta\tnull\tnull\t\t\t\t\t\t\t
+                                2026-01-03T02:00:00.000000Z\ta\tnull\tnull\t\t\t\t\t\t\t
+                                2026-01-03T03:00:00.000000Z\ta\t8.0\t8\t2026-01-03T02:00:00.000Z\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0
+                                2026-01-03T04:00:00.000000Z\ta\t8.0\t8\t2026-01-03T02:00:00.000Z\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0
+                                2026-01-01T11:00:01.000000Z\tb\tnull\tnull\t\t\t\t\t\t\t
+                                2026-01-01T11:00:02.000000Z\tc\tnull\tnull\t\t\t\t\t\t\t
+                                2026-01-01T11:00:03.000000Z\td\tnull\tnull\t\t\t\t\t\t\t
+                                """);
+            }
+        });
+    }
+
+    /**
      * Documents why {@code EXCLUDE CURRENT ROW} is the spelling that reaches the subset
      * unanchored, and pins the neighbouring route closed. An accumulator over a plain
      * {@code ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW} is refused at CREATE by the
@@ -846,10 +949,10 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
     }
 
     /**
-     * One row carrying the same magnitude in every type {@code first_value} and
-     * {@code last_value} each have their own RANGE implementation for. The DATE column takes
-     * the row's own timestamp at millisecond resolution, so the expected tables read a row of
-     * the bucket back rather than an opaque epoch offset.
+     * One row carrying the same magnitude in every type {@code first_value},
+     * {@code last_value} and {@code nth_value} each have their own RANGE implementation for.
+     * The DATE column takes the row's own timestamp at millisecond resolution, so the expected
+     * tables read a row of the bucket back rather than an opaque epoch offset.
      */
     private static String positionalValueRow(String ts, String sym, String value) {
         return "('" + ts + "', '" + sym + "', " + value + ".0, " + value

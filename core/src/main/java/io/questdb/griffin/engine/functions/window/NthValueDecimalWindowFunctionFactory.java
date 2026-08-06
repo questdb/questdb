@@ -224,7 +224,8 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                     }
                     try {
                         return new Decimal128NthValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, n, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, n, argType, partitionByKeyTypes, liveView,
+                                configuration);
                     } catch (Throwable t) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -388,7 +389,8 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                     }
                     try {
                         return new Decimal16NthValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, n, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, n, argType, partitionByKeyTypes, liveView,
+                                configuration);
                     } catch (Throwable t) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -552,7 +554,8 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                     }
                     try {
                         return new Decimal256NthValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, n, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, n, argType, partitionByKeyTypes, liveView,
+                                configuration);
                     } catch (Throwable t) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -716,7 +719,8 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                     }
                     try {
                         return new Decimal32NthValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, n, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, n, argType, partitionByKeyTypes, liveView,
+                                configuration);
                     } catch (Throwable t) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -881,7 +885,8 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                     }
                     try {
                         return new Decimal64NthValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, n, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, n, argType, partitionByKeyTypes, liveView,
+                                configuration);
                     } catch (Throwable t) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -1045,7 +1050,8 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                     }
                     try {
                         return new Decimal8NthValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, n, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, n, argType, partitionByKeyTypes, liveView,
+                                configuration);
                     } catch (Throwable t) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -1283,6 +1289,9 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
     public static class Decimal128NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + 16;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         protected final LongList freeList = new LongList();
@@ -1314,7 +1323,8 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                 int n,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -1324,6 +1334,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
             this.n = n;
+            this.configuration = configuration;
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
             this.liveView = liveView;
@@ -1351,6 +1362,43 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 1 is the ring's start offset,
+         * slot 3 its capacity, with the frame size ahead of them at slot 0. {@code nth_value}
+         * has no IGNORE NULLS spelling, so no subclass shifts the pair.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 1, 3, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -3039,6 +3087,9 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
     public static class Decimal16NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         protected final LongList freeList = new LongList();
@@ -3069,7 +3120,8 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                 int n,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -3079,6 +3131,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
             this.n = n;
+            this.configuration = configuration;
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
             this.liveView = liveView;
@@ -3106,6 +3159,43 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 1 is the ring's start offset,
+         * slot 3 its capacity, with the frame size ahead of them at slot 0. {@code nth_value}
+         * has no IGNORE NULLS spelling, so no subclass shifts the pair.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 1, 3, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -4758,6 +4848,9 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
     public static class Decimal256NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + 32;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         protected final LongList freeList = new LongList();
@@ -4789,7 +4882,8 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                 int n,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -4799,6 +4893,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
             this.n = n;
+            this.configuration = configuration;
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
             this.liveView = liveView;
@@ -4826,6 +4921,43 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 1 is the ring's start offset,
+         * slot 3 its capacity, with the frame size ahead of them at slot 0. {@code nth_value}
+         * has no IGNORE NULLS spelling, so no subclass shifts the pair.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 1, 3, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -6535,6 +6667,9 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
     public static class Decimal32NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         protected final LongList freeList = new LongList();
@@ -6565,7 +6700,8 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                 int n,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -6575,6 +6711,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
             this.n = n;
+            this.configuration = configuration;
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
             this.liveView = liveView;
@@ -6602,6 +6739,43 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 1 is the ring's start offset,
+         * slot 3 its capacity, with the frame size ahead of them at slot 0. {@code nth_value}
+         * has no IGNORE NULLS spelling, so no subclass shifts the pair.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 1, 3, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -8237,6 +8411,9 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
     public static class Decimal64NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = 2 * Long.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         protected final LongList freeList = new LongList();
@@ -8269,7 +8446,8 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                 int n,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -8279,6 +8457,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
             this.n = n;
+            this.configuration = configuration;
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
             this.liveView = liveView;
@@ -8306,6 +8485,43 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 1 is the ring's start offset,
+         * slot 3 its capacity, with the frame size ahead of them at slot 0. {@code nth_value}
+         * has no IGNORE NULLS spelling, so no subclass shifts the pair.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 1, 3, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -9942,6 +10158,9 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
     public static class Decimal8NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Byte.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         protected final LongList freeList = new LongList();
@@ -9972,7 +10191,8 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                 int n,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -9982,6 +10202,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
             this.n = n;
+            this.configuration = configuration;
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
             this.liveView = liveView;
@@ -10009,6 +10230,43 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 1 is the ring's start offset,
+         * slot 3 its capacity, with the frame size ahead of them at slot 0. {@code nth_value}
+         * has no IGNORE NULLS spelling, so no subclass shifts the pair.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 1, 3, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
