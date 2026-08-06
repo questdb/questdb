@@ -32,6 +32,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurableAckRegistry;
@@ -193,6 +194,69 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             } finally {
                 state.onDisconnected();
                 state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeWithBufferedRowsAppliesOnNextLookup() throws Exception {
+        // C4: an ALTER COLUMN TYPE that lands while the cached writer still
+        // holds buffered uncommitted rows exercises goActive()'s hardest path --
+        // rollUncommittedToNewSegment converts the buffered column data into the
+        // new type. The buffered row must survive the refresh and commit with
+        // the new column type.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alter_buf (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("alter_buf"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                TableWriter.Row row = tud.getWriter().newRow(1_000_000L);
+                row.putLong(1, 42);
+                row.append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                execute("ALTER TABLE alter_buf ALTER COLUMN v TYPE DOUBLE");
+                drainWalQueue();
+
+                // The cache hit applies the pending structure change; the entry
+                // survives (same identity, same token).
+                WalTableUpdateDetails again = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("alter_buf"), null, null, 1
+                );
+                Assert.assertSame(tud, again);
+
+                // A second row, written through the SAME writer right after the
+                // cache-hit lookup, using the new column type and an index
+                // re-resolved from the writer's own (possibly refreshed)
+                // metadata -- exactly as a real caller would after a lookup.
+                // WalWriter.commit() has its own last-resort structure-version
+                // check, so a lookup that skips applyPendingStructureChanges
+                // would still self-heal for a row buffered entirely before the
+                // ALTER -- but it cannot retroactively fix a row whose bytes
+                // were written under stale metadata: putDouble() writes straight
+                // into the column's memory without a type check, so this row
+                // only survives the eventual conversion correctly if the
+                // writer's metadata was already DOUBLE at the moment it was
+                // written.
+                int vIndex = again.getWriter().getMetadata().getColumnIndex("v");
+                TableWriter.Row row2 = again.getWriter().newRow(2_000_000L);
+                row2.putDouble(vIndex, 84.5);
+                row2.append();
+
+                again.commit(false);
+                drainWalQueue();
+                assertQuery("SELECT v FROM alter_buf")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("v\n42.0\n84.5\n");
             }
         });
     }
