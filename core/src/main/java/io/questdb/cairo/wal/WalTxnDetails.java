@@ -32,6 +32,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
@@ -39,7 +40,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.DirectString;
@@ -451,6 +451,12 @@ public class WalTxnDetails implements QuietCloseable {
         boolean isLastSegmentUse = false;
         long roHi = 0;
         long prevRoHi = -1;
+        // Non-overlap in-order check, consistent with calculateInsertTransactionBlock
+        // (:286-287): compare each txn's min against the aggregate max of the txns
+        // BEFORE it, hence the check runs ahead of the addTxn that folds this txn's
+        // own max in. For a single segment the slice iteration order is txn order ==
+        // time order, so internally sorted txns joined without overlap mean the whole
+        // row range is already sorted and block-apply can skip the O3 sort.
         boolean allInOrder = true;
 
         for (int i = 0; i < blockTransactionCount; i++) {
@@ -481,8 +487,8 @@ public class WalTxnDetails implements QuietCloseable {
             isLastSegmentUse = isLastSegmentUse | sortedBySegmentTxnSlice.isLastSegmentUse(i);
             roHi = sortedBySegmentTxnSlice.getRoHi(i);
             long committedRowsCount = roHi - roLo;
-            copyTasks.addTxn(roLo, relativeSeqTxn, committedRowsCount, copyTaskCount, minTimestamp, maxTimestamp);
             allInOrder = allInOrder && minTimestamp >= copyTasks.getMaxTimestamp() && sortedBySegmentTxnSlice.isTxnDataInOrder(i);
+            copyTasks.addTxn(roLo, relativeSeqTxn, committedRowsCount, copyTaskCount, minTimestamp, maxTimestamp);
 
             if (prevRoHi != -1 && prevRoHi != roLo) {
                 // In theory it's possible but in practice it should not happen
@@ -499,7 +505,12 @@ public class WalTxnDetails implements QuietCloseable {
         int walId = sortedBySegmentTxnSlice.getWalId(lastIndex);
 
         copyTasks.addSegment(walId, segmentId, segmentLo, roHi, isLastSegmentUse);
-        copyTasks.setAllTxnDataInOrder(allInOrder);
+        // Single segment iff no segment transition occurred (copyTaskCount stays
+        // 0); getSegmentCount() == copyTaskCount + 1. Only the single-segment
+        // fast-copy path (TableWriter, gated on getSegmentCount()==1) consumes this
+        // flag, and the non-overlap check is only meaningful there: multi-segment
+        // iteration is ordered by (wal, segment), not by time.
+        copyTasks.setAllTxnDataInOrder(copyTaskCount == 0 && allInOrder);
     }
 
     public void readObservableTxnMeta(
