@@ -1678,6 +1678,48 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUdpRenameAndRecreateRoutesRowsToNewTable() throws Exception {
+        // C1 regression: after RENAME TABLE t TO t2 + CREATE TABLE t, the cached
+        // entry for "t" is still bound to what is now t2's writer. The staleness
+        // gate alone reports "not stale" (the dir still resolves), and goActive()
+        // would replay the rename into the writer, defeating the sequencer's
+        // token check -- rows sent for "t" would land in t2. The cache must
+        // instead evict the entry and rebuild it against the new "t".
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                execute("CREATE TABLE ren (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("ren").longColumn("v", 1).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                execute("RENAME TABLE ren TO ren_old");
+                execute("CREATE TABLE ren (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+                drainWalQueue();
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("ren").longColumn("v", 2).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                assertQuery("SELECT v FROM ren")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("v\n2\n");
+                assertQuery("SELECT v FROM ren_old")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("v\n1\n");
+            }
+        });
+    }
+
+    @Test
     public void testUdpStaleTableWithBufferedRowsDropsDatagramAndHeals() throws Exception {
         // M4: end-to-end through processDatagram. A datagram buffers rows for a
         // table that is then DROPped WITHOUT a commit, so the cached TUD still

@@ -2431,7 +2431,10 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         // throw the C1 discard exception. (Committing through the stale writer
         // after a rename is a separate, pre-existing concern: WalWriter.commit
         // then raises TableReferenceOutOfDateException; the guard's job is only
-        // to avoid the false eviction, which is what this test pins.)
+        // to avoid the false eviction, which is what this test pins.) When the
+        // old name IS re-used by a new table, the entry becomes stale and eviction
+        // salvage-commits its buffered rows into the renamed table -- see
+        // testGetTableUpdateDetailsSalvagesRenamedTablesBufferedRowsOnRecreate.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE rename_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
@@ -2461,6 +2464,55 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertSame("a renamed (not dropped) table must not be evicted", tud, again);
                 Assert.assertEquals(1, cache.size());
                 Assert.assertFalse("buffered rows must survive a rename", again.isFirstRow());
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsSalvagesRenamedTablesBufferedRowsOnRecreate() throws Exception {
+        // C1: when the old name is re-used by a NEW table (rename + recreate),
+        // the cached entry is stale -- but its writer's table is alive under the
+        // new name, so its buffered rows are salvageable: the eviction commits
+        // them through the old writer (into the renamed table) instead of
+        // discarding them, then rebuilds the entry against the new table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sal_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("sal_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                tud.getWriter().newRow(1_000_000L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                execute("RENAME TABLE sal_src TO sal_dst");
+                execute("CREATE TABLE sal_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                WalTableUpdateDetails rebuilt = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("sal_src"), null, null, 1
+                );
+                Assert.assertNotNull(rebuilt);
+                Assert.assertNotSame("stale entry must be rebuilt against the new table", tud, rebuilt);
+                Assert.assertEquals(1, cache.size());
+
+                // The buffered row was salvage-committed into the renamed table.
+                drainWalQueue();
+                assertQuery("SELECT count() FROM sal_dst")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+                assertQuery("SELECT count() FROM sal_src")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n0\n");
             }
         });
     }

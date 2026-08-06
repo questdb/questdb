@@ -400,30 +400,7 @@ public class QwpTudCache implements QuietCloseable {
                 applyPendingStructureChanges(tud);
                 return tud;
             }
-
-            // The cached TUD is stale: its token resolves by neither name nor
-            // directory, i.e. the table was DROPped. A pure rename keeps the
-            // directory and is not reported stale here, so its buffered rows
-            // still commit through the same writer -- only a drop reaches this
-            // branch. Freeing a TUD built with commitOnClose=false rolls its
-            // buffered rows back, so a stale writer that still holds
-            // uncommitted rows cannot be evicted silently: in the QWP
-            // deferred-ack path a later group-closing commit would clear the
-            // uncommitted-deferred-rows clamp and let the cumulative durable-ack
-            // cover rows this eviction discarded (a phantom ack -> silent data
-            // loss). The dropped table is gone, so the rows cannot be re-homed;
-            // evict them but propagate the loss so the QWP layer rejects
-            // instead of acknowledging discarded rows. The UDP receiver has no
-            // ack: it drops the datagram and heals on the next one.
-            final boolean hadBufferedRows = !tud.isFirstRow();
-            tableUpdateDetails.removeAt(key);
-            cachedTableCount = tableUpdateDetails.size();
-            Misc.free(tud);
-            if (hadBufferedRows) {
-                throw CairoException.nonCritical()
-                        .put("dropped table discarded buffered rows, cannot acknowledge: ")
-                        .put(tableNameUtf8);
-            }
+            evictStaleTud(key, tableNameUtf8, tud);
             key = tableUpdateDetails.keyIndex(tableNameUtf8);
         }
 
@@ -512,6 +489,99 @@ public class QwpTudCache implements QuietCloseable {
         return TableUtils.isValidColumnName(columnName, maxFileNameLength);
     }
 
+    /**
+     * Bring a cached table's writer up to date with structure changes committed
+     * since it was last refreshed.
+     * <p>
+     * Nothing else on this path does. {@link #isTableTokenStale} only notices a
+     * change of table IDENTITY -- a DROP mints a new {@link TableToken} -- while
+     * {@code ALTER TABLE ... ALTER COLUMN ... TYPE} keeps the token and merely
+     * bumps the metadata version. The cached writer therefore kept the column's
+     * old type indefinitely, and rows of the new type were converted against it:
+     * refused on QWP/WebSocket, and silently dropped on QWP/UDP, which has no
+     * ack channel to refuse through. The UDP receiver makes that unbounded --
+     * it holds ONE cache for every sender, with no reconnect to heal it.
+     * <p>
+     * Gated on the sequencer's transaction counter, which an ALTER advances, so
+     * the change log is only opened when something has actually been committed
+     * since the last look -- not on every frame.
+     * <p>
+     * A table dropped concurrently makes {@code goActive} throw, which refuses
+     * the frame rather than acknowledging it -- the safe direction, and the next
+     * call finds the token stale and takes the eviction path above.
+     * <p>
+     * A renamed table's writer is deliberately left untouched: the change log
+     * carries the RENAME TABLE entry, and replaying it here would rebind the
+     * writer's token and defeat the sequencer's token-mismatch check, silently
+     * committing rows keyed by the old name into the renamed table. See the
+     * directory-name guard below.
+     */
+    private void applyPendingStructureChanges(WalTableUpdateDetails tud) {
+        if (!(tud.getWriter() instanceof WalWriter walWriter)) {
+            return;
+        }
+        final TableToken cachedToken = tud.getTableToken();
+        // Never bring a renamed table's writer up to date here: the change log
+        // contains the RENAME TABLE entry, and replaying it rebinds the writer's
+        // token -- defeating the sequencer's token-mismatch check and silently
+        // committing rows keyed by the OLD name into the renamed table. Leaving
+        // the writer as-is preserves the loud commit-time
+        // TableReferenceOutOfDateException.
+        if (engine.getTableTokenByDirName(cachedToken.getDirName()) != cachedToken) {
+            return;
+        }
+        final long seqTxn = engine.getTableSequencerAPI()
+                .getTxnTracker(cachedToken)
+                .getSeqTxn();
+        if (seqTxn == tud.getLastStructureCheckSeqTxn()) {
+            return;
+        }
+        tud.setLastStructureCheckSeqTxn(seqTxn);
+        walWriter.goActive();
+    }
+
+    // Evicts a stale cached entry (see isTableTokenStale): either the table was
+    // DROPped -- its token resolves by neither name nor directory -- or it was
+    // RENAMEd and the old name was reused by a new table. A pure rename that
+    // does NOT reuse the old name is not stale and never reaches here -- its
+    // buffered rows keep committing through the same writer. A dropped table's
+    // rows cannot be re-homed and are discarded; a renamed table's rows are
+    // salvaged below instead.
+    private void evictStaleTud(int key, Utf8Sequence tableNameUtf8, WalTableUpdateDetails tud) {
+        final boolean hadBufferedRows = !tud.isFirstRow();
+        final boolean isRenamed = engine.getTableTokenByDirName(tud.getTableToken().getDirName()) != null;
+        boolean isSalvaged = false;
+        if (hadBufferedRows && isRenamed && tud.getWriter() instanceof WalWriter walWriter) {
+            // The writer's table is alive under a new name, so its buffered rows
+            // are salvageable. goActive() replays the rename into the writer --
+            // rebinding its token -- after which the sequencer accepts the commit
+            // and the rows land in the renamed table: the same table identity
+            // that accepted them. The entry is evicted right after, so the healed
+            // token can never serve another lookup under the old name.
+            try {
+                walWriter.goActive();
+                tud.commit(false);
+                isSalvaged = true;
+            } catch (Throwable th) {
+                LOG.error().$("could not salvage buffered rows of a renamed table [table=")
+                        .$(tableNameUtf8).$(", e=").$safe(th.getMessage()).I$();
+            }
+        }
+        tableUpdateDetails.removeAt(key);
+        cachedTableCount = tableUpdateDetails.size();
+        // Freeing a commitOnClose=false TUD rolls back whatever is still
+        // uncommitted. If rows were discarded (dropped table, or a failed
+        // salvage), propagate so the QWP layer rejects instead of acknowledging
+        // them; the UDP receiver has no ack and simply drops the datagram.
+        Misc.free(tud);
+        if (hadBufferedRows && !isSalvaged) {
+            throw CairoException.nonCritical()
+                    .put(isRenamed ? "renamed" : "dropped")
+                    .put(" table discarded buffered rows, cannot acknowledge: ")
+                    .put(tableNameUtf8);
+        }
+    }
+
     private TableToken getOrCreateTable(SecurityContext securityContext, StringSink tableNameUtf16,
                                         ObjList<QwpColumnDef> schema, QwpTableBlockCursor cursor) {
         int maxFileNameLength = engine.getConfiguration().getMaxFileNameLength();
@@ -574,46 +644,20 @@ public class QwpTudCache implements QuietCloseable {
         return tableToken;
     }
 
-    /**
-     * Bring a cached table's writer up to date with structure changes committed
-     * since it was last refreshed.
-     * <p>
-     * Nothing else on this path does. {@link #isTableTokenStale} only notices a
-     * change of table IDENTITY -- a DROP mints a new {@link TableToken} -- while
-     * {@code ALTER TABLE ... ALTER COLUMN ... TYPE} keeps the token and merely
-     * bumps the metadata version. The cached writer therefore kept the column's
-     * old type indefinitely, and rows of the new type were converted against it:
-     * refused on QWP/WebSocket, and silently dropped on QWP/UDP, which has no
-     * ack channel to refuse through. The UDP receiver makes that unbounded --
-     * it holds ONE cache for every sender, with no reconnect to heal it.
-     * <p>
-     * Gated on the sequencer's transaction counter, which an ALTER advances, so
-     * the change log is only opened when something has actually been committed
-     * since the last look -- not on every frame.
-     * <p>
-     * A table dropped concurrently makes {@code goActive} throw, which refuses
-     * the frame rather than acknowledging it -- the safe direction, and the next
-     * call finds the token stale and takes the eviction path above.
-     */
-    private void applyPendingStructureChanges(WalTableUpdateDetails tud) {
-        final TableWriterAPI writer = tud.getWriter();
-        if (!(writer instanceof WalWriter)) {
-            return;
-        }
-        final long seqTxn = engine.getTableSequencerAPI()
-                .getTxnTracker(tud.getTableToken())
-                .getSeqTxn();
-        if (seqTxn == tud.getLastStructureCheckSeqTxn()) {
-            return;
-        }
-        tud.setLastStructureCheckSeqTxn(seqTxn);
-        ((WalWriter) writer).goActive();
-    }
-
     private boolean isTableTokenStale(WalTableUpdateDetails tud) {
-        TableToken cachedToken = tud.getTableToken();
-        return engine.getTableTokenIfExists(cachedToken.getTableName()) != cachedToken
-                && engine.getTableTokenByDirName(cachedToken.getDirName()) == null;
+        final TableToken cachedToken = tud.getTableToken();
+        final TableToken byName = engine.getTableTokenIfExists(cachedToken.getTableName());
+        if (byName == cachedToken) {
+            return false;
+        }
+        // The cached name no longer resolves to the cached table. Either the
+        // table was dropped -- its directory no longer resolves either -- or
+        // another live table took the name after a rename (byName is a
+        // different, live token). A pure rename whose old name is NOT re-used
+        // resolves the directory but not the name, and is deliberately not
+        // stale: the entry stays cached and commits keep failing with
+        // TableReferenceOutOfDateException, exactly as on master.
+        return byName != null || engine.getTableTokenByDirName(cachedToken.getDirName()) == null;
     }
 
     /**
