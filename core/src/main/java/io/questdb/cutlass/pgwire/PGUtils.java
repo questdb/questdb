@@ -219,18 +219,28 @@ class PGUtils {
     }
 
     public static int countNotNull(ArrayView array, int resumePoint) {
+        if (array.isEmpty()) {
+            return 0;
+        }
+
+        final int cardinality = array.getCardinality();
+        final int skip = Math.max(0, resumePoint);
+        if (skip >= cardinality) {
+            return 0;
+        }
+
         if (array.isVanilla()) {
             return switch (array.getElemType()) {
                 case ColumnType.DOUBLE -> array.flatView().countDouble(
-                        array.getFlatViewOffset() + resumePoint,
-                        array.getFlatViewLength() - resumePoint);
+                        array.getFlatViewOffset() + skip,
+                        array.getFlatViewLength() - skip);
                 case ColumnType.LONG -> array.flatView().countLong(
-                        array.getFlatViewOffset() + resumePoint,
-                        array.getFlatViewLength() - resumePoint);
+                        array.getFlatViewOffset() + skip,
+                        array.getFlatViewLength() - skip);
                 default -> throw new AssertionError("Unsupported array element type: " + array.getElemType());
             };
         } else {
-            return countNotNullRecursive(array, 0, 0, resumePoint);
+            return countNotNullRecursive(array, 0, 0, skip, cardinality);
         }
     }
 
@@ -357,31 +367,47 @@ class PGUtils {
                 + array.getDimCount() * (2 * Integer.BYTES); // dimension lengths
     }
 
-    private static int countNotNullRecursive(ArrayView array, int dim, int flatIndex, int resumePoint) {
+    private static int countNotNullRecursive(
+            ArrayView array,
+            int dim,
+            int flatIndex,
+            int skip,
+            int subtreeCardinality
+    ) {
         int count = 0;
         final int dimLen = array.getDimLen(dim);
         final int stride = array.getStride(dim);
         final boolean atDeepestDim = dim == array.getDimCount() - 1;
         if (atDeepestDim) {
             short elemType = array.getElemType();
-            for (int i = 0; i < dimLen; i++) {
-                if (flatIndex >= resumePoint)
-                    switch (elemType) {
-                        case ColumnType.DOUBLE:
-                            if (Numbers.isFinite(array.getDouble(flatIndex))) {
-                                count++;
-                            }
-                            break;
-                        case ColumnType.LONG:
-                            if (array.getLong(flatIndex) != Numbers.LONG_NULL) {
-                                count++;
-                            }
+            flatIndex += skip * stride;
+            for (int i = skip; i < dimLen; i++) {
+                switch (elemType) {
+                    case ColumnType.DOUBLE:
+                        if (Numbers.isFinite(array.getDouble(flatIndex))) {
+                            count++;
+                        }
+                        break;
+                    case ColumnType.LONG:
+                        if (array.getLong(flatIndex) != Numbers.LONG_NULL) {
+                            count++;
+                        }
                     }
                 flatIndex += stride;
             }
         } else {
-            for (int i = 0; i < dimLen; i++) {
-                count += countNotNullRecursive(array, dim + 1, flatIndex, resumePoint);
+            final int childCardinality = subtreeCardinality / dimLen;
+            final int firstChild = skip / childCardinality;
+            final int childSkip = skip % childCardinality;
+            flatIndex += firstChild * stride;
+            for (int i = firstChild; i < dimLen; i++) {
+                count += countNotNullRecursive(
+                        array,
+                        dim + 1,
+                        flatIndex,
+                        i == firstChild ? childSkip : 0,
+                        childCardinality
+                );
                 flatIndex += stride;
             }
         }

@@ -135,6 +135,27 @@ public class PGResultFormatCodesTest extends BasePGTest {
     }
 
     @Test
+    public void testBinaryStridedDoubleArrayDeclaresCorrectRowLength() throws Exception {
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            execute("""
+                    CREATE TABLE strided AS (
+                      SELECT rnd_double_array(2, 0, 0, 10, 10) AS a
+                      FROM long_sequence(2))""");
+
+            try (RawPGClient client = new RawPGClient(port)) {
+                ObjList<ObjList<String>> rows = client.query(
+                        "SELECT a[3:,3:] FROM strided",
+                        formats(1, FORMAT_BINARY)
+                );
+                Assert.assertEquals(2, rows.size());
+                for (int i = 0; i < rows.size(); i++) {
+                    Assert.assertEquals(1, rows.getQuick(i).size());
+                }
+            }
+        }, () -> sendBufferSize = 512);
+    }
+
+    @Test
     public void testBinaryVarcharArrayIsRejectedWithActionableError() throws Exception {
         // outColBinArr() only encodes fixed-width DOUBLE and LONG elements. A varchar array reaches
         // a projection through a bind variable, and asking for it in binary used to trip an
