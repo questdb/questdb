@@ -1479,6 +1479,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     case SCHEMA_MISMATCH -> STATUS_SCHEMA_MISMATCH;
                     case SECURITY_ERROR -> STATUS_SECURITY_ERROR;
                     case INTERNAL_ERROR -> STATUS_INTERNAL_ERROR;
+                    case DICTIONARY_GAP -> STATUS_DICTIONARY_GAP;
                     default -> STATUS_WRITE_ERROR;
                 };
             }
