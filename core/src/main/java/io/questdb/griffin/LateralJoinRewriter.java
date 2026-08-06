@@ -62,6 +62,7 @@ class LateralJoinRewriter implements Mutable {
     private static final int CORRELATED_LIMIT = CORRELATED_LATEST_BY << 1;
     private static final int CORRELATED_JOIN_ON = CORRELATED_LIMIT << 1;
 
+    private static final String LATERAL_COUNT_CARRIER_PREFIX = "qdb_lc";
     private static final String OUTER_REF_PREFIX = "__qdb_outer_ref__";
     private static final byte TERMINATE_AT_NESTED = 2;
     private static final byte TERMINATE_DESCEND = 3;
@@ -70,6 +71,10 @@ class LateralJoinRewriter implements Mutable {
     private final CharacterStore characterStore;
     private final ObjList<ExpressionNode> correlatedPreds = new ObjList<>();
     private final ObjList<CharSequence> countColAliases;
+    private final ObjList<CharSequence> deferredCountExprAliases = new ObjList<>();
+    private final ObjList<ExpressionNode> deferredCountExprTemplates = new ObjList<>();
+    private final ObjList<CharSequence> extractAggAliases = new ObjList<>();
+    private final ObjList<ExpressionNode> extractAggNodes = new ObjList<>();
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
     private final ObjList<ExpressionNode> groupingCols;
@@ -133,6 +138,10 @@ class LateralJoinRewriter implements Mutable {
     @Override
     public void clear() {
         correlatedPreds.clear();
+        deferredCountExprAliases.clear();
+        deferredCountExprTemplates.clear();
+        extractAggAliases.clear();
+        extractAggNodes.clear();
         innerJoinCorrelated.clear();
         innerJoinNonCorrelated.clear();
         nonCorrelatedPreds.clear();
@@ -196,6 +205,7 @@ class LateralJoinRewriter implements Mutable {
     private static boolean isCountAggregate(ExpressionNode node) {
         return node != null
                 && node.type == ExpressionNode.FUNCTION
+                && node.windowExpression == null
                 && Chars.equalsIgnoreCase(node.token, "count");
     }
 
@@ -1031,6 +1041,32 @@ class LateralJoinRewriter implements Mutable {
         return result;
     }
 
+    private boolean containsCountAggregate(ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (isCountAggregate(node)) {
+                    return true;
+                }
+                if (node.type == ExpressionNode.FUNCTION && isGroupByAggregate(node)) {
+                    // Aggregate args are values, not nested aggregates in this dialect.
+                    node = null;
+                    continue;
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.push(node.args.getQuick(i));
+                }
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return false;
+    }
+
     private IQueryModel convertLatestByToWindowFunction(
             final IQueryModel inner,
             IQueryModel parent,
@@ -1249,6 +1285,8 @@ class LateralJoinRewriter implements Mutable {
                 boolean isPerSidePush = canPerSidePush(topInner, depth);
                 CharSequence perSideCloneAlias = null;
                 countColAliases.clear();
+                deferredCountExprAliases.clear();
+                deferredCountExprTemplates.clear();
                 if (isPerSidePush) {
                     perSideCloneAlias = pushDownPerSidePush(topInner, outerToInnerAlias, outerRefJoinModel, depth);
                 } else {
@@ -1316,7 +1354,7 @@ class LateralJoinRewriter implements Mutable {
                     }
                 }
 
-                if (isLeft && countColAliases.size() > 0) {
+                if (isLeft && (countColAliases.size() > 0 || deferredCountExprAliases.size() > 0)) {
                     IQueryModel selectModel = (model.getBottomUpColumns().size() > 0 || parent == null)
                             ? model : parent;
                     wrapCountColumnsWithCoalesce(selectModel, joinModel, countColAliases);
@@ -1384,6 +1422,53 @@ class LateralJoinRewriter implements Mutable {
             cols.setQuick(0, qc);
         }
         return alias;
+    }
+
+    private void extractAggregateCarriers(
+            ExpressionNode node,
+            IQueryModel model,
+            IQueryModel topModel,
+            ObjList<CharSequence> countColAliases
+    ) throws SqlException {
+        sqlNodeStack.clear();
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        ExpressionNode replaced = replaceAggregateWithCarrier(node.rhs, model, topModel, countColAliases);
+                        if (replaced == node.rhs) {
+                            sqlNodeStack.push(node.rhs);
+                        } else {
+                            node.rhs = replaced;
+                        }
+                    }
+                    if (node.lhs != null) {
+                        ExpressionNode replaced = replaceAggregateWithCarrier(node.lhs, model, topModel, countColAliases);
+                        if (replaced == node.lhs) {
+                            node = node.lhs;
+                        } else {
+                            node.lhs = replaced;
+                            node = null;
+                        }
+                    } else {
+                        node = null;
+                    }
+                } else {
+                    for (int i = 0, k = node.paramCount; i < k; i++) {
+                        ExpressionNode arg = node.args.getQuick(i);
+                        ExpressionNode replaced = replaceAggregateWithCarrier(arg, model, topModel, countColAliases);
+                        if (replaced == arg) {
+                            sqlNodeStack.push(arg);
+                        } else {
+                            node.args.setQuick(i, replaced);
+                        }
+                    }
+                    node = sqlNodeStack.poll();
+                }
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
     }
 
     private void extractCorrelatedFromInnerJoins(
@@ -1511,6 +1596,31 @@ class LateralJoinRewriter implements Mutable {
         return null;
     }
 
+    private ExpressionNode findPrimaryCountAggregate(ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (isCountAggregate(node)) {
+                    return node;
+                }
+                if (isGroupByAggregate(node)) {
+                    node = null;
+                    continue;
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.push(node.args.getQuick(i));
+                }
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return null;
+    }
+
     private boolean hasAggregateFunctions(IQueryModel model) {
         ObjList<QueryColumn> cols = model.getBottomUpColumns();
         for (int i = 0, n = cols.size(); i < n; i++) {
@@ -1557,6 +1667,31 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
+    private boolean hasFreeColumnLiteral(ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.type == ExpressionNode.LITERAL) {
+                    return true;
+                }
+                if (isGroupByAggregate(node)) {
+                    node = null;
+                    continue;
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.push(node.args.getQuick(i));
+                }
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return false;
+    }
+
     private boolean hasNonEqualityCorrelation(ExpressionNode where, int depth) {
         ExpressionNode node = where;
         while (node != null) {
@@ -1590,6 +1725,30 @@ class LateralJoinRewriter implements Mutable {
             node = node.lhs != null ? node.lhs : (sqlNodeStack.poll());
         }
         return false;
+    }
+
+    private boolean hasScalarCountCardinalityBlocker(IQueryModel topModel, IQueryModel aggregateModel) {
+        IQueryModel model = topModel;
+        while (model != null) {
+            if (model.getGroupBy().size() > 0
+                    || model.getSampleBy() != null
+                    || model.isDistinct()
+                    || model.getLatestBy().size() > 0
+                    || model.getLimitHi() != null
+                    || model.getLimitLo() != null
+                    || model.getUnionModel() != null) {
+                return true;
+            }
+            if (model == aggregateModel) {
+                return false;
+            }
+            // A filter above the aggregate layer can remove the scalar row.
+            if (model.getWhereClause() != null) {
+                return true;
+            }
+            model = model.getNestedModel();
+        }
+        return true;
     }
 
     private boolean hasUnmappedOuterRefLiteral(
@@ -1704,6 +1863,37 @@ class LateralJoinRewriter implements Mutable {
             }
         }
         return false;
+    }
+
+    private boolean isDeferableCountExpression(ExpressionNode node) {
+        return containsCountAggregate(node)
+                && !hasFreeColumnLiteral(node);
+    }
+
+    private boolean isDeferredLiteralMatch(
+            ExpressionNode node,
+            CharSequence joinAlias,
+            CharSequence outAlias
+    ) {
+        if (node == null || node.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        if (joinAlias != null) {
+            int dotPos = Chars.indexOf(node.token, '.');
+            if (dotPos > 0
+                    && Chars.equalsIgnoreCase(joinAlias, node.token, 0, dotPos)
+                    && Chars.equalsIgnoreCase(outAlias, node.token, dotPos + 1, node.token.length())) {
+                return true;
+            }
+        }
+        return Chars.equalsIgnoreCase(node.token, outAlias);
+    }
+
+    private boolean isGroupByAggregate(ExpressionNode node) {
+        return node != null
+                && node.type == ExpressionNode.FUNCTION
+                && node.windowExpression == null
+                && functionParser.getFunctionFactoryCache().isGroupBy(node.token);
     }
 
     private boolean isLocalSelectAlias(CharSequence columnName, IQueryModel jm) {
@@ -1994,7 +2184,16 @@ class LateralJoinRewriter implements Mutable {
             compensateAggregate(current);
         }
         if (isLeftJoin && hasAggregateFunctions(current)) {
-            rewriteCountForLeftJoin(current, countColAliases);
+            IQueryModel topModel = lateralJoinModel.getNestedModel();
+            rewriteCountForLeftJoin(
+                    current,
+                    topModel,
+                    countColAliases,
+                    hasGroupBy
+                            || (current.getNestedModel() != null
+                            && current.getNestedModel().getGroupBy().size() > 0)
+                            || hasScalarCountCardinalityBlocker(topModel, current)
+            );
         }
         if (hasWindowColumns(current)) {
             compensateWindow(current, outerRefJoinModel.getAlias().token);
@@ -2318,6 +2517,47 @@ class LateralJoinRewriter implements Mutable {
         return column;
     }
 
+    private ExpressionNode rebuildDeferredCountExpression(
+            ExpressionNode template,
+            CharSequence joinAlias
+    ) {
+        ExpressionNode root = ExpressionNode.deepClone(expressionNodePool, template);
+        if (root.type == ExpressionNode.LITERAL) {
+            return rewriteTemplateLiteral(root, joinAlias);
+        }
+        // Use sqlNodeStack2 so callers that walk with sqlNodeStack can rebuild safely.
+        sqlNodeStack2.clear();
+        sqlNodeStack2.push(root);
+        while (!sqlNodeStack2.isEmpty()) {
+            ExpressionNode current = sqlNodeStack2.poll();
+            if (current.lhs != null) {
+                if (current.lhs.type == ExpressionNode.LITERAL) {
+                    current.lhs = rewriteTemplateLiteral(current.lhs, joinAlias);
+                } else {
+                    sqlNodeStack2.push(current.lhs);
+                }
+            }
+            if (current.rhs != null) {
+                if (current.rhs.type == ExpressionNode.LITERAL) {
+                    current.rhs = rewriteTemplateLiteral(current.rhs, joinAlias);
+                } else {
+                    sqlNodeStack2.push(current.rhs);
+                }
+            }
+            for (int i = 0, n = current.args.size(); i < n; i++) {
+                ExpressionNode arg = current.args.getQuick(i);
+                if (arg != null) {
+                    if (arg.type == ExpressionNode.LITERAL) {
+                        current.args.setQuick(i, rewriteTemplateLiteral(arg, joinAlias));
+                    } else {
+                        sqlNodeStack2.push(arg);
+                    }
+                }
+            }
+        }
+        return root;
+    }
+
     private void rebuildGroupingCols() {
         groupingCols.clear();
         ObjList<CharSequence> keys = outerToInnerAlias.keys();
@@ -2350,6 +2590,34 @@ class LateralJoinRewriter implements Mutable {
             result = result == null ? lifted : createBinaryOp("and", result, lifted);
         }
         return result;
+    }
+
+    private ExpressionNode replaceAggregateWithCarrier(
+            ExpressionNode node,
+            IQueryModel model,
+            IQueryModel topModel,
+            ObjList<CharSequence> countColAliases
+    ) throws SqlException {
+        if (!isGroupByAggregate(node)) {
+            return node;
+        }
+        for (int i = 0, n = extractAggNodes.size(); i < n; i++) {
+            if (ExpressionNode.compareNodesExact(extractAggNodes.getQuick(i), node)) {
+                return expressionNodePool.next().of(
+                        ExpressionNode.LITERAL, extractAggAliases.getQuick(i), 0, node.position
+                );
+            }
+        }
+        CharSequence alias = createColumnAlias(LATERAL_COUNT_CARRIER_PREFIX, model);
+        ExpressionNode aggClone = ExpressionNode.deepClone(expressionNodePool, node);
+        model.addBottomUpColumn(queryColumnPool.next().of(alias, aggClone, false));
+        alias = propagateColumnUp(alias, topModel, model);
+        extractAggNodes.add(aggClone);
+        extractAggAliases.add(alias);
+        if (isCountAggregate(node)) {
+            countColAliases.add(alias);
+        }
+        return expressionNodePool.next().of(ExpressionNode.LITERAL, alias, 0, node.position);
     }
 
     // Iterative copy-on-write leaf replacement using post-order two-stack traversal.
@@ -2445,6 +2713,69 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
+    private ExpressionNode replaceDeferredCountRefs(
+            ExpressionNode node,
+            CharSequence joinAlias
+    ) {
+        if (node == null || deferredCountExprAliases.size() == 0) {
+            return node;
+        }
+        for (int i = 0, n = deferredCountExprAliases.size(); i < n; i++) {
+            if (isDeferredLiteralMatch(node, joinAlias, deferredCountExprAliases.getQuick(i))) {
+                return rebuildDeferredCountExpression(
+                        deferredCountExprTemplates.getQuick(i), joinAlias
+                );
+            }
+        }
+        sqlNodeStack.clear();
+        sqlNodeStack.push(node);
+        while (!sqlNodeStack.isEmpty()) {
+            ExpressionNode current = sqlNodeStack.poll();
+            if (current.lhs != null) {
+                ExpressionNode replaced = replaceDeferredCountChild(current.lhs, joinAlias);
+                if (replaced != current.lhs) {
+                    current.lhs = replaced;
+                } else {
+                    sqlNodeStack.push(current.lhs);
+                }
+            }
+            if (current.rhs != null) {
+                ExpressionNode replaced = replaceDeferredCountChild(current.rhs, joinAlias);
+                if (replaced != current.rhs) {
+                    current.rhs = replaced;
+                } else {
+                    sqlNodeStack.push(current.rhs);
+                }
+            }
+            for (int i = 0, n = current.args.size(); i < n; i++) {
+                ExpressionNode arg = current.args.getQuick(i);
+                if (arg != null) {
+                    ExpressionNode replaced = replaceDeferredCountChild(arg, joinAlias);
+                    if (replaced != arg) {
+                        current.args.setQuick(i, replaced);
+                    } else {
+                        sqlNodeStack.push(arg);
+                    }
+                }
+            }
+        }
+        return node;
+    }
+
+    private ExpressionNode replaceDeferredCountChild(
+            ExpressionNode child,
+            CharSequence joinAlias
+    ) {
+        for (int i = 0, n = deferredCountExprAliases.size(); i < n; i++) {
+            if (isDeferredLiteralMatch(child, joinAlias, deferredCountExprAliases.getQuick(i))) {
+                return rebuildDeferredCountExpression(
+                        deferredCountExprTemplates.getQuick(i), joinAlias
+                );
+            }
+        }
+        return child;
+    }
+
     private void restoreOuterToInnerAlias(int aliasSaveBase) {
         ObjList<CharSequence> oKeys = outerToInnerAlias.keys();
         int savedIdx = aliasSaveBase;
@@ -2459,27 +2790,59 @@ class LateralJoinRewriter implements Mutable {
         rebuildGroupingCols();
     }
 
-    // Collects aliases of columns whose top-level expression is count().
-    // These columns are later wrapped with coalesce(x, 0) so that LEFT
-    // LATERAL no-match rows produce 0 instead of NULL.
+    // Collects aliases of columns whose top-level expression is count(), and
+    // defers composite projections that embed count (e.g. count(*) + 2).
     //
-    // Limitation: only bare count() are detected. Expressions
-    // that embed count (e.g., count(*) + 2) are NOT detected — after decorrelation
-    // the GROUP BY eliminates empty groups entirely, so the outer LEFT JOIN
-    // NULL-fills the whole row. Wrapping the outer reference with coalesce(x, 0)
-    // would produce 0, not the correct value (2). Fixing this requires extracting
-    // count into a separate projected column inside the lateral body and rebuilding
-    // the expression at the parent level with coalesce applied only to the count
-    // part.
+    // Bare count columns are later wrapped with coalesce(x, 0) so LEFT LATERAL
+    // no-match rows produce 0 instead of NULL.
+    //
+    // Composite count expressions cannot be coalesced as a whole: unmatched
+    // count(*) + 2 must yield 2, while unmatched count(*) + sum(v) must stay
+    // NULL. The user's column keeps a real count() aggregate AST (so SELECT
+    // rewrite can resolve it), non-primary aggregates become wildcard-hidden
+    // carriers, and the expression template is rebuilt on the parent side after
+    // the LEFT JOIN null-extension with coalesce applied only to count leaves.
     private void rewriteCountForLeftJoin(
             IQueryModel inner,
-            ObjList<CharSequence> countColAliases
-    ) {
-        for (int i = 0, n = inner.getBottomUpColumns().size(); i < n; i++) {
-            QueryColumn col = inner.getBottomUpColumns().getQuick(i);
-            if (isCountAggregate(col.getAst())) {
-                countColAliases.add(col.getAlias());
+            IQueryModel topModel,
+            ObjList<CharSequence> countColAliases,
+            boolean skipNestedCountDefer
+    ) throws SqlException {
+        ObjList<QueryColumn> cols = inner.getBottomUpColumns();
+        for (int i = 0, n = cols.size(); i < n; i++) {
+            QueryColumn col = cols.getQuick(i);
+            ExpressionNode ast = col.getAst();
+            if (ast == null) {
+                continue;
             }
+            if (isCountAggregate(ast)) {
+                countColAliases.add(col.getAlias());
+                continue;
+            }
+            if (skipNestedCountDefer || !isDeferableCountExpression(ast)) {
+                continue;
+            }
+            extractAggNodes.clear();
+            extractAggAliases.clear();
+            ExpressionNode primaryCount = findPrimaryCountAggregate(ast);
+            if (primaryCount == null) {
+                continue;
+            }
+            // Map the primary count leaf to the user's column alias — the column
+            // itself becomes that count() aggregate. Other aggregate leaves get
+            // hidden carrier columns.
+            extractAggNodes.add(ExpressionNode.deepClone(expressionNodePool, primaryCount));
+            extractAggAliases.add(col.getAlias());
+            ExpressionNode template = ExpressionNode.deepClone(expressionNodePool, ast);
+            extractAggregateCarriers(template, inner, topModel, countColAliases);
+            col.of(
+                    col.getAlias(),
+                    ExpressionNode.deepClone(expressionNodePool, primaryCount),
+                    col.isIncludeIntoWildcard()
+            );
+            countColAliases.add(col.getAlias());
+            deferredCountExprAliases.add(col.getAlias());
+            deferredCountExprTemplates.add(template);
         }
     }
 
@@ -2742,6 +3105,20 @@ class LateralJoinRewriter implements Mutable {
                 }
             }
         }
+    }
+
+    private ExpressionNode rewriteTemplateLiteral(ExpressionNode literal, CharSequence joinAlias) {
+        // Qualify carrier / count-alias literals with the lateral join alias.
+        // coalesce() is applied later by wrapCountRefsWithCoalesce so count
+        // leaves are compensated exactly once.
+        if (joinAlias != null && Chars.indexOf(literal.token, '.') < 0) {
+            characterStore.newEntry();
+            characterStore.put(joinAlias).put('.').put(literal.token);
+            return expressionNodePool.next().of(
+                    ExpressionNode.LITERAL, characterStore.toImmutable(), 0, literal.position
+            );
+        }
+        return literal;
     }
 
     // Builds the data source for __qdb_outer_ref__ by cloning the outer model(s)
@@ -3250,6 +3627,25 @@ class LateralJoinRewriter implements Mutable {
                     deferred.add(countColAliases.getQuick(i));
                 }
             }
+            ObjList<CharSequence> deferredExprAliases = parentModel.getLateralCountExprAliases();
+            ObjList<ExpressionNode> deferredExprTemplates = parentModel.getLateralCountExprTemplates();
+            for (int i = 0, n = deferredCountExprAliases.size(); i < n; i++) {
+                if (joinAlias != null) {
+                    characterStore.newEntry();
+                    characterStore.put(joinAlias).put('.').put(deferredCountExprAliases.getQuick(i));
+                    deferredExprAliases.add(characterStore.toImmutable());
+                } else {
+                    deferredExprAliases.add(deferredCountExprAliases.getQuick(i));
+                }
+                ExpressionNode rebuilt = rebuildDeferredCountExpression(
+                        deferredCountExprTemplates.getQuick(i), joinAlias
+                );
+                // Bake coalesce into the deferred wildcard template; materialization
+                // replaces the stand-in column after bare-count coalesce runs.
+                deferredExprTemplates.add(
+                        wrapCountRefsWithCoalesce(rebuilt, joinAlias, countColAliases)
+                );
+            }
             return;
         }
         for (int i = 0, n = parentCols.size(); i < n; i++) {
@@ -3258,7 +3654,10 @@ class LateralJoinRewriter implements Mutable {
             if (ast == null) {
                 continue;
             }
-            ExpressionNode rewritten = wrapCountRefsWithCoalesce(ast, joinAlias, countColAliases);
+            // Rebuild deferred count expressions before coalesce so wrapCountRefs
+            // sees the extracted count leaves and wraps each of them once.
+            ExpressionNode rewritten = replaceDeferredCountRefs(ast, joinAlias);
+            rewritten = wrapCountRefsWithCoalesce(rewritten, joinAlias, countColAliases);
             if (rewritten != ast) {
                 pc.of(pc.getAlias(), rewritten, pc.isIncludeIntoWildcard());
             }

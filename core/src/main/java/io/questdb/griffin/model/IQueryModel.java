@@ -316,6 +316,10 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ObjList<CharSequence> getLateralCountColumns();
 
+    ObjList<CharSequence> getLateralCountExprAliases();
+
+    ObjList<ExpressionNode> getLateralCountExprTemplates();
+
     ObjList<ExpressionNode> getLatestBy();
 
     int getLatestByType();

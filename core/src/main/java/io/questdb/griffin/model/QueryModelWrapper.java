@@ -418,6 +418,16 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ObjList<CharSequence> getLateralCountExprAliases() {
+        return delegate.getLateralCountExprAliases();
+    }
+
+    @Override
+    public ObjList<ExpressionNode> getLateralCountExprTemplates() {
+        return delegate.getLateralCountExprTemplates();
+    }
+
+    @Override
     public ObjList<ExpressionNode> getLatestBy() {
         return delegate.getLatestBy();
     }
