@@ -164,8 +164,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     try {
                         final ArrayColumnTypes valueTypes;
                         if (rowsLo == Long.MIN_VALUE) {
-                            // An unbounded frame start carries no live-view layout: the parser
-                            // turns the shape away at CREATE, so this arm never checkpoints.
+                            // An unbounded frame start carries no live-view layout, and needs none:
+                            // CREATE refuses every route to it. See MaxMinOverPartitionRangeFrameBase
+                            // in MaxMinWindowFunctionFactoryHelper.
                             valueTypes = MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
                         } else {
                             valueTypes = liveView ? MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV : MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES;
@@ -564,9 +565,10 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             this.comparator = comparator;
             this.name = name;
             this.liveView = liveView;
-            // Only the bounded-lo frame reaches a live view; an unbounded start is
-            // rejected at CREATE, so that arm keeps the plain layout and reports no
-            // checkpoint support.
+            // Only the bounded-lo frame carries a live-view layout; CREATE refuses
+            // every route to the unbounded-lo one, so that arm keeps the plain layout
+            // and reports no checkpoint support. See MaxMinOverPartitionRangeFrameBase
+            // in MaxMinWindowFunctionFactoryHelper.
             if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {

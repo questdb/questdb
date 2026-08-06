@@ -157,8 +157,9 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     try {
                         final ArrayColumnTypes valueTypes;
                         if (rowsLo == Long.MIN_VALUE) {
-                            // An unbounded frame start carries no live-view layout: the parser
-                            // turns the shape away at CREATE, so this arm never checkpoints.
+                            // An unbounded frame start carries no live-view layout, and needs none:
+                            // CREATE refuses every route to it. See MaxMinOverPartitionRangeFrameBase
+                            // in MaxMinWindowFunctionFactoryHelper.
                             valueTypes = MaxLongWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
                         } else {
                             valueTypes = liveView

@@ -211,8 +211,9 @@ public class MaxMinWindowFunctionFactoryHelper {
                     try {
                         final ArrayColumnTypes valueTypes;
                         if (rowsLo == Long.MIN_VALUE) {
-                            // An unbounded frame start carries no live-view layout: the parser
-                            // turns the shape away at CREATE, so this arm never checkpoints.
+                            // An unbounded frame start carries no live-view layout, and needs
+                            // none: CREATE refuses every route to it. See
+                            // MaxMinOverPartitionRangeFrameBase's constructor.
                             valueTypes = MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
                         } else {
                             valueTypes = liveView ? MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV : MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES;
@@ -724,9 +725,36 @@ public class MaxMinWindowFunctionFactoryHelper {
             this.comparator = comparator;
             this.name = name;
             this.liveView = liveView;
-            // Only the bounded-lo frame reaches a live view; an unbounded start is
-            // rejected at CREATE, so that arm keeps the plain layout and reports no
-            // checkpoint support.
+            // Only the bounded-lo frame carries a live-view layout, and the unbounded-lo
+            // one needs none: CREATE refuses every route to it, so that arm keeps the
+            // plain layout and reports no checkpoint support.
+            //
+            // Three of those routes SqlParser refuses. An unanchored unbounded frame
+            // start trips the finite-influence rules (rejectUnboundedFrameStart /
+            // rejectBareUnboundedWindows), and an anchored window spelling the frame out
+            // - ROWS BETWEEN UNBOUNDED PRECEDING AND anything, or RANGE ... AND k
+            // PRECEDING - trips validateLiveViewAnchors, which refuses an ANCHOR on a
+            // non-default frame.
+            //
+            // The fourth is the one to keep in mind, because it is what makes every OTHER
+            // ring-shaped family anchorable: RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
+            // ROW EXCLUDE CURRENT ROW reads as the default frame to
+            // WindowExpression.isNonDefaultFrame(), which never looks at the exclusion
+            // mode, so it keeps its ANCHOR; WindowContextImpl.getRowsHi() then folds the
+            // frame end below the current row and lands here. What refuses THAT one is
+            // CairoEngine.validateLiveViewWindowFunction, precisely because this branch
+            // reports no checkpoint support - "incremental snapshot is not supported for
+            // this function yet". So max/min is the one aggregate family a live view
+            // cannot fold into a ring, which is why these classes carry no live-view
+            // frontier-sweep hooks (newCompactionScratch and friends) while avg, sum,
+            // count, first_value, last_value and nth_value all do.
+            //
+            // Giving this arm a layout therefore has a second half: the instance joins
+            // the anchorable subset ring-shaped, and LiveViewWindow.compact() would sweep
+            // it, so it has to enrol in the sweep in the same change or it retains one map
+            // entry and one arena slab per partition it ever sees.
+            // LiveViewAnchorResetScopeTest#testAnchoredMaxAndMinNeverReachTheRingShape
+            // pins both halves.
             if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {

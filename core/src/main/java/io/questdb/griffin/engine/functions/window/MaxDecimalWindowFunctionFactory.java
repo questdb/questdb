@@ -155,8 +155,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        // An unbounded frame start carries no live-view layout: the parser
-                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        // An unbounded frame start carries no live-view layout, and needs none:
+                                        // CREATE refuses every route to it. See MaxMinOverPartitionRangeFrameBase
+                                        // in MaxMinWindowFunctionFactoryHelper.
                                         ? MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
@@ -310,8 +311,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        // An unbounded frame start carries no live-view layout: the parser
-                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        // An unbounded frame start carries no live-view layout, and needs none:
+                                        // CREATE refuses every route to it. See MaxMinOverPartitionRangeFrameBase
+                                        // in MaxMinWindowFunctionFactoryHelper.
                                         ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
@@ -465,8 +467,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        // An unbounded frame start carries no live-view layout: the parser
-                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        // An unbounded frame start carries no live-view layout, and needs none:
+                                        // CREATE refuses every route to it. See MaxMinOverPartitionRangeFrameBase
+                                        // in MaxMinWindowFunctionFactoryHelper.
                                         ? MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
@@ -620,8 +623,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        // An unbounded frame start carries no live-view layout: the parser
-                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        // An unbounded frame start carries no live-view layout, and needs none:
+                                        // CREATE refuses every route to it. See MaxMinOverPartitionRangeFrameBase
+                                        // in MaxMinWindowFunctionFactoryHelper.
                                         ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
@@ -775,8 +779,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        // An unbounded frame start carries no live-view layout: the parser
-                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        // An unbounded frame start carries no live-view layout, and needs none:
+                                        // CREATE refuses every route to it. See MaxMinOverPartitionRangeFrameBase
+                                        // in MaxMinWindowFunctionFactoryHelper.
                                         ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
@@ -930,8 +935,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        // An unbounded frame start carries no live-view layout: the parser
-                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        // An unbounded frame start carries no live-view layout, and needs none:
+                                        // CREATE refuses every route to it. See MaxMinOverPartitionRangeFrameBase
+                                        // in MaxMinWindowFunctionFactoryHelper.
                                         ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
@@ -1299,9 +1305,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.liveView = liveView;
             maxMin.ofRawNull();
-            // Only the bounded-lo frame reaches a live view; an unbounded start is
-            // rejected at CREATE, so that arm keeps the plain layout and reports no
-            // checkpoint support.
+            // Only the bounded-lo frame carries a live-view layout; CREATE refuses
+            // every route to the unbounded-lo one, so that arm keeps the plain layout
+            // and reports no checkpoint support. See MaxMinOverPartitionRangeFrameBase
+            // in MaxMinWindowFunctionFactoryHelper.
             if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
@@ -3307,9 +3314,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.name = name;
             this.type = type;
             this.liveView = liveView;
-            // Only the bounded-lo frame reaches a live view; an unbounded start is
-            // rejected at CREATE, so that arm keeps the plain layout and reports no
-            // checkpoint support.
+            // Only the bounded-lo frame carries a live-view layout; CREATE refuses
+            // every route to the unbounded-lo one, so that arm keeps the plain layout
+            // and reports no checkpoint support. See MaxMinOverPartitionRangeFrameBase
+            // in MaxMinWindowFunctionFactoryHelper.
             if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
@@ -5216,9 +5224,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.liveView = liveView;
             maxMin.ofRawNull();
-            // Only the bounded-lo frame reaches a live view; an unbounded start is
-            // rejected at CREATE, so that arm keeps the plain layout and reports no
-            // checkpoint support.
+            // Only the bounded-lo frame carries a live-view layout; CREATE refuses
+            // every route to the unbounded-lo one, so that arm keeps the plain layout
+            // and reports no checkpoint support. See MaxMinOverPartitionRangeFrameBase
+            // in MaxMinWindowFunctionFactoryHelper.
             if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
@@ -7236,9 +7245,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.name = name;
             this.type = type;
             this.liveView = liveView;
-            // Only the bounded-lo frame reaches a live view; an unbounded start is
-            // rejected at CREATE, so that arm keeps the plain layout and reports no
-            // checkpoint support.
+            // Only the bounded-lo frame carries a live-view layout; CREATE refuses
+            // every route to the unbounded-lo one, so that arm keeps the plain layout
+            // and reports no checkpoint support. See MaxMinOverPartitionRangeFrameBase
+            // in MaxMinWindowFunctionFactoryHelper.
             if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
@@ -9117,9 +9127,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.name = name;
             this.type = type;
             this.liveView = liveView;
-            // Only the bounded-lo frame reaches a live view; an unbounded start is
-            // rejected at CREATE, so that arm keeps the plain layout and reports no
-            // checkpoint support.
+            // Only the bounded-lo frame carries a live-view layout; CREATE refuses
+            // every route to the unbounded-lo one, so that arm keeps the plain layout
+            // and reports no checkpoint support. See MaxMinOverPartitionRangeFrameBase
+            // in MaxMinWindowFunctionFactoryHelper.
             if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
@@ -11003,9 +11014,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.name = name;
             this.type = type;
             this.liveView = liveView;
-            // Only the bounded-lo frame reaches a live view; an unbounded start is
-            // rejected at CREATE, so that arm keeps the plain layout and reports no
-            // checkpoint support.
+            // Only the bounded-lo frame carries a live-view layout; CREATE refuses
+            // every route to the unbounded-lo one, so that arm keeps the plain layout
+            // and reports no checkpoint support. See MaxMinOverPartitionRangeFrameBase
+            // in MaxMinWindowFunctionFactoryHelper.
             if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {

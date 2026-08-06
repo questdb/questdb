@@ -242,6 +242,126 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
     }
 
     /**
+     * {@code max} and {@code min} are the one aggregate family a live view cannot fold into a
+     * ring, and this is what holds them there.
+     * <p>
+     * Their RANGE implementation - one resizable slab per partition in a {@code MemoryARW}
+     * arena - carries a live-view value layout only for a BOUNDED frame start
+     * ({@code MaxMinWindowFunctionFactoryHelper.MaxMinOverPartitionRangeFrameBase}); the
+     * unbounded-lo branch keeps the plain layout and so reports no checkpoint support. The
+     * anchorable subset needs the opposite: a frame reading as UNBOUNDED PRECEDING ... CURRENT
+     * ROW over an anchored window. The two do not meet, and both halves are pinned here.
+     * <p>
+     * The spelling that folds every other family into an anchored ring is EXCLUDE CURRENT ROW,
+     * which keeps its ANCHOR because {@code WindowExpression.isNonDefaultFrame()} never reads
+     * the exclusion mode. Here it lands on the unbounded-lo branch instead, and
+     * {@code CairoEngine.validateLiveViewWindowFunction} refuses the view at CREATE. All nine
+     * ring classes are covered - DOUBLE, LONG, the abstract base the DATE and TIMESTAMP leaves
+     * share, and the six decimal widths - each read as {@code max} and as {@code min}, which
+     * reuse the same nine classes with an inverted comparator.
+     * <p>
+     * The spelling that IS accepted folds to {@code MaxMinOverUnboundedPartitionRowsFrameBase},
+     * which keeps one scalar per partition and no arena, so the subset the frontier sweep walks
+     * holds nothing ring-shaped to reclaim. That is why these nine classes carry none of the
+     * sweep's hooks while {@code avg}, {@code sum}, {@code count}, {@code first_value},
+     * {@code last_value} and {@code nth_value} all do.
+     * <p>
+     * A live view can still carry a ring-shaped {@code max}, through a bounded RANGE frame on
+     * an unanchored window. The sweep does not reach that one either, for the reason it
+     * reaches no unanchored window: it is driven by an anchor's monotone bucket advance, and a
+     * window with no anchor has no frontier to sweep by. Giving the unbounded-lo branch a
+     * live-view layout would instead move max/min into the anchored subset ring-shaped, and
+     * the same change would then have to enrol it in the sweep; the first assertion below is
+     * what fails on the day that happens.
+     */
+    @Test
+    public void testAnchoredMaxAndMinNeverReachTheRingShape() throws Exception {
+        assertMemoryLeak(() -> {
+            // One column per ring class: DOUBLE and LONG carry their own, DATE routes through
+            // the shared base the TIMESTAMP leaves also use, and the six decimal widths pick
+            // six more (precision 2 -> DECIMAL8, 4 -> DECIMAL16, 9 -> DECIMAL32,
+            // 18 -> DECIMAL64, 38 -> DECIMAL128, 75 -> DECIMAL256).
+            execute("""
+                    CREATE TABLE base (
+                        ts TIMESTAMP, sym SYMBOL, y DOUBLE, n LONG, dt DATE,
+                        d8 DECIMAL(2, 1), d16 DECIMAL(4, 1), d32 DECIMAL(9, 1),
+                        d64 DECIMAL(18, 1), d128 DECIMAL(38, 1), d256 DECIMAL(75, 1)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("INSERT INTO base (ts, sym, y, n, dt, d8, d16, d32, d64, d128, d256) VALUES "
+                    + positionalValueRow("2026-01-01T11:00:00.000000Z", "a", "1") + ", "
+                    + positionalValueRow("2026-01-01T12:00:00.000000Z", "a", "3") + ", "
+                    + positionalValueRow("2026-01-02T11:00:00.000000Z", "a", "2"));
+            drainWalQueue();
+
+            final String[] columns = {"y", "n", "dt", "d8", "d16", "d32", "d64", "d128", "d256"};
+            for (String name : new String[]{"max", "min"}) {
+                for (String column : columns) {
+                    try {
+                        execute("CREATE LIVE VIEW lv_ring FLUSH EVERY 100ms START FROM BEGINNING AS "
+                                + "SELECT ts, sym, " + name + "(" + column + ") OVER w AS v FROM base "
+                                + "WINDOW w AS (PARTITION BY sym ORDER BY ts "
+                                + "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW "
+                                + "ANCHOR DAILY '00:00')");
+                        Assert.fail("an anchored ring-shaped " + name + "(" + column + ") must be refused at CREATE");
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "live view select cannot use window function " + name
+                                        + "(); incremental snapshot is not supported for this function yet"
+                        );
+                    }
+                }
+            }
+
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, sym,
+                           max(y) OVER w AS my, max(n) OVER w AS mn, max(dt) OVER w AS mt,
+                           max(d8) OVER w AS m8, max(d16) OVER w AS m16, max(d32) OVER w AS m32,
+                           max(d64) OVER w AS m64, max(d128) OVER w AS m128, max(d256) OVER w AS m256
+                    FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')""");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' must be registered", instance);
+                final ObjList<WindowFunction> anchorable = anchorableFunctions(instance);
+                Assert.assertEquals("the anchored window carries all 9 max calls", 9, anchorable.size());
+                for (int i = 0, n = anchorable.size(); i < n; i++) {
+                    final WindowFunction f = anchorable.getQuick(i);
+                    Assert.assertFalse(
+                            "the accepted anchored max/min shape must not fold to a ring",
+                            f.supportsCheckpointRingState()
+                    );
+                    Assert.assertNull(
+                            "a sweep of the anchored subset must find no max/min arena to reclaim",
+                            f.getRingArena()
+                    );
+                }
+
+                assertNoRefreshFaults("lv");
+                // The anchor resets each partition at every bucket crossing, so the row in the
+                // second bucket reports its own value rather than the larger one before it.
+                assertQuery("""
+                        SELECT ts, sym, my, mn, mt, m8, m16, m32, m64, m128, m256
+                        FROM lv ORDER BY ts""")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tsym\tmy\tmn\tmt\tm8\tm16\tm32\tm64\tm128\tm256
+                                2026-01-01T11:00:00.000000Z\ta\t1.0\t1\t2026-01-01T11:00:00.000Z\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0
+                                2026-01-01T12:00:00.000000Z\ta\t3.0\t3\t2026-01-01T12:00:00.000Z\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0
+                                2026-01-02T11:00:00.000000Z\ta\t2.0\t2\t2026-01-02T11:00:00.000Z\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0
+                                """);
+            }
+        });
+    }
+
+    /**
      * The frontier sweep and a ring-shaped member of the anchorable subset.
      * <p>
      * A ring-shaped function does reach the subset. {@code SqlParser.validateLiveViewAnchors}
@@ -950,9 +1070,10 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
 
     /**
      * One row carrying the same magnitude in every type {@code first_value},
-     * {@code last_value} and {@code nth_value} each have their own RANGE implementation for.
-     * The DATE column takes the row's own timestamp at millisecond resolution, so the expected
-     * tables read a row of the bucket back rather than an opaque epoch offset.
+     * {@code last_value}, {@code nth_value} and {@code max}/{@code min} each have their own
+     * RANGE implementation for. The DATE column takes the row's own timestamp at millisecond
+     * resolution, so the expected tables read a row of the bucket back rather than an opaque
+     * epoch offset.
      */
     private static String positionalValueRow(String ts, String sym, String value) {
         return "('" + ts + "', '" + sym + "', " + value + ".0, " + value
