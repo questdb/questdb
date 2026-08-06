@@ -35,7 +35,6 @@ import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -51,7 +50,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
 
@@ -130,7 +130,7 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                             prep.getCoveredLong(0);
                         }
                         Misc.free(prep);
-                        reader.populateCacheForKey(probeKey, Long.MAX_VALUE);
+                        reader.populateCacheForKey(probeKey);
                         reader.setFrozen(true);
                         final int poolAfterWarm = freeCursorsSize(reader);
 
@@ -144,9 +144,8 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                                 try {
                                     start.await();
                                     for (int it = 0; it < iterations && !Thread.interrupted(); it++) {
-                                        CoveringRowCursor cc = (CoveringRowCursor)
-                                                reader.getDetachedCursor(probeKey, 0, Long.MAX_VALUE, required);
-                                        try {
+                                        try (CoveringRowCursor cc = (CoveringRowCursor)
+                                                reader.getDetachedCursor(probeKey, 0, Long.MAX_VALUE, required)) {
                                             int i = 0;
                                             while (cc.hasNext()) {
                                                 long r = cc.next();
@@ -157,8 +156,6 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                                                 i++;
                                             }
                                             assertEquals("fewer rows than cold", expRows.size(), i);
-                                        } finally {
-                                            cc.close();
                                         }
                                     }
                                 } catch (Throwable e) {
@@ -542,9 +539,8 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                         final Runnable worker = () -> {
                             try {
                                 barrier.await();
-                                CoveringRowCursor cc = (CoveringRowCursor)
-                                        warm.getDetachedCursor(probeKey, 0, Long.MAX_VALUE, required);
-                                try {
+                                try (CoveringRowCursor cc = (CoveringRowCursor)
+                                        warm.getDetachedCursor(probeKey, 0, Long.MAX_VALUE, required)) {
                                     int i = 0;
                                     while (cc.hasNext()) {
                                         long r = cc.next();
@@ -557,8 +553,6 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                                     }
                                     assertEquals("detached bwd cursor produced fewer rows than cold",
                                             expectedRows.size(), i);
-                                } finally {
-                                    cc.close();
                                 }
                             } catch (Throwable t) {
                                 error.compareAndSet(null, t);
@@ -686,9 +680,8 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                                 // open their detached cursor, then iterate in lockstep
                                 // start so decode runs concurrently on shared mmap.
                                 barrier.await();
-                                CoveringRowCursor cc = (CoveringRowCursor)
-                                        warm.getDetachedCursor(probeKey, 0, Long.MAX_VALUE, required);
-                                try {
+                                try (CoveringRowCursor cc = (CoveringRowCursor)
+                                        warm.getDetachedCursor(probeKey, 0, Long.MAX_VALUE, required)) {
                                     int i = 0;
                                     while (cc.hasNext()) {
                                         long r = cc.next();
@@ -703,8 +696,6 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                                     }
                                     assertEquals("detached cursor produced fewer rows than cold",
                                             expectedRows.size(), i);
-                                } finally {
-                                    cc.close();
                                 }
                             } catch (Throwable t) {
                                 error.compareAndSet(null, t);
