@@ -312,10 +312,12 @@ public class QwpTudCache implements QuietCloseable {
                 if (e.isTableDropped()) {
                     tud.setIsDropped();
                 } else {
+                    tud.setWriterInError();
                     LOG.error().$("commit error [table=").$(tableName).$(", e=").$(e.getReason()).I$();
                 }
             } catch (Throwable t) {
-                LOG.error().$("commit error [table=").$(tableName).$(", e=").$(t.getMessage()).I$();
+                tud.setWriterInError();
+                LOG.error().$("commit error [table=").$(tableName).$(", e=").$safe(t.getMessage()).I$();
             }
 
             // A DROP is detected the moment the name registry marks the token
@@ -325,7 +327,13 @@ public class QwpTudCache implements QuietCloseable {
             // writer that throws a plain CairoException after DROP; without it
             // the loop would retry and log the same table forever. This is a
             // fire-and-forget path (no ack), so no rows are silently acknowledged.
-            if (!tud.isDropped() && isTableTokenStale(tud)) {
+            //
+            // A writer whose commit failed for any other reason is evicted as
+            // well: retrying cannot succeed for a distressed or out-of-date
+            // writer, and this fire-and-forget path has no client to report
+            // to -- the next datagram rebuilds a fresh entry (bounded loss,
+            // within the UDP contract).
+            if (!tud.isDropped() && (tud.isWriterInError() || isTableTokenStale(tud))) {
                 tud.setIsDropped();
             }
 
@@ -358,10 +366,12 @@ public class QwpTudCache implements QuietCloseable {
                 if (e.isTableDropped()) {
                     tud.setIsDropped();
                 } else {
+                    tud.setWriterInError();
                     LOG.error().$("commit error [table=").$(tableName).$(", e=").$(e.getReason()).I$();
                 }
             } catch (Throwable t) {
-                LOG.error().$("commit error [table=").$(tableName).$(", e=").$(t.getMessage()).I$();
+                tud.setWriterInError();
+                LOG.error().$("commit error [table=").$(tableName).$(", e=").$safe(t.getMessage()).I$();
             }
 
             // A DROP is detected the moment the name registry marks the token
@@ -371,7 +381,13 @@ public class QwpTudCache implements QuietCloseable {
             // writer that throws a plain CairoException after DROP; without it
             // the loop would retry and log the same table forever. This is a
             // fire-and-forget path (no ack), so no rows are silently acknowledged.
-            if (!tud.isDropped() && isTableTokenStale(tud)) {
+            //
+            // A writer whose commit failed for any other reason is evicted as
+            // well: retrying cannot succeed for a distressed or out-of-date
+            // writer, and this fire-and-forget path has no client to report
+            // to -- the next datagram rebuilds a fresh entry (bounded loss,
+            // within the UDP contract).
+            if (!tud.isDropped() && (tud.isWriterInError() || isTableTokenStale(tud))) {
                 tud.setIsDropped();
             }
 

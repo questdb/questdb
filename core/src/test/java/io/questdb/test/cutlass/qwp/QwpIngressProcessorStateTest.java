@@ -1458,6 +1458,40 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitAllBestEffortEvictsTableWhoseCommitKeepsFailing() throws Exception {
+        // C2: a live-token writer whose commit persistently fails (here: a pure
+        // rename, whose commits are rejected by the sequencer's token check) was
+        // retried and error-logged on every fire-and-forget pass forever. The
+        // loop must mark it writer-in-error and evict it in the same pass; the
+        // next datagram for the name rebuilds a fresh entry. Fire-and-forget has
+        // no ack, so dropping the buffered rows is within the UDP contract.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE be_err (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("be_err"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                tud.getWriter().newRow(1_000_000L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                // Pure rename: the entry stays cached (not stale), but commits
+                // through the old writer fail on the sequencer token check.
+                execute("RENAME TABLE be_err TO be_err_dst");
+
+                cache.commitAllBestEffort();
+                Assert.assertEquals("failing writer must be evicted, not retried forever", 0, cache.size());
+            }
+        });
+    }
+
+    @Test
     public void testCommitAllBestEffortHandlesDroppedTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE be_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1513,10 +1547,12 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 // Should log the error and continue without throwing.
                 cache.commitAllBestEffort();
 
-                // TUD stays in the cache (not removed on non-drop failure)
-                // and its writer is marked as being in error state.
-                Assert.assertEquals(1, getCacheSize(cache));
+                // A non-drop commit failure marks the writer in error and the
+                // loop evicts it in the same pass: retrying cannot succeed for
+                // a distressed writer, and fire-and-forget has no client to
+                // report to.
                 Assert.assertTrue(tud.isWriterInError());
+                Assert.assertEquals(0, getCacheSize(cache));
             }
         });
     }
