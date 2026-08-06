@@ -12219,6 +12219,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw e;
         } finally {
             path.trimTo(pathSize);
+            Throwable cleanupError = null;
             for (long i = 0, n = columnFdAndDataSize.size() / 3; i < n; i++) {
                 final long dstAuxFd = columnFdAndDataSize.get(3L * i);
                 final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);
@@ -12228,16 +12229,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // non-durable here (lazy) and made crash-safe by the epoch + recovery roll-forward.
                 // The partition DIRECTORY entry below stays durable (structural). See appliesColumnSync.
                 // Per-table effective mode (Deferred 1): the data sync follows THIS table's mode.
-                if (appliesColumnSync(effectiveCommitMode)) {
-                    if (dstDataFd != -1) {
-                        ff.fsync(dstDataFd);
+                // CLEANUP COMPLETES: these fsyncs are durability barriers on a CLEANUP path, so a failure
+                // here (a genuine EIO, or the crash harness's Error) must not skip the frees below -- the
+                // fd closes, the decoder close and the parquet munmap. Capture and rethrow after everything
+                // is released; fail-stop is preserved, the leak is not.
+                try {
+                    if (appliesColumnSync(effectiveCommitMode)) {
+                        if (dstDataFd != -1) {
+                            ff.fsync(dstDataFd);
+                        }
+                        if (dstAuxFd != -1) {
+                            ff.fsync(dstAuxFd);
+                        }
                     }
-                    if (dstAuxFd != -1) {
-                        ff.fsync(dstAuxFd);
+                } catch (Throwable th) {
+                    if (cleanupError == null) {
+                        cleanupError = th;
                     }
+                } finally {
+                    ff.close(dstAuxFd);
+                    ff.close(dstDataFd);
                 }
-                ff.close(dstAuxFd);
-                ff.close(dstDataFd);
             }
             if (!Os.isWindows() && effectiveCommitMode != CommitMode.NOSYNC) {
                 try {
@@ -12251,6 +12263,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         engine.handleDataSyncFailure(ex);
                     }
                     LOG.error().$("could not fsync native partition dir [path=").$(other).$(", errno=").$(ex.getErrno()).I$();
+                } catch (Throwable th) {
+                    // Not a CairoException (the crash harness raises an Error): still must not skip the
+                    // decoder close and munmap below.
+                    if (cleanupError == null) {
+                        cleanupError = th;
+                    }
                 }
             }
             other.trimTo(pathSize);
@@ -12258,6 +12276,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetFileDecoder.close();
             if (parquetAddr != 0) {
                 ff.munmap(parquetAddr, parquetFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            if (cleanupError != null) {
+                if (cleanupError instanceof Error) {
+                    throw (Error) cleanupError;
+                }
+                throw (RuntimeException) cleanupError;
             }
         }
         return parquetRowCount;
