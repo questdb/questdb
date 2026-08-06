@@ -1438,7 +1438,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 chunkBase = 0;
             }
 
-            final int count = (int) Math.min((long) rowCap, total - chunkBase);
+            final int count = (int) Math.min(rowCap, total - chunkBase);
             if (count <= 0) {
                 // This (key, partition) is exhausted. Clear resume state; the caller
                 // advances to the next partition.
@@ -1465,7 +1465,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // cache exactly as the traverse's natural-exhaustion putCacheEntries
                 // would, BEFORE the pipeline freezes the reader and dispatches workers.
                 // No-op for single-gen-dense; gated on multi-gen + sparse inside.
-                reader.populateCacheForKey(key, clampedMax);
+                reader.populateCacheForKey(key);
             }
 
             final long nextBase = chunkBase + count;
@@ -2409,10 +2409,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // state persists across nextImpl() calls so a partition that exceeds
         // maxRowsPerFrame resumes in the next frame.
         private int mergePartitionIndex = -1;
-        // Base row range of the partition currently being merged. Carried onto
-        // each emitted frame (Task 6 surface); persists across nextImpl()
-        // re-entry alongside mergePartitionIndex.
-        private long mergeRowHi;
         private long mergeRowLo;
 
         MultiKeyCoveringPageFrameCursor(
@@ -2572,7 +2568,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             framePartitionFormat = partFrame.getPartitionFormat();
             framePostingReader = tableReader.getIndexReader(partitionIndex, indexColumnIndex, IndexReader.DIR_FORWARD);
             mergeRowLo = rowLo;
-            mergeRowHi = rowHi;
+            // Base row range of the partition currently being merged. Carried onto
+            // each emitted frame (Task 6 surface); persists across nextImpl()
+            // re-entry alongside mergePartitionIndex.
             boolean any = false;
             for (int i = 0; i < n; i++) {
                 CoveringRowCursor c = openForwardCoveringCursor(
