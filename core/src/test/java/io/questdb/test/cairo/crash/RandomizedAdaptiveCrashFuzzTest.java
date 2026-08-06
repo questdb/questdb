@@ -155,7 +155,18 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                     0.1, 0.05, 0.05, 0.05,      // colAdd, colRemove, colRename, colTypeChange
                     0.5, 0.0, 0.05, 0.03,       // dataAdd, equalTsRows(=0: canonical dump), partitionDrop, partitionToParquet
                     0.03, 0.05, 0.0, 0.05,      // partitionToNative, truncate, tableDrop(=0), setTtl
-                    0.1, 0.0, 0.0, 0.02,        // replaceInsert(dedup), symbolAccessValidation, query, setParquetEncoding
+                    // replaceInsert(dedup) = 0: INCOMPATIBLE with partitionToParquet below. QuestDB does not
+                    // support replace-range commits over Parquet partitions, so once a partition is
+                    // converted, any later replace over it is unappliable BY CONSTRUCTION -- in-order WAL
+                    // replay always hits "commit replace mode is not supported for Parquet partitions" and
+                    // suspends the table. An uncrashed run usually hides this: ApplyWal2TableJob's skip
+                    // optimisation elides the replace when a LATER txn supersedes it (observed
+                    // skipTxnCount=4 at seqTxn=19 with the full WAL visible). After a crash the sequencer
+                    // log is legitimately shorter, nothing supersedes it, the replace is applied for real
+                    // and the table suspends -- indistinguishable from a durability defect, and it cost two
+                    // full investigations. Re-enable only once the generator refuses to emit a replace
+                    // range overlapping a partition it has converted.
+                    0.0, 0.0, 0.0, 0.02,        // replaceInsert(dedup), symbolAccessValidation, query, setParquetEncoding
                     0.0, 0.03);                 // setTableFormat(=0), addCoveringIndex
         }
         //                     isO3, fuzzRowCount, txns, strLen, symStrLen, symCount, initialRows=0, partitions
