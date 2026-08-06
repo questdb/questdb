@@ -169,6 +169,7 @@ public class PostingIndexWriter implements IndexWriter {
     // exposes append/extend/recovery primitives. Single instance per writer
     // reused across reopens via resetState().
     private final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+    private final PostingIndexChainHeader.Snapshot closeHeaderScratch = new PostingIndexChainHeader.Snapshot();
     private final CairoConfiguration configuration;
     // Last-known valid byte extent of each cover column's .pcN, indexed by cover
     // slot. Updated from the live sidecar handle's append offset whenever it is
@@ -448,17 +449,30 @@ public class PostingIndexWriter implements IndexWriter {
         try {
             if (keyMem.isOpen()) {
                 try {
-                    // v1 trimmed to KEY_FILE_RESERVED because the only live
-                    // bytes were the two header pages. v2 keeps chain entries
-                    // past the headers; trim to regionLimit instead so we
-                    // don't lop off the head entry. For an empty chain
-                    // regionLimit equals the entry region base which equals
-                    // KEY_FILE_RESERVED.
+                    // A squash frame writer can publish through a second mapping
+                    // while this table writer still holds the previously empty
+                    // index open. In that case this chain's cached regionLimit is
+                    // stale, but both mappings see the newly published header.
+                    // Include that authoritative extent so closing this writer
+                    // cannot truncate the other writer's chain head.
                     long liveSize = chain.getRegionLimit();
+                    if (PostingIndexChainHeader.readUnderSeqlock(keyMem, closeHeaderScratch)
+                            && closeHeaderScratch.formatVersion == V2_FORMAT_VERSION) {
+                        liveSize = Math.max(liveSize, closeHeaderScratch.regionLimit);
+                    }
                     if (liveSize < KEY_FILE_RESERVED) {
                         liveSize = KEY_FILE_RESERVED;
                     }
-                    keyMem.setSize(liveSize);
+                    if (liveSize > keyMem.size()) {
+                        // Another mapping published beyond this stale mapping and
+                        // already extended the file. Growing keyMem only to close it
+                        // would allocate and remap memory, and an allocation failure
+                        // would leave its old append offset armed for truncation in
+                        // the finally below. Close without truncation instead.
+                        keyMem.close(false);
+                    } else {
+                        keyMem.setSize(liveSize);
+                    }
                 } finally {
                     Misc.free(keyMem);
                 }
