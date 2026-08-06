@@ -26,7 +26,9 @@ package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.Function;
+import io.questdb.std.Hash;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -53,6 +55,10 @@ import java.util.Arrays;
  */
 public final class WindowAccumulatorPlanBuilder {
     /**
+     * Smallest component slot table. A group with fewer components than this never grows one.
+     */
+    private static final int MIN_COMPONENT_SLOTS = 16;
+    /**
      * The activation rule: an owner binds a group only where it removes at least this much
      * of the unfused runtime. Two is what a plain two-function group scores - both private
      * maps go dormant behind one group map - and one is what a single-function group scores,
@@ -69,6 +75,18 @@ public final class WindowAccumulatorPlanBuilder {
     private final IntList componentContributorIsGuarded = new IntList();
     private final IntList componentContributorOutputPositions = new IntList();
     private final IntList componentContributors = new IntList();
+    /**
+     * Open-addressed slots over {@link #components}, holding {@code componentIndex + 1} with
+     * zero for an empty slot, so a projection finds the component it names by hash rather
+     * than by comparing itself against every component added so far. A group's components
+     * are as many as its distinct arguments, so the scan it replaces grew with the SELECT
+     * list on both sides.
+     * <p>
+     * Hashed on exactly the four fields {@link WindowAccumulatorDescriptor#isSameIdentity}
+     * compares and resolved through that same method, so the table cannot separate two
+     * components the builder would have merged.
+     */
+    private final IntList componentSlots = new IntList();
     private final ObjList<WindowAccumulatorDescriptor> components = new ObjList<>();
     private final FoldPolicy foldPolicy;
     private final WindowAccumulatorCandidate.PartitionKeyGuard partitionKeyGuard;
@@ -83,6 +101,7 @@ public final class WindowAccumulatorPlanBuilder {
     private final IntList projectionKinds = new IntList();
     private final IntList projectionOutputPositions = new IntList();
     private final WindowMapSpec spec;
+    private int componentSlotMask;
 
     public WindowAccumulatorPlanBuilder(@NotNull WindowMapSpec spec) {
         this(spec, null);
@@ -144,6 +163,17 @@ public final class WindowAccumulatorPlanBuilder {
             @NotNull ColumnTypes recordTypes
     ) {
         ObjList<WindowAccumulatorPlanBuilder> builders = null;
+        // Per builder, the SELECT-list indexes bucketed onto it. Filling these on the one
+        // pass below is what keeps the second phase from re-scanning the whole SELECT list
+        // once per group: the membership question is answered where it is already being
+        // asked, and the answer is kept rather than asked again.
+        ObjList<IntList> builderMembers = null;
+        // Buckets the open builders by their spec's hash, so a function finds the group it
+        // belongs to without comparing its spec against every group already open. The hash
+        // narrows and isSameSpec still decides, so a collision costs a comparison the scan
+        // would have made anyway and can never join two groups that differ.
+        final IntList builderSlots = new IntList();
+        int builderSlotMask = 0;
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowMapSpec spec = i < specs.size() ? specs.getQuick(i) : null;
             if (spec == null || !(functions.getQuick(i) instanceof WindowFunction)) {
@@ -151,18 +181,48 @@ public final class WindowAccumulatorPlanBuilder {
             }
             if (builders == null) {
                 builders = new ObjList<>();
+                builderMembers = new ObjList<>();
+                builderSlots.setAll(MIN_COMPONENT_SLOTS, 0);
+                builderSlotMask = MIN_COMPONENT_SLOTS - 1;
             }
-            WindowAccumulatorPlanBuilder builder = null;
-            for (int j = 0, m = builders.size(); j < m; j++) {
-                if (builders.getQuick(j).spec.isSameSpec(spec)) {
-                    builder = builders.getQuick(j);
+            int builderIndex = -1;
+            int slot = spec.getSpecHash() & builderSlotMask;
+            for (; ; ) {
+                final int entry = builderSlots.getQuick(slot);
+                if (entry == 0) {
                     break;
                 }
+                if (builders.getQuick(entry - 1).spec.isSameSpec(spec)) {
+                    builderIndex = entry - 1;
+                    break;
+                }
+                slot = (slot + 1) & builderSlotMask;
             }
-            if (builder == null) {
-                builder = new WindowAccumulatorPlanBuilder(spec);
-                builders.add(builder);
+            if (builderIndex < 0) {
+                builderIndex = builders.size();
+                builders.add(new WindowAccumulatorPlanBuilder(spec));
+                builderMembers.add(new IntList());
+                // Grow before the table can pass half full, so the probe above stays short
+                // and always finds an empty slot to stop on.
+                if (builderSlots.size() < (builders.size() << 1)) {
+                    final int slotCount = Math.max(
+                            MIN_COMPONENT_SLOTS,
+                            Numbers.ceilPow2(builders.size() << 2)
+                    );
+                    builderSlots.setAll(slotCount, 0);
+                    builderSlotMask = slotCount - 1;
+                    for (int j = 0, m = builders.size(); j < m; j++) {
+                        int s = builders.getQuick(j).spec.getSpecHash() & builderSlotMask;
+                        while (builderSlots.getQuick(s) != 0) {
+                            s = (s + 1) & builderSlotMask;
+                        }
+                        builderSlots.setQuick(s, j + 1);
+                    }
+                } else {
+                    builderSlots.setQuick(slot, builderIndex + 1);
+                }
             }
+            builderMembers.getQuick(builderIndex).add(i);
         }
         if (builders == null) {
             return null;
@@ -175,14 +235,16 @@ public final class WindowAccumulatorPlanBuilder {
             // reading of that same row count - and the count may precede it in the SELECT
             // list. Everything else about a projection follows from the function alone.
             final WindowFunction rowCountHost = rowCountHost(functions, specs, builder.spec);
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                final WindowMapSpec spec = i < specs.size() ? specs.getQuick(i) : null;
-                if (spec == null
-                        || !builder.spec.isSameSpec(spec)
-                        || !(functions.getQuick(i) instanceof WindowFunction windowFunction)) {
-                    continue;
-                }
-                addAccumulatorProjection(builder, windowFunction, i, recordTypes, rowCountHost);
+            final IntList members = builderMembers.getQuick(b);
+            for (int m = 0, mn = members.size(); m < mn; m++) {
+                final int i = members.getQuick(m);
+                addAccumulatorProjection(
+                        builder,
+                        (WindowFunction) functions.getQuick(i),
+                        i,
+                        recordTypes,
+                        rowCountHost
+                );
             }
             final WindowAccumulatorPlan plan = builder.build(0);
             if (plan == null || plan.getStructuralReduction() < MIN_STRUCTURAL_REDUCTION) {
@@ -217,16 +279,11 @@ public final class WindowAccumulatorPlanBuilder {
             return false;
         }
         final boolean isGuarded = projectionKind == WindowAccumulatorProjection.PROJECTION_COUNT_PARTITION_KEY;
-        int componentIndex = -1;
-        for (int i = 0, n = components.size(); i < n; i++) {
-            if (components.getQuick(i).isSameIdentity(component)) {
-                componentIndex = i;
-                break;
-            }
-        }
+        int componentIndex = indexOfSameIdentity(component);
         if (componentIndex < 0) {
             componentIndex = components.size();
             components.add(component);
+            indexComponent(componentIndex);
             componentContributors.add(projectionFunctions.size());
             componentContributorOutputPositions.add(outputPosition);
             componentContributorIsGuarded.add(isGuarded ? 1 : 0);
@@ -259,6 +316,11 @@ public final class WindowAccumulatorPlanBuilder {
         }
         foldDerivedComponents();
         sortComponentsByIdentity();
+        // Both renumbered the components the slots point at, so the table is rebuilt rather
+        // than left describing the order they replaced. Nothing offers this builder a
+        // projection after build() today; rebuilding is what keeps that from being a
+        // silent requirement.
+        rebuildComponentSlots();
         final int componentCount = components.size();
         for (int i = 0; i < componentCount; i++) {
             if (componentContributorIsGuarded.getQuick(i) != 0) {
@@ -327,6 +389,32 @@ public final class WindowAccumulatorPlanBuilder {
                 candidate.getProjectionKind(),
                 outputPosition
         );
+    }
+
+    /**
+     * Hashes the three fields {@link WindowAccumulatorDescriptor#derivedSlotOffset} requires
+     * a pair to agree on before it will look at their families at all. Deliberately the
+     * method's precondition rather than its conclusion: a family pair added to its table
+     * still lands in the chain this builds, where a hash over the pairs themselves would
+     * have to be updated alongside it.
+     */
+    private static int foldChainHash(WindowAccumulatorDescriptor component) {
+        int h = component.getContributionKind();
+        h = h * 31 + component.getArgumentColumnIndex();
+        h = h * 31 + component.getArgumentColumnType();
+        return Hash.spread(h);
+    }
+
+    /**
+     * Hashes exactly the four fields {@link WindowAccumulatorDescriptor#isSameIdentity}
+     * compares, so two components the builder would merge cannot land in different slots.
+     */
+    private static int identityHash(WindowAccumulatorDescriptor component) {
+        int h = component.getFamily();
+        h = h * 31 + component.getContributionKind();
+        h = h * 31 + component.getArgumentColumnIndex();
+        h = h * 31 + component.getArgumentColumnType();
+        return Hash.spread(h);
     }
 
     /**
@@ -402,11 +490,30 @@ public final class WindowAccumulatorPlanBuilder {
         final int[] byDescendingWidth = orderByDescendingWidth();
         final int[] hostOf = new int[n];
         Arrays.fill(hostOf, -1);
+        // Chain the components by the triple derivedSlotOffset demands before it will
+        // consider a pair at all, so a guest looks at the components that could host it
+        // rather than at every one. A hash collision only widens a chain - the predicate
+        // below still decides every pair - so the answer is the one the full scan gave.
+        final int slotCount = Math.max(MIN_COMPONENT_SLOTS, Numbers.ceilPow2(n << 2));
+        final int mask = slotCount - 1;
+        final int[] chainHeads = new int[slotCount];
+        Arrays.fill(chainHeads, -1);
+        final int[] chainNext = new int[n];
+        for (int i = 0; i < n; i++) {
+            final int slot = foldChainHash(components.getQuick(i)) & mask;
+            chainNext[i] = chainHeads[slot];
+            chainHeads[slot] = i;
+        }
         for (int i = 0; i < n; i++) {
             final int guest = byDescendingWidth[i];
             final WindowAccumulatorDescriptor guestComponent = components.getQuick(guest);
             int host = -1;
-            for (int candidate = 0; candidate < n; candidate++) {
+            // The winner is the smallest by identity, and two components in this list never
+            // share one - they would have merged - so which order the chain visits them in
+            // does not change the answer.
+            for (int candidate = chainHeads[foldChainHash(guestComponent) & mask];
+                 candidate >= 0;
+                 candidate = chainNext[candidate]) {
                 final WindowAccumulatorDescriptor candidateComponent = components.getQuick(candidate);
                 if (candidate == guest
                         || hostOf[candidate] != -1
@@ -457,6 +564,47 @@ public final class WindowAccumulatorPlanBuilder {
     }
 
     /**
+     * Adds the last component to the slot table, growing it when it would pass half full so
+     * the linear probe stays short.
+     */
+    private void indexComponent(int componentIndex) {
+        if (componentSlots.size() < (components.size() << 1)) {
+            rebuildComponentSlots();
+            return;
+        }
+        insertComponentSlot(componentIndex);
+    }
+
+    /**
+     * The index of the component {@code component} would merge into, or {@code -1} when the
+     * builder holds none.
+     */
+    private int indexOfSameIdentity(WindowAccumulatorDescriptor component) {
+        if (componentSlots.size() == 0) {
+            return -1;
+        }
+        int slot = identityHash(component) & componentSlotMask;
+        for (; ; ) {
+            final int entry = componentSlots.getQuick(slot);
+            if (entry == 0) {
+                return -1;
+            }
+            if (components.getQuick(entry - 1).isSameIdentity(component)) {
+                return entry - 1;
+            }
+            slot = (slot + 1) & componentSlotMask;
+        }
+    }
+
+    private void insertComponentSlot(int componentIndex) {
+        int slot = identityHash(components.getQuick(componentIndex)) & componentSlotMask;
+        while (componentSlots.getQuick(slot) != 0) {
+            slot = (slot + 1) & componentSlotMask;
+        }
+        componentSlots.setQuick(slot, componentIndex + 1);
+    }
+
+    /**
      * Whether a projection just offered to component {@code componentIndex} should take the
      * contributor role from the one that holds it.
      * <p>
@@ -472,6 +620,16 @@ public final class WindowAccumulatorPlanBuilder {
             return isIncumbentGuarded;
         }
         return outputPosition < componentContributorOutputPositions.getQuick(componentIndex);
+    }
+
+    /**
+     * Whether {@code left} sorts ahead of {@code right} in the order {@code isByWidth}
+     * selects - the "less" the max-heap in {@link #sortComponentOrder} is built on.
+     */
+    private boolean isComponentLess(int left, int right, boolean isByWidth) {
+        return isByWidth
+                ? isWiderThan(left, right)
+                : components.getQuick(left).compareIdentity(components.getQuick(right)) < 0;
     }
 
     private boolean isWiderThan(int left, int right) {
@@ -492,22 +650,73 @@ public final class WindowAccumulatorPlanBuilder {
         for (int i = 0; i < n; i++) {
             order[i] = i;
         }
-        for (int i = 1; i < n; i++) {
-            final int candidate = order[i];
-            int j = i - 1;
-            while (j >= 0 && isWiderThan(candidate, order[j])) {
-                order[j + 1] = order[j];
-                j--;
-            }
-            order[j + 1] = candidate;
-        }
+        sortComponentOrder(order, true);
         return order;
     }
 
     /**
-     * Insertion-sorts the components by identity, carrying the per-component bookkeeping and
-     * every projection's component index with them. Insertion sort because a group holds a
-     * handful of components, and because it keeps the index rewrite in one place.
+     * Re-slots every component. Also the way the table is invalidated: the fold and the
+     * identity sort renumber {@link #components}, and the slots hold those numbers.
+     */
+    private void rebuildComponentSlots() {
+        final int slotCount = Math.max(MIN_COMPONENT_SLOTS, Numbers.ceilPow2(components.size() << 2));
+        componentSlots.setAll(slotCount, 0);
+        componentSlotMask = slotCount - 1;
+        for (int i = 0, n = components.size(); i < n; i++) {
+            insertComponentSlot(i);
+        }
+    }
+
+    private void siftComponentOrder(int[] order, int root, int size, boolean isByWidth) {
+        for (; ; ) {
+            int largest = root;
+            final int left = (root << 1) + 1;
+            if (left < size && isComponentLess(order[largest], order[left], isByWidth)) {
+                largest = left;
+            }
+            final int right = left + 1;
+            if (right < size && isComponentLess(order[largest], order[right], isByWidth)) {
+                largest = right;
+            }
+            if (largest == root) {
+                return;
+            }
+            final int top = order[root];
+            order[root] = order[largest];
+            order[largest] = top;
+            root = largest;
+        }
+    }
+
+    /**
+     * Heap-sorts {@code order} in place - descending by width when {@code isByWidth},
+     * ascending by identity otherwise.
+     * <p>
+     * Heap rather than insertion because a group holds as many components as the SELECT
+     * list has distinct arguments, which is not the handful the two call sites used to
+     * assume: a hundred-column projection over one window sorts a hundred of them, twice.
+     * In place and comparator-free, so the O(C log C) costs no allocation. Neither order
+     * needs stability to be deterministic - two components in this list never share an
+     * identity, because they would have been merged into one.
+     */
+    private void sortComponentOrder(int[] order, boolean isByWidth) {
+        final int n = order.length;
+        for (int root = (n >> 1) - 1; root >= 0; root--) {
+            siftComponentOrder(order, root, n, isByWidth);
+        }
+        for (int end = n - 1; end > 0; end--) {
+            final int top = order[0];
+            order[0] = order[end];
+            order[end] = top;
+            siftComponentOrder(order, 0, end, isByWidth);
+        }
+    }
+
+    /**
+     * Sorts the components by identity, carrying the per-component bookkeeping and every
+     * projection's component index with them. The index rewrite stays in one place, which
+     * is what the ordering is for: the plan's component numbering follows the identities
+     * rather than the SELECT list.
      */
     private void sortComponentsByIdentity() {
         final int n = components.size();
@@ -515,15 +724,7 @@ public final class WindowAccumulatorPlanBuilder {
         for (int i = 0; i < n; i++) {
             order[i] = i;
         }
-        for (int i = 1; i < n; i++) {
-            final int candidate = order[i];
-            int j = i - 1;
-            while (j >= 0 && components.getQuick(order[j]).compareIdentity(components.getQuick(candidate)) > 0) {
-                order[j + 1] = order[j];
-                j--;
-            }
-            order[j + 1] = candidate;
-        }
+        sortComponentOrder(order, false);
         final int[] newIndexOfOld = new int[n];
         final ObjList<WindowAccumulatorDescriptor> sorted = new ObjList<>(n);
         final IntList sortedContributors = new IntList(n);

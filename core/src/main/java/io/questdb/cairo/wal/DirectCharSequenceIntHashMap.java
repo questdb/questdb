@@ -36,7 +36,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -44,8 +43,13 @@ import java.io.Closeable;
  * HashMap mapping char sequences to integers using unmanaged memory to store keys, values and offsets.
  */
 public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
+    /**
+     * The key buffer's ceiling: keys are addressed by 32-bit word offsets, so the buffer
+     * cannot exceed four bytes per addressable word. An owner that wants the default passes
+     * this, and {@link #hasKeyCapacity} is what reports the exhaustion it implies.
+     */
+    public static final long MAX_KEY_BUFFER_CAPACITY = (long) Integer.MAX_VALUE << 2;
     public static final int NO_ENTRY_VALUE = -1;
-    private static final long MAX_KEY_BUFFER_CAPACITY = (long) Integer.MAX_VALUE << 2;
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final int NO_ENTRY_OFFSET = 0;
     private final double loadFactor;
@@ -138,7 +142,14 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         this(initialCapacity, loadFactor, noEntryValue, avgKeySize, memoryTag, MAX_KEY_BUFFER_CAPACITY);
     }
 
-    @TestOnly
+    /**
+     * @param maxKeyBufferCapacity the key buffer's ceiling, at most
+     *                             {@link #MAX_KEY_BUFFER_CAPACITY} and 4-byte aligned. Once
+     *                             reached, {@link #hasKeyCapacity} answers false and the
+     *                             owner decides what to do about it - {@code SymbolMapWriter}
+     *                             drops the map and falls back to its on-disk index. An owner
+     *                             that wants the maximum passes it explicitly
+     */
     public DirectCharSequenceIntHashMap(
             int initialCapacity,
             double loadFactor,

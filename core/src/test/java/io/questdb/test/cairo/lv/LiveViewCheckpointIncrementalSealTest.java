@@ -874,6 +874,133 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     @Test
+    public void testARepeatedKeyEntersTheDirtySetOncePerCadence() throws Exception {
+        // Four rows per boundary, as in the case below, so a commit smaller than that
+        // refreshes without sealing and the marks a cadence made stay readable.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        assertMemoryLeak(() -> {
+            createView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
+                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
+                            + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+
+                // Three rows, one key, inside one cadence. The dirty set names the key
+                // once, and the marks it costs are one rather than three: a repeat row
+                // reads the cadence off the anchor value processRow has already loaded
+                // and never serializes the key into the second map at all.
+                final long marksBefore = anchorWindow().getCheckpointDirtyMarkCount();
+                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0), "
+                        + "('2026-01-01T11:00:05.000000Z', 'acct-1', 2.0), "
+                        + "('2026-01-01T11:00:06.000000Z', 'acct-1', 3.0)", job);
+                Assert.assertEquals(1, anchorWindow().getCheckpointDirtyAnchorMapSize());
+                Assert.assertEquals(
+                        "a repeat row must not enter its key into the dirty set again",
+                        1,
+                        anchorWindow().getCheckpointDirtyMarkCount() - marksBefore
+                );
+
+                // The fourth row crosses the boundary and seals, which empties the dirty
+                // set. The cadence has to move on with it: a key whose anchor entry still
+                // carried the sealed cadence would skip its mark for good, and the next
+                // incremental seal would publish a root missing it.
+                commit("('2026-01-01T11:00:07.000000Z', 'acct-1', 4.0)", job);
+                assertDirtySetsClearedByPublish();
+
+                final long marksAfterSeal = anchorWindow().getCheckpointDirtyMarkCount();
+                commit("('2026-01-01T11:00:08.000000Z', 'acct-1', 5.0)", job);
+                Assert.assertEquals(
+                        "the first row of a new cadence must enter its key again",
+                        1,
+                        anchorWindow().getCheckpointDirtyAnchorMapSize()
+                );
+                Assert.assertEquals(
+                        1,
+                        anchorWindow().getCheckpointDirtyMarkCount() - marksAfterSeal
+                );
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            // ...and the key the second cadence named has to reach the durable root, which
+            // is what says the skipped marks cost the seal nothing.
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
+    public void testTheCadenceCounterWrappingStillNamesEveryTouchedKey() throws Exception {
+        // Four rows per boundary, as in the cases around it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        assertMemoryLeak(() -> {
+            createView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
+                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
+                            + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+
+                // Stamp acct-1 with the cadence the counter's turn will land back on. The
+                // counter is a SHORT and restarts at 1 when it turns over, so a key
+                // stamped 1 and then left alone is the one the turn collides with - and a
+                // key whose stamp matches skips its mark, which takes it out of the
+                // incremental root with nothing to say so.
+                anchorWindow().setCheckpointDirtyEpoch((short) 1);
+                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0)", job);
+                Assert.assertEquals(1, anchorWindow().getCheckpointDirtyAnchorMapSize());
+
+                // Stand the counter one cadence below its turn, which is what 32765 quiet
+                // cadences would have done, and cross the boundary on OTHER keys so
+                // acct-1's stamp is the stale one rather than a fresh one.
+                anchorWindow().setCheckpointDirtyEpoch(Short.MAX_VALUE);
+                commit("('2026-01-01T11:00:05.000000Z', 'acct-2', 2.0), "
+                        + "('2026-01-01T11:00:06.000000Z', 'acct-3', 3.0), "
+                        + "('2026-01-01T11:00:07.000000Z', 'acct-4', 4.0)", job);
+                assertDirtySetsClearedByPublish();
+
+                // The counter has turned back onto acct-1's stamp. Its next row must still
+                // be named.
+                final long marksAfterWrap = anchorWindow().getCheckpointDirtyMarkCount();
+                commit("('2026-01-01T11:00:08.000000Z', 'acct-1', 5.0)", job);
+                Assert.assertEquals(
+                        "a key stamped with the cadence the turn lands on must be named again",
+                        1,
+                        anchorWindow().getCheckpointDirtyAnchorMapSize()
+                );
+                Assert.assertEquals(
+                        1,
+                        anchorWindow().getCheckpointDirtyMarkCount() - marksAfterWrap
+                );
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            // The incremental root the wrapped cadence published has to hold both keys,
+            // which is the consequence a skipped mark would have destroyed.
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
     public void testTouchedKeysAreTheOnlyDirtyStateBetweenSeals() throws Exception {
         // Four rows per boundary, so a commit smaller than that refreshes without
         // sealing and leaves the dirty sets readable mid-cadence.

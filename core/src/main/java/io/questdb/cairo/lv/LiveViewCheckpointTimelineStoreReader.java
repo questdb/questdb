@@ -752,7 +752,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
      * key has an entry with this member's slots at identity, and what this walk adds is the
      * slice the root holds. Every entry is inline by construction: a member reached the
      * group through the compiler's inline-budget gate, so its root was written by
-     * {@code freezeGroupedFunction}, which mints no data pages.
+     * {@code freezeGroupedFunctions}, which mints no data pages.
      */
     private void restoreGroupedFunction(
             @NotNull LiveViewWindow anchorWindow,

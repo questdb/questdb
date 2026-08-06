@@ -44,6 +44,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -67,6 +68,14 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private static final int CACHE_INITIAL_CAPACITY = 64;
     private static final double CACHE_LOAD_FACTOR = 0.4;
     private static final Log LOG = LogFactory.getLog(SymbolMapWriter.class);
+    /**
+     * Key-buffer ceiling every cache built from here is given. The production value is the
+     * map's own maximum - the cache is bounded by the 32-bit word offsets it addresses keys
+     * with, not by anything this class decides - and a test lowers it to reach the
+     * exhaustion transition without writing the eight gigabytes of symbols it would
+     * otherwise take.
+     */
+    private static long cacheKeyBufferLimit = DirectCharSequenceIntHashMap.MAX_KEY_BUFFER_CAPACITY;
     private final MemoryMARW charMem;
     private final int columnIndex; // column index in the table writer metadata
     private final BitmapIndexWriter indexWriter;
@@ -193,6 +202,24 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return remapped;
     }
 
+    /**
+     * Sets the key-buffer ceiling every cache built after this call is given, and returns
+     * the previous one so a caller can put it back.
+     * <p>
+     * No production path calls this. What it reaches is the transition in
+     * {@link #lookupPutAndCache}: once the cache cannot hold another key it is freed
+     * outright and every later symbol goes to the on-disk index instead. That is a
+     * behaviour change under load - the writer keeps working and stops being accelerated -
+     * and the only alternative way to reach it is to write eight gigabytes of distinct
+     * symbols into one column - the ceiling is four bytes per addressable 32-bit word.
+     */
+    @TestOnly
+    public static long setCacheKeyBufferLimit(long limit) {
+        final long previous = cacheKeyBufferLimit;
+        cacheKeyBufferLimit = limit;
+        return previous;
+    }
+
     @Override
     public void close() {
         Misc.free(indexWriter);
@@ -235,6 +262,17 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     @Override
     public MemoryR getSymbolValuesMemory() {
         return charMem;
+    }
+
+    /**
+     * @return whether the value-to-key cache is still allocated. Not the same question as
+     * {@link #isCached()}, which reports what the column asked for: a column configured
+     * CACHE keeps that flag after the cache has exhausted its key buffer and been dropped,
+     * because the drop is an internal fallback rather than a change to the column
+     */
+    @TestOnly
+    public boolean isCacheAllocated() {
+        return cache != null;
     }
 
     public boolean isCached() {
@@ -541,7 +579,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                     CACHE_LOAD_FACTOR,
                     DirectCharSequenceIntHashMap.NO_ENTRY_VALUE,
                     CACHE_AVG_KEY_SIZE,
-                    MemoryTag.NATIVE_TABLE_WRITER
+                    MemoryTag.NATIVE_TABLE_WRITER,
+                    cacheKeyBufferLimit
             );
         }
         cachedFlag = newCacheFlag;

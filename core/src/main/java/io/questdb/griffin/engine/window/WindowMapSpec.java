@@ -119,6 +119,7 @@ public final class WindowMapSpec {
     private final int scanDirection;
     private final int timestampIndex;
     private final int timestampType;
+    private int specHash;
 
     private WindowMapSpec(
             IntList partitionColumnIndexes,
@@ -383,6 +384,42 @@ public final class WindowMapSpec {
      */
     public int getScanDirection() {
         return scanDirection;
+    }
+
+    /**
+     * A hash over exactly the fields {@link #isSameSpec} compares, so two specs that group
+     * together cannot land in different buckets. The two have to be changed together: a
+     * field added to one and not the other is the way a bucketed lookup starts splitting a
+     * group in half.
+     * <p>
+     * Every field it reads is final and no composite it reads is mutated after the
+     * constructor, so the value is computed once and kept in one field, {@code String}'s
+     * way rather than with a separate computed flag. A spec whose fields genuinely hash to
+     * zero recomputes on each call, which costs fourteen operations and can never be
+     * wrong; the two-field form would instead let another thread see the flag set before
+     * the value it guards.
+     */
+    public int getSpecHash() {
+        int h = specHash;
+        if (h == 0) {
+            h = framingMode;
+            h = h * 31 + Long.hashCode(rowsLo);
+            h = h * 31 + Long.hashCode(rowsHi);
+            h = h * 31 + exclusionKind;
+            h = h * 31 + (orderDismissed ? 1 : 0);
+            h = h * 31 + scanDirection;
+            h = h * 31 + passCount;
+            // Compared with == in isSameSpec, which for an enum is ordinal equality.
+            h = h * 31 + (pass1ScanDirection == null ? 0 : pass1ScanDirection.ordinal());
+            h = h * 31 + timestampIndex;
+            h = h * 31 + timestampType;
+            h = h * 31 + partitionKeyIdentity.hashCode();
+            h = h * 31 + keyColumnTypes.hashCode();
+            h = h * 31 + orderColumnIndexes.hashCode();
+            h = h * 31 + orderDirections.hashCode();
+            specHash = h;
+        }
+        return h;
     }
 
     public int getTimestampIndex() {

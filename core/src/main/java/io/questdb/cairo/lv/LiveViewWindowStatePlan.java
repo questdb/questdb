@@ -126,13 +126,17 @@ public final class LiveViewWindowStatePlan {
      */
     public static final int ANCHOR_STATE_OFFSET = 0;
     /**
-     * The window's own value slots - anchor value, initialized flag, tombstone - which
-     * lead the fused runtime map value exactly as the anchor value leads the fused
-     * scalar payload. {@code LiveViewWindow} defines those slots and reads this constant
-     * back for its value layout, so the two cannot disagree about where the components
-     * start.
+     * The window's own value slots - anchor value, initialized flag, tombstone and the
+     * cadence a key was last marked dirty in - which lead the fused runtime map value
+     * exactly as the anchor value leads the fused scalar payload. {@code LiveViewWindow}
+     * defines those slots and reads this constant back for its value layout, so the two
+     * cannot disagree about where the components start.
+     * <p>
+     * Runtime only. The durable payload is laid out from {@link #ANCHOR_STATE_OFFSET} and
+     * {@link #ANCHOR_STATE_BYTES} and carries no slot index, so a slot added here changes
+     * no encoding and no checkpoint written by another build.
      */
-    public static final int WINDOW_VALUE_SLOT_COUNT = 3;
+    public static final int WINDOW_VALUE_SLOT_COUNT = 4;
     private static final int WINDOW_IDENTITY_FORMAT_VERSION = 1;
     private static final int WINDOW_IDENTITY_MAGIC = 0x4c565749; // LVWI
     private final IntList componentSlotBases;

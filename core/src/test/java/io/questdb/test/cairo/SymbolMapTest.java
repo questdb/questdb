@@ -155,6 +155,120 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCacheExhaustionFallsBackToTheOnDiskIndex() throws Exception {
+        // The cache addresses its keys by 32-bit word offsets, so a column that interns
+        // enough distinct symbols exhausts it and the writer drops it and looks every later
+        // symbol up on disk instead. Reaching that in production takes gigabytes of
+        // symbols; the limit is lowered here so the transition itself can be walked over.
+        final long previousLimit = SymbolMapWriter.setCacheKeyBufferLimit(256);
+        try {
+            TestUtils.assertMemoryLeak(() -> {
+                try (Path path = new Path().of(configuration.getDbRoot())) {
+                    create(path, "x", 128, true);
+                    final int symbolCount;
+                    final int uncachedFrom;
+                    try (
+                            SymbolMapWriter writer = new SymbolMapWriter(
+                                    configuration,
+                                    path,
+                                    "x",
+                                    COLUMN_NAME_TXN_NONE,
+                                    0,
+                                    -1,
+                                    NOOP_COLLECTOR,
+                                    -1
+                            )
+                    ) {
+                        Assert.assertTrue("the column asked for a cache", writer.isCached());
+                        Assert.assertTrue("...and got one", writer.isCacheAllocated());
+
+                        // Intern until the key buffer runs out. Every symbol is distinct, so
+                        // each one takes buffer the previous ones did not.
+                        final ObjList<String> cached = new ObjList<>();
+                        int key = -1;
+                        while (writer.isCacheAllocated() && cached.size() < 64) {
+                            final String symbol = "cached-symbol-" + cached.size();
+                            Assert.assertEquals(++key, writer.put(symbol));
+                            cached.add(symbol);
+                        }
+                        Assert.assertFalse(
+                                "the cache must be dropped once its key buffer is exhausted,"
+                                        + " rather than grown past what it can address",
+                                writer.isCacheAllocated()
+                        );
+                        // A concrete floor rather than "more than one". The limit above admits
+                        // six of these symbols and the seventh is the one that trips the drop -
+                        // the list holds all seven, since the tripping symbol is interned too,
+                        // just through the fallback. A change to the cache's sizing that
+                        // collapsed the cached run to a single insert would otherwise leave this
+                        // case asserting the fallback over almost nothing.
+                        Assert.assertTrue(
+                                "the cached run was " + cached.size() + " symbols, too short to"
+                                        + " exercise the cache before the drop",
+                                cached.size() >= 5
+                        );
+                        // The column's own CACHE flag is untouched: dropping the accelerator
+                        // is the writer's business, not a change to what the column declared.
+                        Assert.assertTrue(writer.isCached());
+
+                        // Existing symbols: every key interned while the cache was alive must
+                        // still resolve to the same key, now off the on-disk index.
+                        for (int i = 0, n = cached.size(); i < n; i++) {
+                            Assert.assertEquals(
+                                    "symbol " + i + " changed key after the cache was dropped",
+                                    i,
+                                    writer.put(cached.getQuick(i))
+                            );
+                        }
+
+                        // New symbols: still appended, still sequential, still uncached.
+                        final int firstUncached = cached.size();
+                        for (int i = 0; i < 32; i++) {
+                            Assert.assertEquals(firstUncached + i, writer.put("uncached-symbol-" + i));
+                            Assert.assertFalse(writer.isCacheAllocated());
+                        }
+
+                        // Duplicates of both eras resolve to their own key rather than
+                        // appending a second copy.
+                        Assert.assertEquals(0, writer.put(cached.getQuick(0)));
+                        Assert.assertEquals(firstUncached, writer.put("uncached-symbol-0"));
+                        Assert.assertEquals(firstUncached + 31, writer.put("uncached-symbol-31"));
+                        Assert.assertEquals(firstUncached + 32, writer.getSymbolCount());
+                        Assert.assertEquals(SymbolTable.VALUE_IS_NULL, writer.put(null));
+                        symbolCount = writer.getSymbolCount();
+                        uncachedFrom = firstUncached;
+                    }
+
+                    // ...and the whole map reads back holding the values the writer was given,
+                    // in the keys it handed out. Reading each value back by name is what says
+                    // the fallback wrote the same thing the cache would: an identity
+                    // round-trip alone cannot tell a correct map from a consistently wrong one.
+                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(
+                            configuration,
+                            path,
+                            "x",
+                            COLUMN_NAME_TXN_NONE,
+                            symbolCount
+                    )) {
+                        Assert.assertEquals(symbolCount, reader.getSymbolCount());
+                        for (int i = 0; i < symbolCount; i++) {
+                            TestUtils.assertEquals(
+                                    i < uncachedFrom
+                                            ? "cached-symbol-" + i
+                                            : "uncached-symbol-" + (i - uncachedFrom),
+                                    reader.valueOf(i)
+                            );
+                            Assert.assertEquals(i, reader.keyOf(reader.valueOf(i)));
+                        }
+                    }
+                }
+            });
+        } finally {
+            SymbolMapWriter.setCacheKeyBufferLimit(previousLimit);
+        }
+    }
+
+    @Test
     public void testConcurrentSymbolTableAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int keys = 1000;

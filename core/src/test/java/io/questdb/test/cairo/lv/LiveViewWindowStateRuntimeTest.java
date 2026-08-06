@@ -332,6 +332,65 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAManyMemberSealWalksTheKeyDomainOncePerDisposition() throws Exception {
+        assertSealWalksOncePerDisposition(8);
+    }
+
+    @Test
+    public void testAMixedDispositionSealWalksTheKeyDomainOncePerBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            final int runtimeOnlyMembers = 4;
+            final int columns = createGroupPastTheLeafBudget(runtimeOnlyMembers);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertWideAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", columns);
+                insertWideAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-2", columns);
+                insertWideAccount(job, DAILY_ANCHOR + "09:00:20.000000Z", "acct-1", columns);
+
+                final LiveViewWindowStatePlan plan = window().getCheckpointWindowStatePlan();
+                Assert.assertNotNull(plan);
+                Assert.assertEquals(runtimeOnlyMembers, countRuntimeOnlyProjections(plan));
+
+                // One member is put back on a complete freeze while its siblings stay
+                // incremental. A state-format version bump does this in the field - it
+                // leaves one member without a predecessor root it can build on - and the
+                // disposition is what decides WHICH map the walk reads, so such a member
+                // cannot share its siblings' walk. The seal must then make two member
+                // walks rather than silently freezing one member off the wrong map.
+                final WindowFunction odd = runtimeOnlyMember(plan);
+                Assert.assertNotNull("the fixture must expose a runtime-only member", odd);
+                odd.requireCheckpointFullScan();
+
+                final long before = window().getCheckpointFreezeScanCount();
+                Assert.assertTrue("the fixture must already have sealed", before > 0);
+                insertWideAccount(job, DAILY_ANCHOR + "09:00:30.000000Z", "acct-1", columns);
+                final long walks = window().getCheckpointFreezeScanCount() - before;
+
+                Assert.assertEquals(
+                        "a boundary whose members disagree on the incremental disposition must"
+                                + " walk once for the window state and once per bucket",
+                        3,
+                        walks
+                );
+                assertWideViewMatchesRecompute(columns);
+
+                // Both buckets' roots have to come back, which is what says the split fanned
+                // each member's image into its own root rather than crossing them over.
+                final byte[] snapshot = snapshotWindow(window());
+                restoreHead();
+                Assert.assertArrayEquals(snapshot, snapshotWindow(window()));
+                assertWideViewMatchesRecompute(columns);
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testAOneMemberSealWalksTheKeyDomainOncePerDisposition() throws Exception {
+        assertSealWalksOncePerDisposition(1);
+    }
+
+    @Test
     public void testARuntimeOnlyMemberSealsAndRestoresThroughTheGroup() throws Exception {
         // The member the leaf budget leaves out of the manifest keeps a root of its own, and
         // that root is written out of the group's map and read back into it. What the case
@@ -401,6 +460,23 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 assertNoRefreshFaults("lv");
             }
         });
+    }
+
+    @Test
+    public void testAFusedIntKeyedAnchorMapStaysUnorderedAtTheServerEntryLimit() throws Exception {
+        // The fused shape at the server's 32: the window's own slots plus one
+        // (sum, count) component. This is the tightest shipping shape there is - it
+        // lands exactly on the limit - so it is the one a slot added to the window's
+        // prefix would push onto OrderedMap first.
+        assertAnchorMapImplementation(true, 32, "Unordered4Map");
+    }
+
+    @Test
+    public void testANarrowIntKeyedAnchorMapStaysUnorderedAtTheTighterEntryLimit() throws Exception {
+        // The unfused shape at 16, the embedded default and the tighter of the two the
+        // product ships, which the window's own value slots land exactly on. The test
+        // harness defaults to 32, so the case sets it rather than inheriting it.
+        assertAnchorMapImplementation(false, 16, "Unordered4Map");
     }
 
     @Test
@@ -1061,6 +1137,138 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Requires an anchored view's own partition map to land on {@code expected} at
+     * {@code maxEntrySize}.
+     * <p>
+     * {@code MapFactory} selects on the raw key-plus-value byte sum, so the window's own
+     * value slots are what stands between an anchored view and the slower
+     * {@code OrderedMap}: they are charged to every anchored view there is, ahead of any
+     * component. A slot added to that prefix is cheap in isolation and can still cost a
+     * whole map implementation, which no correctness test would notice - hence this one.
+     * <p>
+     * The configured limit is asserted beside the implementation, so neither half can pass
+     * for the other's reason: a limit that silently defaulted would make the implementation
+     * assertion vacuous.
+     */
+    private void assertAnchorMapImplementation(
+            boolean isFused,
+            int maxEntrySize,
+            String expected
+    ) throws Exception {
+        // Both settings are global and the harness only resets overrides between CLASSES,
+        // so they are put back before returning: every other case in this class asserts the
+        // fused shape, and a leaked kill switch would leave them compiling the other one.
+        setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, maxEntrySize);
+        if (!isFused) {
+            // The kill switch is what produces the unfused shape without changing the
+            // SQL, so both cases measure the same view and differ only in what the
+            // anchor map's value carries.
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
+        }
+        try {
+            assertAnchorMapImplementation0(isFused, maxEntrySize, expected);
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, (String) null);
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, (String) null);
+        }
+    }
+
+    private void assertAnchorMapImplementation0(
+            boolean isFused,
+            int maxEntrySize,
+            String expected
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tx (created_at timestamp, acct int, amt_txn double) "
+                    + "timestamp(created_at) partition by hour wal");
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, acct, sum(amt_txn) over w as cumulative_sum from tx "
+                    + "window w as (partition by acct order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                execute("insert into tx values ('" + DAILY_ANCHOR + "09:00:00.000000Z', 1, 1.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                Assert.assertEquals(
+                        "the limit the selection is made against must be the configured one",
+                        maxEntrySize,
+                        configuration.getSqlUnorderedMapMaxEntrySize()
+                );
+                Assert.assertEquals(
+                        "the fixture must build the shape this case is about",
+                        isFused,
+                        window().getCheckpointWindowStatePlan() != null
+                );
+                Assert.assertEquals(
+                        "the anchor map must keep the fastest implementation its shape allows",
+                        expected,
+                        window().getAnchorMapImplementation()
+                );
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    /**
+     * Seals a group carrying {@code runtimeOnlyMembers} members past the leaf budget and
+     * requires the boundary to walk the key domain a number of times that does not depend
+     * on how many those are.
+     * <p>
+     * Every runtime-only member reads the same keys out of the same map: the encoded key,
+     * the anchor probe an incremental freeze makes and the removal set are properties of
+     * the key, not of the member, and only the state image and the logical charge are each
+     * member's own. So one walk serves all of them, and the only thing that can force a
+     * second is a member that disagrees on whether the freeze may build on its own
+     * predecessor root - which decides which map is walked. This fixture has no such
+     * disagreement, so the count is the window state's own walk plus one.
+     * <p>
+     * Asserting the same number at two widths is the point. A per-member walk passes at one
+     * member and fails at eight, which is exactly the shape of the cost being removed.
+     */
+    private void assertSealWalksOncePerDisposition(int runtimeOnlyMembers) throws Exception {
+        assertMemoryLeak(() -> {
+            final int columns = createGroupPastTheLeafBudget(runtimeOnlyMembers);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertWideAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", columns);
+                insertWideAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-2", columns);
+
+                final LiveViewWindowStatePlan plan = window().getCheckpointWindowStatePlan();
+                Assert.assertNotNull(plan);
+                Assert.assertEquals(
+                        "the fixture must put exactly this many members past the leaf budget",
+                        runtimeOnlyMembers,
+                        countRuntimeOnlyProjections(plan)
+                );
+
+                // One commit is one boundary at this cadence, so the delta is one seal's.
+                final long before = window().getCheckpointFreezeScanCount();
+                Assert.assertTrue("the fixture must already have sealed", before > 0);
+                insertWideAccount(job, DAILY_ANCHOR + "09:00:20.000000Z", "acct-1", columns);
+                final long walks = window().getCheckpointFreezeScanCount() - before;
+
+                Assert.assertEquals(
+                        "one seal must walk the key domain twice - once for the window state and"
+                                + " once for the " + runtimeOnlyMembers + " runtime-only members that"
+                                + " share a disposition - rather than once per member",
+                        2,
+                        walks
+                );
+                assertWideViewMatchesRecompute(columns);
+
+                // The shared walk has to produce what the per-member ones did, so the roots
+                // it wrote must still restore into the same runtime byte for byte.
+                final byte[] before0 = snapshotWindow(window());
+                restoreHead();
+                Assert.assertArrayEquals(before0, snapshotWindow(window()));
+                assertWideViewMatchesRecompute(columns);
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    /**
      * Fills every one of a component's slots with a distinct value, freezes it twice -
      * once through the component descriptor's payload codec and once through the
      * contributing function's own state-page writer - and requires the two images to be
@@ -1308,6 +1516,31 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+    }
+
+    /**
+     * Builds a base table and an anchored view whose group carries exactly
+     * {@code runtimeOnlyMembers} members past the leaf payload budget, and so that many
+     * roots the seal has to write out of the group's own map.
+     *
+     * @return the SELECT list's width, which the recompute helpers key off
+     */
+    private int createGroupPastTheLeafBudget(int runtimeOnlyMembers) throws Exception {
+        final int fitting =
+                (LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES - Long.BYTES) / (Double.BYTES + Long.BYTES);
+        final int columns = fitting + runtimeOnlyMembers;
+        final StringBuilder ddl = new StringBuilder();
+        final StringBuilder projections = new StringBuilder();
+        for (int i = 1; i <= columns; i++) {
+            ddl.append(", q").append(i).append(" double");
+            projections.append(", sum(q").append(i).append(") over w as s").append(i);
+        }
+        execute("create table tx (created_at timestamp, cod_acct_no symbol" + ddl + ") "
+                + "timestamp(created_at) partition by hour wal");
+        execute("create live view lv flush every 100ms start from beginning as "
+                + "select created_at, cod_acct_no" + projections + " from tx "
+                + "window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+        return columns;
     }
 
     private void createBaseTable() throws Exception {

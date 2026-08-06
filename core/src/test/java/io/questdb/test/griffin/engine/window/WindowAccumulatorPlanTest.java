@@ -310,6 +310,74 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAWideGroupsLayoutFollowsTheIdentitiesRatherThanTheSelectList() throws Exception {
+        assertMemoryLeak(() -> {
+            // Wide enough that the compile's component lookup, containment fold and two
+            // orderings all run over a set no eyeball case reaches. Each of the three used
+            // to compare every component against every other, so this is the shape whose
+            // cost grew with the square of the SELECT list.
+            final int arguments = 48;
+            final StringBuilder ddl = new StringBuilder();
+            for (int i = 1; i <= arguments; i++) {
+                ddl.append(", q").append(i).append(" double");
+            }
+            execute("create table wide (ts timestamp, k symbol" + ddl + ") timestamp(ts) partition by day wal");
+
+            final StringBuilder forward = new StringBuilder();
+            final StringBuilder reverse = new StringBuilder();
+            for (int i = 1; i <= arguments; i++) {
+                forward.append(", sum(q").append(i).append(") over w, count(q").append(i).append(") over w");
+                reverse.insert(0, ", count(q" + i + ") over w").insert(0, ", sum(q" + i + ") over w");
+            }
+
+            final String[] layouts = new String[2];
+            assertPlans(
+                    "select ts" + forward + " from wide " + window(),
+                    plans -> layouts[0] = componentLayout(onlyPlan(plans))
+            );
+            assertPlans(
+                    "select ts" + reverse + " from wide " + window(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        layouts[1] = componentLayout(plan);
+                        // One component per argument: each count(qN) folds onto the counter
+                        // the sum(qN) beside it already keeps. Asserted here so a fold that
+                        // stopped finding its host - the hazard in bucketing candidates
+                        // rather than scanning them all - shows up as a component count
+                        // rather than only as a slower compile.
+                        Assert.assertEquals(arguments, plan.getComponentCount());
+                        Assert.assertEquals(2 * arguments, plan.getProjectionCount());
+                    }
+            );
+            // The layout is the identities' order, not the SELECT list's, so reversing the
+            // list must move nothing. Reversal is what a hash-bucketed lookup or a
+            // reordered sort would break: both are fed the components in the opposite
+            // sequence and have to reach the same numbering anyway.
+            Assert.assertEquals(layouts[0], layouts[1]);
+
+            // Every projection above named a distinct component, so the lookup answered
+            // "no" every time. avg(qN) beside sum(qN) is the other answer: it merges onto
+            // the component already there, so this run drives the lookup's hit path across
+            // the same widths - and past the point where the table has been re-slotted,
+            // which is where a merge that stopped being found would silently split a
+            // component in two.
+            final StringBuilder merging = new StringBuilder();
+            for (int i = 1; i <= arguments; i++) {
+                merging.append(", sum(q").append(i).append(") over w, avg(q").append(i).append(") over w");
+            }
+            assertPlans(
+                    "select ts" + merging + " from wide " + window(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(arguments, plan.getComponentCount());
+                        Assert.assertEquals(2 * arguments, plan.getProjectionCount());
+                        Assert.assertEquals(layouts[0], componentLayout(plan));
+                    }
+            );
+        });
+    }
+
+    @Test
     public void testSumAndCountOverDifferentArgumentsShareAMapButNotACounter() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();
