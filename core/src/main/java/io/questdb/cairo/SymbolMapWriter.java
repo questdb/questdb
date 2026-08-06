@@ -520,7 +520,17 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     private int lookupAndPut(CharSequence symbol, SymbolValueCountCollector countCollector) {
-        int hash = Hash.boundedHash(symbol, maxHash);
+        return lookupAndPut(symbol, Chars.hashCode(symbol), countCollector);
+    }
+
+    /**
+     * Looks {@code symbol} up in the on-disk index and appends it when it is absent, taking the
+     * symbol's {@link Chars#hashCode(CharSequence)} from a caller that has already computed it -
+     * the cached path probes its off-heap map with that same hash, so hashing the characters
+     * again here would repeat the whole scan of them on every cache miss.
+     */
+    private int lookupAndPut(CharSequence symbol, int hashCode, SymbolValueCountCollector countCollector) {
+        int hash = Hash.boundedHash(hashCode, maxHash);
         RowCursor cursor = indexWriter.getCursor(hash);
         while (cursor.hasNext()) {
             long offsetOffset = cursor.next();
@@ -537,9 +547,9 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             // exhausted, discard this optional accelerator and use the on-disk
             // index for this and subsequent lookups.
             cache = Misc.free(cache);
-            return lookupAndPut(symbol, countCollector);
+            return lookupAndPut(symbol, hashCode, countCollector);
         }
-        final int result = lookupAndPut(symbol, countCollector);
+        final int result = lookupAndPut(symbol, hashCode, countCollector);
         // Copies the chars into the map's own off-heap key buffer, so unlike the
         // on-heap predecessor this retains no String and leaves nothing for the
         // collector to trace. lookupAndPut runs first: if it throws, the slot the
