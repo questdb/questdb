@@ -43,10 +43,18 @@ import java.util.function.BiFunction;
 import java.util.function.Function;
 
 /**
- * Holds mat view definitions and dependency lists, i.e. mat view graph.
- * This object is always in-use, even when mat views are disabled or the node is a read-only replica.
+ * Holds mat view definitions and the dependency list shared across mat views and
+ * live views. The class is named for its broader responsibility: ordering
+ * dependents (mat views, live views) before their base tables for snapshot and
+ * recovery flows. Mat-view-specific storage ({@link MatViewDefinition} cache)
+ * still lives here; the same {@code dependentViewsByTableName} map is
+ * generic-by-{@link TableToken}, so live views participate in ordering without
+ * additional graph state.
+ * <p>
+ * This object is always in-use, even when mat views are disabled or the node is
+ * a read-only replica.
  */
-public class MatViewGraph implements Mutable {
+public class DependentViewGraph implements Mutable {
     private static final CarrierLocal<MatViewDefinition> tlDefinitionTask = new CarrierLocal<>();
     private static final CarrierLocal<LowerCaseCharSequenceHashSet> tlSeen = new CarrierLocal<>(LowerCaseCharSequenceHashSet::new);
     private static final CarrierLocal<ArrayDeque<CharSequence>> tlStack = new CarrierLocal<>(ArrayDeque::new);
@@ -56,9 +64,49 @@ public class MatViewGraph implements Mutable {
     private final ConcurrentHashMap<ViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
     private final BiFunction<CharSequence, MatViewDefinition, MatViewDefinition> updateDefinitionRef;
 
-    public MatViewGraph() {
+    public DependentViewGraph() {
         this.createDependencyList = name -> new ViewDependencyList();
         this.updateDefinitionRef = this::updateDefinition;
+    }
+
+    /**
+     * Registers a live view as a dependent of {@code baseTableName} so
+     * {@link #orderByDependentViews} sees the LV when ordering tables for
+     * checkpoint/snapshot flows. Unlike {@link #addView(MatViewDefinition)},
+     * this does not cache a definition - LV definitions live in
+     * {@code LiveViewRegistry}. The graph only needs the LV's token to honor
+     * the "dependents-before-bases" ordering rule.
+     * <p>
+     * Rejects circular dependencies via {@link #hasDependencyLoop} - the same
+     * walk used for mat views, so a mixed mat/live chain catches loops that
+     * cross view types.
+     */
+    public boolean addLiveView(@NotNull TableToken liveViewToken, @NotNull CharSequence baseTableName) {
+        synchronized (this) {
+            if (hasDependencyLoop(baseTableName, liveViewToken)) {
+                throw CairoException.critical(0)
+                        .put("circular dependency detected for live view [view=").put(liveViewToken.getTableName())
+                        .put(", baseTable=").put(baseTableName)
+                        .put(']');
+            }
+            final ViewDependencyList list = getOrCreateDependentViews(baseTableName);
+            final ObjList<TableToken> dependents = list.lockForWrite();
+            try {
+                // Idempotent, like addView's putIfAbsent: CREATE, the boot loader and the
+                // replica's reconstructLiveViewFiles all reach this for the same view.
+                // removeLiveView drops the first match only, so a duplicate entry would
+                // outlive the drop and keep the dead view in orderByDependentViews forever.
+                for (int i = 0, n = dependents.size(); i < n; i++) {
+                    if (Chars.equalsIgnoreCase(dependents.getQuick(i).getDirName(), liveViewToken.getDirName())) {
+                        return false;
+                    }
+                }
+                dependents.add(liveViewToken);
+            } finally {
+                list.unlockAfterWrite();
+            }
+        }
+        return true;
     }
 
     public boolean addView(MatViewDefinition viewDefinition) {
@@ -137,6 +185,28 @@ public class MatViewGraph implements Mutable {
         }
     }
 
+    /**
+     * Removes a live view from its base's dependent list. Idempotent - a
+     * missing entry is silently ignored, mirroring the mat-view path.
+     */
+    public void removeLiveView(@NotNull TableToken liveViewToken, @NotNull CharSequence baseTableName) {
+        final ViewDependencyList dependents = dependentViewsByTableName.get(baseTableName);
+        if (dependents == null) {
+            return;
+        }
+        final ObjList<TableToken> list = dependents.lockForWrite();
+        try {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                if (list.get(i).equals(liveViewToken)) {
+                    list.remove(i);
+                    break;
+                }
+            }
+        } finally {
+            dependents.unlockAfterWrite();
+        }
+    }
+
     public void removeView(TableToken viewToken) {
         final MatViewDefinition viewDefinition = definitionsByTableDirName.remove(viewToken.getDirName());
         if (viewDefinition != null) {
@@ -156,6 +226,32 @@ public class MatViewGraph implements Mutable {
                     dependentViews.unlockAfterWrite();
                 }
             }
+        }
+    }
+
+    /**
+     * Swaps a renamed live view's token in its base's dependent list. The graph caches no LV
+     * definition (see {@link #addLiveView}), so the base table name comes from the caller.
+     * {@link TableToken#equals} compares the table name too, so a list entry left on the old
+     * name would make {@link #removeLiveView} silently miss on a later drop and leave the LV
+     * dangling in {@link #orderByDependentViews} forever. Idempotent - a missing entry is
+     * ignored, mirroring the mat-view path.
+     */
+    public void updateLiveViewToken(@NotNull TableToken updatedToken, @NotNull CharSequence baseTableName) {
+        final ViewDependencyList dependents = dependentViewsByTableName.get(baseTableName);
+        if (dependents == null) {
+            return;
+        }
+        final ObjList<TableToken> list = dependents.lockForWrite();
+        try {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                if (Chars.equalsIgnoreCase(list.get(i).getDirName(), updatedToken.getDirName())) {
+                    list.set(i, updatedToken);
+                    return;
+                }
+            }
+        } finally {
+            dependents.unlockAfterWrite();
         }
     }
 

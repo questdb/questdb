@@ -48,6 +48,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -106,14 +107,14 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         fileName.clear();
         rnd = null;
         record = null;
+        // Close the Rust streaming writer and its decoded buffers before the
+        // cursor that owns the borrowed query memory tracker is unregistered.
+        task.clear();
         if (serialParquetExporter != null) {
             serialParquetExporter.clearExportResources();
         }
         cursor = Misc.free(cursor);
         pageFrameCursor = Misc.free(pageFrameCursor);
-        // Close the Rust streaming writer before freeing materializer buffers,
-        // since the writer may still reference pinned native buffers.
-        task.clear();
         materializer.clear();
         materializerColumnData.clear();
         firstParquetWriteCall = true;
@@ -152,6 +153,9 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     @Override
     public void close() {
+        // See clear(): task buffers must be destroyed while their borrowed
+        // query memory tracker is still owned by an open cursor.
+        task = Misc.free(task);
         if (serialParquetExporter != null) {
             serialParquetExporter.clearExportResources();
             serialParquetExporter = null;
@@ -159,8 +163,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
         pageFrameCursor = Misc.free(pageFrameCursor);
-        // Close the Rust streaming writer before freeing materializer buffers.
-        task = Misc.free(task);
         Misc.free(materializer);
         Misc.free(materializerColumnData);
         releaseExportEntry();
@@ -198,6 +200,13 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     public void setParquetTempTableCreate(CreateTableOperation createOp) {
         this.createParquetOp = createOp;
+    }
+
+    @TestOnly
+    public void setTaskAndCursorForTest(CopyExportRequestTask task, RecordCursor cursor) {
+        this.cursor = cursor;
+        this.task = Misc.free(this.task);
+        this.task = task;
     }
 
     private void releaseExportEntry() {

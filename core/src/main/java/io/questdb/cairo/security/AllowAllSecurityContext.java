@@ -159,6 +159,14 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeLiveViewCreate() {
+    }
+
+    @Override
+    public void authorizeLiveViewDrop(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeMatViewCreate() {
     }
 
