@@ -456,7 +456,7 @@ public class LogFactoryTest {
                 });
 
                 try {
-                    logger.info();
+                    logger.info().$();
                     Assert.fail("expected abandoned-record recovery to fail while appending EOL");
                 } catch (RuntimeException e) {
                     Assert.assertSame(eolFailure, e);
