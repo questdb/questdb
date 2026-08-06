@@ -100,12 +100,16 @@ public class LogAlertSocketTest {
     @Test
     public void testConstructorFreesInputBufferWhenOutputAllocationFails() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final int inBufferSize = 4 * 1024 * 1024;
-            final int outBufferSize = 16 * 1024 * 1024;
+            final int ambientBufferSize = 5 * 1024 * 1024;
+            final int inBufferSize = 1024;
+            final int outBufferSize = 512 * 1024 * 1024;
             final long memoryBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LOGGER);
             final long previousRssLimit = Unsafe.getRssMemLimit();
+            long ambientBufferPtr = 0;
             try {
-                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 2L * inBufferSize);
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 64L * 1024 * 1024);
+                // Reproduce an unrelated allocation changing the global counter after the limit snapshot.
+                ambientBufferPtr = Unsafe.malloc(ambientBufferSize, MemoryTag.NATIVE_DEFAULT);
                 try (LogAlertSocket ignored = new LogAlertSocket(
                         NetworkFacadeImpl.INSTANCE,
                         "",
@@ -119,11 +123,12 @@ public class LogAlertSocketTest {
                     Assert.fail("expected output buffer allocation to exceed the RSS limit");
                 } catch (CairoException e) {
                     Assert.assertTrue(e.isOutOfMemory());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "size=16777216");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "size=" + outBufferSize);
                 }
                 Assert.assertEquals(memoryBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LOGGER));
             } finally {
                 Unsafe.setRssMemLimit(previousRssLimit);
+                Unsafe.free(ambientBufferPtr, ambientBufferSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }

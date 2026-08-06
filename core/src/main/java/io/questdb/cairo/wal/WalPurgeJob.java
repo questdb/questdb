@@ -358,7 +358,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             onDiskWalIDSet.add(walId);
                             int maxSegmentLocked = walLocker.lockPurge(tableToken, walId);
 
-                            int trackerIdx = logic.trackDiscoveredWal(walId);
+                            final int trackerIdx;
+                            try {
+                                trackerIdx = logic.trackDiscoveredWal(walId);
+                            } catch (Throwable th) {
+                                try {
+                                    walLocker.unlockPurge(tableToken, walId);
+                                } catch (Throwable unlockFailure) {
+                                    if (unlockFailure != th) {
+                                        th.addSuppressed(unlockFailure);
+                                    }
+                                }
+                                throw th;
+                            }
                             boolean isTrackingComplete = false;
                             boolean walLocked = maxSegmentLocked == WalUtils.SEG_NONE_ID;
 
@@ -839,10 +851,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         public int trackDiscoveredWal(int walId) {
-            discovered.add(walId);
-            discovered.add(0); // placeholder for max segment locked
-            discovered.add(0); // placeholder for number of segments discovered
-            return discovered.size() - 2;
+            final int walIdIndex = discovered.size();
+            discovered.setPos(walIdIndex + 3);
+            discovered.setQuick(walIdIndex, walId);
+            discovered.setQuick(walIdIndex + 1, 0); // placeholder for max segment locked
+            discovered.setQuick(walIdIndex + 2, 0); // placeholder for number of segments discovered
+            return walIdIndex + 1;
         }
 
         public void trackNextToApplySegment(int walId, int segmentId) {
@@ -993,9 +1007,20 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         @Override
         public void unlock(int walId) {
             walLocker.unlockPurge(tableToken, walId);
-            LOG.debug().$("unlocked WAL [table=").$(tableToken)
-                    .$(", walId=").$(walId)
-                    .I$();
+            // The native unlock has already changed ownership. Keep diagnostic logging
+            // from making the caller retry that state transition.
+            try {
+                final LogRecord log = LOG.debug();
+                try {
+                    log.$("unlocked WAL [table=");
+                    tableToken.toSink(log);
+                    log.$(", walId=").$(walId)
+                            .$(']');
+                } finally {
+                    log.$();
+                }
+            } catch (Throwable ignored) {
+            }
         }
     }
 }

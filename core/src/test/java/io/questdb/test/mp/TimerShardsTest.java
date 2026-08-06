@@ -38,6 +38,7 @@ import java.lang.management.ThreadMXBean;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class TimerShardsTest {
     private static final Log LOG = LogFactory.getLog(TimerShardsTest.class);
@@ -108,6 +109,68 @@ public class TimerShardsTest {
         } finally {
             shards.shutdown();
         }
+    }
+
+    @Test
+    public void testInterruptedShutdownJoinsShardThreads() throws Exception {
+        final CountDownLatch expireStarted = new CountDownLatch(1);
+        final CountDownLatch releaseExpire = new CountDownLatch(1);
+        final CountDownLatch shutdownReturned = new CountDownLatch(1);
+        final AtomicReference<Throwable> shutdownFailure = new AtomicReference<>();
+        final AtomicReference<Thread> timerThread = new AtomicReference<>();
+        final TimerShards shards = new TimerShards(1, "test-interrupted-shutdown", LOG);
+        final AtomicReference<Boolean> isInterruptRestored = new AtomicReference<>();
+        final Thread shutdownThread = new Thread(() -> {
+            try {
+                Thread.currentThread().interrupt();
+                shards.shutdown();
+                isInterruptRestored.set(Thread.currentThread().isInterrupted());
+            } catch (Throwable th) {
+                shutdownFailure.set(th);
+            } finally {
+                shutdownReturned.countDown();
+            }
+        }, "test-interrupted-shutdown-caller");
+
+        try {
+            shards.start();
+            shards.register(new TestEntry(System.currentTimeMillis(), () -> {
+                timerThread.set(Thread.currentThread());
+                expireStarted.countDown();
+                TestUtils.await(releaseExpire);
+            }, null));
+            Assert.assertTrue("timer entry did not start", expireStarted.await(5, TimeUnit.SECONDS));
+
+            shutdownThread.start();
+            TestUtils.assertEventually(() -> {
+                if (shutdownReturned.getCount() == 0) {
+                    return;
+                }
+                Assert.assertFalse("shutdown thread has not consumed its interrupt", shutdownThread.isInterrupted());
+                boolean isJoining = false;
+                for (StackTraceElement frame : shutdownThread.getStackTrace()) {
+                    if (frame.getMethodName().equals("join")) {
+                        isJoining = true;
+                        break;
+                    }
+                }
+                Assert.assertTrue("shutdown thread did not wait for the shard", isJoining);
+            }, 5);
+            Assert.assertEquals("shutdown returned while the shard was active", 1, shutdownReturned.getCount());
+            Assert.assertTrue("shard stopped before the callback was released", timerThread.get().isAlive());
+        } finally {
+            releaseExpire.countDown();
+            shutdownThread.join(TimeUnit.SECONDS.toMillis(5));
+            final Thread timer = timerThread.get();
+            if (timer != null) {
+                timer.join(TimeUnit.SECONDS.toMillis(5));
+            }
+            shards.halt();
+        }
+        Assert.assertFalse("shutdown thread did not stop", shutdownThread.isAlive());
+        Assert.assertNull("shutdown failed", shutdownFailure.get());
+        Assert.assertEquals("shutdown did not restore the interrupt flag", Boolean.TRUE, isInterruptRestored.get());
+        Assert.assertFalse("shard thread did not stop", timerThread.get().isAlive());
     }
 
     @Test

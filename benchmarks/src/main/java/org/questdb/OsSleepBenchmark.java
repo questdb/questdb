@@ -84,7 +84,7 @@ public class OsSleepBenchmark {
     @Setup(Level.Trial)
     public void setup() {
         Os.init();
-        // Resolve the qdb_sleep_millis downcall handle outside the measured region.
+        // Warm the downcall MethodHandle invoker outside the measured region.
         Os.sleep(1);
     }
 

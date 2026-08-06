@@ -200,17 +200,33 @@ public final class TimerShards {
     }
 
     private void joinThreadsQuietly() {
-        for (int i = 0; i < threads.length; i++) {
-            Thread t = threads[i];
-            if (t == null) {
-                continue;
+        boolean isInterrupted = Thread.interrupted();
+        try {
+            for (int i = 0; i < threads.length; i++) {
+                Thread t = threads[i];
+                if (t == null) {
+                    continue;
+                }
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                while (t.isAlive()) {
+                    final long remaining = deadline - System.nanoTime();
+                    if (remaining <= 0) {
+                        break;
+                    }
+                    try {
+                        t.join(Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining)));
+                    } catch (InterruptedException ie) {
+                        isInterrupted = true;
+                    }
+                }
+                if (!t.isAlive()) {
+                    threads[i] = null;
+                }
             }
-            try {
-                t.join(2_000);
-            } catch (InterruptedException ie) {
+        } finally {
+            if (isInterrupted) {
                 Thread.currentThread().interrupt();
             }
-            threads[i] = null;
         }
     }
 

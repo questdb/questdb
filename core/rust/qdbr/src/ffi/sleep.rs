@@ -24,13 +24,11 @@
 
 //! Millisecond sleep backing `io.questdb.std.Os.sleep`.
 //!
-//! Java's `Thread.sleep` allocates a `jdk.internal.event.ThreadSleepEvent` on
-//! every call since JDK 24 -- `Thread.beforeSleep` constructs the event before
-//! testing `isEnabled()`, so the 40 bytes are paid even with JFR off wherever
-//! the JIT does not eliminate the dead event (the Graal JIT, C1 and the
-//! interpreter do not; a hot C2-compiled call site does). QuestDB's worker
-//! back-off ladder calls it often enough for that to dominate the young
-//! generation on GraalVM builds, hence this replacement.
+//! Some supported JVM/JIT combinations allocate a JFR event on every
+//! `Thread.sleep` call. QuestDB's worker back-off ladder calls it often enough
+//! for those allocations to dominate the young generation, so this native
+//! implementation avoids that Java path. `OsSleepBenchmark` tracks the detailed
+//! allocation and timing comparison.
 //!
 //! `Thread.interrupt` never signals a thread parked in a plain downcall, so a
 //! Java-interrupted caller sleeps the full duration; `OsTest.testSleepEnds`
@@ -54,9 +52,8 @@ pub extern "C" fn qdb_sleep_millis(millis: i64) {
 }
 
 fn sleep_millis(mut millis: u64, mut sleep: impl FnMut(Duration)) {
-    // Windows reserves u32::MAX milliseconds for INFINITE. The finite bound
-    // also keeps oversized durations out of platform sleep conversions that
-    // can panic inside this extern "C" call.
+    // Windows reserves u32::MAX milliseconds for INFINITE, so keep each chunk
+    // below it in case std::thread::sleep falls back to Sleep().
     while millis > 0 {
         let chunk_millis = millis.min(MAX_SLEEP_MILLIS);
         sleep(Duration::from_millis(chunk_millis));
@@ -96,12 +93,15 @@ mod tests {
     #[test]
     fn splits_long_sleeps_into_finite_chunks() {
         let mut chunks = Vec::new();
-        sleep_millis(u32::MAX as u64, |duration| chunks.push(duration));
+        sleep_millis(MAX_SLEEP_MILLIS, |duration| chunks.push(duration));
+        assert_eq!(chunks, [Duration::from_millis(MAX_SLEEP_MILLIS)]);
 
+        chunks.clear();
+        sleep_millis(MAX_SLEEP_MILLIS + 1, |duration| chunks.push(duration));
         assert_eq!(
             chunks,
             [
-                Duration::from_millis(u32::MAX as u64 - 1),
+                Duration::from_millis(MAX_SLEEP_MILLIS),
                 Duration::from_millis(1),
             ]
         );

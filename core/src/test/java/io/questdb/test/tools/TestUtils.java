@@ -24,7 +24,6 @@
 
 package io.questdb.test.tools;
 
-import com.sun.management.ThreadMXBean;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.ServerMain;
@@ -140,6 +139,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadMXBean;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Paths;
@@ -171,14 +171,14 @@ import static org.junit.Assert.assertNotNull;
 public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
-    private static boolean isThreadAllocationInitiallyEnabled;
-    private static boolean isThreadCpuTimeInitiallyEnabled;
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
     private static final Object threadAllocationLock = new Object();
-    private static int threadAllocationScopeCount;
     private static final Object threadCpuTimeLock = new Object();
-    private static int threadCpuTimeScopeCount;
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
+    private static boolean isThreadAllocationInitiallyEnabled;
+    private static boolean isThreadCpuTimeInitiallyEnabled;
+    private static int threadAllocationScopeCount;
+    private static int threadCpuTimeScopeCount;
 
     private TestUtils() {
     }
@@ -918,7 +918,7 @@ public final class TestUtils {
             BooleanSupplier releasedWait,
             Runnable release
     ) throws Exception {
-        try (ThreadMetricsScope<java.lang.management.ThreadMXBean> scope = threadCpuTimeScope()) {
+        try (ThreadMetricsScope<ThreadMXBean> scope = threadCpuTimeScope()) {
             assertInterruptedWaitTimesOutWithoutSpin0(
                     scope.getBean(),
                     operation,
@@ -1284,25 +1284,6 @@ public final class TestUtils {
             Assert.assertEquals(expectedInvalid, viewState.isInvalid());
         } finally {
             viewState.unlockAfterRead();
-        }
-    }
-
-    public static void assertWaitDoesNotSpin(
-            String operation,
-            Runnable wait,
-            @Nullable EventualCode waitReady,
-            Runnable release,
-            boolean isInitiallyInterrupted
-    ) throws Exception {
-        try (ThreadMetricsScope<java.lang.management.ThreadMXBean> scope = threadCpuTimeScope()) {
-            assertWaitDoesNotSpin0(
-                    scope.getBean(),
-                    operation,
-                    wait,
-                    waitReady,
-                    release,
-                    isInitiallyInterrupted
-            );
         }
     }
 
@@ -2348,8 +2329,8 @@ public final class TestUtils {
      * the JVM does not support it. Closing the returned scope restores the setting
      * that the first overlapping scope observed.
      */
-    public static ThreadMetricsScope<ThreadMXBean> threadAllocationScope() {
-        if (!(ManagementFactory.getThreadMXBean() instanceof ThreadMXBean bean)) {
+    public static ThreadMetricsScope<com.sun.management.ThreadMXBean> threadAllocationScope() {
+        if (!(ManagementFactory.getThreadMXBean() instanceof com.sun.management.ThreadMXBean bean)) {
             throw new AssumptionViolatedException("thread allocation measurement not supported");
         }
         Assume.assumeTrue("thread allocation measurement not supported", bean.isThreadAllocatedMemorySupported());
@@ -2371,8 +2352,8 @@ public final class TestUtils {
      * the JVM does not support it. Closing the returned scope restores the setting
      * that the first overlapping scope observed.
      */
-    public static ThreadMetricsScope<java.lang.management.ThreadMXBean> threadCpuTimeScope() {
-        java.lang.management.ThreadMXBean bean = ManagementFactory.getThreadMXBean();
+    public static ThreadMetricsScope<ThreadMXBean> threadCpuTimeScope() {
+        ThreadMXBean bean = ManagementFactory.getThreadMXBean();
         Assume.assumeTrue("current thread CPU time measurement not supported", bean.isCurrentThreadCpuTimeSupported());
         synchronized (threadCpuTimeLock) {
             if (threadCpuTimeScopeCount == 0) {
@@ -2645,7 +2626,7 @@ public final class TestUtils {
     }
 
     private static void assertInterruptedWaitTimesOutWithoutSpin0(
-            java.lang.management.ThreadMXBean bean,
+            ThreadMXBean bean,
             String operation,
             BooleanSupplier timedWait,
             BooleanSupplier releasedWait,
@@ -2754,8 +2735,27 @@ public final class TestUtils {
         }
     }
 
+    private static void assertWaitDoesNotSpin(
+            String operation,
+            Runnable wait,
+            @Nullable EventualCode waitReady,
+            Runnable release,
+            boolean isInitiallyInterrupted
+    ) throws Exception {
+        try (ThreadMetricsScope<ThreadMXBean> scope = threadCpuTimeScope()) {
+            assertWaitDoesNotSpin0(
+                    scope.getBean(),
+                    operation,
+                    wait,
+                    waitReady,
+                    release,
+                    isInitiallyInterrupted
+            );
+        }
+    }
+
     private static void assertWaitDoesNotSpin0(
-            java.lang.management.ThreadMXBean bean,
+            ThreadMXBean bean,
             String operation,
             Runnable wait,
             @Nullable EventualCode waitReady,
@@ -2800,7 +2800,7 @@ public final class TestUtils {
             if (waitReady != null) {
                 assertEventually(waitReady, 5);
             }
-            Os.sleep(500);
+            Thread.sleep(500);
             Assert.assertFalse(operation + " returned before release", isWaitComplete.get());
         } finally {
             try {
@@ -3002,7 +3002,7 @@ public final class TestUtils {
         return sink.toString();
     }
 
-    private static void releaseThreadAllocationScope(ThreadMXBean bean) {
+    private static void releaseThreadAllocationScope(com.sun.management.ThreadMXBean bean) {
         synchronized (threadAllocationLock) {
             assert threadAllocationScopeCount > 0;
             if (--threadAllocationScopeCount == 0 && !isThreadAllocationInitiallyEnabled) {
@@ -3011,7 +3011,7 @@ public final class TestUtils {
         }
     }
 
-    private static void releaseThreadCpuTimeScope(java.lang.management.ThreadMXBean bean) {
+    private static void releaseThreadCpuTimeScope(ThreadMXBean bean) {
         synchronized (threadCpuTimeLock) {
             assert threadCpuTimeScopeCount > 0;
             if (--threadCpuTimeScopeCount == 0 && !isThreadCpuTimeInitiallyEnabled) {
@@ -3221,10 +3221,10 @@ public final class TestUtils {
         }
     }
 
-    public static final class ThreadMetricsScope<T extends java.lang.management.ThreadMXBean> implements AutoCloseable {
+    public static final class ThreadMetricsScope<T extends ThreadMXBean> implements AutoCloseable {
         private final T bean;
-        private boolean isClosed;
         private final Runnable release;
+        private boolean isClosed;
 
         private ThreadMetricsScope(T bean, Runnable release) {
             this.bean = bean;

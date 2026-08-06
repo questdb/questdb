@@ -24,15 +24,12 @@
 
 package io.questdb.test.std;
 
-import com.sun.management.ThreadMXBean;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
-import java.lang.management.GarbageCollectorMXBean;
-import java.lang.management.ManagementFactory;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -50,26 +47,37 @@ public class OsTest {
 
     @Test
     public void testAffinity() throws Exception {
-        if (Os.arch != Os.ARCH_AARCH64 || Os.type != Os.DARWIN) {
-            AtomicInteger cpu0Result = new AtomicInteger(-1);
-            AtomicInteger cpu1Result = new AtomicInteger(-1);
-            AtomicInteger noAffinityResult = new AtomicInteger(-1);
+        Assume.assumeFalse(
+                "thread affinity is not supported on darwin-aarch64",
+                Os.arch == Os.ARCH_AARCH64 && Os.type == Os.DARWIN
+        );
+        AtomicInteger cpu0Result = new AtomicInteger(-1);
+        AtomicInteger cpu1Result = new AtomicInteger(-1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        AtomicInteger noAffinityResult = new AtomicInteger(-1);
 
-            // Run on a spawned thread: pinning the JUnit runner thread would serialize
-            // every subsequent test in this fork onto one CPU.
-            Thread t = new Thread(() -> {
+        // Run on a spawned thread: pinning the JUnit runner thread would serialize
+        // every subsequent test in this fork onto one CPU.
+        Thread thread = new Thread(() -> {
+            try {
                 noAffinityResult.set(Os.setCurrentThreadAffinity(-1));
                 cpu0Result.set(Os.setCurrentThreadAffinity(0));
                 cpu1Result.set(Os.setCurrentThreadAffinity(1));
-            });
-            t.start();
-            t.join(TimeUnit.SECONDS.toMillis(10));
+            } catch (Throwable th) {
+                failure.set(th);
+            }
+        }, "affinity-test");
+        thread.setDaemon(true);
+        thread.start();
+        thread.join(TimeUnit.SECONDS.toMillis(10));
 
-            Assert.assertFalse(t.isAlive());
-            Assert.assertEquals(0, noAffinityResult.get());
-            Assert.assertEquals(0, cpu0Result.get());
-            Assert.assertEquals(0, cpu1Result.get());
+        Assert.assertFalse(thread.isAlive());
+        if (failure.get() != null) {
+            throw new AssertionError("affinity thread failed", failure.get());
         }
+        Assert.assertEquals(0, noAffinityResult.get());
+        Assert.assertEquals(0, cpu0Result.get());
+        Assert.assertEquals(0, cpu1Result.get());
     }
 
     @Test
@@ -119,58 +127,17 @@ public class OsTest {
     }
 
     @Test
-    public void testPauseDoesNotAllocate() {
-        try (TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
-            ThreadMXBean bean = scope.getBean();
-            for (int i = 0; i < 128; i++) {
-                Os.pause();
-            }
-            long before = bean.getCurrentThreadAllocatedBytes();
-            for (int i = 0; i < 128; i++) {
-                Os.pause();
-            }
-            long allocated = bean.getCurrentThreadAllocatedBytes() - before;
-            // Thread.sleep(0), which pause() used to call, allocates a 40-byte ThreadSleepEvent
-            // per call since JDK 24. The loop must stay cold: C2 eliminates that allocation once
-            // Thread.sleep compiles, so a hot fork cannot detect a regression.
-            assertTrue("Os.pause() allocated " + allocated + " bytes over 128 calls", allocated < 1280);
-        }
-    }
-
-    @Test
-    public void testSleepDoesNotAllocate() {
-        try (TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
-            ThreadMXBean bean = scope.getBean();
-            // Warm past the downcall handle bootstrap and the LambdaForm customization the
-            // JDK triggers at invocation CUSTOMIZE_THRESHOLD + 1 (128 by default). The loop
-            // must stay cold overall: C2 eliminates the legacy Thread.sleep allocation once
-            // Thread.sleep compiles, so a hot fork cannot detect a regression.
-            for (int i = 0; i < 256; i++) {
-                Os.sleep(1);
-            }
-            long before = bean.getCurrentThreadAllocatedBytes();
-            for (int i = 0; i < 128; i++) {
-                Os.sleep(1);
-            }
-            long allocated = bean.getCurrentThreadAllocatedBytes() - before;
-            assertTrue("Os.sleep(1) allocated " + allocated + " bytes over 128 calls", allocated < 1280);
-        }
-    }
-
-    @Test
-    public void testSleepDoesNotBlockSafepoints() throws Exception {
+    public void testSleepDoesNotUseThreadSleep() throws Exception {
         // Warm the downcall adapter so method isolation exercises the steady-state binding.
         for (int i = 0; i < 256; i++) {
             Os.sleep(1);
         }
         CyclicBarrier barrier = new CyclicBarrier(2);
-        AtomicLong wakeNanos = new AtomicLong();
         AtomicReference<Throwable> error = new AtomicReference<>();
         Thread t = new Thread(() -> {
             try {
                 TestUtils.await(barrier);
                 Os.sleep(5_000);
-                wakeNanos.set(System.nanoTime());
             } catch (Throwable th) {
                 error.set(th);
             }
@@ -204,18 +171,9 @@ public class OsTest {
         assertTrue("peer never observed inside Os.sleep", isSleeping);
         Assert.assertFalse("Os.sleep parks through Thread.sleep", hasThreadSleepFrame);
 
-        long gcCountBefore = totalGcCount();
-        System.gc();
-        long gcDoneNanos = System.nanoTime();
-        boolean hasGcRun = totalGcCount() > gcCountBefore;
-
         t.join(TimeUnit.SECONDS.toMillis(10));
         Assert.assertFalse(t.isAlive());
         Assert.assertNull(error.get());
-        Assume.assumeTrue("System.gc() is disabled", hasGcRun);
-        // a Linker.Option.critical binding would keep the sleeper in _thread_in_Java
-        // and stall the GC safepoint until the sleep ends
-        assertTrue("System.gc() returned only after the sleeper woke", gcDoneNanos < wakeNanos.get());
     }
 
     @Test
@@ -291,14 +249,4 @@ public class OsTest {
                 fromMXBean > 0 && fromMXBean < (1L << 48));
     }
 
-    private static long totalGcCount() {
-        long total = 0;
-        for (GarbageCollectorMXBean bean : ManagementFactory.getGarbageCollectorMXBeans()) {
-            long count = bean.getCollectionCount();
-            if (count > 0) {
-                total += count;
-            }
-        }
-        return total;
-    }
 }

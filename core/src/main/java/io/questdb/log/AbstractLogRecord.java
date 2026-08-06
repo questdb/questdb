@@ -163,6 +163,7 @@ abstract class AbstractLogRecord implements Log {
         try {
             logError = rec.detectAbandonedLogRecord();
         } catch (Throwable th) {
+            rec.isLogRecordInProgress = false;
             // next()/nextBully() reserved this cursor before recovery. Publish an
             // empty record so consumers can advance past the abandoned attempt.
             final LogRecordUtf8Sink sink = ring.get(cursor);
@@ -186,6 +187,10 @@ abstract class AbstractLogRecord implements Log {
             seq.done(cursor);
             throw logError;
         }
+        // detectAbandonedLogRecord() released the previous slot and cleared this
+        // flag. Production continues with the newly reserved record, so track it
+        // just like the clean-record branch does.
+        rec.isLogRecordInProgress = true;
         return rec;
     }
 

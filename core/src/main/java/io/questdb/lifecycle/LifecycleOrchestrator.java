@@ -136,6 +136,10 @@ public class LifecycleOrchestrator implements QuietCloseable {
 
     @Override
     public void close() {
+        // Capture the entry interrupt and accumulate interrupts consumed by the bounded
+        // executor and boot waits, so neither rendezvous loses its safety budget. Restore
+        // the consumed status after the stop attempts. The base executor wait and boot join
+        // each have an independent 30-second budget; component stops can add their own.
         boolean isInterrupted = Thread.interrupted();
         try {
             if (!closed.compareAndSet(false, true)) {
@@ -179,19 +183,23 @@ public class LifecycleOrchestrator implements QuietCloseable {
             // Never self-join: run() calls close() on its own thread on a boot-essential failure.
             final Thread boot = bootThread;
             if (boot != null && boot != Thread.currentThread() && boot.isAlive()) {
-                try {
-                    boot.join(BOOT_JOIN_BUDGET_MS);
-                    if (boot.isAlive()) {
-                        injectedLog.error()
-                                .$("boot thread did not unwind within the close budget; proceeding to the "
-                                        + "reverse-topo stop loop (a late-woken start() is refused by the "
-                                        + "engine's closing guards, not freed under)").I$();
+                final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(BOOT_JOIN_BUDGET_MS);
+                while (boot.isAlive()) {
+                    final long remaining = deadline - System.nanoTime();
+                    if (remaining <= 0) {
+                        break;
                     }
-                } catch (InterruptedException e) {
-                    isInterrupted = true;
+                    try {
+                        TimeUnit.NANOSECONDS.timedJoin(boot, remaining);
+                    } catch (InterruptedException e) {
+                        isInterrupted = true;
+                    }
+                }
+                if (boot.isAlive()) {
                     injectedLog.error()
-                            .$("interrupted while joining the boot thread on close; proceeding to the "
-                                    + "reverse-topo stop loop").I$();
+                            .$("boot thread did not unwind within the close budget; proceeding to the "
+                                    + "reverse-topo stop loop (a late-woken start() is refused by the "
+                                    + "engine's closing guards, not freed under)").I$();
                 }
             }
             // reverseTopoOrder is null if validateAndComputeOrder() never ran (or threw before
@@ -365,11 +373,29 @@ public class LifecycleOrchestrator implements QuietCloseable {
      * timed out, in which case {@link #close()} logs and proceeds to the stop loop.
      */
     protected boolean awaitInFlightWork() {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        boolean isInterrupted = false;
         try {
-            return executor.awaitTermination(30, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
+            while (!executor.isTerminated()) {
+                final long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return false;
+                }
+                try {
+                    if (executor.awaitTermination(remaining, TimeUnit.NANOSECONDS)) {
+                        return true;
+                    }
+                } catch (InterruptedException e) {
+                    // Preserve the close budget, but do not let an interrupt move teardown
+                    // ahead of work that may still access component-owned resources.
+                    isInterrupted = true;
+                }
+            }
+            return true;
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 

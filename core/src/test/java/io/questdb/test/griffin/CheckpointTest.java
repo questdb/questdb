@@ -112,11 +112,15 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.file.FileVisitResult;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -936,6 +940,48 @@ public class CheckpointTest extends AbstractCairoTest {
             Assert.assertTrue("expected CairoException, got: " + th, th instanceof CairoException);
             TestUtils.assertContains(((CairoException) th).getFlyweightMessage(), "parallel task interrupted");
             Assert.assertTrue("the draining thread's interrupt status must be restored", interruptStatusRestored.get());
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreDrainPreInterruptedFutureCompletesAndRestoresStatus() throws Exception {
+        assertMemoryLeak(() -> {
+            final SOCountDownLatch getEntered = new SOCountDownLatch(1);
+            final FutureTask<Void> task = new FutureTask<>(() -> null) {
+                @Override
+                public Void get() throws InterruptedException, ExecutionException {
+                    getEntered.countDown();
+                    return super.get();
+                }
+            };
+            final Thread completer = new Thread(() -> {
+                getEntered.await();
+                task.run();
+            }, "restore-pre-interrupt-completer");
+            completer.start();
+
+            boolean isInterruptRestored = false;
+            try (TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)) {
+                final Field futuresField = TableSnapshotRestore.class.getDeclaredField("futures");
+                futuresField.setAccessible(true);
+                @SuppressWarnings("unchecked")
+                final ObjList<Future<?>> futures = (ObjList<Future<?>>) futuresField.get(restoreAgent);
+                futures.add(task);
+
+                try {
+                    Thread.currentThread().interrupt();
+                    restoreAgent.finalizeParallelTasks();
+                    isInterruptRestored = Thread.currentThread().isInterrupted();
+                } finally {
+                    Thread.interrupted();
+                }
+            } finally {
+                task.run();
+                completer.join(TimeUnit.SECONDS.toMillis(5));
+            }
+
+            Assert.assertFalse("future completer did not stop", completer.isAlive());
+            Assert.assertTrue("finalizeParallelTasks did not restore interrupt status", isInterruptRestored);
         });
     }
 

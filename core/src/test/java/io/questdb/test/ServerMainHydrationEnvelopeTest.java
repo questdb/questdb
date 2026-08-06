@@ -32,11 +32,14 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.view.ViewCompilerExecutionContext;
 import io.questdb.cairo.wal.QdbrWalLocker;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -69,6 +72,65 @@ public class ServerMainHydrationEnvelopeTest extends AbstractBootstrapTest {
                 PropertyKey.VIEW_COMPILER_WORKER_COUNT + "=0"
         ));
         dbPath.parent().$();
+    }
+
+    @Test
+    public void awaitStartupWaitsForHydrationWhenInterrupted() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean awaitReturned = new AtomicBoolean();
+            final AtomicBoolean interruptRestored = new AtomicBoolean();
+            final SOCountDownLatch hydrationStarted = new SOCountDownLatch(1);
+            final SOCountDownLatch releaseHydration = new SOCountDownLatch(1);
+
+            Bootstrap bootstrap = new Bootstrap(new PropBootstrapConfiguration(), getServerMainArgs()) {
+                @Override
+                public CairoEngine newCairoEngine() {
+                    CairoConfiguration cfg = getConfiguration().getCairoConfiguration();
+                    return new CairoEngine(cfg, new QdbrWalLocker(), true) {
+                        @Override
+                        public void hydrateRecentWriteTracker() {
+                            hydrationStarted.countDown();
+                            releaseHydration.await();
+                        }
+                    };
+                }
+            };
+
+            ServerMain serverMain = new ServerMain(bootstrap);
+            Thread awaitStartupThread = null;
+            try {
+                serverMain.start(false);
+                Assert.assertTrue(
+                        "metadata hydration did not start",
+                        hydrationStarted.await(TimeUnit.SECONDS.toNanos(5))
+                );
+
+                awaitStartupThread = new Thread(() -> {
+                    Thread.currentThread().interrupt();
+                    serverMain.awaitStartup();
+                    interruptRestored.set(Thread.currentThread().isInterrupted());
+                    awaitReturned.set(true);
+                }, "await-startup-test");
+                awaitStartupThread.start();
+
+                final Thread thread = awaitStartupThread;
+                TestUtils.assertEventually(
+                        () -> Assert.assertTrue(awaitReturned.get() || thread.getState() == Thread.State.WAITING),
+                        5
+                );
+                Assert.assertFalse("awaitStartup returned before hydration completed", awaitReturned.get());
+
+                releaseHydration.countDown();
+                awaitStartupThread.join();
+                Assert.assertTrue("awaitStartup did not restore interrupt status", interruptRestored.get());
+            } finally {
+                releaseHydration.countDown();
+                if (awaitStartupThread != null) {
+                    awaitStartupThread.join();
+                }
+                serverMain.close();
+            }
+        });
     }
 
     @Test

@@ -3006,11 +3006,10 @@ public class ConcurrentLongHashMap<V> implements Serializable {
                             waiter = Thread.currentThread();
                         }
                     } else if (isWaiting) {
+                        // The bin monitor admits one writer, so only this thread can own WAITER.
                         LockSupport.park(this);
                         // Consume interrupts so the next park can block; restore the flag on exit.
                         isInterrupted |= Thread.interrupted();
-                    } else {
-                        Thread.onSpinWait();
                     }
                 }
             } finally {
@@ -3024,6 +3023,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
          * Acquires write lock for tree restructuring.
          */
         private void lockRoot() {
+            assert Thread.holdsLock(this) : "TreeBin writer must hold the bin monitor";
             if (!Unsafe.cas(this, LOCKSTATE, 0, WRITER))
                 contendedLock(); // offload to separate method
         }

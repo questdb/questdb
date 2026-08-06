@@ -7960,7 +7960,7 @@ public class IODispatcherTest extends AbstractTest {
                             do {
                                 dispatcher.run();
                                 dispatcher.processIOQueue(requestProcessor);
-                                LockSupport.parkNanos(1);
+                                Os.pause();
                             } while (!isInterrupted());
                         } finally {
                             Unsafe.free(smem, 1, MemoryTag.NATIVE_DEFAULT);

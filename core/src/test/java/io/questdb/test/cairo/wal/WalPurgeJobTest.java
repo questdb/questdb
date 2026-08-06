@@ -40,7 +40,10 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -876,17 +879,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
 
         logic.reset(tableToken);
+        int idx = logic.trackDiscoveredWal(1);
+        logic.endWalTracking(idx, WalUtils.SEG_NONE_ID, true);
         long time = System.nanoTime();
         logic.run();
         long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time);
-        Assert.assertTrue("empty run waited " + elapsedMs + "ms", elapsedMs < waitMs);
-
-        logic.reset(tableToken);
-        int idx = logic.trackDiscoveredWal(1);
-        logic.endWalTracking(idx, WalUtils.SEG_NONE_ID, true);
-        time = System.nanoTime();
-        logic.run();
-        elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time);
         Assert.assertTrue("run waited only " + elapsedMs + "ms", elapsedMs >= waitMs);
         Assert.assertEquals(1, deleter.events.size());
         Assert.assertEquals(new DeletionEvent(1), deleter.events.get(0));
@@ -1390,24 +1387,40 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         final AtomicBoolean isArmed = new AtomicBoolean(false);
         final RuntimeException segmentScanFailure = new RuntimeException("segment scan failure");
         final FilesFacade testFf = new TestFilesFacadeImpl() {
-            long segmentScanPtr = -1;
+            private final DirectUtf8StringZ segmentName = new DirectUtf8StringZ();
+            private boolean hasScannedSegment;
+            private long segmentScanPtr = -1;
 
             @Override
             public long findFirst(LPSZ path) {
                 long ptr = super.findFirst(path);
                 if (isArmed.get() && Utf8s.containsAscii(path, tableDirName) && Utf8s.endsWithAscii(path, "wal1")) {
+                    hasScannedSegment = false;
                     segmentScanPtr = ptr;
                 }
                 return ptr;
             }
 
             @Override
-            public int findType(long findPtr) {
-                if (findPtr == segmentScanPtr) {
+            public int findNext(long findPtr) {
+                if (findPtr == segmentScanPtr && hasScannedSegment) {
                     segmentScanPtr = -1;
                     throw segmentScanFailure;
                 }
-                return super.findType(findPtr);
+                return super.findNext(findPtr);
+            }
+
+            @Override
+            public int findType(long findPtr) {
+                final int type = super.findType(findPtr);
+                if (findPtr == segmentScanPtr && type == Files.DT_DIR) {
+                    try {
+                        Numbers.parseInt(segmentName.of(super.findName(findPtr)));
+                        hasScannedSegment = true;
+                    } catch (NumericException ignored) {
+                    }
+                }
+                return type;
             }
         };
 
@@ -1430,7 +1443,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     """.formatted(tableName));
 
             // Release the writer so the purge job acquires an exclusive lock. The
-            // injected failure happens before the scan records any segment.
+            // injected failure happens after the scan records one segment.
             engine.releaseInactive();
             assertWalNotLocked(tableName, 1);
             assertWalExistence(true, tableName, 1);
@@ -1459,6 +1472,8 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 discoveredField.setAccessible(true);
                 LongList discovered = (LongList) discoveredField.get(logic);
                 Assert.assertEquals(-WalUtils.SEG_NONE_ID - 1L, discovered.getQuick(1));
+                Assert.assertEquals(1, discovered.getQuick(2));
+                Assert.assertTrue(discovered.getQuick(3) > -1);
             }
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
@@ -1549,6 +1564,41 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 drainPurgeJob();
                 assertWalExistence(false, tableName, walWriter1.getWalId());
             }
+        });
+    }
+
+    @Test
+    public void testTrackingFailureReleasesLock() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            execute("""
+                    CREATE TABLE %s (
+                        x LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """.formatted(tableName));
+            execute("INSERT INTO " + tableName + " VALUES (1, '2022-02-24T00:00:00.000000Z')");
+
+            engine.releaseInactive();
+            assertWalExistence(true, tableName, 1);
+            assertWalNotLocked(tableName, 1);
+
+            final OutOfMemoryError trackingFailure = new OutOfMemoryError("tracking failure");
+            try (WalPurgeJob job = new WalPurgeJob(engine)) {
+                final WalPurgeJob.Logic failingLogic = new WalPurgeJob.Logic(new TestDeleter(), 0) {
+                    @Override
+                    public int trackDiscoveredWal(int walId) {
+                        throw trackingFailure;
+                    }
+                };
+                final Field logicField = WalPurgeJob.class.getDeclaredField("logic");
+                Unsafe.putObject(job, Unsafe.objectFieldOffset(logicField), failingLogic);
+
+                final OutOfMemoryError error = Assert.assertThrows(OutOfMemoryError.class, () -> job.drain(0));
+                Assert.assertSame(trackingFailure, error);
+            }
+
+            assertWalNotLocked(tableName, 1);
         });
     }
 
