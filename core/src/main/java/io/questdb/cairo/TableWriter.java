@@ -7599,8 +7599,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // When a backup checkpoint is in progress, force async-only purge to prevent
         // deleting column version files that the checkpoint may still reference.
+        //
+        // ADAPTIVE has the same property, for a different reason: the materialized table is a REBUILDABLE
+        // CACHE of the durable WAL, so recovery may rewind it to the durable epoch cut and replay forward.
+        // A synchronous purge is one-shot destructive filesystem work that no epoch can re-derive -- it
+        // deletes column files (including a symbol column's <name>.o/.c/.k/.v) that a replayed transaction
+        // still needs. The crash-fuzz hit exactly that: DROP COLUMN purged sym2.*, the crash rewound _meta
+        // to a version that still declares the column, and apply then failed with "SymbolMap does not
+        // exist: ...sym2.o" leaving writerTxn at 0 while the sequencer held every txn -- a table that could
+        // never apply another transaction. Defer to the async purge, which runs once the state it would
+        // destroy is no longer reachable.
         boolean asyncOnly = checkScoreboardHasReadersBeforeLastCommittedTxn()
-                || isCheckpointInProgress();
+                || isCheckpointInProgress()
+                || effectiveCommitMode == CommitMode.ADAPTIVE;
         purgingOperator.purge(
                 path.trimTo(pathSize),
                 tableToken,
