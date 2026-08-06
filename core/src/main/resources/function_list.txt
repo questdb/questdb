@@ -750,6 +750,8 @@ io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory
 # replace()
 io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory
 io.questdb.griffin.engine.functions.str.ReplaceVarcharFunctionFactory
+io.questdb.griffin.engine.functions.str.TranslateFunctionFactory
+io.questdb.griffin.engine.functions.str.TranslateVarcharFunctionFactory
 
 # json_extract()
 io.questdb.griffin.engine.functions.json.JsonExtractVarcharFunctionFactory
