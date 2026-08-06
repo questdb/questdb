@@ -1458,6 +1458,53 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitAllBestEffortEvictsStaleTableWithZeroBufferedRows() throws Exception {
+        // The zero-row dropped-table case the loop's own comment calls out:
+        // with no uncommitted rows, tud.commit(false) never reaches this
+        // loop's own CommitFailedException/Throwable catch arms, so neither
+        // explicitly marks the writer in error. The entry is still evicted,
+        // but NOT because isTableTokenStale() is the sole evictor here as one
+        // might expect: TableUpdateDetails.commit() has its own unconditional
+        // tail check (pre-existing since 2023, unrelated to this fix) that
+        // marks a WAL writer in error whenever its cached token no longer
+        // resolves by name -- the exact same precondition isTableTokenStale()
+        // needs to return true. So isWriterInError() is already true by the
+        // time this loop's predicate runs, and isTableTokenStale() is never
+        // actually invoked (short-circuited). This asserts the writer starts
+        // healthy to prove it is not pre-marked, then proves the previously
+        // untested real-writer/zero-row/externally-dropped-table combination
+        // still evicts in one pass, and pins the (perhaps surprising) true
+        // reason: isWriterInError(), not isTableTokenStale().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE be_zero (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("be_zero"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                Assert.assertTrue("no rows buffered", tud.isFirstRow());
+                Assert.assertFalse("writer starts healthy", tud.isWriterInError());
+
+                execute("DROP TABLE be_zero");
+
+                cache.commitAllBestEffort();
+
+                Assert.assertEquals("zero-row dropped table must be evicted", 0, cache.size());
+                Assert.assertTrue(
+                        "commit()'s own tail check marks the writer in error before staleness is ever checked",
+                        tud.isWriterInError()
+                );
+            }
+        });
+    }
+
+    @Test
     public void testCommitAllBestEffortEvictsTableWhoseCommitKeepsFailing() throws Exception {
         // C2: a live-token writer whose commit persistently fails (here: a pure
         // rename, whose commits are rejected by the sequencer's token check) was
@@ -2296,6 +2343,88 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
                 cache.commitWalTables(Long.MAX_VALUE);
                 Assert.assertEquals("evicted TUD must not be retried", 1, rawFailureCount[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testCommitWalTablesEvictsStaleTableWithZeroBufferedRows() throws Exception {
+        // Same zero-row/dropped-table scenario as the commitAllBestEffort
+        // sibling test (see its comment for the full explanation), exercised
+        // through commitWalTables()'s own commit-if-elapsed call path: with
+        // no uncommitted rows, tud.commitIfIntervalElapsed() never reaches
+        // this loop's own catch arms, so the entry is evicted via
+        // TableUpdateDetails.commit()'s own pre-existing tail check (marks a
+        // WAL writer in error whenever its cached token no longer resolves by
+        // name), NOT via isTableTokenStale() -- that check needs the exact
+        // same precondition and is short-circuited away by the time this
+        // loop's predicate runs. Starts from a healthy writer to prove it is
+        // not pre-marked, then proves the previously untested
+        // real-writer/zero-row/externally-dropped-table combination still
+        // evicts in one pass, and pins the true reason.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE interval_zero (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("interval_zero"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                Assert.assertTrue("no rows buffered", tud.isFirstRow());
+                Assert.assertFalse("writer starts healthy", tud.isWriterInError());
+
+                execute("DROP TABLE interval_zero");
+
+                cache.commitWalTables(Long.MAX_VALUE);
+
+                Assert.assertEquals("zero-row dropped table must be evicted", 0, cache.size());
+                Assert.assertTrue(
+                        "commit()'s own tail check marks the writer in error before staleness is ever checked",
+                        tud.isWriterInError()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testCommitWalTablesNonDropCommitFailure() throws Exception {
+        // Mirrors testCommitAllBestEffortNonDropCommitFailure but drives
+        // commitWalTables()'s own CommitFailedException(isTableDropped=false)
+        // catch arm directly -- the sibling test only exercises
+        // commitAllBestEffort(), and the raw-CairoException test above only
+        // exercises commitWalTables()'s generic catch(Throwable) arm, leaving
+        // this branch unverified.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE interval_fail (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("interval_fail"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                replaceWriterWithFake(tud, false);
+
+                cache.commitWalTables(Long.MAX_VALUE);
+
+                // A non-drop commit failure marks the writer in error and the
+                // loop evicts it in the same pass.
+                Assert.assertTrue(tud.isWriterInError());
+                Assert.assertEquals(0, getCacheSize(cache));
             }
         });
     }

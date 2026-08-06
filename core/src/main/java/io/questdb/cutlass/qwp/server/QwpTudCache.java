@@ -331,8 +331,9 @@ public class QwpTudCache implements QuietCloseable {
             // A writer whose commit failed for any other reason is evicted as
             // well: retrying cannot succeed for a distressed or out-of-date
             // writer, and this fire-and-forget path has no client to report
-            // to -- the next datagram rebuilds a fresh entry (bounded loss,
-            // within the UDP contract).
+            // to -- the next datagram rebuilds a fresh entry. Eviction may
+            // drop this entry's buffered rows, but that is bounded loss
+            // within the UDP no-ack contract.
             if (!tud.isDropped() && (tud.isWriterInError() || isTableTokenStale(tud))) {
                 tud.setIsDropped();
             }
@@ -385,8 +386,9 @@ public class QwpTudCache implements QuietCloseable {
             // A writer whose commit failed for any other reason is evicted as
             // well: retrying cannot succeed for a distressed or out-of-date
             // writer, and this fire-and-forget path has no client to report
-            // to -- the next datagram rebuilds a fresh entry (bounded loss,
-            // within the UDP contract).
+            // to -- the next datagram rebuilds a fresh entry. Eviction may
+            // drop this entry's buffered rows, but that is bounded loss
+            // within the UDP no-ack contract.
             if (!tud.isDropped() && (tud.isWriterInError() || isTableTokenStale(tud))) {
                 tud.setIsDropped();
             }
