@@ -54,7 +54,9 @@ public class PGOids {
     public static final int BINARY_TYPE_INTERVAL = (1 << 31) | ColumnType.INTERVAL;
     public static final int BINARY_TYPE_IPv4 = (1 << 31) | ColumnType.IPv4;
     public static final int BINARY_TYPE_LONG = (1 << 31) | ColumnType.LONG;
+    public static final int BINARY_TYPE_LONG128 = (1 << 31) | ColumnType.LONG128;
     public static final int BINARY_TYPE_LONG256 = (1 << 31) | ColumnType.LONG256;
+    public static final int BINARY_TYPE_NULL = (1 << 31) | ColumnType.NULL;
     public static final int BINARY_TYPE_SHORT = (1 << 31) | ColumnType.SHORT;
     public static final int BINARY_TYPE_STRING = (1 << 31) | ColumnType.STRING;
     public static final int BINARY_TYPE_SYMBOL = (1 << 31) | ColumnType.SYMBOL;

@@ -1191,7 +1191,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
             // if column is not variable size and format code is text, we can't calculate size
             if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
-                return -1;
+                if (typeTag != ColumnType.ARRAY || !record.getArray(i, columnType).isNull()) {
+                    return -1;
+                }
+                // A NULL array is the one text array whose size is knowable: outColTxtArr() writes
+                // the same 4-byte NULL marker as the binary path, so the row stays resumable.
+                recordSize += Integer.BYTES;
+                continue;
             }
             // number of bits or chars for geohash
             final int geohashSize = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
@@ -1819,13 +1825,22 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColBinArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
+    private void outColBinArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType)
+            throws PGMessageProcessingException {
         ArrayView array = record.getArray(columnIndex, columnType);
         if (array.getDimCount() == 0) {
             utf8Sink.setNullValue();
             return;
         }
         short elemType = array.getElemType();
+        if (elemType != ColumnType.DOUBLE && elemType != ColumnType.LONG) {
+            // Only fixed-width DOUBLE and LONG elements have a binary encoding here, and the size
+            // arithmetic below assumes them. Reject before writing a byte: the element loop would
+            // otherwise emit nothing per element while the header declared a length for them.
+            throw kaput().put("binary result format is not supported for arrays with element type ")
+                    .put(ColumnType.nameOf(elemType))
+                    .put(", request text format instead [column=").put(columnIndex).put(']');
+        }
         if (outResendResumePoint == -1) {
             int nDims = array.getDimCount();
             int componentTypeOid = getTypeOid(elemType);
@@ -2766,13 +2781,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case ColumnType.INT:
                         outColTxtInt(utf8Sink, record, colIndex);
                         break;
-                    // pgwire advertises IPv4 as PG_VARCHAR, whose binary encoding is the text bytes,
-                    // so both format codes render identically. calculateColumnBinSize() already
-                    // sizes IPv4 that way; without the binary label here the switch fell through to
-                    // "default", emitting no bytes at all for a field the DataRow header still
-                    // counts, which desynchronises the client.
                     case ColumnType.IPv4:
                     case BINARY_TYPE_IPv4:
+                        // pgwire advertises IPv4 as PG_VARCHAR, whose binary encoding is its text
+                        // bytes, so both format codes emit the same bytes and calculateColumnBinSize()
+                        // sizes both alike. Every format code a client can request must reach an arm
+                        // that writes the field: the DataRow header counts it either way.
                         outColTxtIPv4(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.INTERVAL:
@@ -2859,10 +2873,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case BINARY_TYPE_LONG256:
                         outColTxtLong256(utf8Sink, record, colIndex);
                         break;
-                    // pgwire advertises every geohash width as PG_VARCHAR, so, as with IPv4, the two
-                    // format codes render the same bytes and both labels share an arm.
                     case ColumnType.GEOBYTE:
                     case BINARY_TYPE_GEOBYTE:
+                        // pgwire advertises every geohash width as PG_VARCHAR, as it does IPv4, so
+                        // the two format codes emit the same bytes and both labels share this arm.
                         outColTxtGeoByte(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
                         break;
                     case ColumnType.GEOSHORT:
@@ -2878,6 +2892,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         outColTxtGeoLong(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
                         break;
                     case ColumnType.NULL:
+                    case BINARY_TYPE_NULL:
+                        // a NULL field is a bare -1 length prefix with no payload, so both format
+                        // codes emit the same 4 bytes and share this arm. pgwire advertises the
+                        // column as PG_VARCHAR (outRowDescription() substitutes STRING for NULL).
                         utf8Sink.setNullValue();
                         break;
                     case ColumnType.UUID:
@@ -2956,8 +2974,24 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         record.getDecimal256(colIndex, decimal256);
                         outColBinDecimal(utf8Sink, decimal256, columnType);
                         break;
+                    case ColumnType.LONG128:
+                    case BINARY_TYPE_LONG128:
+                        // No egress path renders LONG128: the HTTP JSON and CSV processors reject it
+                        // too, and pgwire has no OID for it (getTypeOid() returns 0). Fail the query
+                        // rather than invent a representation here that no other protocol agrees with.
+                        throw kaput().put("unsupported column type in result set [type=LONG128, column=")
+                                .put(colIndex).put(']');
                     default:
-                        assert false;
+                        // An unlabelled (type, format code) pair would write no bytes for a field the
+                        // DataRow header has already counted, desynchronising the client until the
+                        // idle timeout. Fail loudly instead: this is the only place that can catch a
+                        // type/format combination nobody enumerated.
+                        // nameOf() answers "unknown" for an unmapped tag, so carry the number too
+                        throw kaput().put("unsupported column type in DataRow [type=")
+                                .put(ColumnType.nameOf(columnTag))
+                                .put(", tag=").put(columnTag)
+                                .put(", binaryFormat=").put(columnBinaryFlag)
+                                .put(", column=").put(colIndex).put(']');
                 }
                 outResendColumnIndex++;
                 utf8Sink.bookmark();
@@ -3570,16 +3604,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         final int typeTag = ColumnType.tagOf(columnType);
         if (typeTag == ColumnType.ARRAY) {
             // ARRAY is var-size, but unlike the other var-size types its text encoding is not the
-            // raw bytes: outColTxtArr() writes a PostgreSQL array literal ("{1.0,2.0}"), whose size
-            // is unrelated to the binary array wire size calculateColumnBinSize() computes. Letting
-            // the binary size stand in for the text size makes calculateRecordTailSize() patch a
-            // wrong length into a DataRow header that has already been flushed to the client. When
-            // the binary size is the larger of the two, the client blocks forever waiting for bytes
-            // the server never sends, and the connection dies on the idle timeout.
+            // raw bytes: outColTxtArr() writes a PostgreSQL array literal ("{1.0,2.0}") whose size
+            // bears no relation to the binary wire size calculateColumnBinSize() returns. Reporting
+            // "sizes differ" keeps calculateRecordTailSize() from patching a binary size into a
+            // DataRow header, which has to carry the exact byte count the row goes on to write.
             return true;
         }
         return !ColumnType.isVarSize(typeTag)
                 && !ColumnType.isGeoHash(columnType)
+                && typeTag != ColumnType.ARRAY_STRING
                 && typeTag != ColumnType.BOOLEAN
                 && typeTag != ColumnType.CHAR
                 && typeTag != ColumnType.IPv4

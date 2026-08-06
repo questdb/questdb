@@ -47,6 +47,10 @@ class PGUtils {
     private static final int MAX_GEOINT_TEXT_LEN = 32;
     private static final int MAX_GEOLONG_TEXT_LEN = 64;
     private static final int MAX_GEOSHORT_TEXT_LEN = 16;
+    // Interval.toSink() renders "('<timestamp>', '<timestamp>')": 2 * MAX_TIMESTAMP_TEXT_LEN (31)
+    // for the two ISO timestamps, plus punctuation. Spelled as a literal because
+    // MAX_TIMESTAMP_TEXT_LEN is declared below and a simple name cannot be forward-referenced.
+    private static final int MAX_INTERVAL_TEXT_LEN = 78;
     private static final int MAX_INT_TEXT_LEN = String.valueOf(Integer.MIN_VALUE).length();
     private static final int MAX_IPv4_TEXT_LEN = 15; // "255.255.255.255"
     private static final int MAX_LONG256_TEXT_LEN = 66; // "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
@@ -54,6 +58,7 @@ class PGUtils {
     private static final int MAX_SHORT_TEXT_LEN = String.valueOf(Short.MIN_VALUE).length();
     private static final int MAX_TIMESTAMP_TEXT_LEN = 31; // "294247-01-10 04:00:54.775807123"
     private static final int MAX_UUID_TEXT_LEN = 36;
+    private static final int NULL_LITERAL_TEXT_LEN = 4; // "NULL", as ArrayTypeDriver.arrayToPgWire() writes it
 
     private PGUtils() {
     }
@@ -144,6 +149,8 @@ class PGUtils {
                 int vcResumePoint = Math.max(0, resumePoint);
                 int vcRemaining = vcValue.size() - vcResumePoint;
                 return resumePoint == -1 ? Integer.BYTES + vcRemaining : vcRemaining;
+            case ColumnType.ARRAY_STRING:
+                // ARRAY_STRING goes out through outColString() under either format code
             case ColumnType.STRING:
                 final CharSequence strValue = record.getStrA(columnIndex);
                 return strValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(strValue);
@@ -171,9 +178,14 @@ class PGUtils {
                 if (array.isNull()) {
                     return Integer.BYTES; // size field (will be -1 for NULL)
                 }
-                assert ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE ||
-                        ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG
-                        : "implemented only for DOUBLE and LONG";
+                final short elemType = ColumnType.decodeArrayElementType(columnType);
+                if (elemType != ColumnType.DOUBLE && elemType != ColumnType.LONG) {
+                    // outColBinArr() only encodes fixed-width DOUBLE and LONG elements, and the
+                    // fixed-size arithmetic below assumes them too. Report "cannot size" so
+                    // calculateRecordTailSize() rewinds the row instead of patching a wrong length,
+                    // and let outColBinArr() reject the request with a message the client can act on.
+                    return -1;
+                }
 
                 int actualResumePoint = Math.max(0, resumePoint);
                 int remainingElements = array.getCardinality() - actualResumePoint; // includes nulls
@@ -185,8 +197,23 @@ class PGUtils {
                 // add remaining elements
                 size += calculateArrayResumeColBinSize(notNullCount, remainingElements - notNullCount);
                 return size;
+            case ColumnType.INTERVAL:
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
+                // This method has to be EXACT, not an upper bound: calculateRecordTailSize() patches
+                // its result into a DataRow length prefix. An interval's size depends on the rendered
+                // timestamps and a binary NUMERIC's on value-level zero-group suppression, so neither
+                // can be sized without doing the work. Report "cannot size" and give up mid-record
+                // resume for these rows; the whole-row rewind still delivers them.
+                return -1;
             default:
-                assert false : "unsupported type: " + typeTag;
+                // never assert here: this runs inside outRecord()'s NoSpaceLeftInResponseBufferException
+                // handler, where a thrown AssertionError would replace the in-flight exception and
+                // derail the rewind. outRecord()'s default arm reports the unsupported type instead.
                 return -1;
         }
     }
@@ -217,19 +244,9 @@ class PGUtils {
             int columnIndex,
             int columnType
     ) {
-        final int typeTag = ColumnType.tagOf(columnType);
+        // matches calculateColumnBinSize(), which also derives the tag from the full column type
+        final short typeTag = ColumnType.tagOf(columnType);
         return switch (typeTag) {
-            case ColumnType.ARRAY -> {
-                final ArrayView array = record.getArray(columnIndex, columnType);
-                if (array.isNull()) {
-                    yield Integer.BYTES;
-                }
-                // outColTxtArr() renders a PostgreSQL array literal. Elements are DOUBLE or LONG and
-                // the double literal is the wider of the two; each element contributes at most one
-                // literal, one separator and one pair of nesting braces, which bounds the whole
-                // literal from above without walking the array shape.
-                yield Integer.BYTES + (long) array.getCardinality() * (MAX_DOUBLE_TEXT_LEN + 3L) + 2L;
-            }
             case ColumnType.NULL -> Integer.BYTES;
             case ColumnType.BOOLEAN -> Integer.BYTES + Byte.BYTES;
             case ColumnType.BYTE -> Integer.BYTES + MAX_BYTE_TEXT_LEN;
@@ -266,11 +283,70 @@ class PGUtils {
                 BinarySequence sequence = record.getBin(columnIndex);
                 yield sequence == null ? Integer.BYTES : Integer.BYTES + sequence.length();
             }
-            default -> {
-                assert false : "unsupported type: " + typeTag;
-                yield -1;
+            // ARRAY sits last, as it does in calculateColumnBinSize()
+            case ColumnType.ARRAY -> {
+                final ArrayView array = record.getArray(columnIndex, columnType);
+                if (array.isNull()) {
+                    yield Integer.BYTES;
+                }
+                yield Integer.BYTES + arrayTxtSize(array);
             }
+            case ColumnType.INTERVAL -> Integer.BYTES + MAX_INTERVAL_TEXT_LEN;
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32,
+                 ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
+                // Decimals.appendNonNull() writes at most a sign, `precision` digits, a decimal
+                // point and a leading zero; one spare digit covers the rounding of the scale
+                    Integer.BYTES + ColumnType.getDecimalPrecision(columnType) + 4;
+            // NOTE: no ARRAY_STRING arm - txtAndBinSizesCanBeDifferent() reports it as same-sized
+            // in both formats, so it is sized by calculateColumnBinSize() and never reaches here.
+            default ->
+                // an unknown type must not raise here: this runs inside outRecord()'s
+                // NoSpaceLeftInResponseBufferException handler, where a thrown AssertionError
+                // replaces the in-flight exception and derails the rewind. outRecord()'s own
+                // default arm is what reports an unsupported type to the client.
+                    -1;
         };
+    }
+
+    /**
+     * Upper bound on the bytes {@code outColTxtArr()} writes for a non-null array, excluding the
+     * length prefix. ArrayTypeDriver.arrayToText() emits one brace PAIR per node of the shape
+     * tree, not one per element, so the brace count is driven by dimensionality: for shape
+     * (d0..dk-1) it is {@code 1 + d0 + d0*d1 + ... + d0*..*dk-2}. Charging a fixed allowance per
+     * element under-counts as soon as a trailing dimension is 1 (shape (2,1,1) needs 5 pairs for
+     * 2 elements), so this walks the shape instead - at most {@link ColumnType#ARRAY_NDIMS_LIMIT}
+     * steps, on the send-buffer-overflow path only. Commas telescope to exactly cardinality - 1.
+     */
+    private static long arrayTxtSize(ArrayView array) {
+        if (array.isEmpty()) {
+            // arrayToText() short-circuits an empty array to "{}" whatever its shape, so the node
+            // walk below must not run: a shape like (100_000_000, 100_000_000, 0) would count ten
+            // quadrillion phantom brace pairs
+            return 2;
+        }
+        long nodes = 0;
+        long levelNodes = 1;
+        for (int d = 0, n = array.getDimCount(); d < n; d++) {
+            nodes += levelNodes;
+            levelNodes *= array.getDimLen(d);
+        }
+        final int cardinality = array.getCardinality();
+        final long elements;
+        if (array.getElemType() == ColumnType.VARCHAR && array.isVanilla()) {
+            // a varchar element has no width bound, so measure the elements we are going to write.
+            // getVarchar() applies flatViewOffset itself, so a flat index is right for a vanilla
+            // array; a strided one falls back to the numeric budget below, which is advisory only
+            long size = 0;
+            for (int i = 0; i < cardinality; i++) {
+                final Utf8Sequence value = array.getVarchar(i);
+                size += value == null ? NULL_LITERAL_TEXT_LEN : value.size();
+            }
+            elements = size;
+        } else {
+            // DOUBLE is the widest numeric literal; LONG and the "NULL" literal are shorter still
+            elements = (long) cardinality * MAX_DOUBLE_TEXT_LEN;
+        }
+        return 2 * nodes + (cardinality - 1L) + elements;
     }
 
     private static int calculateArrayHeaderSize(ArrayView array) {
