@@ -79,6 +79,12 @@ public class QwpTudCache implements QuietCloseable {
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
     private final Telemetry<TelemetryTask> telemetry;
     private volatile int cachedTableCount;
+    // Optional callback mirroring commitAll(consumer)'s: invoked after a
+    // successful salvage commit in evictStaleTud, the one commit path that
+    // does not flow through commitAll/commitIfMaxUncommittedRowsReached. Set
+    // by QwpIngressProcessorState so its durable-ack bookkeeping sees the
+    // salvaged txn; UDP receivers leave it null (no ack channel to update).
+    private CommittedTxnConsumer committedTxnConsumer;
     private MemoryMARW ddlMem;
     private boolean isDistressed = false;
     private Path path;
@@ -329,11 +335,15 @@ public class QwpTudCache implements QuietCloseable {
             // fire-and-forget path (no ack), so no rows are silently acknowledged.
             //
             // A writer whose commit failed for any other reason is evicted as
-            // well: retrying cannot succeed for a distressed or out-of-date
-            // writer, and this fire-and-forget path has no client to report
-            // to -- the next datagram rebuilds a fresh entry. Eviction may
-            // drop this entry's buffered rows, but that is bounded loss
-            // within the UDP no-ack contract.
+            // well: retrying generally cannot succeed for a distressed or
+            // out-of-date writer -- the one transient exception is a
+            // role-derived read-only refusal (TableUpdateDetails.commit()
+            // throws readOnlyAccess() before marking the writer in error),
+            // which this same branch also evicts on -- and this
+            // fire-and-forget path has no client to report to -- the next
+            // datagram rebuilds a fresh entry. Eviction may drop this entry's
+            // buffered rows, but that is bounded loss within the UDP no-ack
+            // contract.
             if (!tud.isDropped() && (tud.isWriterInError() || isTableTokenStale(tud))) {
                 tud.setIsDropped();
             }
@@ -384,11 +394,15 @@ public class QwpTudCache implements QuietCloseable {
             // fire-and-forget path (no ack), so no rows are silently acknowledged.
             //
             // A writer whose commit failed for any other reason is evicted as
-            // well: retrying cannot succeed for a distressed or out-of-date
-            // writer, and this fire-and-forget path has no client to report
-            // to -- the next datagram rebuilds a fresh entry. Eviction may
-            // drop this entry's buffered rows, but that is bounded loss
-            // within the UDP no-ack contract.
+            // well: retrying generally cannot succeed for a distressed or
+            // out-of-date writer -- the one transient exception is a
+            // role-derived read-only refusal (TableUpdateDetails.commit()
+            // throws readOnlyAccess() before marking the writer in error),
+            // which this same branch also evicts on -- and this
+            // fire-and-forget path has no client to report to -- the next
+            // datagram rebuilds a fresh entry. Eviction may drop this entry's
+            // buffered rows, but that is bounded loss within the UDP no-ack
+            // contract.
             if (!tud.isDropped() && (tud.isWriterInError() || isTableTokenStale(tud))) {
                 tud.setIsDropped();
             }
@@ -427,7 +441,7 @@ public class QwpTudCache implements QuietCloseable {
                     // next lookup acquires a fresh writer from the pool.
                     tableUpdateDetails.removeAt(key);
                     cachedTableCount = tableUpdateDetails.size();
-                    Misc.free(tud);
+                    Misc.free(tud, th);
                     throw th;
                 }
                 return tud;
@@ -490,6 +504,14 @@ public class QwpTudCache implements QuietCloseable {
         }
         tableUpdateDetails.clear();
         cachedTableCount = 0;
+    }
+
+    /**
+     * Registers the callback invoked after a successful salvage commit in
+     * {@link #evictStaleTud}. See {@link #committedTxnConsumer}.
+     */
+    public void setCommittedTxnConsumer(CommittedTxnConsumer consumer) {
+        this.committedTxnConsumer = consumer;
     }
 
     public void setDistressed() {
@@ -605,6 +627,20 @@ public class QwpTudCache implements QuietCloseable {
             } catch (Throwable th) {
                 LOG.error().$("could not salvage buffered rows of a renamed table [table=")
                         .$(tableNameUtf8).$(", e=").$safe(th.getMessage()).I$();
+            }
+            // The salvage commit bypasses commitAll/commitIfMaxUncommittedRowsReached,
+            // so it must notify committedTxnConsumer itself -- otherwise a durable-ack
+            // client's pendingDurableSeqTxns bookkeeping never learns about these rows
+            // and a later durable ack could cover a WAL segment never registered for
+            // upload. Use the WRITER's rebound token (goActive() replayed the RENAME
+            // and updated it), not tud's cached token, which stays pinned to the OLD
+            // identity for the TUD's whole lifetime.
+            if (isSalvaged && committedTxnConsumer != null) {
+                committedTxnConsumer.accept(
+                        walWriter.getTableToken().getTableName(),
+                        walWriter.getTableToken().getDirName(),
+                        tud.getLastSeqTxn()
+                );
             }
         }
         tableUpdateDetails.removeAt(key);

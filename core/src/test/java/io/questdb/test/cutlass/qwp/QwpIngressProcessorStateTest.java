@@ -2810,6 +2810,75 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetTableUpdateDetailsSalvageNotifiesCommittedTxnConsumer() throws Exception {
+        // I1: the salvage commit in evictStaleTud bypasses
+        // commitAll(consumer)/commitIfMaxUncommittedRowsReached(consumer), the
+        // only other paths that feed QwpIngressProcessorState.recordCommittedTable
+        // and, through it, the pendingAckSeqTxns / pendingDurableSeqTxns /
+        // pendingDurableDirNames bookkeeping a durable-ack client relies on.
+        // Without a dedicated hook, a successful salvage leaves those maps
+        // untouched even though the rows are now durable in the WAL --
+        // collectDurableProgress/isDurableWorkFullyUploaded would then let a
+        // durable ack cover a WAL segment that was never registered for
+        // upload. Drives the same rename+recreate scenario as
+        // testGetTableUpdateDetailsSalvagesRenamedTablesBufferedRowsOnRecreate
+        // above through the real QwpIngressProcessorState (production
+        // wiring) instead of poking QwpTudCache directly.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sal_consumer_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+
+                // Buffer a row without committing: a deferred frame leaves it
+                // sitting uncommitted in the writer, exactly what the salvage
+                // in evictStaleTud requires.
+                addEncodedRow(state, "sal_consumer_src", 1, QwpConstants.FLAG_DEFER_COMMIT);
+                Assert.assertTrue(state.isDeferCommit());
+                state.processMessage();
+                Assert.assertTrue(state.isOk());
+                state.clearMessageState();
+
+                // Rename the table out from under the cache, then recreate it
+                // under the old name: the cached entry goes stale and its
+                // buffered row is salvage-committed into the renamed table.
+                execute("RENAME TABLE sal_consumer_src TO sal_consumer_dst");
+                execute("CREATE TABLE sal_consumer_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // A second frame naming the old name drives the stale lookup
+                // and salvage eviction inside processMessage/getTableUpdateDetails.
+                addEncodedRow(state, "sal_consumer_src", 2, (byte) 0);
+                Assert.assertFalse(state.isDeferCommit());
+                state.processMessage();
+                Assert.assertTrue(state.isOk());
+
+                // The salvage must land in the SAME bookkeeping a normal
+                // commitAll(consumer) txn reaches, under the renamed table's
+                // identity (the writer's rebound token), not the stale
+                // lookup name.
+                Assert.assertEquals(1, state.getPendingAckSeqTxns().size());
+                Assert.assertTrue(
+                        "salvaged txn must be recorded under the renamed table's identity",
+                        state.getPendingAckSeqTxns().get("sal_consumer_dst") >= 0
+                );
+                Assert.assertTrue(
+                        "durable-ack bookkeeping must also see the salvaged txn",
+                        state.hasPendingDurableWork()
+                );
+                Assert.assertEquals(1, fieldSize(state, "pendingDurableSeqTxns"));
+                Assert.assertEquals(1, fieldSize(state, "pendingDurableDirNames"));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testGetTableUpdateDetailsRejectsInvalidDeferredArrayColumnName() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
