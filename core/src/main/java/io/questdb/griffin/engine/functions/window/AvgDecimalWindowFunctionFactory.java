@@ -31,6 +31,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -40,7 +44,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -67,14 +73,45 @@ import java.math.RoundingMode;
 public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
     private static final ArrayColumnTypes AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES;
+    // Live-view value layout for the Decimal128/256 partition-range frame: the
+    // non-LV ring-buffer slots plus a trailing BYTE tombstone slot for
+    // anchor-driven frontier compaction. Shared by both widths.
+    private static final ArrayColumnTypes AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV;
     private static final ArrayColumnTypes AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES;
+    // Live-view value layout for the Decimal128/256 partition-rows frame: the
+    // non-LV ring-buffer slots plus a trailing BYTE tombstone slot.
+    private static final ArrayColumnTypes AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV;
     private static final ArrayColumnTypes AVG_DECIMAL128_TYPES;
+    // Live-view value layout for the unbounded-partition-rows accumulator: the
+    // non-LV [DECIMAL256 acc, LONG count] plus a trailing BYTE tombstone slot for
+    // anchor-driven frontier compaction. Shared by the Decimal128 and Decimal256
+    // variants, which carry the same map value layout.
+    private static final ArrayColumnTypes AVG_DECIMAL128_TYPES_LV;
     private static final ArrayColumnTypes AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES;
+    // Live-view value layout for the Decimal64 partition-range frame: the non-LV
+    // ring-buffer slots plus a trailing BYTE tombstone slot.
+    private static final ArrayColumnTypes AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV;
     private static final ArrayColumnTypes AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES;
+    // Live-view value layout for the Decimal64 partition-rows frame: the non-LV
+    // ring-buffer slots plus a trailing BYTE tombstone slot.
+    private static final ArrayColumnTypes AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV;
     private static final ArrayColumnTypes AVG_DECIMAL64_TYPES;
+    // Live-view value layout for the Decimal64 unbounded-partition-rows
+    // accumulator: [DECIMAL128 acc, LONG count] plus a trailing BYTE tombstone.
+    private static final ArrayColumnTypes AVG_DECIMAL64_TYPES_LV;
     private static final ArrayColumnTypes AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES;
+    // Live-view value layout for the Decimal8/16/32 partition-range frame: the
+    // non-LV ring-buffer slots plus a trailing BYTE tombstone slot. Shared by the
+    // three narrow widths.
+    private static final ArrayColumnTypes AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV;
     private static final ArrayColumnTypes AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES;
+    // Live-view value layout for the Decimal8/16/32 partition-rows frame: the
+    // non-LV ring-buffer slots plus a trailing BYTE tombstone slot.
+    private static final ArrayColumnTypes AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV;
     private static final ArrayColumnTypes AVG_DECIMAL_NARROW_TYPES;
+    // Live-view value layout for the Decimal8/16/32 unbounded-partition-rows
+    // accumulator: [LONG acc, LONG count] plus a trailing BYTE tombstone.
+    private static final ArrayColumnTypes AVG_DECIMAL_NARROW_TYPES_LV;
     private static final String NAME = "avg";
     private static final String SIGNATURE = NAME + "(Ξ)";
 
@@ -174,9 +211,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL128_TYPES_LV : AVG_DECIMAL128_TYPES);
                     try {
-                        return new Decimal128AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal128AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -185,15 +225,18 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
+                    final boolean liveView = windowContext.isLiveView();
                     int timestampIndex = windowContext.getTimestampIndex();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES);
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                                liveView ? AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV : AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES);
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal128AvgOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos);
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos,
+                                partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -202,9 +245,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL128_TYPES_LV : AVG_DECIMAL128_TYPES);
                     try {
-                        return new Decimal128AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal128AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -220,14 +266,17 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES);
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                                liveView ? AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV : AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES);
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal128AvgOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, argType, argPos);
+                                rowsLo, rowsHi, arg, mem, argType, argPos,
+                                partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -294,9 +343,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL_NARROW_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL_NARROW_TYPES_LV : AVG_DECIMAL_NARROW_TYPES);
                     try {
-                        return new Decimal16AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal16AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -305,15 +357,18 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
+                    final boolean liveView = windowContext.isLiveView();
                     int timestampIndex = windowContext.getTimestampIndex();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES);
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                                liveView ? AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV : AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES);
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal16AvgOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos);
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos,
+                                partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -322,9 +377,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL_NARROW_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL_NARROW_TYPES_LV : AVG_DECIMAL_NARROW_TYPES);
                     try {
-                        return new Decimal16AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal16AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -340,14 +398,17 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES);
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                                liveView ? AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV : AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES);
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal16AvgOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, argType, argPos);
+                                rowsLo, rowsHi, arg, mem, argType, argPos,
+                                partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -414,9 +475,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL128_TYPES_LV : AVG_DECIMAL128_TYPES);
                     try {
-                        return new Decimal256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -425,15 +489,18 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
+                    final boolean liveView = windowContext.isLiveView();
                     int timestampIndex = windowContext.getTimestampIndex();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES);
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                                liveView ? AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV : AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES);
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal256AvgOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos);
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos,
+                                partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -442,9 +509,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL128_TYPES_LV : AVG_DECIMAL128_TYPES);
                     try {
-                        return new Decimal256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -460,14 +530,17 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES);
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                                liveView ? AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV : AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES);
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal256AvgOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, argType, argPos);
+                                rowsLo, rowsHi, arg, mem, argType, argPos,
+                                partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -534,9 +607,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL_NARROW_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL_NARROW_TYPES_LV : AVG_DECIMAL_NARROW_TYPES);
                     try {
-                        return new Decimal32AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal32AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -545,15 +621,18 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
+                    final boolean liveView = windowContext.isLiveView();
                     int timestampIndex = windowContext.getTimestampIndex();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES);
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                                liveView ? AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV : AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES);
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal32AvgOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos);
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos,
+                                partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -562,9 +641,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL_NARROW_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL_NARROW_TYPES_LV : AVG_DECIMAL_NARROW_TYPES);
                     try {
-                        return new Decimal32AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal32AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -580,14 +662,17 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES);
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                                liveView ? AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV : AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES);
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal32AvgOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, argType, argPos);
+                                rowsLo, rowsHi, arg, mem, argType, argPos,
+                                partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -654,9 +739,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL64_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL64_TYPES_LV : AVG_DECIMAL64_TYPES);
                     try {
-                        return new Decimal64AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal64AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -665,15 +753,18 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
+                    final boolean liveView = windowContext.isLiveView();
                     int timestampIndex = windowContext.getTimestampIndex();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES);
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                                liveView ? AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV : AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES);
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal64AvgOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos);
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos,
+                                partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -682,9 +773,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL64_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL64_TYPES_LV : AVG_DECIMAL64_TYPES);
                     try {
-                        return new Decimal64AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal64AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -700,14 +794,17 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES);
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                                liveView ? AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV : AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES);
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal64AvgOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, argType, argPos);
+                                rowsLo, rowsHi, arg, mem, argType, argPos,
+                                partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -774,9 +871,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL_NARROW_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL_NARROW_TYPES_LV : AVG_DECIMAL_NARROW_TYPES);
                     try {
-                        return new Decimal8AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal8AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -785,15 +885,18 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
+                    final boolean liveView = windowContext.isLiveView();
                     int timestampIndex = windowContext.getTimestampIndex();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES);
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                                liveView ? AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV : AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES);
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal8AvgOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos);
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos,
+                                partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -802,9 +905,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL_NARROW_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL_NARROW_TYPES_LV : AVG_DECIMAL_NARROW_TYPES);
                     try {
-                        return new Decimal8AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal8AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -820,14 +926,17 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES);
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                                liveView ? AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV : AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES);
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal8AvgOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, argType, argPos);
+                                rowsLo, rowsHi, arg, mem, argType, argPos,
+                                partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -1014,11 +1123,19 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the snapshot codec; null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final MemoryARW memory;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int scale;
         private final Decimal128 scratch = new Decimal128();
         private final int timestampIndex;
@@ -1036,7 +1153,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int initialBufferSize,
                 int timestampIdx,
                 int type,
-                int position
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -1049,6 +1168,22 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 6;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -1075,6 +1210,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             boolean isNull = scratch.isNull();
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -1223,13 +1361,47 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES.getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator and
+            // count run over exactly those, so a warm-up from the frame's lower edge rebuilds
+            // all three. Adding and subtracting fixed-point values is exact, so unlike the
+            // DOUBLE arm the accumulator carries no rounding difference into the rebuilt state
+            // and the quotient read off it converges exactly.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
+            freeList.clear();
         }
 
         @Override
@@ -1256,9 +1428,160 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. RANGE-bounded windows reject ANCHOR at
+            // CREATE, but a mixed LV with an anchored window in the same
+            // function list still dispatches resetPartition to every function.
+            // Drop the partition's frame to empty; the ring slab stays
+            // allocated and the next row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.findValue();
+            if (mapValue != null) {
+                acc.ofRaw(0);
+                mapValue.putDecimal256(0, acc);
+                mapValue.putLong(1, 0L);
+                // slot 2 (startOffset) stays - the ring slab is reused.
+                mapValue.putLong(3, 0L);
+                // slot 4 (capacity) stays.
+                mapValue.putLong(5, 0L);
+                if (!mapValue.isNew() && tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            acc.ofRaw(
+                    source.getScalarWord(0),
+                    source.getScalarWord(1),
+                    source.getScalarWord(2),
+                    source.getScalarWord(3)
+            );
+            value.putDecimal256(0, acc);
+            value.putLong(1, source.getFrameSize());
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            source.getDecimal256(offset, acc);
+            value.putDecimal256(0, acc);
+            offset += 4 * Long.BYTES;
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            for (long i = 0; i < size; i++) {
+                memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(offset));
+                offset += Long.BYTES;
+                source.getDecimal128(offset, scratch);
+                memory.putDecimal128(newStartOffset + i * RECORD_SIZE + Long.BYTES, scratch.getHigh(), scratch.getLow());
+                offset += Decimal128.BYTES;
+            }
+            value.putLong(1, frameSize);
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             super.setMemoryTracker(tracker);
             memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointRingScalarWords() {
+            return 4;
+        }
+
+        @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The shared ring carries the frame's (timestamp, value) rows, so adjacent
+            // roots reference the same pages instead of each re-encoding the frame. The
+            // scalar slot carries the exact running sum verbatim rather than let restore
+            // re-derive it, so it cannot drift from the one the runtime carried.
+            value.getDecimal256(0, acc);
+            sink.putScalarState(acc.getHh(), acc.getHl(), acc.getLh(), acc.getLl(), value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putRow(
+                        memory.getLong(rec),
+                        memory.getLong(rec + Long.BYTES),
+                        memory.getLong(rec + 2 * Long.BYTES)
+                );
+            }
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            value.getDecimal256(0, acc);
+            sink.putDecimal256(acc.getHh(), acc.getHl(), acc.getLh(), acc.getLl());
+            sink.putLong(value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            sink.putLong(size);
+            for (long i = 0; i < size; i++) {
+                final long idx = (firstIdx + i) % capacity;
+                sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
+                memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
+                sink.putDecimal128(scratch.getHigh(), scratch.getLow());
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -1287,6 +1610,37 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             memory.truncate();
             freeList.clear();
         }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab, rebasing firstIdx to zero. Reused across partitions so a restore
+         * that walks thousands of them allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.Decimal128RowConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long hi, long lo) {
+                // The avg ring never stores a null (computeNext excludes them), so a
+                // null here is a corrupt value page. The shared reader admits any bit
+                // pattern, so avg re-asserts the invariant it relies on rather than fold
+                // garbage into the running sum.
+                if (hi == Decimals.DECIMAL128_HI_NULL && lo == Decimals.DECIMAL128_LO_NULL) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint avg RANGE ring value is null");
+                }
+                final long rec = startOffset + rows * RECORD_SIZE;
+                memory.putLong(rec, timestamp);
+                memory.putDecimal128(rec + Long.BYTES, hi, lo);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
+        }
     }
 
     public static class Decimal128AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
@@ -1297,6 +1651,13 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the snapshot codec; null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final MemoryARW memory;
         private final int position;
         private final int scale;
@@ -1313,7 +1674,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 Function arg,
                 MemoryARW memory,
                 int type,
-                int position
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             if (rowsLo > Long.MIN_VALUE) {
@@ -1330,6 +1693,22 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 4;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -1354,6 +1733,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long inLow = scratch.getLow();
 
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Decimal128.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && !isNull) {
@@ -1438,13 +1820,47 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES.getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator and count run over
+            // exactly those, so a warm-up of N predecessors rebuilds all three. The ring starts
+            // at a different rotation than a whole-history recompute leaves it at, which the
+            // contract allows. Adding and subtracting fixed-point values is exact, so unlike
+            // the DOUBLE arm the values converge exactly rather than within the documented
+            // drift.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -1466,6 +1882,88 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             acc.ofZero();
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's bounded-ROWS frame to
+            // empty; ring slots return to NULL so the next row in the new anchor
+            // bucket re-anchors cleanly. The startOffset (slot 3) stays allocated.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                final long startOffset = mv.getLong(3);
+                acc.ofRaw(0);
+                mv.putDecimal256(0, acc);
+                mv.putLong(1, 0L);
+                mv.putLong(2, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putLong(startOffset + (long) i * Decimal128.BYTES, Decimals.DECIMAL128_HI_NULL);
+                    memory.putLong(startOffset + (long) i * Decimal128.BYTES + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            source.getDecimal256(offset, acc);
+            value.putDecimal256(0, acc);
+            offset += 4 * Long.BYTES;
+            final long count = source.getLong(offset);
+            offset += Long.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor((long) bufferSize * Decimal128.BYTES) - memory.getPageAddress(0);
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putLong(newStartOffset + (long) i * Decimal128.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putLong(newStartOffset + (long) i * Decimal128.BYTES + Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(1, count);
+            value.putLong(2, loIdx);
+            value.putLong(3, newStartOffset);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            value.getDecimal256(0, acc);
+            sink.putDecimal256(acc.getHh(), acc.getHl(), acc.getLh(), acc.getLl());
+            sink.putLong(value.getLong(1));
+            sink.putLong(value.getLong(2));
+            final long startOffset = value.getLong(3);
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putLong(memory.getLong(startOffset + (long) i * Decimal128.BYTES));
+                sink.putLong(memory.getLong(startOffset + (long) i * Decimal128.BYTES + Long.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -1784,12 +2282,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -1944,18 +2436,59 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     static class Decimal128AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
+        private final CairoConfiguration configuration;
         private final Decimal256 divScratch = new Decimal256();
+        // Stable snapshot of the partition-by key column types, taken at
+        // construction (the factory reuses its WindowContext buffer across
+        // compiles). Kept for live-view snapshot key codec and frontier sweep.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // newCompactionScratch() scratch Map. Null outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final int position;
         private final int scale;
         private final Decimal128 scratch = new Decimal128();
         private final int type;
         private final Decimal128 value = new Decimal128();
 
-        public Decimal128AvgOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+        public Decimal128AvgOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL128_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL128_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -1967,6 +2500,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             long count;
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 acc.ofRaw(0);
                 count = 0;
             } else {
@@ -2013,8 +2549,25 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL128_TYPES.getColumnCount();
         }
 
         @Override
@@ -2028,6 +2581,57 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, value.getHigh());
             Unsafe.putLong(addr + Long.BYTES, value.getLow());
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the [acc, count] slots; the next
+            // computeNext re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                acc.ofRaw(0);
+                mv.putDecimal256(0, acc);
+                mv.putLong(1, 0L);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            source.getDecimal256(offset, acc);
+            value.putDecimal256(0, acc);
+            offset += 4 * Long.BYTES;
+            value.putLong(1, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            value.getDecimal256(0, acc);
+            sink.putDecimal256(acc.getHh(), acc.getHl(), acc.getLh(), acc.getLl());
+            sink.putLong(value.getLong(1));
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -2352,11 +2956,19 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the snapshot codec; null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final MemoryARW memory;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int scale;
         private final int timestampIndex;
         private final int type;
@@ -2373,7 +2985,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int initialBufferSize,
                 int timestampIdx,
                 int type,
-                int position
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -2386,6 +3000,22 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 6;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -2412,6 +3042,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             short s = arg.getDecimal16(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -2541,13 +3174,47 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES.getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator and
+            // count run over exactly those, so a warm-up from the frame's lower edge rebuilds
+            // all three. Adding and subtracting fixed-point values is exact, so unlike the
+            // DOUBLE arm the accumulator carries no rounding difference into the rebuilt state
+            // and the quotient read off it converges exactly.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
+            freeList.clear();
         }
 
         @Override
@@ -2570,9 +3237,140 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. RANGE-bounded windows reject ANCHOR at
+            // CREATE, but a mixed LV with an anchored window in the same
+            // function list still dispatches resetPartition to every function.
+            // Drop the partition's frame to empty; the ring slab stays
+            // allocated and the next row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.findValue();
+            if (mapValue != null) {
+                mapValue.putLong(0, 0L);
+                mapValue.putLong(1, 0L);
+                // slot 2 (startOffset) stays - the ring slab is reused.
+                mapValue.putLong(3, 0L);
+                // slot 4 (capacity) stays.
+                mapValue.putLong(5, 0L);
+                if (!mapValue.isNew() && tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putLong(0, source.getScalarBits());
+            value.putLong(1, source.getFrameSize());
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            for (long i = 0; i < size; i++) {
+                final long rec = newStartOffset + i * RECORD_SIZE;
+                memory.putLong(rec, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putShort(rec + Long.BYTES, source.getShort(offset));
+                offset += Short.BYTES;
+            }
+            value.putLong(1, frameSize);
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             super.setMemoryTracker(tracker);
             memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The shared ring carries the frame's (timestamp, value) rows, so adjacent
+            // roots reference the same pages instead of each re-encoding the frame. The
+            // scalar slot carries the exact running sum verbatim rather than let restore
+            // re-derive it, so it cannot drift from the one the runtime carried.
+            sink.putScalarState(value.getLong(0), value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putRow(memory.getLong(rec), memory.getShort(rec + Long.BYTES));
+            }
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            sink.putLong(size);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                sink.putShort(memory.getShort(rec + Long.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -2600,6 +3398,37 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             memory.truncate();
             freeList.clear();
         }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab, rebasing firstIdx to zero. Reused across partitions so a restore
+         * that walks thousands of them allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long valueBits) {
+                // The avg ring never stores a null (computeNext excludes them), so a
+                // null here is a corrupt value page. The shared reader admits any bit
+                // pattern, so avg re-asserts the invariant it relies on rather than fold
+                // garbage into the running sum.
+                if (valueBits == Decimals.DECIMAL16_NULL) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint avg RANGE ring value is null");
+                }
+                final long rec = startOffset + rows * RECORD_SIZE;
+                memory.putLong(rec, timestamp);
+                memory.putShort(rec + Long.BYTES, (short) valueBits);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
+        }
     }
 
     public static class Decimal16AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
@@ -2608,6 +3437,13 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the snapshot codec; null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final MemoryARW memory;
         private final int position;
         private final int scale;
@@ -2623,7 +3459,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 Function arg,
                 MemoryARW memory,
                 int type,
-                int position
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             if (rowsLo > Long.MIN_VALUE) {
@@ -2640,6 +3478,22 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 4;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -2662,6 +3516,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             short s = arg.getDecimal16(record);
 
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Short.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && s != Decimals.DECIMAL16_NULL) {
@@ -2725,13 +3582,47 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES.getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator and count run over
+            // exactly those, so a warm-up of N predecessors rebuilds all three. The ring starts
+            // at a different rotation than a whole-history recompute leaves it at, which the
+            // contract allows. Adding and subtracting fixed-point values is exact, so unlike
+            // the DOUBLE arm the values converge exactly rather than within the documented
+            // drift.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -2749,6 +3640,81 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's bounded-ROWS frame to
+            // empty; ring slots return to NULL so the next row in the new anchor
+            // bucket re-anchors cleanly. The startOffset (slot 3) stays allocated.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                final long startOffset = mv.getLong(3);
+                mv.putLong(0, 0L);
+                mv.putLong(1, 0L);
+                mv.putLong(2, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putShort(startOffset + (long) i * Short.BYTES, Decimals.DECIMAL16_NULL);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            final long count = source.getLong(offset);
+            offset += Long.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor((long) bufferSize * Short.BYTES) - memory.getPageAddress(0);
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putShort(newStartOffset + (long) i * Short.BYTES, source.getShort(offset));
+                offset += Short.BYTES;
+            }
+            value.putLong(1, count);
+            value.putLong(2, loIdx);
+            value.putLong(3, newStartOffset);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(1));
+            sink.putLong(value.getLong(2));
+            final long startOffset = value.getLong(3);
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putShort(memory.getShort(startOffset + (long) i * Short.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -3037,12 +4003,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             value = Decimals.DECIMAL16_NULL;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -3168,17 +4128,53 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     }
 
     static class Decimal16AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+        private final CairoConfiguration configuration;
         private final Decimal64 divResult = new Decimal64();
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final int position;
         private final int scale;
         private final int type;
         private short value;
 
-        public Decimal16AvgOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+        public Decimal16AvgOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL_NARROW_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL_NARROW_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -3191,6 +4187,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long acc;
             long count;
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 acc = 0L;
                 count = 0;
             } else {
@@ -3229,8 +4228,25 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL_NARROW_TYPES.getColumnCount();
         }
 
         @Override
@@ -3242,6 +4258,54 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the [acc, count] slots; the next
+            // computeNext re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putLong(0, 0L);
+                mv.putLong(1, 0L);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putLong(1, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(1));
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -3577,11 +4641,19 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the snapshot codec; null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final MemoryARW memory;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int scale;
         private final Decimal256 scratch = new Decimal256();
         private final int timestampIndex;
@@ -3599,7 +4671,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int initialBufferSize,
                 int timestampIdx,
                 int type,
-                int position
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -3612,6 +4686,22 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 6;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -3642,6 +4732,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long inLl = scratch.getLl();
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -3796,13 +4889,47 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES.getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator and
+            // count run over exactly those, so a warm-up from the frame's lower edge rebuilds
+            // all three. Adding and subtracting fixed-point values is exact, so unlike the
+            // DOUBLE arm the accumulator carries no rounding difference into the rebuilt state
+            // and the quotient read off it converges exactly.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
+            freeList.clear();
         }
 
         @Override
@@ -3831,9 +4958,170 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. RANGE-bounded windows reject ANCHOR at
+            // CREATE, but a mixed LV with an anchored window in the same
+            // function list still dispatches resetPartition to every function.
+            // Drop the partition's frame to empty; the ring slab stays
+            // allocated and the next row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.findValue();
+            if (mapValue != null) {
+                acc.ofRaw(0);
+                mapValue.putDecimal256(0, acc);
+                mapValue.putLong(1, 0L);
+                // slot 2 (startOffset) stays - the ring slab is reused.
+                mapValue.putLong(3, 0L);
+                // slot 4 (capacity) stays.
+                mapValue.putLong(5, 0L);
+                if (!mapValue.isNew() && tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            acc.ofRaw(
+                    source.getScalarWord(0),
+                    source.getScalarWord(1),
+                    source.getScalarWord(2),
+                    source.getScalarWord(3)
+            );
+            value.putDecimal256(0, acc);
+            value.putLong(1, source.getFrameSize());
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            source.getDecimal256(offset, acc);
+            value.putDecimal256(0, acc);
+            offset += 4 * Long.BYTES;
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            for (long i = 0; i < size; i++) {
+                final long rec = newStartOffset + i * RECORD_SIZE;
+                memory.putLong(rec, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putLong(rec + Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putLong(rec + 2 * Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putLong(rec + 3 * Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putLong(rec + 4 * Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(1, frameSize);
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             super.setMemoryTracker(tracker);
             memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointRingScalarWords() {
+            return 4;
+        }
+
+        @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL256;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The shared ring carries the frame's (timestamp, value) rows, so adjacent
+            // roots reference the same pages instead of each re-encoding the frame. The
+            // scalar slot carries the exact running sum verbatim rather than let restore
+            // re-derive it, so it cannot drift from the one the runtime carried.
+            value.getDecimal256(0, acc);
+            sink.putScalarState(acc.getHh(), acc.getHl(), acc.getLh(), acc.getLl(), value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putRow(
+                        memory.getLong(rec),
+                        memory.getLong(rec + Long.BYTES),
+                        memory.getLong(rec + 2 * Long.BYTES),
+                        memory.getLong(rec + 3 * Long.BYTES),
+                        memory.getLong(rec + 4 * Long.BYTES)
+                );
+            }
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            value.getDecimal256(0, acc);
+            sink.putDecimal256(acc.getHh(), acc.getHl(), acc.getLh(), acc.getLl());
+            sink.putLong(value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            sink.putLong(size);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                sink.putLong(memory.getLong(rec + Long.BYTES));
+                sink.putLong(memory.getLong(rec + 2 * Long.BYTES));
+                sink.putLong(memory.getLong(rec + 3 * Long.BYTES));
+                sink.putLong(memory.getLong(rec + 4 * Long.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -3862,6 +5150,38 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             memory.truncate();
             freeList.clear();
         }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab, rebasing firstIdx to zero. Reused across partitions so a restore
+         * that walks thousands of them allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.Decimal256RowConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long hh, long hl, long lh, long ll) {
+                // The avg ring never stores a null (computeNext excludes them), so a
+                // null here is a corrupt value page. The shared reader admits any bit
+                // pattern, so avg re-asserts the invariant it relies on rather than fold
+                // garbage into the running sum.
+                if (hh == Decimals.DECIMAL256_HH_NULL && hl == Decimals.DECIMAL256_HL_NULL
+                        && lh == Decimals.DECIMAL256_LH_NULL && ll == Decimals.DECIMAL256_LL_NULL) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint avg RANGE ring value is null");
+                }
+                final long rec = startOffset + rows * RECORD_SIZE;
+                memory.putLong(rec, timestamp);
+                memory.putDecimal256(rec + Long.BYTES, hh, hl, lh, ll);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
+        }
     }
 
     public static class Decimal256AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
@@ -3872,6 +5192,13 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the snapshot codec; null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final MemoryARW memory;
         private final int position;
         private final int scale;
@@ -3888,7 +5215,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 Function arg,
                 MemoryARW memory,
                 int type,
-                int position
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             if (rowsLo > Long.MIN_VALUE) {
@@ -3905,6 +5234,22 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 4;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -3931,6 +5276,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             boolean isNull = scratch.isNull();
 
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Decimal256.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && !isNull) {
@@ -4027,13 +5375,47 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES.getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator and count run over
+            // exactly those, so a warm-up of N predecessors rebuilds all three. The ring starts
+            // at a different rotation than a whole-history recompute leaves it at, which the
+            // contract allows. Adding and subtracting fixed-point values is exact, so unlike
+            // the DOUBLE arm the values converge exactly rather than within the documented
+            // drift.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -4057,6 +5439,99 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             acc.ofZero();
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's bounded-ROWS frame to
+            // empty; ring slots return to NULL so the next row in the new anchor
+            // bucket re-anchors cleanly. The startOffset (slot 3) stays allocated.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                final long startOffset = mv.getLong(3);
+                acc.ofRaw(0);
+                mv.putDecimal256(0, acc);
+                mv.putLong(1, 0L);
+                mv.putLong(2, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    final long off = startOffset + (long) i * Decimal256.BYTES;
+                    memory.putLong(off, Decimals.DECIMAL256_HH_NULL);
+                    memory.putLong(off + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
+                    memory.putLong(off + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
+                    memory.putLong(off + 3 * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            source.getDecimal256(offset, acc);
+            value.putDecimal256(0, acc);
+            offset += 4 * Long.BYTES;
+            final long count = source.getLong(offset);
+            offset += Long.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor((long) bufferSize * Decimal256.BYTES) - memory.getPageAddress(0);
+            for (int i = 0; i < bufferSize; i++) {
+                final long rec = newStartOffset + (long) i * Decimal256.BYTES;
+                memory.putLong(rec, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putLong(rec + Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putLong(rec + 2 * Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putLong(rec + 3 * Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(1, count);
+            value.putLong(2, loIdx);
+            value.putLong(3, newStartOffset);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            value.getDecimal256(0, acc);
+            sink.putDecimal256(acc.getHh(), acc.getHl(), acc.getLh(), acc.getLl());
+            sink.putLong(value.getLong(1));
+            sink.putLong(value.getLong(2));
+            final long startOffset = value.getLong(3);
+            for (int i = 0; i < bufferSize; i++) {
+                final long rec = startOffset + (long) i * Decimal256.BYTES;
+                sink.putLong(memory.getLong(rec));
+                sink.putLong(memory.getLong(rec + Long.BYTES));
+                sink.putLong(memory.getLong(rec + 2 * Long.BYTES));
+                sink.putLong(memory.getLong(rec + 3 * Long.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -4383,12 +5858,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -4556,18 +6025,59 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     static class Decimal256AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
+        private final CairoConfiguration configuration;
         private final Decimal256 divScratch = new Decimal256();
+        // Stable snapshot of the partition-by key column types, taken at
+        // construction (the factory reuses its WindowContext buffer across
+        // compiles). Kept for live-view snapshot key codec and frontier sweep.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // newCompactionScratch() scratch Map. Null outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final int position;
         private final int scale;
         private final Decimal256 scratch = new Decimal256();
         private final int type;
         private final Decimal256 value = new Decimal256();
 
-        public Decimal256AvgOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+        public Decimal256AvgOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL128_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL128_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -4579,6 +6089,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             long count;
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 acc.ofRaw(0);
                 count = 0;
             } else {
@@ -4628,8 +6141,25 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL128_TYPES.getColumnCount();
         }
 
         @Override
@@ -4645,6 +6175,57 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             Unsafe.putLong(addr + Long.BYTES, value.getHl());
             Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
             Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the [acc, count] slots; the next
+            // computeNext re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                acc.ofRaw(0);
+                mv.putDecimal256(0, acc);
+                mv.putLong(1, 0L);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            source.getDecimal256(offset, acc);
+            value.putDecimal256(0, acc);
+            offset += 4 * Long.BYTES;
+            value.putLong(1, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            value.getDecimal256(0, acc);
+            sink.putDecimal256(acc.getHh(), acc.getHl(), acc.getLh(), acc.getLl());
+            sink.putLong(value.getLong(1));
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -4976,11 +6557,19 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the snapshot codec; null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final MemoryARW memory;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int scale;
         private final int timestampIndex;
         private final int type;
@@ -4997,7 +6586,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int initialBufferSize,
                 int timestampIdx,
                 int type,
-                int position
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -5010,6 +6601,22 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 6;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -5036,6 +6643,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             int i = arg.getDecimal32(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -5165,13 +6775,47 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES.getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator and
+            // count run over exactly those, so a warm-up from the frame's lower edge rebuilds
+            // all three. Adding and subtracting fixed-point values is exact, so unlike the
+            // DOUBLE arm the accumulator carries no rounding difference into the rebuilt state
+            // and the quotient read off it converges exactly.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
+            freeList.clear();
         }
 
         @Override
@@ -5194,9 +6838,140 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. RANGE-bounded windows reject ANCHOR at
+            // CREATE, but a mixed LV with an anchored window in the same
+            // function list still dispatches resetPartition to every function.
+            // Drop the partition's frame to empty; the ring slab stays
+            // allocated and the next row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.findValue();
+            if (mapValue != null) {
+                mapValue.putLong(0, 0L);
+                mapValue.putLong(1, 0L);
+                // slot 2 (startOffset) stays - the ring slab is reused.
+                mapValue.putLong(3, 0L);
+                // slot 4 (capacity) stays.
+                mapValue.putLong(5, 0L);
+                if (!mapValue.isNew() && tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putLong(0, source.getScalarBits());
+            value.putLong(1, source.getFrameSize());
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            for (long i = 0; i < size; i++) {
+                final long rec = newStartOffset + i * RECORD_SIZE;
+                memory.putLong(rec, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putInt(rec + Long.BYTES, source.getInt(offset));
+                offset += Integer.BYTES;
+            }
+            value.putLong(1, frameSize);
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             super.setMemoryTracker(tracker);
             memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The shared ring carries the frame's (timestamp, value) rows, so adjacent
+            // roots reference the same pages instead of each re-encoding the frame. The
+            // scalar slot carries the exact running sum verbatim rather than let restore
+            // re-derive it, so it cannot drift from the one the runtime carried.
+            sink.putScalarState(value.getLong(0), value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putRow(memory.getLong(rec), memory.getInt(rec + Long.BYTES));
+            }
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            sink.putLong(size);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                sink.putInt(memory.getInt(rec + Long.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -5224,6 +6999,37 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             memory.truncate();
             freeList.clear();
         }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab, rebasing firstIdx to zero. Reused across partitions so a restore
+         * that walks thousands of them allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long valueBits) {
+                // The avg ring never stores a null (computeNext excludes them), so a
+                // null here is a corrupt value page. The shared reader admits any bit
+                // pattern, so avg re-asserts the invariant it relies on rather than fold
+                // garbage into the running sum.
+                if (valueBits == Decimals.DECIMAL32_NULL) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint avg RANGE ring value is null");
+                }
+                final long rec = startOffset + rows * RECORD_SIZE;
+                memory.putLong(rec, timestamp);
+                memory.putInt(rec + Long.BYTES, (int) valueBits);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
+        }
     }
 
     public static class Decimal32AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
@@ -5232,6 +7038,13 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the snapshot codec; null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final MemoryARW memory;
         private final int position;
         private final int scale;
@@ -5247,7 +7060,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 Function arg,
                 MemoryARW memory,
                 int type,
-                int position
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             if (rowsLo > Long.MIN_VALUE) {
@@ -5264,6 +7079,22 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 4;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -5286,6 +7117,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             int i = arg.getDecimal32(record);
 
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Integer.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && i != Decimals.DECIMAL32_NULL) {
@@ -5349,13 +7183,47 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES.getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator and count run over
+            // exactly those, so a warm-up of N predecessors rebuilds all three. The ring starts
+            // at a different rotation than a whole-history recompute leaves it at, which the
+            // contract allows. Adding and subtracting fixed-point values is exact, so unlike
+            // the DOUBLE arm the values converge exactly rather than within the documented
+            // drift.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -5373,6 +7241,81 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's bounded-ROWS frame to
+            // empty; ring slots return to NULL so the next row in the new anchor
+            // bucket re-anchors cleanly. The startOffset (slot 3) stays allocated.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                final long startOffset = mv.getLong(3);
+                mv.putLong(0, 0L);
+                mv.putLong(1, 0L);
+                mv.putLong(2, 0L);
+                for (int j = 0; j < bufferSize; j++) {
+                    memory.putInt(startOffset + (long) j * Integer.BYTES, Decimals.DECIMAL32_NULL);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            final long count = source.getLong(offset);
+            offset += Long.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor((long) bufferSize * Integer.BYTES) - memory.getPageAddress(0);
+            for (int j = 0; j < bufferSize; j++) {
+                memory.putInt(newStartOffset + (long) j * Integer.BYTES, source.getInt(offset));
+                offset += Integer.BYTES;
+            }
+            value.putLong(1, count);
+            value.putLong(2, loIdx);
+            value.putLong(3, newStartOffset);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(1));
+            sink.putLong(value.getLong(2));
+            final long startOffset = value.getLong(3);
+            for (int j = 0; j < bufferSize; j++) {
+                sink.putInt(memory.getInt(startOffset + (long) j * Integer.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -5661,12 +7604,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             value = Decimals.DECIMAL32_NULL;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -5792,17 +7729,53 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     }
 
     static class Decimal32AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+        private final CairoConfiguration configuration;
         private final Decimal64 divResult = new Decimal64();
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final int position;
         private final int scale;
         private final int type;
         private int value;
 
-        public Decimal32AvgOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+        public Decimal32AvgOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL_NARROW_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL_NARROW_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -5815,6 +7788,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long acc;
             long count;
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 acc = 0L;
                 count = 0;
             } else {
@@ -5853,8 +7829,25 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL_NARROW_TYPES.getColumnCount();
         }
 
         @Override
@@ -5866,6 +7859,54 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the [acc, count] slots; the next
+            // computeNext re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putLong(0, 0L);
+                mv.putLong(1, 0L);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putLong(1, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(1));
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -6172,12 +8213,20 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the snapshot codec; null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final MemoryARW memory;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
         private final Decimal128 result = new Decimal128();
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int scale;
         private final int timestampIndex;
         private final int type;
@@ -6194,7 +8243,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int initialBufferSize,
                 int timestampIdx,
                 int type,
-                int position
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -6207,6 +8258,22 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 6;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -6232,6 +8299,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long d = arg.getDecimal64(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -6372,13 +8442,47 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES.getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator and
+            // count run over exactly those, so a warm-up from the frame's lower edge rebuilds
+            // all three. Adding and subtracting fixed-point values is exact, so unlike the
+            // DOUBLE arm the accumulator carries no rounding difference into the rebuilt state
+            // and the quotient read off it converges exactly.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
+            freeList.clear();
         }
 
         @Override
@@ -6401,9 +8505,150 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. RANGE-bounded windows reject ANCHOR at
+            // CREATE, but a mixed LV with an anchored window in the same
+            // function list still dispatches resetPartition to every function.
+            // Drop the partition's frame to empty; the ring slab stays
+            // allocated and the next row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.findValue();
+            if (mapValue != null) {
+                decimal128.ofRaw(0);
+                mapValue.putDecimal128(0, decimal128);
+                mapValue.putLong(1, 0L);
+                // slot 2 (startOffset) stays - the ring slab is reused.
+                mapValue.putLong(3, 0L);
+                // slot 4 (capacity) stays.
+                mapValue.putLong(5, 0L);
+                if (!mapValue.isNew() && tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            decimal128.ofRaw(source.getScalarWord(0), source.getScalarWord(1));
+            value.putDecimal128(0, decimal128);
+            value.putLong(1, source.getFrameSize());
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            source.getDecimal128(offset, decimal128);
+            value.putDecimal128(0, decimal128);
+            offset += 2 * Long.BYTES;
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            for (long i = 0; i < size; i++) {
+                final long rec = newStartOffset + i * RECORD_SIZE;
+                memory.putLong(rec, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putLong(rec + Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(1, frameSize);
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             super.setMemoryTracker(tracker);
             memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointRingScalarWords() {
+            return 2;
+        }
+
+        @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The shared ring carries the frame's (timestamp, value) rows, so adjacent
+            // roots reference the same pages instead of each re-encoding the frame. The
+            // scalar slot carries the exact running sum verbatim rather than let restore
+            // re-derive it, so it cannot drift from the one the runtime carried.
+            value.getDecimal128(0, decimal128);
+            sink.putScalarState(decimal128.getHigh(), decimal128.getLow(), value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putRow(memory.getLong(rec), memory.getLong(rec + Long.BYTES));
+            }
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            value.getDecimal128(0, decimal128);
+            sink.putDecimal128(decimal128.getHigh(), decimal128.getLow());
+            sink.putLong(value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            sink.putLong(size);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                sink.putLong(memory.getLong(rec + Long.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -6434,6 +8679,37 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             memory.truncate();
             freeList.clear();
         }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab, rebasing firstIdx to zero. Reused across partitions so a restore
+         * that walks thousands of them allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long valueBits) {
+                // The avg ring never stores a null (computeNext excludes them), so a
+                // null here is a corrupt value page. The shared reader admits any bit
+                // pattern, so avg re-asserts the invariant it relies on rather than fold
+                // garbage into the running sum.
+                if (valueBits == Decimals.DECIMAL64_NULL) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint avg RANGE ring value is null");
+                }
+                final long rec = startOffset + rows * RECORD_SIZE;
+                memory.putLong(rec, timestamp);
+                memory.putLong(rec + Long.BYTES, valueBits);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
+        }
     }
 
     public static class Decimal64AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
@@ -6442,6 +8718,13 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the snapshot codec; null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final MemoryARW memory;
         private final int position;
         private final Decimal128 result = new Decimal128();
@@ -6458,7 +8741,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 Function arg,
                 MemoryARW memory,
                 int type,
-                int position
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             if (rowsLo > Long.MIN_VALUE) {
@@ -6475,6 +8760,22 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 4;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -6496,6 +8797,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long d = arg.getDecimal64(record);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && d != Decimals.DECIMAL64_NULL) {
@@ -6566,13 +8870,47 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES.getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator and count run over
+            // exactly those, so a warm-up of N predecessors rebuilds all three. The ring starts
+            // at a different rotation than a whole-history recompute leaves it at, which the
+            // contract allows. Adding and subtracting fixed-point values is exact, so unlike
+            // the DOUBLE arm the values converge exactly rather than within the documented
+            // drift.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -6590,6 +8928,84 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's bounded-ROWS frame to
+            // empty; ring slots return to NULL so the next row in the new anchor
+            // bucket re-anchors cleanly. The startOffset (slot 3) stays allocated.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                final long startOffset = mv.getLong(3);
+                decimal128.ofRaw(0);
+                mv.putDecimal128(0, decimal128);
+                mv.putLong(1, 0L);
+                mv.putLong(2, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putLong(startOffset + (long) i * Long.BYTES, Decimals.DECIMAL64_NULL);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            source.getDecimal128(offset, decimal128);
+            value.putDecimal128(0, decimal128);
+            offset += 2 * Long.BYTES;
+            final long count = source.getLong(offset);
+            offset += Long.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(1, count);
+            value.putLong(2, loIdx);
+            value.putLong(3, newStartOffset);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            value.getDecimal128(0, decimal128);
+            sink.putDecimal128(decimal128.getHigh(), decimal128.getLow());
+            sink.putLong(value.getLong(1));
+            sink.putLong(value.getLong(2));
+            final long startOffset = value.getLong(3);
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -6893,12 +9309,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             acc.ofRaw(0);
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -7032,18 +9442,54 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     }
 
     static class Decimal64AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+        private final CairoConfiguration configuration;
         private final Decimal128 decimal128 = new Decimal128();
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final int position;
         private final int scale;
         private final Decimal128 scratch = new Decimal128();
         private final int type;
         private long avg;
 
-        public Decimal64AvgOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+        public Decimal64AvgOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL64_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL64_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -7055,6 +9501,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             long count;
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 decimal128.ofRaw(0);
                 count = 0;
             } else {
@@ -7098,8 +9547,25 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL64_TYPES.getColumnCount();
         }
 
         @Override
@@ -7111,6 +9577,57 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), avg);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the [acc, count] slots; the next
+            // computeNext re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                decimal128.ofRaw(0);
+                mv.putDecimal128(0, decimal128);
+                mv.putLong(1, 0L);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            source.getDecimal128(offset, decimal128);
+            value.putDecimal128(0, decimal128);
+            offset += 2 * Long.BYTES;
+            value.putLong(1, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            value.getDecimal128(0, decimal128);
+            sink.putDecimal128(decimal128.getHigh(), decimal128.getLow());
+            sink.putLong(value.getLong(1));
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -7424,11 +9941,19 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the snapshot codec; null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final MemoryARW memory;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int scale;
         private final int timestampIndex;
         private final int type;
@@ -7445,7 +9970,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int initialBufferSize,
                 int timestampIdx,
                 int type,
-                int position
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -7458,6 +9985,22 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 6;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -7484,6 +10027,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             byte b = arg.getDecimal8(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -7613,13 +10159,47 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES.getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator and
+            // count run over exactly those, so a warm-up from the frame's lower edge rebuilds
+            // all three. Adding and subtracting fixed-point values is exact, so unlike the
+            // DOUBLE arm the accumulator carries no rounding difference into the rebuilt state
+            // and the quotient read off it converges exactly.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
+            freeList.clear();
         }
 
         @Override
@@ -7642,9 +10222,140 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. RANGE-bounded windows reject ANCHOR at
+            // CREATE, but a mixed LV with an anchored window in the same
+            // function list still dispatches resetPartition to every function.
+            // Drop the partition's frame to empty; the ring slab stays
+            // allocated and the next row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.findValue();
+            if (mapValue != null) {
+                mapValue.putLong(0, 0L);
+                mapValue.putLong(1, 0L);
+                // slot 2 (startOffset) stays - the ring slab is reused.
+                mapValue.putLong(3, 0L);
+                // slot 4 (capacity) stays.
+                mapValue.putLong(5, 0L);
+                if (!mapValue.isNew() && tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putLong(0, source.getScalarBits());
+            value.putLong(1, source.getFrameSize());
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            for (long i = 0; i < size; i++) {
+                final long rec = newStartOffset + i * RECORD_SIZE;
+                memory.putLong(rec, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putByte(rec + Long.BYTES, source.getByte(offset));
+                offset += Byte.BYTES;
+            }
+            value.putLong(1, frameSize);
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             super.setMemoryTracker(tracker);
             memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The shared ring carries the frame's (timestamp, value) rows, so adjacent
+            // roots reference the same pages instead of each re-encoding the frame. The
+            // scalar slot carries the exact running sum verbatim rather than let restore
+            // re-derive it, so it cannot drift from the one the runtime carried.
+            sink.putScalarState(value.getLong(0), value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putRow(memory.getLong(rec), memory.getByte(rec + Long.BYTES));
+            }
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            sink.putLong(size);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                sink.putByte(memory.getByte(rec + Long.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -7672,6 +10383,37 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             memory.truncate();
             freeList.clear();
         }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab, rebasing firstIdx to zero. Reused across partitions so a restore
+         * that walks thousands of them allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long valueBits) {
+                // The avg ring never stores a null (computeNext excludes them), so a
+                // null here is a corrupt value page. The shared reader admits any bit
+                // pattern, so avg re-asserts the invariant it relies on rather than fold
+                // garbage into the running sum.
+                if (valueBits == Decimals.DECIMAL8_NULL) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint avg RANGE ring value is null");
+                }
+                final long rec = startOffset + rows * RECORD_SIZE;
+                memory.putLong(rec, timestamp);
+                memory.putByte(rec + Long.BYTES, (byte) valueBits);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
+        }
     }
 
     public static class Decimal8AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
@@ -7680,6 +10422,13 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the snapshot codec; null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final MemoryARW memory;
         private final int position;
         private final int scale;
@@ -7695,7 +10444,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 Function arg,
                 MemoryARW memory,
                 int type,
-                int position
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             if (rowsLo > Long.MIN_VALUE) {
@@ -7712,6 +10463,22 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 4;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -7734,6 +10501,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             byte b = arg.getDecimal8(record);
 
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Byte.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && b != Decimals.DECIMAL8_NULL) {
@@ -7797,13 +10567,47 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES.getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator and count run over
+            // exactly those, so a warm-up of N predecessors rebuilds all three. The ring starts
+            // at a different rotation than a whole-history recompute leaves it at, which the
+            // contract allows. Adding and subtracting fixed-point values is exact, so unlike
+            // the DOUBLE arm the values converge exactly rather than within the documented
+            // drift.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -7821,6 +10625,81 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's bounded-ROWS frame to
+            // empty; ring slots return to NULL so the next row in the new anchor
+            // bucket re-anchors cleanly. The startOffset (slot 3) stays allocated.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                final long startOffset = mv.getLong(3);
+                mv.putLong(0, 0L);
+                mv.putLong(1, 0L);
+                mv.putLong(2, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putByte(startOffset + (long) i * Byte.BYTES, Decimals.DECIMAL8_NULL);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            final long count = source.getLong(offset);
+            offset += Long.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor((long) bufferSize * Byte.BYTES) - memory.getPageAddress(0);
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putByte(newStartOffset + (long) i * Byte.BYTES, source.getByte(offset));
+                offset += Byte.BYTES;
+            }
+            value.putLong(1, count);
+            value.putLong(2, loIdx);
+            value.putLong(3, newStartOffset);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(1));
+            sink.putLong(value.getLong(2));
+            final long startOffset = value.getLong(3);
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putByte(memory.getByte(startOffset + (long) i * Byte.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -8109,12 +10988,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             value = Decimals.DECIMAL8_NULL;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -8240,17 +11113,53 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     }
 
     static class Decimal8AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+        private final CairoConfiguration configuration;
         private final Decimal64 divResult = new Decimal64();
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final int position;
         private final int scale;
         private final int type;
         private byte value;
 
-        public Decimal8AvgOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+        public Decimal8AvgOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL_NARROW_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL_NARROW_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -8263,6 +11172,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long acc;
             long count;
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 acc = 0L;
                 count = 0;
             } else {
@@ -8301,8 +11213,25 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL_NARROW_TYPES.getColumnCount();
         }
 
         @Override
@@ -8314,6 +11243,54 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putByte(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the [acc, count] slots; the next
+            // computeNext re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putLong(0, 0L);
+                mv.putLong(1, 0L);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putLong(1, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(1));
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -8493,6 +11470,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         AVG_DECIMAL64_TYPES.add(ColumnType.DECIMAL128); // slot 0: acc
         AVG_DECIMAL64_TYPES.add(ColumnType.LONG);       // slot 1: count
 
+        AVG_DECIMAL64_TYPES_LV = new ArrayColumnTypes();
+        AVG_DECIMAL64_TYPES_LV.add(ColumnType.DECIMAL128); // slot 0: acc
+        AVG_DECIMAL64_TYPES_LV.add(ColumnType.LONG);       // slot 1: count
+        AVG_DECIMAL64_TYPES_LV.add(ColumnType.BYTE);       // slot 2: tombstone (anchor-driven compaction)
+
         AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES = new ArrayColumnTypes();
         AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES.add(ColumnType.DECIMAL128); // slot 0: acc
         AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);       // slot 1: frameSize
@@ -8501,9 +11483,23 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);       // slot 4: capacity
         AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);       // slot 5: firstIdx
 
+        AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV = new ArrayColumnTypes();
+        AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.DECIMAL128); // slot 0: acc
+        AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);       // slot 1: frameSize
+        AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);       // slot 2: startOffset
+        AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);       // slot 3: size
+        AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);       // slot 4: capacity
+        AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);       // slot 5: firstIdx
+        AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.BYTE);       // slot 6: tombstone (anchor-driven compaction)
+
         AVG_DECIMAL128_TYPES = new ArrayColumnTypes();
         AVG_DECIMAL128_TYPES.add(ColumnType.DECIMAL256); // slot 0: acc
         AVG_DECIMAL128_TYPES.add(ColumnType.LONG);       // slot 1: count
+
+        AVG_DECIMAL128_TYPES_LV = new ArrayColumnTypes();
+        AVG_DECIMAL128_TYPES_LV.add(ColumnType.DECIMAL256); // slot 0: acc
+        AVG_DECIMAL128_TYPES_LV.add(ColumnType.LONG);       // slot 1: count
+        AVG_DECIMAL128_TYPES_LV.add(ColumnType.BYTE);       // slot 2: tombstone (anchor-driven compaction)
 
         AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES = new ArrayColumnTypes();
         AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES.add(ColumnType.DECIMAL256); // slot 0: acc
@@ -8513,11 +11509,27 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);       // slot 4: capacity
         AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);       // slot 5: firstIdx
 
+        AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV = new ArrayColumnTypes();
+        AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.DECIMAL256); // slot 0: acc
+        AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);       // slot 1: frameSize
+        AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);       // slot 2: startOffset
+        AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);       // slot 3: size
+        AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);       // slot 4: capacity
+        AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);       // slot 5: firstIdx
+        AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.BYTE);       // slot 6: tombstone (anchor-driven compaction)
+
         AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES = new ArrayColumnTypes();
         AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES.add(ColumnType.DECIMAL256); // slot 0: acc
         AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);       // slot 1: count
         AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);       // slot 2: loIdx
         AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);       // slot 3: startOffset
+
+        AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV = new ArrayColumnTypes();
+        AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.DECIMAL256); // slot 0: acc
+        AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);       // slot 1: count
+        AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);       // slot 2: loIdx
+        AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);       // slot 3: startOffset
+        AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.BYTE);       // slot 4: tombstone (anchor-driven compaction)
 
         AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES = new ArrayColumnTypes();
         AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES.add(ColumnType.DECIMAL128); // slot 0: acc
@@ -8525,9 +11537,21 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);       // slot 2: loIdx
         AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);       // slot 3: startOffset
 
+        AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV = new ArrayColumnTypes();
+        AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.DECIMAL128); // slot 0: acc
+        AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);       // slot 1: count
+        AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);       // slot 2: loIdx
+        AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);       // slot 3: startOffset
+        AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.BYTE);       // slot 4: tombstone (anchor-driven compaction)
+
         AVG_DECIMAL_NARROW_TYPES = new ArrayColumnTypes();
         AVG_DECIMAL_NARROW_TYPES.add(ColumnType.LONG); // acc (raw long sum)
         AVG_DECIMAL_NARROW_TYPES.add(ColumnType.LONG); // count
+
+        AVG_DECIMAL_NARROW_TYPES_LV = new ArrayColumnTypes();
+        AVG_DECIMAL_NARROW_TYPES_LV.add(ColumnType.LONG); // slot 0: acc (raw long sum)
+        AVG_DECIMAL_NARROW_TYPES_LV.add(ColumnType.LONG); // slot 1: count
+        AVG_DECIMAL_NARROW_TYPES_LV.add(ColumnType.BYTE); // slot 2: tombstone (anchor-driven compaction)
 
         AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES = new ArrayColumnTypes();
         AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG); // acc
@@ -8537,10 +11561,26 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG); // capacity
         AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG); // firstIdx
 
+        AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV = new ArrayColumnTypes();
+        AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG); // slot 0: acc
+        AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG); // slot 1: frameSize
+        AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG); // slot 2: startOffset
+        AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG); // slot 3: size
+        AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG); // slot 4: capacity
+        AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG); // slot 5: firstIdx
+        AVG_DECIMAL_NARROW_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.BYTE); // slot 6: tombstone (anchor-driven compaction)
+
         AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES = new ArrayColumnTypes();
         AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG); // acc
         AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG); // count
         AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG); // loIdx
         AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG); // startOffset
+
+        AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV = new ArrayColumnTypes();
+        AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG); // slot 0: acc
+        AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG); // slot 1: count
+        AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG); // slot 2: loIdx
+        AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG); // slot 3: startOffset
+        AVG_DECIMAL_NARROW_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.BYTE); // slot 4: tombstone (anchor-driven compaction)
     }
 }

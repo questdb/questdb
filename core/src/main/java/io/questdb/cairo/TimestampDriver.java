@@ -329,6 +329,23 @@ public interface TimestampDriver {
     long getMaxDesignatedTimestamp();
 
     /**
+     * Returns the largest magnitude, counted in {@code unit}s, that {@link #from(long, char)}
+     * converts into this driver's units without losing the value. A count beyond this ceiling
+     * does not fail: {@code from()} multiplies by a per-unit constant without an overflow check,
+     * and narrows minutes and coarser units to {@code int} first, so the conversion wraps or
+     * truncates onto a value that keeps the shape of a legal one. Callers that convert a count
+     * taken from user input must test its magnitude against this ceiling and report the
+     * out-of-range input themselves, because {@code from()} cannot tell them.
+     * <p>
+     * The ceiling is symmetric: a count in {@code [-getMaxUnitValue(unit), getMaxUnitValue(unit)]}
+     * converts exactly, and every count outside it does not.
+     *
+     * @param unit the time unit character, as {@link #from(long, char)} reads it
+     * @return the inclusive maximum magnitude for the unit, or 0 when the unit is not recognized
+     */
+    long getMaxUnitValue(char unit);
+
+    /**
      * Gets the microseconds within the millisecond from a timestamp value.
      *
      * @param timestamp the timestamp value

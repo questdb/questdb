@@ -398,6 +398,24 @@ public class MillisTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long getMaxUnitValue(char unit) {
+        return switch (unit) {
+            // nanos and micros convert by dividing, so no count of them overflows millis
+            case 'n' -> Long.MAX_VALUE;
+            case 'u', 'U' -> Long.MAX_VALUE;
+            case 'T' -> Long.MAX_VALUE;
+            case 's' -> Long.MAX_VALUE / Dates.SECOND_MILLIS;
+            // from() narrows these four to int before scaling, so the narrowing caps them
+            // whenever it bites before the multiply does
+            case 'm' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Dates.MINUTE_MILLIS);
+            case 'H', 'h' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Dates.HOUR_MILLIS);
+            case 'd' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Dates.DAY_MILLIS);
+            case 'w' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Dates.WEEK_MILLIS);
+            default -> 0;
+        };
+    }
+
+    @Override
     public int getMicrosOfMilli(long timestamp) {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;

@@ -26,7 +26,6 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.Misc;
 
 public class WalDataCursor implements RecordCursor {
     private final WalDataRecord recordA = new WalDataRecord();
@@ -35,7 +34,7 @@ public class WalDataCursor implements RecordCursor {
 
     @Override
     public void close() {
-        reader = Misc.free(reader);
+        // No-op: the WalReader owns this cursor and is responsible for its lifecycle.
     }
 
     @Override
@@ -58,8 +57,6 @@ public class WalDataCursor implements RecordCursor {
     }
 
     public void of(WalReader reader) {
-        close();
-
         this.reader = reader;
         recordA.of(reader);
 
