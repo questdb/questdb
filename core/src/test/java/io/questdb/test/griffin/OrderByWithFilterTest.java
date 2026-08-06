@@ -333,7 +333,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .returns("""
                                 s
-                                
+
                                 b
                                 w
                                 """);
@@ -343,7 +343,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                                 s
                                 w
                                 b
-                                
+
                                 """);
                 execute("DROP TABLE a");
             }

@@ -49,12 +49,9 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
@@ -261,21 +258,6 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
                 (secondOfDay % 3600) / 60,
                 secondOfDay % 60
         );
-    }
-
-    private static ObjList<WindowFunction> unwrapWindowFunctions(LiveViewInstance instance) {
-        RecordCursorFactory factory = instance.getCompiledFactory();
-        while (factory != null) {
-            if (factory instanceof WindowRecordCursorFactory windowFactory) {
-                return windowFactory.getWindowFunctions();
-            }
-            if (factory instanceof QueryProgress) {
-                factory = factory.getBaseFactory();
-                continue;
-            }
-            break;
-        }
-        throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
     }
 
     private long assertEpochRetainsEveryEntry(LiveViewInstance instance, long previousEntries, String when) {

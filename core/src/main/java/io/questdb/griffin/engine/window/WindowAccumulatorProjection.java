@@ -222,74 +222,63 @@ public final class WindowAccumulatorProjection {
      * that has already passed it.
      */
     public static boolean isCompatible(int family, int kind) {
-        switch (kind) {
-            case PROJECTION_SUM:
-            case PROJECTION_AVG:
-                // The cumulative pair and the two bounded ones, which carry the same two fields
-                // and mean the same two things by them: a total over the rows the component
-                // currently holds and the count of them. What differs is which rows those are,
-                // and that is the group's frame rather than the projection's business.
-                return family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT
-                        || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT
-                        || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_ROWS_SUM_COUNT;
-            case PROJECTION_KAHAN_SUM:
-                // The compensated total's own family and no other, which is the whole reason
-                // the kind exists: PROJECTION_SUM reads the same two fields, and letting
-                // either kind reach both families would make a sum and a ksum over one
-                // column interchangeable, which they are not.
-                return family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT;
-            case PROJECTION_COUNT:
-                // Every accumulating family carries a counter, and the Welford and Kahan ones
-                // are here because a count(x) folded onto a stddev(x) or a ksum(x) reads that
-                // host's counter. Which counter a given call may read is still the component
-                // identity's answer, not this one's.
-                //
-                // The two bounded (sum, count) families are deliberately absent even though their
-                // counter is exactly what a count(x) over the same bounded frame emits: nothing
-                // folds onto a ring-backed component - see
-                // WindowAccumulatorDescriptor#derivedSlotOffset - so a count there keeps a
-                // ring-backed counter of its own, and listing the pairs here would state a reading
-                // no plan can produce.
-                return family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT
-                        || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT
-                        || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD
-                        || family == WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT
-                        || family == WindowAccumulatorDescriptor.FAMILY_RANGE_NON_NULL_COUNT
-                        || family == WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT
-                        || family == WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;
-            case PROJECTION_CAPTURED_VALUE:
-                // The six capture families and nothing else. Every one of them carries the value
-                // slot this kind reads, and no other family does - a total, a counter and an
-                // extremum are all summaries of many rows where this is one row's own value.
-                return family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE
-                        || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE
-                        || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_LAST_NOT_NULL_VALUE
-                        || family == WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_NOT_NULL_VALUE
-                        || family == WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_VALUE
-                        || family == WindowAccumulatorDescriptor.FAMILY_LONG_LAST_NOT_NULL_VALUE;
-            case PROJECTION_EXTREMUM:
-                // The six extremum families and nothing else. Every one of them carries the
-                // single slot this kind reads, and no other family does.
-                return family == WindowAccumulatorDescriptor.FAMILY_DECIMAL_MAX
-                        || family == WindowAccumulatorDescriptor.FAMILY_DECIMAL_MIN
-                        || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX
-                        || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN
-                        || family == WindowAccumulatorDescriptor.FAMILY_LONG_MAX
-                        || family == WindowAccumulatorDescriptor.FAMILY_LONG_MIN;
-            case PROJECTION_COUNT_PARTITION_KEY:
-                // The row count alone. A guarded reading of a non-null count would be
-                // either a tautology or a contradiction - that counter already applies the
-                // argument's own predicate - so the kind names the one family whose counter
-                // it corrects.
-                return family == WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;
-            case PROJECTION_STDDEV_POP:
-            case PROJECTION_STDDEV_SAMP:
-            case PROJECTION_VAR_POP:
-            case PROJECTION_VAR_SAMP:
-                return family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD;
-            default:
-                return false;
-        }
+        return switch (kind) {
+            // The cumulative pair and the two bounded ones, which carry the same two fields
+            // and mean the same two things by them: a total over the rows the component
+            // currently holds and the count of them. What differs is which rows those are,
+            // and that is the group's frame rather than the projection's business.
+            case PROJECTION_SUM, PROJECTION_AVG -> family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT
+                    || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT
+                    || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_ROWS_SUM_COUNT;
+            // The compensated total's own family and no other, which is the whole reason
+            // the kind exists: PROJECTION_SUM reads the same two fields, and letting
+            // either kind reach both families would make a sum and a ksum over one
+            // column interchangeable, which they are not.
+            case PROJECTION_KAHAN_SUM -> family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT;
+            // Every accumulating family carries a counter, and the Welford and Kahan ones
+            // are here because a count(x) folded onto a stddev(x) or a ksum(x) reads that
+            // host's counter. Which counter a given call may read is still the component
+            // identity's answer, not this one's.
+            //
+            // The two bounded (sum, count) families are deliberately absent even though their
+            // counter is exactly what a count(x) over the same bounded frame emits: nothing
+            // folds onto a ring-backed component - see
+            // WindowAccumulatorDescriptor#derivedSlotOffset - so a count there keeps a
+            // ring-backed counter of its own, and listing the pairs here would state a reading
+            // no plan can produce.
+            case PROJECTION_COUNT -> family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT
+                    || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT
+                    || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD
+                    || family == WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT
+                    || family == WindowAccumulatorDescriptor.FAMILY_RANGE_NON_NULL_COUNT
+                    || family == WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT
+                    || family == WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;
+            // The six capture families and nothing else. Every one of them carries the value
+            // slot this kind reads, and no other family does - a total, a counter and an
+            // extremum are all summaries of many rows where this is one row's own value.
+            case PROJECTION_CAPTURED_VALUE -> family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE
+                    || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE
+                    || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_LAST_NOT_NULL_VALUE
+                    || family == WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_NOT_NULL_VALUE
+                    || family == WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_VALUE
+                    || family == WindowAccumulatorDescriptor.FAMILY_LONG_LAST_NOT_NULL_VALUE;
+            // The six extremum families and nothing else. Every one of them carries the
+            // single slot this kind reads, and no other family does.
+            case PROJECTION_EXTREMUM -> family == WindowAccumulatorDescriptor.FAMILY_DECIMAL_MAX
+                    || family == WindowAccumulatorDescriptor.FAMILY_DECIMAL_MIN
+                    || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX
+                    || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN
+                    || family == WindowAccumulatorDescriptor.FAMILY_LONG_MAX
+                    || family == WindowAccumulatorDescriptor.FAMILY_LONG_MIN;
+            // The row count alone. A guarded reading of a non-null count would be
+            // either a tautology or a contradiction - that counter already applies the
+            // argument's own predicate - so the kind names the one family whose counter
+            // it corrects.
+            case PROJECTION_COUNT_PARTITION_KEY -> family == WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;
+            case PROJECTION_STDDEV_POP, PROJECTION_STDDEV_SAMP, PROJECTION_VAR_POP, PROJECTION_VAR_SAMP ->
+                    family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD;
+            default -> false;
+        };
     }
 
     /**

@@ -1941,18 +1941,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 && previousBoundary.hasFunctionRoot(frozen.identity, frozen.stateFormatVersion)
                 ? function.getCheckpointDirtyPartitionMap()
                 : null;
-        final boolean incremental = dirtyMap != null;
-        frozen.isIncremental = incremental;
+        final boolean isIncremental = dirtyMap != null;
+        frozen.isIncremental = isIncremental;
         // Whether this function's whole-state image goes into the leaf rather than
         // into a data page it names. Read once per function: the answer is a property
         // of the compiled implementation, not of the partition being frozen.
-        final boolean inlineState = !isRingShaped
+        final boolean hasInlineState = !isRingShaped
                 && LiveViewCheckpointContracts.isInlineableStateLength(function.checkpointStateFixedLength());
-        long logicalBytes = incremental ? function.getCheckpointLogicalStateBytes() : 0;
+        long logicalBytes = isIncremental ? function.getCheckpointLogicalStateBytes() : 0;
         final ColumnTypes keyTypes = function.getCheckpointKeyColumnTypes();
         final int keyStartIndex = function.getCheckpointKeyStartIndex();
         final int tombstoneIndex = function.getTombstoneValueIndex();
-        final Map scanMap = incremental ? dirtyMap : map;
+        final Map scanMap = isIncremental ? dirtyMap : map;
         final MapRecordCursor cursor = scanMap.getCursor();
         final MapRecord record = scanMap.getRecord();
         final LiveViewCheckpointPartitionMapEntry ringEntry =
@@ -1963,10 +1963,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // walks the state map itself and gets the value for free, which is what
             // lets it skip a tombstone before paying for the key image, the domain
             // test and the predecessor probe below.
-            int keyLength = incremental ? encodeCheckpointKey(record, keyTypes, keyStartIndex) : 0;
+            int keyLength = isIncremental ? encodeCheckpointKey(record, keyTypes, keyStartIndex) : 0;
             final MapValue value;
             boolean isEvicted = false;
-            if (incremental) {
+            if (isIncremental) {
                 final MapKey liveKey = map.withKey();
                 LiveViewSnapshotKeyCodec.readKey(liveKey, keyBuffer, 0, keyTypes);
                 value = liveKey.findValue();
@@ -1994,10 +1994,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
             // An evicted key has no live value left, so there is no tombstone bit to read.
             final boolean isTombstoned = !isEvicted && tombstoneIndex >= 0 && value.getByte(tombstoneIndex) == 1;
-            if (isTombstoned && !incremental) {
+            if (isTombstoned && !isIncremental) {
                 continue;
             }
-            if (!incremental) {
+            if (!isIncremental) {
                 keyLength = encodeCheckpointKey(record, keyTypes, keyStartIndex);
             }
             final byte[] key = new byte[keyLength];
@@ -2040,7 +2040,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 frozen.addPartition(ringEntry);
             } else {
                 final long stateLength;
-                if (inlineState) {
+                if (hasInlineState) {
                     final byte[] scalarState = freezeInlineState(function, value);
                     // The predecessor's image is already in the decoded leaf entry this
                     // freeze holds, so the elision costs a byte compare and no longer has
@@ -2073,7 +2073,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 // named by a reference hold the same state bytes, and logical accounting
                 // counts the state rather than the framing that reaches it. That is what
                 // lets a root convert entry by entry without the running total moving.
-                if (incremental) {
+                if (isIncremental) {
                     final long newLogicalBytes = checkedAdd(keyLength, stateLength);
                     logicalBytes = checkedAdd(
                             logicalBytes,
@@ -2118,7 +2118,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             @NotNull ObjList<FrozenFunction> members,
             @NotNull IntList projectionIndexes,
             @NotNull ObjList<ObjList<byte[]>> memberImages,
-            boolean incremental,
+            boolean isIncremental,
             @Nullable PreviousBoundary previousBoundary,
             @Nullable LiveViewCheckpointOutputKeyDomain outputKeys
     ) {
@@ -2147,7 +2147,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     groupedFreezeAnchorValues,
                     memberImages,
                     groupedFreezeRemovedKeys,
-                    incremental,
+                    isIncremental,
                     groupedFreezeLogicalBytes
             );
             long logicalStateBytes = 0;

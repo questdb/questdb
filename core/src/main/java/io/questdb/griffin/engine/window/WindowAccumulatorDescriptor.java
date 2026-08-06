@@ -577,115 +577,99 @@ public final class WindowAccumulatorDescriptor {
      * fused component and leaves the function on the private map it owns anyway.
      */
     public static int contributionKindFor(int family, int argumentColumnType) {
-        switch (family) {
-            case FAMILY_ROW_COUNT:
-                // No argument to predicate on, and the caller must not have supplied one:
-                // a row count that quietly accepted an argument type would be a second
-                // identity for the same state, and the two would not merge.
-                return argumentColumnType == ColumnType.UNDEFINED
-                        ? CONTRIBUTION_EVERY_ROW
-                        : CONTRIBUTION_NONE;
-            case FAMILY_DOUBLE_FIRST_VALUE:
-            case FAMILY_LONG_FIRST_VALUE:
-                // Every row is a candidate: which one the state keeps is the traversal's answer
-                // and not the value's, so there is no predicate to name beyond "this argument
-                // reaches the implementation that declares the family". Each of the two is
-                // admitted over the types its own implementation is selected for, exactly as the
-                // extremum pair is - a DOUBLE-stated capture through getDouble, a 64-bit one
-                // through the argument's payload word.
-                return (family == FAMILY_DOUBLE_FIRST_VALUE
-                        ? isWidenedToDouble(argumentColumnType)
-                        : isLongPayload(argumentColumnType))
-                        ? CONTRIBUTION_EVERY_ROW
-                        : CONTRIBUTION_NONE;
-            case FAMILY_LONG_FIRST_NOT_NULL_VALUE:
-            case FAMILY_LONG_LAST_NOT_NULL_VALUE:
-                // The 64-bit capture's own null test, which is the predicate the IGNORE NULLS
-                // implementations apply: they skip a row whose payload word is LONG_NULL. Same
-                // list and same reasoning as the 64-bit extremum's.
-                return isLongPayload(argumentColumnType)
-                        ? CONTRIBUTION_TYPED_NOT_NULL
-                        : CONTRIBUTION_NONE;
-            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE:
-            case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
-            case FAMILY_DOUBLE_LAST_NOT_NULL_VALUE:
-            case FAMILY_DOUBLE_MAX:
-            case FAMILY_DOUBLE_MIN:
-            case FAMILY_DOUBLE_RANGE_SUM_COUNT:
-            case FAMILY_DOUBLE_ROWS_SUM_COUNT:
-            case FAMILY_DOUBLE_SUM_COUNT:
-            case FAMILY_DOUBLE_WELFORD:
-                // Those families have one factory each and it takes a DOUBLE, so every
-                // other argument they accept arrives by widening into that DOUBLE. The
-                // max/min pair reads its argument through the same getDouble and skips the
-                // row on the same isFinite test, so it contributes under the same predicate
-                // - which is also why an extremum over a DOUBLE argument never sees an
-                // infinity, and its empty state can be NaN. The bounded-ROWS sum applies that
-                // same test twice, once as a value enters the frame and once as it leaves, so
-                // the rows it holds are exactly the rows this predicate names. The bounded-RANGE
-                // one applies it once and keeps only the values that passed, which names the same
-                // rows a different way. The two DOUBLE IGNORE NULLS capture families apply it
-                // once per row to decide whether the row may replace what the slot holds, which
-                // is the same reading of the same rows again.
-                return isWidenedToDouble(argumentColumnType)
-                        ? CONTRIBUTION_FINITE_DOUBLE
-                        : CONTRIBUTION_NONE;
-            case FAMILY_LONG_MAX:
-            case FAMILY_LONG_MIN:
-                // The 64-bit extremum's own null test: the implementation reads the
-                // argument's payload word and skips it when it equals LONG_NULL. Every type
-                // below reaches that reading as its own column function - LONG, DATE and
-                // TIMESTAMP have a factory each, and the narrower integrals widen into
-                // max(L) - and the type stays in the identity, so a DATE extremum and a
-                // TIMESTAMP one over the same word are still two components.
-                return isLongPayload(argumentColumnType)
-                        ? CONTRIBUTION_TYPED_NOT_NULL
-                        : CONTRIBUTION_NONE;
-            case FAMILY_DECIMAL_MAX:
-            case FAMILY_DECIMAL_MIN:
-                // The DECIMAL extremum's own null test, which is the width's null sentinel and
-                // nothing else - the same predicate a count over the same column applies, since
-                // max(D) has an implementation per width and each of them skips exactly the rows
-                // that width calls absent. A non-DECIMAL argument declines: it reaches a
-                // different max() factory storing a different thing.
-                return isDecimalPayload(argumentColumnType)
-                        ? CONTRIBUTION_TYPED_NOT_NULL
-                        : CONTRIBUTION_NONE;
-            case FAMILY_NON_NULL_COUNT:
-            case FAMILY_RANGE_NON_NULL_COUNT:
-            case FAMILY_ROWS_NON_NULL_COUNT:
-                // count() has a factory per argument shape, so this arm is the one that
-                // can name a predicate other than the DOUBLE one - and the type is what
-                // selects between them. All three counting families share the arm because they
-                // share those predicates exactly: one class serves every bounded-ROWS count and
-                // one every bounded-RANGE count, and each applies the very lambda the cumulative
-                // one does - to the row entering the frame and to the row leaving it alike.
+        return switch (family) {
+            // No argument to predicate on, and the caller must not have supplied one:
+            // a row count that quietly accepted an argument type would be a second
+            // identity for the same state, and the two would not merge.
+            case FAMILY_ROW_COUNT -> argumentColumnType == ColumnType.UNDEFINED
+                    ? CONTRIBUTION_EVERY_ROW
+                    : CONTRIBUTION_NONE;
+            // Every row is a candidate: which one the state keeps is the traversal's answer
+            // and not the value's, so there is no predicate to name beyond "this argument
+            // reaches the implementation that declares the family". Each of the two is
+            // admitted over the types its own implementation is selected for, exactly as the
+            // extremum pair is - a DOUBLE-stated capture through getDouble, a 64-bit one
+            // through the argument's payload word.
+            case FAMILY_DOUBLE_FIRST_VALUE, FAMILY_LONG_FIRST_VALUE -> (family == FAMILY_DOUBLE_FIRST_VALUE
+                    ? isWidenedToDouble(argumentColumnType)
+                    : isLongPayload(argumentColumnType))
+                    ? CONTRIBUTION_EVERY_ROW
+                    : CONTRIBUTION_NONE;
+            // The 64-bit capture's own null test, which is the predicate the IGNORE NULLS
+            // implementations apply: they skip a row whose payload word is LONG_NULL. Same
+            // list and same reasoning as the 64-bit extremum's.
+            case FAMILY_LONG_FIRST_NOT_NULL_VALUE, FAMILY_LONG_LAST_NOT_NULL_VALUE -> isLongPayload(argumentColumnType)
+                    ? CONTRIBUTION_TYPED_NOT_NULL
+                    : CONTRIBUTION_NONE;
+            // Those families have one factory each and it takes a DOUBLE, so every
+            // other argument they accept arrives by widening into that DOUBLE. The
+            // max/min pair reads its argument through the same getDouble and skips the
+            // row on the same isFinite test, so it contributes under the same predicate
+            // - which is also why an extremum over a DOUBLE argument never sees an
+            // infinity, and its empty state can be NaN. The bounded-ROWS sum applies that
+            // same test twice, once as a value enters the frame and once as it leaves, so
+            // the rows it holds are exactly the rows this predicate names. The bounded-RANGE
+            // one applies it once and keeps only the values that passed, which names the same
+            // rows a different way. The two DOUBLE IGNORE NULLS capture families apply it
+            // once per row to decide whether the row may replace what the slot holds, which
+            // is the same reading of the same rows again.
+            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE,
+                 FAMILY_DOUBLE_KAHAN_SUM_COUNT,
+                 FAMILY_DOUBLE_LAST_NOT_NULL_VALUE,
+                 FAMILY_DOUBLE_MAX,
+                 FAMILY_DOUBLE_MIN,
+                 FAMILY_DOUBLE_RANGE_SUM_COUNT,
+                 FAMILY_DOUBLE_ROWS_SUM_COUNT,
+                 FAMILY_DOUBLE_SUM_COUNT,
+                 FAMILY_DOUBLE_WELFORD -> isWidenedToDouble(argumentColumnType)
+                    ? CONTRIBUTION_FINITE_DOUBLE
+                    : CONTRIBUTION_NONE;
+            // The 64-bit extremum's own null test: the implementation reads the
+            // argument's payload word and skips it when it equals LONG_NULL. Every type
+            // below reaches that reading as its own column function - LONG, DATE and
+            // TIMESTAMP have a factory each, and the narrower integrals widen into
+            // max(L) - and the type stays in the identity, so a DATE extremum and a
+            // TIMESTAMP one over the same word are still two components.
+            case FAMILY_LONG_MAX, FAMILY_LONG_MIN -> isLongPayload(argumentColumnType)
+                    ? CONTRIBUTION_TYPED_NOT_NULL
+                    : CONTRIBUTION_NONE;
+            // The DECIMAL extremum's own null test, which is the width's null sentinel and
+            // nothing else - the same predicate a count over the same column applies, since
+            // max(D) has an implementation per width and each of them skips exactly the rows
+            // that width calls absent. A non-DECIMAL argument declines: it reaches a
+            // different max() factory storing a different thing.
+            case FAMILY_DECIMAL_MAX, FAMILY_DECIMAL_MIN -> isDecimalPayload(argumentColumnType)
+                    ? CONTRIBUTION_TYPED_NOT_NULL
+                    : CONTRIBUTION_NONE;
+            // count() has a factory per argument shape, so this arm is the one that
+            // can name a predicate other than the DOUBLE one - and the type is what
+            // selects between them. All three counting families share the arm because they
+            // share those predicates exactly: one class serves every bounded-ROWS count and
+            // one every bounded-RANGE count, and each applies the very lambda the cumulative
+            // one does - to the row entering the frame and to the row leaving it alike.
+            case FAMILY_NON_NULL_COUNT, FAMILY_RANGE_NON_NULL_COUNT, FAMILY_ROWS_NON_NULL_COUNT -> {
                 if (isWidenedToDouble(argumentColumnType)) {
-                    return CONTRIBUTION_FINITE_DOUBLE;
+                    yield CONTRIBUTION_FINITE_DOUBLE;
                 }
-                switch (ColumnType.tagOf(argumentColumnType)) {
-                    case ColumnType.SYMBOL:
-                    case ColumnType.VARCHAR:
-                        return CONTRIBUTION_TYPED_NOT_NULL;
+                yield switch (ColumnType.tagOf(argumentColumnType)) {
+                    case ColumnType.SYMBOL, ColumnType.VARCHAR -> CONTRIBUTION_TYPED_NOT_NULL;
                     // A DECIMAL count is the argument type's own null test and nothing
                     // else: CountDecimalWindowFunctionFactory selects a predicate per
                     // width, and every one of the six compares against that width's null
                     // sentinel. The type stays in the identity, so a count over a
                     // DECIMAL64 column and one over a DECIMAL128 column remain two
                     // components even though both name this kind.
-                    case ColumnType.DECIMAL8:
-                    case ColumnType.DECIMAL16:
-                    case ColumnType.DECIMAL32:
-                    case ColumnType.DECIMAL64:
-                    case ColumnType.DECIMAL128:
-                    case ColumnType.DECIMAL256:
-                        return CONTRIBUTION_TYPED_NOT_NULL;
-                    default:
-                        return CONTRIBUTION_NONE;
-                }
-            default:
-                return CONTRIBUTION_NONE;
-        }
+                    case ColumnType.DECIMAL8,
+                         ColumnType.DECIMAL16,
+                         ColumnType.DECIMAL32,
+                         ColumnType.DECIMAL64,
+                         ColumnType.DECIMAL128,
+                         ColumnType.DECIMAL256 -> CONTRIBUTION_TYPED_NOT_NULL;
+                    default -> CONTRIBUTION_NONE;
+                };
+            }
+            default -> CONTRIBUTION_NONE;
+        };
     }
 
     /**
@@ -731,37 +715,30 @@ public final class WindowAccumulatorDescriptor {
      * {@code 0} for a family this build does not know.
      */
     public static int familySlotCount(int family) {
-        switch (family) {
-            case FAMILY_DOUBLE_RANGE_SUM_COUNT:
-                return 6;
-            case FAMILY_RANGE_NON_NULL_COUNT:
-                return 5;
-            case FAMILY_DOUBLE_ROWS_SUM_COUNT:
-                return 4;
-            case FAMILY_DOUBLE_FIRST_VALUE:
-            case FAMILY_DOUBLE_LAST_NOT_NULL_VALUE:
-            case FAMILY_DOUBLE_SUM_COUNT:
-            case FAMILY_LONG_FIRST_VALUE:
-            case FAMILY_LONG_LAST_NOT_NULL_VALUE:
-                return 2;
-            case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
-            case FAMILY_DOUBLE_WELFORD:
-            case FAMILY_ROWS_NON_NULL_COUNT:
-                return 3;
-            case FAMILY_DECIMAL_MAX:
-            case FAMILY_DECIMAL_MIN:
-            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE:
-            case FAMILY_DOUBLE_MAX:
-            case FAMILY_DOUBLE_MIN:
-            case FAMILY_LONG_FIRST_NOT_NULL_VALUE:
-            case FAMILY_LONG_MAX:
-            case FAMILY_LONG_MIN:
-            case FAMILY_NON_NULL_COUNT:
-            case FAMILY_ROW_COUNT:
-                return 1;
-            default:
-                return 0;
-        }
+        return switch (family) {
+            case FAMILY_DOUBLE_RANGE_SUM_COUNT -> 6;
+            case FAMILY_RANGE_NON_NULL_COUNT -> 5;
+            case FAMILY_DOUBLE_ROWS_SUM_COUNT -> 4;
+            case FAMILY_DOUBLE_FIRST_VALUE,
+                 FAMILY_DOUBLE_LAST_NOT_NULL_VALUE,
+                 FAMILY_DOUBLE_SUM_COUNT,
+                 FAMILY_LONG_FIRST_VALUE,
+                 FAMILY_LONG_LAST_NOT_NULL_VALUE -> 2;
+            case FAMILY_DOUBLE_KAHAN_SUM_COUNT,
+                 FAMILY_DOUBLE_WELFORD,
+                 FAMILY_ROWS_NON_NULL_COUNT -> 3;
+            case FAMILY_DECIMAL_MAX,
+                 FAMILY_DECIMAL_MIN,
+                 FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE,
+                 FAMILY_DOUBLE_MAX,
+                 FAMILY_DOUBLE_MIN,
+                 FAMILY_LONG_FIRST_NOT_NULL_VALUE,
+                 FAMILY_LONG_MAX,
+                 FAMILY_LONG_MIN,
+                 FAMILY_NON_NULL_COUNT,
+                 FAMILY_ROW_COUNT -> 1;
+            default -> 0;
+        };
     }
 
     /**
@@ -969,104 +946,75 @@ public final class WindowAccumulatorDescriptor {
      * the family does not carry it.
      */
     public int getFieldSlot(int field) {
-        switch (family) {
-            case FAMILY_DECIMAL_MAX:
-            case FAMILY_DECIMAL_MIN:
-            case FAMILY_DOUBLE_MAX:
-            case FAMILY_DOUBLE_MIN:
-            case FAMILY_LONG_MAX:
-            case FAMILY_LONG_MIN:
-                return field == FIELD_EXTREMUM ? 0 : -1;
-            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE:
-            case FAMILY_LONG_FIRST_NOT_NULL_VALUE:
-                // No flag: an IGNORE NULLS first value writes only what its predicate admits,
-                // so its empty state is the value slot's own NULL.
-                return field == FIELD_CAPTURED_VALUE ? 0 : -1;
-            case FAMILY_DOUBLE_FIRST_VALUE:
-            case FAMILY_DOUBLE_LAST_NOT_NULL_VALUE:
-            case FAMILY_LONG_FIRST_VALUE:
-            case FAMILY_LONG_LAST_NOT_NULL_VALUE:
-                if (field == FIELD_CAPTURED_VALUE) {
-                    return 0;
-                }
-                return field == FIELD_CAPTURED ? 1 : -1;
-            case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
-                if (field == FIELD_SUM) {
-                    return 0;
-                }
-                if (field == FIELD_KAHAN_COMPENSATION) {
-                    return 1;
-                }
-                return field == FIELD_NON_NULL_COUNT ? 2 : -1;
-            case FAMILY_DOUBLE_RANGE_SUM_COUNT:
-                if (field == FIELD_SUM) {
-                    return 0;
-                }
-                if (field == FIELD_NON_NULL_COUNT) {
-                    return 1;
-                }
-                if (field == FIELD_RING_INDEX) {
-                    return 2;
-                }
-                if (field == FIELD_RING_OFFSET) {
-                    return 3;
-                }
-                if (field == FIELD_RING_SIZE) {
-                    return 4;
-                }
-                return field == FIELD_RING_CAPACITY ? 5 : -1;
-            case FAMILY_RANGE_NON_NULL_COUNT:
-                if (field == FIELD_NON_NULL_COUNT) {
-                    return 0;
-                }
-                if (field == FIELD_RING_INDEX) {
-                    return 1;
-                }
-                if (field == FIELD_RING_OFFSET) {
-                    return 2;
-                }
-                if (field == FIELD_RING_SIZE) {
-                    return 3;
-                }
-                return field == FIELD_RING_CAPACITY ? 4 : -1;
-            case FAMILY_DOUBLE_ROWS_SUM_COUNT:
-                if (field == FIELD_SUM) {
-                    return 0;
-                }
-                if (field == FIELD_NON_NULL_COUNT) {
-                    return 1;
-                }
-                if (field == FIELD_RING_INDEX) {
-                    return 2;
-                }
-                return field == FIELD_RING_OFFSET ? 3 : -1;
-            case FAMILY_DOUBLE_SUM_COUNT:
-                if (field == FIELD_SUM) {
-                    return 0;
-                }
-                return field == FIELD_NON_NULL_COUNT ? 1 : -1;
-            case FAMILY_ROWS_NON_NULL_COUNT:
-                if (field == FIELD_NON_NULL_COUNT) {
-                    return 0;
-                }
-                if (field == FIELD_RING_INDEX) {
-                    return 1;
-                }
-                return field == FIELD_RING_OFFSET ? 2 : -1;
-            case FAMILY_DOUBLE_WELFORD:
-                if (field == FIELD_MEAN) {
-                    return 0;
-                }
-                if (field == FIELD_M2) {
-                    return 1;
-                }
-                return field == FIELD_NON_NULL_COUNT ? 2 : -1;
-            case FAMILY_NON_NULL_COUNT:
-            case FAMILY_ROW_COUNT:
-                return field == FIELD_NON_NULL_COUNT ? 0 : -1;
-            default:
-                return -1;
-        }
+        return switch (family) {
+            case FAMILY_DECIMAL_MAX,
+                 FAMILY_DECIMAL_MIN,
+                 FAMILY_DOUBLE_MAX,
+                 FAMILY_DOUBLE_MIN,
+                 FAMILY_LONG_MAX,
+                 FAMILY_LONG_MIN -> field == FIELD_EXTREMUM ? 0 : -1;
+            // No flag: an IGNORE NULLS first value writes only what its predicate admits,
+            // so its empty state is the value slot's own NULL.
+            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE, FAMILY_LONG_FIRST_NOT_NULL_VALUE ->
+                    field == FIELD_CAPTURED_VALUE ? 0 : -1;
+            case FAMILY_DOUBLE_FIRST_VALUE,
+                 FAMILY_DOUBLE_LAST_NOT_NULL_VALUE,
+                 FAMILY_LONG_FIRST_VALUE,
+                 FAMILY_LONG_LAST_NOT_NULL_VALUE -> switch (field) {
+                case FIELD_CAPTURED_VALUE -> 0;
+                case FIELD_CAPTURED -> 1;
+                default -> -1;
+            };
+            case FAMILY_DOUBLE_KAHAN_SUM_COUNT -> switch (field) {
+                case FIELD_SUM -> 0;
+                case FIELD_KAHAN_COMPENSATION -> 1;
+                case FIELD_NON_NULL_COUNT -> 2;
+                default -> -1;
+            };
+            case FAMILY_DOUBLE_RANGE_SUM_COUNT -> switch (field) {
+                case FIELD_SUM -> 0;
+                case FIELD_NON_NULL_COUNT -> 1;
+                case FIELD_RING_INDEX -> 2;
+                case FIELD_RING_OFFSET -> 3;
+                case FIELD_RING_SIZE -> 4;
+                case FIELD_RING_CAPACITY -> 5;
+                default -> -1;
+            };
+            case FAMILY_RANGE_NON_NULL_COUNT -> switch (field) {
+                case FIELD_NON_NULL_COUNT -> 0;
+                case FIELD_RING_INDEX -> 1;
+                case FIELD_RING_OFFSET -> 2;
+                case FIELD_RING_SIZE -> 3;
+                case FIELD_RING_CAPACITY -> 4;
+                default -> -1;
+            };
+            case FAMILY_DOUBLE_ROWS_SUM_COUNT -> switch (field) {
+                case FIELD_SUM -> 0;
+                case FIELD_NON_NULL_COUNT -> 1;
+                case FIELD_RING_INDEX -> 2;
+                case FIELD_RING_OFFSET -> 3;
+                default -> -1;
+            };
+            case FAMILY_DOUBLE_SUM_COUNT -> switch (field) {
+                case FIELD_SUM -> 0;
+                case FIELD_NON_NULL_COUNT -> 1;
+                default -> -1;
+            };
+            case FAMILY_ROWS_NON_NULL_COUNT -> switch (field) {
+                case FIELD_NON_NULL_COUNT -> 0;
+                case FIELD_RING_INDEX -> 1;
+                case FIELD_RING_OFFSET -> 2;
+                default -> -1;
+            };
+            case FAMILY_DOUBLE_WELFORD -> switch (field) {
+                case FIELD_MEAN -> 0;
+                case FIELD_M2 -> 1;
+                case FIELD_NON_NULL_COUNT -> 2;
+                default -> -1;
+            };
+            case FAMILY_NON_NULL_COUNT, FAMILY_ROW_COUNT -> field == FIELD_NON_NULL_COUNT ? 0 : -1;
+            default -> -1;
+        };
     }
 
     /**
@@ -1086,92 +1034,84 @@ public final class WindowAccumulatorDescriptor {
      */
     public int getSlotColumnType(int slot) {
         switch (family) {
-            case FAMILY_DECIMAL_MAX:
-            case FAMILY_DECIMAL_MIN:
+            case FAMILY_DECIMAL_MAX, FAMILY_DECIMAL_MIN -> {
                 if (slot == 0) {
                     return decimalStateColumnType(argumentColumnType);
                 }
-                break;
-            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE:
-            case FAMILY_DOUBLE_MAX:
-            case FAMILY_DOUBLE_MIN:
+            }
+            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE, FAMILY_DOUBLE_MAX, FAMILY_DOUBLE_MIN -> {
                 if (slot == 0) {
                     return ColumnType.DOUBLE;
                 }
-                break;
-            case FAMILY_DOUBLE_FIRST_VALUE:
-            case FAMILY_DOUBLE_LAST_NOT_NULL_VALUE:
+            }
+            case FAMILY_DOUBLE_FIRST_VALUE, FAMILY_DOUBLE_LAST_NOT_NULL_VALUE -> {
                 if (slot == 0) {
                     return ColumnType.DOUBLE;
                 }
                 if (slot == 1) {
                     return ColumnType.LONG;
                 }
-                break;
-            case FAMILY_LONG_FIRST_NOT_NULL_VALUE:
-            case FAMILY_LONG_MAX:
-            case FAMILY_LONG_MIN:
+            }
+            case FAMILY_LONG_FIRST_NOT_NULL_VALUE, FAMILY_LONG_MAX, FAMILY_LONG_MIN -> {
                 if (slot == 0) {
                     return ColumnType.LONG;
                 }
-                break;
-            case FAMILY_LONG_FIRST_VALUE:
-            case FAMILY_LONG_LAST_NOT_NULL_VALUE:
+            }
+            case FAMILY_LONG_FIRST_VALUE, FAMILY_LONG_LAST_NOT_NULL_VALUE -> {
                 if (slot == 0 || slot == 1) {
                     return ColumnType.LONG;
                 }
-                break;
-            case FAMILY_DOUBLE_RANGE_SUM_COUNT:
+            }
+            case FAMILY_DOUBLE_RANGE_SUM_COUNT -> {
                 if (slot == 0) {
                     return ColumnType.DOUBLE;
                 }
                 if (slot >= 1 && slot <= 5) {
                     return ColumnType.LONG;
                 }
-                break;
-            case FAMILY_RANGE_NON_NULL_COUNT:
+            }
+            case FAMILY_RANGE_NON_NULL_COUNT -> {
                 if (slot >= 0 && slot <= 4) {
                     return ColumnType.LONG;
                 }
-                break;
-            case FAMILY_DOUBLE_ROWS_SUM_COUNT:
+            }
+            case FAMILY_DOUBLE_ROWS_SUM_COUNT -> {
                 if (slot == 0) {
                     return ColumnType.DOUBLE;
                 }
                 if (slot == 1 || slot == 2 || slot == 3) {
                     return ColumnType.LONG;
                 }
-                break;
-            case FAMILY_DOUBLE_SUM_COUNT:
+            }
+            case FAMILY_DOUBLE_SUM_COUNT -> {
                 if (slot == 0) {
                     return ColumnType.DOUBLE;
                 }
                 if (slot == 1) {
                     return ColumnType.LONG;
                 }
-                break;
-            case FAMILY_ROWS_NON_NULL_COUNT:
+            }
+            case FAMILY_ROWS_NON_NULL_COUNT -> {
                 if (slot == 0 || slot == 1 || slot == 2) {
                     return ColumnType.LONG;
                 }
-                break;
-            case FAMILY_DOUBLE_KAHAN_SUM_COUNT:
-            case FAMILY_DOUBLE_WELFORD:
+            }
+            case FAMILY_DOUBLE_KAHAN_SUM_COUNT, FAMILY_DOUBLE_WELFORD -> {
                 if (slot == 0 || slot == 1) {
                     return ColumnType.DOUBLE;
                 }
                 if (slot == 2) {
                     return ColumnType.LONG;
                 }
-                break;
-            case FAMILY_NON_NULL_COUNT:
-            case FAMILY_ROW_COUNT:
+            }
+            case FAMILY_NON_NULL_COUNT, FAMILY_ROW_COUNT -> {
                 if (slot == 0) {
                     return ColumnType.LONG;
                 }
-                break;
-            default:
-                break;
+            }
+            default -> {
+                // An unknown family has no slot layout, so every slot is out of range.
+            }
         }
         throw new IndexOutOfBoundsException();
     }
@@ -1206,55 +1146,48 @@ public final class WindowAccumulatorDescriptor {
         if (isWideDecimalSlot(slotType)) {
             throw new UnsupportedOperationException("a wide DECIMAL slot's identity is not one word");
         }
-        switch (family) {
-            case FAMILY_DECIMAL_MAX:
-            case FAMILY_DECIMAL_MIN:
-                // Sign-extended into the word the narrow implementations store it in, which is
-                // how they compare it back - (byte) mv.getLong(0) against DECIMAL8_NULL.
-                return decimalNullPayload(argumentColumnType);
-            case FAMILY_DOUBLE_MAX:
-            case FAMILY_DOUBLE_MIN:
-                return Double.doubleToRawLongBits(Double.NaN);
-            case FAMILY_LONG_MAX:
-            case FAMILY_LONG_MIN:
-                return Numbers.LONG_NULL;
-            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE:
-            case FAMILY_DOUBLE_FIRST_VALUE:
-            case FAMILY_DOUBLE_LAST_NOT_NULL_VALUE:
-            case FAMILY_LONG_FIRST_NOT_NULL_VALUE:
-            case FAMILY_LONG_FIRST_VALUE:
-            case FAMILY_LONG_LAST_NOT_NULL_VALUE:
-                // The captured value starts at its own state type's NULL, which is what the same
-                // window emits for a partition nothing has been captured from - so a projection
-                // reads the slot straight and needs no empty test. The flag beside it, where the
-                // family has one, starts at zero and means "nothing written yet"; it is the
-                // contributor's alone.
+        return switch (family) {
+            // Sign-extended into the word the narrow implementations store it in, which is
+            // how they compare it back - (byte) mv.getLong(0) against DECIMAL8_NULL.
+            case FAMILY_DECIMAL_MAX, FAMILY_DECIMAL_MIN -> decimalNullPayload(argumentColumnType);
+            case FAMILY_DOUBLE_MAX, FAMILY_DOUBLE_MIN -> Double.doubleToRawLongBits(Double.NaN);
+            case FAMILY_LONG_MAX, FAMILY_LONG_MIN -> Numbers.LONG_NULL;
+            // The captured value starts at its own state type's NULL, which is what the same
+            // window emits for a partition nothing has been captured from - so a projection
+            // reads the slot straight and needs no empty test. The flag beside it, where the
+            // family has one, starts at zero and means "nothing written yet"; it is the
+            // contributor's alone.
+            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE,
+                 FAMILY_DOUBLE_FIRST_VALUE,
+                 FAMILY_DOUBLE_LAST_NOT_NULL_VALUE,
+                 FAMILY_LONG_FIRST_NOT_NULL_VALUE,
+                 FAMILY_LONG_FIRST_VALUE,
+                 FAMILY_LONG_LAST_NOT_NULL_VALUE -> {
                 if (slot != getFieldSlot(FIELD_CAPTURED_VALUE)) {
-                    return 0L;
+                    yield 0L;
                 }
-                return family == FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE
+                yield family == FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE
                         || family == FAMILY_DOUBLE_FIRST_VALUE
                         || family == FAMILY_DOUBLE_LAST_NOT_NULL_VALUE
                         ? Double.doubleToRawLongBits(Double.NaN)
                         : Numbers.LONG_NULL;
-            case FAMILY_DOUBLE_RANGE_SUM_COUNT:
-            case FAMILY_DOUBLE_ROWS_SUM_COUNT:
-            case FAMILY_RANGE_NON_NULL_COUNT:
-            case FAMILY_ROWS_NON_NULL_COUNT:
-                // Zero for the accumulating slots, which a bounded total and a bounded counter
-                // both start at and mean, and RING_STATE_UNALLOCATED for the ring's address,
-                // which is the one slot in this build whose identity is not a value the
-                // arithmetic could produce - it says "no ring yet" and is what makes the
-                // contributor's first row on a partition allocate one. The RANGE families'
-                // length and capacity start at zero too and mean it: an unallocated ring holds
-                // nothing and can hold nothing, and the contributor writes both when it
-                // allocates.
-                return slot == getFieldSlot(FIELD_RING_OFFSET) ? RING_STATE_UNALLOCATED : 0L;
-            default:
-                // Zero, whichever way the slot is read back: a DOUBLE zero and a LONG zero are
-                // the same word.
-                return 0L;
-        }
+            }
+            // Zero for the accumulating slots, which a bounded total and a bounded counter
+            // both start at and mean, and RING_STATE_UNALLOCATED for the ring's address,
+            // which is the one slot in this build whose identity is not a value the
+            // arithmetic could produce - it says "no ring yet" and is what makes the
+            // contributor's first row on a partition allocate one. The RANGE families'
+            // length and capacity start at zero too and mean it: an unallocated ring holds
+            // nothing and can hold nothing, and the contributor writes both when it
+            // allocates.
+            case FAMILY_DOUBLE_RANGE_SUM_COUNT,
+                 FAMILY_DOUBLE_ROWS_SUM_COUNT,
+                 FAMILY_RANGE_NON_NULL_COUNT,
+                 FAMILY_ROWS_NON_NULL_COUNT -> slot == getFieldSlot(FIELD_RING_OFFSET) ? RING_STATE_UNALLOCATED : 0L;
+            // Zero, whichever way the slot is read back: a DOUBLE zero and a LONG zero are
+            // the same word.
+            default -> 0L;
+        };
     }
 
     /**
@@ -1315,18 +1248,10 @@ public final class WindowAccumulatorDescriptor {
         for (int i = 0, n = getSlotCount(); i < n; i++) {
             final int slotType = getSlotColumnType(i);
             switch (ColumnType.tagOf(slotType)) {
-                case ColumnType.DECIMAL128:
-                    value.putDecimal128Null(slotBase + i);
-                    break;
-                case ColumnType.DECIMAL256:
-                    value.putDecimal256Null(slotBase + i);
-                    break;
-                case ColumnType.DOUBLE:
-                    value.putDouble(slotBase + i, Double.longBitsToDouble(getSlotIdentityBits(i)));
-                    break;
-                default:
-                    value.putLong(slotBase + i, getSlotIdentityBits(i));
-                    break;
+                case ColumnType.DECIMAL128 -> value.putDecimal128Null(slotBase + i);
+                case ColumnType.DECIMAL256 -> value.putDecimal256Null(slotBase + i);
+                case ColumnType.DOUBLE -> value.putDouble(slotBase + i, Double.longBitsToDouble(getSlotIdentityBits(i)));
+                default -> value.putLong(slotBase + i, getSlotIdentityBits(i));
             }
         }
     }
@@ -1342,18 +1267,13 @@ public final class WindowAccumulatorDescriptor {
      * {@link #resetState}.
      */
     private static long decimalNullPayload(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.DECIMAL8:
-                return Decimals.DECIMAL8_NULL;
-            case ColumnType.DECIMAL16:
-                return Decimals.DECIMAL16_NULL;
-            case ColumnType.DECIMAL32:
-                return Decimals.DECIMAL32_NULL;
-            case ColumnType.DECIMAL64:
-                return Decimals.DECIMAL64_NULL;
-            default:
-                throw new IndexOutOfBoundsException();
-        }
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.DECIMAL8 -> Decimals.DECIMAL8_NULL;
+            case ColumnType.DECIMAL16 -> Decimals.DECIMAL16_NULL;
+            case ColumnType.DECIMAL32 -> Decimals.DECIMAL32_NULL;
+            case ColumnType.DECIMAL64 -> Decimals.DECIMAL64_NULL;
+            default -> throw new IndexOutOfBoundsException();
+        };
     }
 
     /**
@@ -1362,19 +1282,13 @@ public final class WindowAccumulatorDescriptor {
      * implementations store, and the argument's own type for the two wide ones.
      */
     private static int decimalStateColumnType(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-                return ColumnType.LONG;
-            case ColumnType.DECIMAL128:
-                return ColumnType.DECIMAL128;
-            case ColumnType.DECIMAL256:
-                return ColumnType.DECIMAL256;
-            default:
-                throw new IndexOutOfBoundsException();
-        }
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
+                    ColumnType.LONG;
+            case ColumnType.DECIMAL128 -> ColumnType.DECIMAL128;
+            case ColumnType.DECIMAL256 -> ColumnType.DECIMAL256;
+            default -> throw new IndexOutOfBoundsException();
+        };
     }
 
     /**
@@ -1390,17 +1304,15 @@ public final class WindowAccumulatorDescriptor {
      * is what they keep, not which rows they keep it from.
      */
     private static boolean isDecimalPayload(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-            case ColumnType.DECIMAL128:
-            case ColumnType.DECIMAL256:
-                return true;
-            default:
-                return false;
-        }
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.DECIMAL8,
+                 ColumnType.DECIMAL16,
+                 ColumnType.DECIMAL32,
+                 ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128,
+                 ColumnType.DECIMAL256 -> true;
+            default -> false;
+        };
     }
 
     /**
@@ -1435,17 +1347,15 @@ public final class WindowAccumulatorDescriptor {
      * same state, since {@code Byte.MIN_VALUE} is an absent DECIMAL8 and an ordinary LONG.
      */
     private static boolean isLongPayload(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BYTE:
-            case ColumnType.SHORT:
-            case ColumnType.INT:
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                return true;
-            default:
-                return false;
-        }
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BYTE,
+                 ColumnType.SHORT,
+                 ColumnType.INT,
+                 ColumnType.LONG,
+                 ColumnType.DATE,
+                 ColumnType.TIMESTAMP -> true;
+            default -> false;
+        };
     }
 
     /**
@@ -1490,16 +1400,14 @@ public final class WindowAccumulatorDescriptor {
      * component would have to re-decide arithmetic rather than describe a state.
      */
     private static boolean isWidenedToDouble(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BYTE:
-            case ColumnType.SHORT:
-            case ColumnType.INT:
-            case ColumnType.LONG:
-            case ColumnType.FLOAT:
-            case ColumnType.DOUBLE:
-                return true;
-            default:
-                return false;
-        }
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BYTE,
+                 ColumnType.SHORT,
+                 ColumnType.INT,
+                 ColumnType.LONG,
+                 ColumnType.FLOAT,
+                 ColumnType.DOUBLE -> true;
+            default -> false;
+        };
     }
 }

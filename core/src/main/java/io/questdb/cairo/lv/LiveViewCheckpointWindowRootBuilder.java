@@ -79,6 +79,11 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
     private int mutationCount;
     private LiveViewCheckpointPartitionMapWriter.Mutation[] mutations = new LiveViewCheckpointPartitionMapWriter.Mutation[8];
     /**
+     * Metadata segment holding the window-root page this build supersedes, or
+     * {@link #NO_SEGMENT} for the first window root of a timeline.
+     */
+    private long oldRootPageSegmentId = NO_SEGMENT;
+    /**
      * The repair's key domain, or null for a whole-truth build. It narrows removal by
      * omission to the keys a replay describes, exactly as the function path narrows it:
      * a key outside {@code Q} has no qualifying row in the replaced interval, so the
@@ -86,11 +91,6 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
      * still the truth and is neither replaced nor removed.
      */
     private LiveViewCheckpointOutputKeyDomain outputKeys;
-    /**
-     * Metadata segment holding the window-root page this build supersedes, or
-     * {@link #NO_SEGMENT} for the first window root of a timeline.
-     */
-    private long oldRootPageSegmentId = NO_SEGMENT;
     private int totalInlineStateBytes;
     private byte[] windowIdentity = new byte[0];
 

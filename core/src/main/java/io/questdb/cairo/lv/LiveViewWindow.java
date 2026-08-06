@@ -778,14 +778,14 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull ObjList<byte[]> keysOut,
             @NotNull LongList valuesOut,
             @NotNull ObjList<byte[]> removedKeysOut,
-            boolean incremental
+            boolean isIncremental
     ) {
         return freezeCheckpointEntries(
                 keyBuffer,
                 keysOut,
                 valuesOut,
                 removedKeysOut,
-                incremental,
+                isIncremental,
                 LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE,
                 null
         );
@@ -817,7 +817,7 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull ObjList<byte[]> keysOut,
             @NotNull LongList valuesOut,
             @NotNull ObjList<byte[]> removedKeysOut,
-            boolean incremental,
+            boolean isIncremental,
             int entryStateBytes,
             @Nullable ObjList<byte[]> payloadsOut
     ) {
@@ -828,7 +828,7 @@ public class LiveViewWindow implements QuietCloseable {
         final IntList projectionIndexes = new IntList(1);
         projectionIndexes.add(NO_MEMBER_PROJECTION);
         final LongList logicalBytes = new LongList(1);
-        logicalBytes.add(incremental ? checkpointLogicalStateBytes : 0);
+        logicalBytes.add(isIncremental ? checkpointLogicalStateBytes : 0);
         ObjList<ObjList<byte[]>> payloads = null;
         if (payloadsOut != null) {
             payloads = new ObjList<>(1);
@@ -839,7 +839,7 @@ public class LiveViewWindow implements QuietCloseable {
                 keysOut,
                 valuesOut,
                 removedKeysOut,
-                incremental,
+                isIncremental,
                 stateBytes,
                 payloads,
                 projectionIndexes,
@@ -887,7 +887,7 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull LongList valuesOut,
             @NotNull ObjList<ObjList<byte[]>> imagesOut,
             @NotNull ObjList<byte[]> removedKeysOut,
-            boolean incremental,
+            boolean isIncremental,
             @NotNull LongList logicalBytesInOut
     ) {
         final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
@@ -909,7 +909,7 @@ public class LiveViewWindow implements QuietCloseable {
         final IntList entryStateBytes = new IntList(memberCount);
         for (int m = 0; m < memberCount; m++) {
             entryStateBytes.add(plan.getProjection(projectionIndexes.getQuick(m)).getFunctionStateLength());
-            if (!incremental) {
+            if (!isIncremental) {
                 logicalBytesInOut.setQuick(m, 0);
             }
         }
@@ -918,7 +918,7 @@ public class LiveViewWindow implements QuietCloseable {
                 keysOut,
                 valuesOut,
                 removedKeysOut,
-                incremental,
+                isIncremental,
                 entryStateBytes,
                 imagesOut,
                 projectionIndexes,
@@ -936,7 +936,7 @@ public class LiveViewWindow implements QuietCloseable {
      * of the loaded value at that member's own slot base, and the logical charge, which is
      * seeded from that member's own root and charged at that member's own width.
      * <p>
-     * Members must agree on {@code incremental}, because it selects the map that is walked
+     * Members must agree on {@code isIncremental}, because it selects the map that is walked
      * and the layout its records carry. They can disagree - a state-format version bump
      * leaves one member without a matching predecessor root while its siblings keep theirs
      * - so the caller buckets them by that flag and issues one walk per bucket, which is
@@ -957,7 +957,7 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull ObjList<byte[]> keysOut,
             @NotNull LongList valuesOut,
             @NotNull ObjList<byte[]> removedKeysOut,
-            boolean incremental,
+            boolean isIncremental,
             @NotNull IntList entryStateBytes,
             @Nullable ObjList<ObjList<byte[]>> payloadsOut,
             @NotNull IntList memberProjectionIndexes,
@@ -977,20 +977,20 @@ public class LiveViewWindow implements QuietCloseable {
                         .put("live view checkpoint window state freeze without an adopted plan");
             }
         }
-        final Map scanMap = incremental ? checkpointDirtyAnchorMap : anchorMap;
+        final Map scanMap = isIncremental ? checkpointDirtyAnchorMap : anchorMap;
         // A map record lays its value columns out ahead of its key columns, and the
         // two maps carry different value layouts, so the key tail starts at a
         // different index in each.
-        final int keyStartIndex = incremental
+        final int keyStartIndex = isIncremental
                 ? DirtyAnchorMapValueTypes.INSTANCE.getColumnCount()
                 : activeKeyStartIndex;
         final MapRecordCursor cursor = scanMap.getCursor();
         final MapRecord record = scanMap.getRecord();
         while (cursor.hasNext()) {
             final MapValue dirtyOrAnchorValue = record.getValue();
-            final boolean isNewSinceCheckpoint = incremental
+            final boolean isNewSinceCheckpoint = isIncremental
                     && dirtyOrAnchorValue.getByte(DIRTY_SLOT_NEW_SINCE_CHECKPOINT) == 1;
-            final boolean isRecordedEviction = incremental
+            final boolean isRecordedEviction = isIncremental
                     && dirtyOrAnchorValue.getByte(DIRTY_SLOT_EVICTED) == 1;
             keyBuffer.jumpTo(0);
             LiveViewSnapshotKeyCodec.writeKey(keyBuffer, record, partitionKeyTypes, keyStartIndex);
@@ -1000,7 +1000,7 @@ public class LiveViewWindow implements QuietCloseable {
                         .put("live view checkpoint anchor key length out of bounds, bytes=").put(length);
             }
             final MapValue anchorValue;
-            if (incremental) {
+            if (isIncremental) {
                 final MapKey liveKey = anchorMap.withKey();
                 LiveViewSnapshotKeyCodec.readKey(liveKey, keyBuffer, 0, partitionKeyTypes);
                 anchorValue = liveKey.findValue();
@@ -1041,7 +1041,7 @@ public class LiveViewWindow implements QuietCloseable {
             final byte[] key = copyEncodedKey(keyBuffer, (int) length);
             keysOut.add(key);
             valuesOut.add(anchorValue.getLong(SLOT_ANCHOR_VALUE));
-            final boolean isCharged = !incremental || isNewSinceCheckpoint;
+            final boolean isCharged = !isIncremental || isNewSinceCheckpoint;
             for (int m = 0; m < memberCount; m++) {
                 final int stateBytes = entryStateBytes.getQuick(m);
                 if (payloadsOut != null) {

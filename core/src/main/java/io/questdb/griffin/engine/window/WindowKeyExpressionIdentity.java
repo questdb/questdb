@@ -91,20 +91,6 @@ public final class WindowKeyExpressionIdentity {
     }
 
     /**
-     * Renders the identity of a term that is a direct column reference, which a caller holding
-     * the compiled function knows without a tree: the index it reads and the type it reads it
-     * as.
-     * <p>
-     * It is the same rendering {@link #render} produces for a LITERAL, and it is here so that
-     * one place defines it - a caller that resolved the column off the compiled function and
-     * one that resolved it off the parsed name have to agree, or two spellings of one key would
-     * be two groups.
-     */
-    public static void renderColumn(int columnIndex, int columnType, @NotNull CharSink<?> sink) {
-        sink.putAscii('#').put(columnIndex).putAscii(':').put(columnType);
-    }
-
-    /**
      * Renders {@code term}'s canonical identity into {@code sink}, and reports whether this
      * build can name it at all.
      * <p>
@@ -128,6 +114,37 @@ public final class WindowKeyExpressionIdentity {
             return false;
         }
         return renderNode(term, metadata, sink, 0);
+    }
+
+    /**
+     * Renders the identity of a term that is a direct column reference, which a caller holding
+     * the compiled function knows without a tree: the index it reads and the type it reads it
+     * as.
+     * <p>
+     * It is the same rendering {@link #render} produces for a LITERAL, and it is here so that
+     * one place defines it - a caller that resolved the column off the compiled function and
+     * one that resolved it off the parsed name have to agree, or two spellings of one key would
+     * be two groups.
+     */
+    public static void renderColumn(int columnIndex, int columnType, @NotNull CharSink<?> sink) {
+        sink.putAscii('#').put(columnIndex).putAscii(':').put(columnType);
+    }
+
+    /**
+     * Renders one child slot, which an operator may legitimately leave empty - a unary
+     * operation carries its operand in {@code rhs} and nothing in {@code lhs}.
+     */
+    private static boolean renderChild(
+            @Nullable ExpressionNode child,
+            @NotNull RecordMetadata metadata,
+            @NotNull CharSink<?> sink,
+            int depth
+    ) {
+        if (child == null) {
+            sink.putAscii('_');
+            return true;
+        }
+        return renderNode(child, metadata, sink, depth + 1);
     }
 
     private static boolean renderChildren(
@@ -164,23 +181,6 @@ public final class WindowKeyExpressionIdentity {
         return true;
     }
 
-    /**
-     * Renders one child slot, which an operator may legitimately leave empty - a unary
-     * operation carries its operand in {@code rhs} and nothing in {@code lhs}.
-     */
-    private static boolean renderChild(
-            @Nullable ExpressionNode child,
-            @NotNull RecordMetadata metadata,
-            @NotNull CharSink<?> sink,
-            int depth
-    ) {
-        if (child == null) {
-            sink.putAscii('_');
-            return true;
-        }
-        return renderNode(child, metadata, sink, depth + 1);
-    }
-
     private static boolean renderNode(
             @Nullable ExpressionNode node,
             @NotNull RecordMetadata metadata,
@@ -190,38 +190,37 @@ public final class WindowKeyExpressionIdentity {
         if (node == null || node.token == null || depth > MAX_DEPTH) {
             return false;
         }
-        switch (node.type) {
-            case ExpressionNode.LITERAL: {
+        return switch (node.type) {
+            case ExpressionNode.LITERAL -> {
                 final int columnIndex = SqlUtil.getColumnIndexQuiet(metadata, node.token);
                 if (columnIndex < 0) {
-                    return false;
+                    yield false;
                 }
                 // The index and the type together: the index is which column the term reads and
                 // the type is what it reads it as, and a metadata this identity outlives could
                 // otherwise be read back through the wrong one.
                 renderColumn(columnIndex, metadata.getColumnType(columnIndex), sink);
-                return true;
+                yield true;
             }
-            case ExpressionNode.CONSTANT:
+            case ExpressionNode.CONSTANT -> {
                 // Verbatim, quoting and case included: 'a' and 'A' are two values, and the
                 // parser folds the token rather than a normalization of it.
                 sink.putAscii('=').put(node.token);
-                return true;
-            case ExpressionNode.OPERATION:
-            case ExpressionNode.FUNCTION: {
+                yield true;
+            }
+            case ExpressionNode.OPERATION, ExpressionNode.FUNCTION -> {
                 // Lower-cased for the reason ExpressionNode's own exact comparison compares a
                 // FUNCTION token case-insensitively: SQL resolves the name that way.
                 sink.putAscii('!');
                 for (int i = 0, n = node.token.length(); i < n; i++) {
                     sink.putAscii(Chars.toLowerCaseAscii(node.token.charAt(i)));
                 }
-                return renderChildren(node, metadata, sink, depth);
+                yield renderChildren(node, metadata, sink, depth);
             }
-            default:
-                // A bind variable, a subquery, an array or member access, a set operation, and
-                // whatever the parser grows next. Declining what is not named is what keeps the
-                // proof a proof.
-                return false;
-        }
+            // A bind variable, a subquery, an array or member access, a set operation, and
+            // whatever the parser grows next. Declining what is not named is what keeps the
+            // proof a proof.
+            default -> false;
+        };
     }
 }

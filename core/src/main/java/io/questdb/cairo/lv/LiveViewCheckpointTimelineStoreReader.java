@@ -844,13 +844,13 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
      * Returns {@code function}'s projection in the adopted plan, or {@code -1} when the
      * group does not carry it or the root being restored is a legacy one.
      *
-     * @param durable when true, answers only for a projection the fused payload carries;
+     * @param isDurable when true, answers only for a projection the fused payload carries;
      *                when false, only for a runtime-only member
      */
     private int memberProjectionIndex(
             @Nullable LiveViewWindow anchorWindow,
             WindowFunction function,
-            boolean durable
+            boolean isDurable
     ) {
         if (!isFusedStateRoot || anchorWindow == null) {
             return -1;
@@ -860,7 +860,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             return -1;
         }
         final int projectionIndex = plan.indexOfProjectionFunction(function);
-        if (projectionIndex < 0 || plan.isDurableProjection(projectionIndex) != durable) {
+        if (projectionIndex < 0 || plan.isDurableProjection(projectionIndex) != isDurable) {
             return -1;
         }
         return projectionIndex;

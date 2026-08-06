@@ -113,20 +113,18 @@ public final class LiveViewAccumulatorDescriptor {
      * bump makes an older component unresolvable rather than reinterpretable.
      */
     public static int familyCodecVersion(int family) {
-        switch (family) {
-            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT:
-            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX:
-            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN:
-            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT:
-            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD:
-            case WindowAccumulatorDescriptor.FAMILY_LONG_MAX:
-            case WindowAccumulatorDescriptor.FAMILY_LONG_MIN:
-            case WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT:
-            case WindowAccumulatorDescriptor.FAMILY_ROW_COUNT:
-                return 1;
-            default:
-                return -1;
-        }
+        return switch (family) {
+            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT,
+                 WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX,
+                 WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN,
+                 WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                 WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                 WindowAccumulatorDescriptor.FAMILY_LONG_MAX,
+                 WindowAccumulatorDescriptor.FAMILY_LONG_MIN,
+                 WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                 WindowAccumulatorDescriptor.FAMILY_ROW_COUNT -> 1;
+            default -> -1;
+        };
     }
 
     /**

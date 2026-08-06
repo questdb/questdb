@@ -105,10 +105,10 @@ import org.jetbrains.annotations.Nullable;
 public final class WindowMapSpec {
     private final int exclusionKind;
     private final int framingMode;
+    private final boolean isOrderDismissed;
     private final IntList keyColumnTypes;
     private final IntList orderColumnIndexes;
     private final IntList orderDirections;
-    private final boolean orderDismissed;
     private final ObjList<? extends Function> partitionByFunctions;
     private final IntList partitionColumnIndexes;
     private final String partitionKeyIdentity;
@@ -128,7 +128,7 @@ public final class WindowMapSpec {
             IntList keyColumnTypes,
             IntList orderColumnIndexes,
             IntList orderDirections,
-            boolean orderDismissed,
+            boolean isOrderDismissed,
             int scanDirection,
             int framingMode,
             long rowsLo,
@@ -145,7 +145,7 @@ public final class WindowMapSpec {
         this.keyColumnTypes = keyColumnTypes;
         this.orderColumnIndexes = orderColumnIndexes;
         this.orderDirections = orderDirections;
-        this.orderDismissed = orderDismissed;
+        this.isOrderDismissed = isOrderDismissed;
         this.scanDirection = scanDirection;
         this.framingMode = framingMode;
         this.rowsLo = rowsLo;
@@ -177,7 +177,7 @@ public final class WindowMapSpec {
      *                          again
      * @param orderBy           the window's ORDER BY terms, as written
      * @param orderByDirections one direction per term
-     * @param orderDismissed    whether the compiler proved the base cursor already
+     * @param isOrderDismissed    whether the compiler proved the base cursor already
      *                          produces this order, so no sort stands between the two
      * @param function          the compiled window function, read for its pass structure
      * @param baseMetadata      the metadata the window's expressions were compiled against,
@@ -194,7 +194,7 @@ public final class WindowMapSpec {
             @NotNull ObjList<ExpressionNode> partitionBy,
             @NotNull ObjList<ExpressionNode> orderBy,
             @NotNull IntList orderByDirections,
-            boolean orderDismissed,
+            boolean isOrderDismissed,
             @NotNull WindowFunction function,
             @NotNull RecordMetadata baseMetadata,
             @NotNull ColumnTypes recordTypes
@@ -270,7 +270,7 @@ public final class WindowMapSpec {
                 keyColumnTypes,
                 orderColumnIndexes,
                 orderDirections,
-                orderDismissed,
+                isOrderDismissed,
                 context.getOrderByScanDirection(),
                 context.getFramingMode(),
                 context.getRowsLo(),
@@ -406,7 +406,7 @@ public final class WindowMapSpec {
             h = h * 31 + Long.hashCode(rowsLo);
             h = h * 31 + Long.hashCode(rowsHi);
             h = h * 31 + exclusionKind;
-            h = h * 31 + (orderDismissed ? 1 : 0);
+            h = h * 31 + (isOrderDismissed ? 1 : 0);
             h = h * 31 + scanDirection;
             h = h * 31 + passCount;
             // Compared with == in isSameSpec, which for an enum is ordinal equality.
@@ -435,7 +435,7 @@ public final class WindowMapSpec {
      * the functions read it without a sort in between.
      */
     public boolean isOrderDismissed() {
-        return orderDismissed;
+        return isOrderDismissed;
     }
 
     /**
@@ -448,7 +448,7 @@ public final class WindowMapSpec {
                 && rowsLo == other.rowsLo
                 && rowsHi == other.rowsHi
                 && exclusionKind == other.exclusionKind
-                && orderDismissed == other.orderDismissed
+                && isOrderDismissed == other.isOrderDismissed
                 && scanDirection == other.scanDirection
                 && passCount == other.passCount
                 && pass1ScanDirection == other.pass1ScanDirection
@@ -469,7 +469,7 @@ public final class WindowMapSpec {
                 + ", keyColumnTypes=" + keyColumnTypes
                 + ", orderColumns=" + orderColumnIndexes
                 + ", orderDirections=" + orderDirections
-                + ", orderDismissed=" + orderDismissed
+                + ", orderDismissed=" + isOrderDismissed
                 + ", scanDirection=" + scanDirection
                 + ", framingMode=" + framingMode
                 + ", rowsLo=" + rowsLo

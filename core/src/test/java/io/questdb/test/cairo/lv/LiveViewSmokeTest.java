@@ -61,17 +61,14 @@ import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
@@ -261,25 +258,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // seed test must drive the whole sweep through a single
     // LiveViewRefreshJob, since tearing one down mid-sweep and resuming on a
     // fresh one is not a path production takes (the pool keeps jobs alive).
-
-    // Walks the LV's compiled factory to its WindowRecordCursorFactory and
-    // returns its window function list. Mirrors the unwrap logic in
-    // LiveViewRefreshJob; tests use this to reach non-anchored windows which
-    // do not show up via LiveViewInstance.getAnchorWindow().
-    private static ObjList<WindowFunction> unwrapWindowFunctions(LiveViewInstance instance) {
-        RecordCursorFactory f = instance.getCompiledFactory();
-        while (f != null) {
-            if (f instanceof WindowRecordCursorFactory wf) {
-                return wf.getWindowFunctions();
-            }
-            if (f instanceof QueryProgress) {
-                f = f.getBaseFactory();
-                continue;
-            }
-            break;
-        }
-        throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
-    }
 
     // Drives a partitioned bounded-frame avg(DECIMAL) live view: asserts the
     // windowed average is correct (also proving CREATE-accept), then performs a

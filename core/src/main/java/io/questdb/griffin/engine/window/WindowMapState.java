@@ -134,6 +134,7 @@ import org.jetbrains.annotations.TestOnly;
  */
 public final class WindowMapState implements QuietCloseable, Reopenable {
     private final int componentCount;
+    private final boolean isTwoPass;
     /**
      * The group's own wrapper over the borrowed PARTITION BY terms, or null when the key is
      * direct columns and the row record carries it. Deliberately never closed: closing a
@@ -145,7 +146,6 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     private final Map map;
     private final WindowAccumulatorPlan plan;
     private final int projectionCount;
-    private final boolean twoPass;
     private final int unorderedMapMaxEntrySize;
     private long lookupCount;
     private long projectionWriteCount;
@@ -168,7 +168,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         assert spec != null;
         // Every member of a group agrees with its spec on how many passes the traversal takes,
         // so this is the group's pass structure and not one function's.
-        this.twoPass = spec.getPassCount() > WindowFunction.ONE_PASS;
+        this.isTwoPass = spec.getPassCount() > WindowFunction.ONE_PASS;
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         appendKeyTypes(spec, keyTypes);
         final ObjList<? extends Function> keyFunctions = spec.getPartitionByFunctions();
@@ -303,7 +303,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         for (int c = 0; c < componentCount; c++) {
             plan.getContributor(c).accumulateWindowState(record, value);
         }
-        if (!twoPass) {
+        if (!isTwoPass) {
             for (int p = 0; p < projectionCount; p++) {
                 plan.getProjectionFunction(p).projectWindowState(record, value);
             }
@@ -380,7 +380,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * well as the pass-1 one. See {@link CachedWindowMapGroups}, the only owner that has both.
      */
     public boolean isTwoPass() {
-        return twoPass;
+        return isTwoPass;
     }
 
     /**

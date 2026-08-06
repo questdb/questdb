@@ -57,6 +57,27 @@ public final class WindowAccumulatorCandidate {
     }
 
     /**
+     * Whether {@code function} would join a group as an unguarded
+     * {@link WindowAccumulatorDescriptor#FAMILY_ROW_COUNT row count} - a {@code count(*)} or a
+     * partitioned {@code row_number()}.
+     * <p>
+     * Such a function is the host a {@code count} over the window's own partition key may
+     * join, and an owner looks for one before it offers a single projection: that count may
+     * precede its host in the SELECT list, and whether it fuses must not depend on that. The
+     * arm is deliberately narrow - the family must be the argumentless one and the function
+     * must actually hold no argument, which is what keeps a {@code count(x)} from being read
+     * as a row count here.
+     * <p>
+     * It is the family half of the search only. The owner adds its own eligibility gates, so
+     * that it cannot name a host {@link #of} would decline.
+     */
+    public static boolean isRowCountHost(@NotNull WindowFunction function) {
+        return function.windowAccumulatorFamily() == WindowAccumulatorDescriptor.FAMILY_ROW_COUNT
+                && function.windowAccumulatorArgument() == null
+                && function.windowAccumulatorProjection() != WindowAccumulatorProjection.PROJECTION_NONE;
+    }
+
+    /**
      * Reads {@code function}'s accumulator identity, or returns null when this build cannot
      * name every part of it. Every null is an ordinary answer: the function is not fusible
      * and keeps whatever state it owns outside a group.
@@ -124,27 +145,6 @@ public final class WindowAccumulatorCandidate {
                 argumentColumnType
         );
         return component == null ? null : new WindowAccumulatorCandidate(component, projectionKind);
-    }
-
-    /**
-     * Whether {@code function} would join a group as an unguarded
-     * {@link WindowAccumulatorDescriptor#FAMILY_ROW_COUNT row count} - a {@code count(*)} or a
-     * partitioned {@code row_number()}.
-     * <p>
-     * Such a function is the host a {@code count} over the window's own partition key may
-     * join, and an owner looks for one before it offers a single projection: that count may
-     * precede its host in the SELECT list, and whether it fuses must not depend on that. The
-     * arm is deliberately narrow - the family must be the argumentless one and the function
-     * must actually hold no argument, which is what keeps a {@code count(x)} from being read
-     * as a row count here.
-     * <p>
-     * It is the family half of the search only. The owner adds its own eligibility gates, so
-     * that it cannot name a host {@link #of} would decline.
-     */
-    public static boolean isRowCountHost(@NotNull WindowFunction function) {
-        return function.windowAccumulatorFamily() == WindowAccumulatorDescriptor.FAMILY_ROW_COUNT
-                && function.windowAccumulatorArgument() == null
-                && function.windowAccumulatorProjection() != WindowAccumulatorProjection.PROJECTION_NONE;
     }
 
     /**

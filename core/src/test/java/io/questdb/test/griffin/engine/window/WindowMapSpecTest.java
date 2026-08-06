@@ -306,10 +306,10 @@ public class WindowMapSpecTest {
         private final RecordMetadata metadata = metadata();
         private int exclusionKind = WindowExpression.EXCLUDE_NO_OTHERS;
         private int framingMode = WindowExpression.FRAMING_ROWS;
+        private boolean isOrderDismissed = true;
         private int keyColumnType = ColumnType.VARCHAR;
         private IntList orderByDirections = directions(IQueryModel.ORDER_DIRECTION_ASCENDING);
         private ObjList<ExpressionNode> orderBy = nodes(literal("ts"));
-        private boolean orderDismissed = true;
         private WindowFunction.Pass1ScanDirection pass1ScanDirection = WindowFunction.Pass1ScanDirection.FORWARD;
         private int passCount = WindowFunction.ZERO_PASS;
         private Function partitionByFunction = new VarcharColumn(COLUMN_K);
@@ -345,7 +345,7 @@ public class WindowMapSpecTest {
                     null,
                     keyTypes,
                     orderBy.size() > 0,
-                    orderDismissed ? scanDirection : RecordCursorFactory.SCAN_DIRECTION_OTHER,
+                    isOrderDismissed ? scanDirection : RecordCursorFactory.SCAN_DIRECTION_OTHER,
                     0,
                     framingMode,
                     rowsLo,
@@ -368,7 +368,7 @@ public class WindowMapSpecTest {
                     partitionBy,
                     orderBy,
                     orderByDirections,
-                    orderDismissed,
+                    isOrderDismissed,
                     new PassStub(passCount, pass1ScanDirection),
                     metadata,
                     // These functions read the record the metadata describes, which is the
@@ -405,8 +405,8 @@ public class WindowMapSpecTest {
             return this;
         }
 
-        Fixture orderDismissed(boolean orderDismissed) {
-            this.orderDismissed = orderDismissed;
+        Fixture orderDismissed(boolean isOrderDismissed) {
+            this.isOrderDismissed = isOrderDismissed;
             return this;
         }
 
