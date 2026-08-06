@@ -65,6 +65,7 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -200,6 +201,21 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             }
         };
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Before
+    @Override
+    public void setUp() {
+        super.setUp();
+        // The soaks in this class advance the mocked microsecond clock (CLOCK_ADVANCE_MICROS
+        // per driver tick) while reader threads hold cursors open, and CairoTestConfiguration
+        // derives the millisecond timeout clock from the same mock. A reader spinning in
+        // TableReader.readTxnSlow() against the driver's ticks therefore consumes the default
+        // 5s deadline after ~20 ticks of synthetic time - milliseconds of wall time - and dies
+        // with "Transaction read timeout" (seen on Windows CI, where slow txn loads widen the
+        // reader's spin window). Push the deadline out to an hour of synthetic time, far beyond
+        // the few hundred ticks a soak runs; tearDown() restores the default.
+        spinLockTimeout = 3_600_000;
     }
 
     @Test
