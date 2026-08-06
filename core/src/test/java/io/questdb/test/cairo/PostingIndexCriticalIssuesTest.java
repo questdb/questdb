@@ -61,6 +61,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.DirectBitSet;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -925,6 +926,104 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
             assertQuery("SELECT count() FROM t_rowless_wal WHERE extra IS NULL")
                     .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+        });
+    }
+
+    /**
+     * A failed {@code .pv} remap while flushing a generation runs
+     * {@code MemoryCMARWImpl.extend0}'s catch, which {@code close(false)}'s valueMem --
+     * leaving it unmapped while the pending batch is still queued and valueMemSize still
+     * reflects the old extent. The failed commit's caller then rolls back, re-entering
+     * {@code flushAllPending} through {@code rollbackValues()}. That second flush must not
+     * dereference the closed valueMem: under {@code -ea} it asserts in
+     * {@code MemoryCR.addressOf}, and in a production build it wild-writes at
+     * {@code pageAddress} 0. {@code flushAllPending} surfaces a clean {@link CairoException}
+     * instead, so the caller can distress the writer and recover the chain on reopen.
+     */
+    @Test
+    public void testRollbackValuesToleratesClosedValueMemAfterValueFileRemapFailure() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 1024);
+        final IntHashSet valueFds = new IntHashSet();
+        final AtomicBoolean armRemapFailure = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                valueFds.remove((int) fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                if (armRemapFailure.get() && valueFds.contains((int) fd)) {
+                    return MAP_FAILED;
+                }
+                return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > -1 && Utf8s.containsAscii(name, ".pv")) {
+                    valueFds.add((int) fd);
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "posting_rollback_closed_valuemem";
+                PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE);
+                try {
+                    // Phase 1: a clean commit builds gen 0 so valueMemSize and the mapped
+                    // .pv are non-zero before the fault, matching the production state.
+                    long row = 0;
+                    for (int k = 0; k < 256; k++) {
+                        for (int r = 0; r < 8; r++) {
+                            writer.add(k, row++);
+                        }
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    final long gen0MaxValue = row - 1;
+
+                    // Phase 2: queue a second batch, then fail the .pv remap so the commit
+                    // flush that grows the file closes valueMem with the batch still pending.
+                    for (int k = 0; k < 256; k++) {
+                        for (int r = 0; r < 32; r++) {
+                            writer.add(k, row++);
+                        }
+                    }
+                    writer.setMaxValue(row - 1);
+                    armRemapFailure.set(true);
+                    try {
+                        writer.commit();
+                        Assert.fail("expected the armed .pv remap failure to abort the flush");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not remap file");
+                    }
+
+                    // valueMem is closed, keyMem stays open, and the batch is still pending.
+                    // rollbackValues() re-enters flushAllPending here; the method javadoc covers
+                    // why that must surface a clean CairoException instead of dereferencing it.
+                    try {
+                        writer.rollbackValues(gen0MaxValue);
+                        Assert.fail("rollbackValues must not flush into closed value memory");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "closed value memory");
+                    }
+                } finally {
+                    // The writer is degraded (valueMem closed). Disarm so close()'s cleanup
+                    // path does its own I/O without the injected fault, then free it.
+                    armRemapFailure.set(false);
+                    try {
+                        writer.close();
+                    } catch (CairoException ignore) {
+                        // close() frees resources without flushing, so it should not throw here;
+                        // the catch is defensive against keyMem trim I/O, and close()'s finally
+                        // frees every resource regardless.
+                    }
+                }
+            }
         });
     }
 
