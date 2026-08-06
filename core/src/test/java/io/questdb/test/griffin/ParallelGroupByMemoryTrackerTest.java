@@ -213,6 +213,98 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelMixedGroupedDistinctReleasesAllocations() throws Exception {
+        // The mixed grouped-DISTINCT path owns two sharding contexts: a flat pair table and
+        // the final ordinary group-state table. Repeated execution verifies that pair
+        // source/destination shards are released before the output shards open and that both
+        // phases debit the same per-query tracker symmetrically.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, g INT, v LONG) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT (x * 1_000)::timestamp, "
+                                        + "(x % 500)::int, (x % 5_000)::long FROM long_sequence(50_000)",
+                                sqlExecutionContext
+                        );
+                        try (RecordCursorFactory factory = compiler.compile(
+                                "SELECT g, sum(v), count(), avg(v), count_distinct(v) FROM tab GROUP BY g",
+                                sqlExecutionContext
+                        ).getRecordCursorFactory()) {
+                            assertInTree(factory, AsyncGroupByRecordCursorFactory.class);
+                            for (int i = 0; i < 10; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    long rows = 0;
+                                    while (cursor.hasNext()) {
+                                        rows++;
+                                    }
+                                    Assert.assertEquals("iteration " + i, 500, rows);
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelMixedGroupedDistinctReusesFactoryAfterMemoryBreach() throws Exception {
+        // Two heavily reused groups deterministically select the flat pair path, while the
+        // distinct argument remains unique. The pair maps therefore outgrow the 8 MiB query
+        // limit after both pair and ordinary-output contexts have been opened. Repeating the
+        // same cached factory verifies cleanup of partially populated maps, shards, and
+        // allocator-backed ordinary state before the next reopen.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, g INT, v LONG) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT (x * 1_000)::timestamp, (x % 2)::int, x "
+                                        + "FROM long_sequence(200_000)",
+                                sqlExecutionContext
+                        );
+                        try (RecordCursorFactory factory = compiler.compile(
+                                "SELECT g, sum(v), count(), count_distinct(v) FROM tab GROUP BY g",
+                                sqlExecutionContext
+                        ).getRecordCursorFactory()) {
+                            assertInTree(factory, AsyncGroupByRecordCursorFactory.class);
+                            for (int i = 0; i < 3; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    //noinspection StatementWithEmptyBody
+                                    while (cursor.hasNext()) {
+                                        // drain until breach
+                                    }
+                                    Assert.fail("expected a per-query memory breach at iteration " + i);
+                                } catch (CairoException e) {
+                                    Assert.assertTrue(
+                                            "expected isOutOfMemory(), got: " + e.getFlyweightMessage(),
+                                            e.isOutOfMemory()
+                                    );
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelNotKeyedArrayAggFailsOnLargeSet() throws Exception {
         // Non-keyed parallel array_agg accumulates every input value into a single
         // growing list, allocated through the owner/per-worker FastGroupByAllocators

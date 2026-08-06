@@ -268,6 +268,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                     Async Group By workers: 1
                                       keys: [RegionID]
                                       values: [count_distinct(UserID)]
+                                      groupedDistinct: adaptive
                                       filter: null
                                         PageFrame
                                             Row forward scan
@@ -283,6 +284,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                     Async Group By workers: 1
                                       keys: [RegionID]
                                       values: [sum(AdvEngineID),count(*),avg(ResolutionWidth),count_distinct(UserID)]
+                                      groupedDistinct: adaptive
                                       filter: null
                                         PageFrame
                                             Row forward scan

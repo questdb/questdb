@@ -122,6 +122,34 @@ public interface Map extends Mutable, Closeable, Reopenable {
     void merge(Map srcMap, MapValueMergeFunction mergeFunc);
 
     /**
+     * Merges {@code srcMap} and reports source records whose keys were newly inserted into this
+     * map. This lets consumers fuse a reduction with the uniqueness probe instead of scanning the
+     * merged destination in a second pass. Implementations may override this generic cursor path.
+     */
+    default void merge(
+            Map srcMap,
+            MapValueMergeFunction mergeFunc,
+            MapRecordMergeFunction newEntryFunc
+    ) {
+        assert this != srcMap;
+        try (MapRecordCursor cursor = srcMap.getCursor()) {
+            final MapRecord srcRecord = cursor.getRecord();
+            while (cursor.hasNext()) {
+                final long hashCode = srcRecord.keyHashCode();
+                final MapKey destKey = withKey();
+                srcRecord.copyToKey(destKey);
+                final MapValue destValue = destKey.createValue(hashCode);
+                if (destValue.isNew()) {
+                    srcRecord.copyValue(destValue);
+                    newEntryFunc.mergeNew(srcRecord);
+                } else {
+                    mergeFunc.merge(destValue, srcRecord.getValue());
+                }
+            }
+        }
+    }
+
+    /**
      * Creates an independent cursor over the same materialized data.
      * Each cursor has its own iteration state (position, record) but
      * shares the underlying data store.

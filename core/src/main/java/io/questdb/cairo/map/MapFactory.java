@@ -193,6 +193,33 @@ public class MapFactory {
             boolean isDeferredKeyCopy,
             boolean openOnInit
     ) {
+        return createUnorderedMap(
+                configuration,
+                keyTypes,
+                valueTypes,
+                keyCapacity,
+                pageSize,
+                isDeferredKeyCopy,
+                openOnInit,
+                false
+        );
+    }
+
+    /**
+     * Internal physical-map selection variant that opts into compact fixed-size composite keys.
+     * The opt-in is deliberately explicit: unordered iteration can regress consumers that scan a
+     * materialized composite-key map, while grouped DISTINCT consumes it through shard finalization.
+     */
+    public static Map createUnorderedMap(
+            CairoConfiguration configuration,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            long pageSize,
+            boolean isDeferredKeyCopy,
+            boolean openOnInit,
+            boolean useCompactFixedSizeKey
+    ) {
         final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
 
         final int valueSize = ColumnTypes.sizeInBytes(valueTypes);
@@ -228,6 +255,19 @@ public class MapFactory {
                         openOnInit
                 );
             }
+        }
+
+        if (useCompactFixedSizeKey
+                && Unordered16Map.isSupportedKeyTypes(keyTypes)
+                && Unordered16Map.KEY_SIZE + valueSize <= maxEntrySize) {
+            return new Unordered16Map(
+                    keyTypes,
+                    valueTypes,
+                    keyCapacity,
+                    configuration.getSqlFastMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes(),
+                    openOnInit
+            );
         }
 
         return new OrderedMap(

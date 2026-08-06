@@ -79,6 +79,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             }
         } catch (Throwable th) {
             LOG.error().$("merge shard failed [error=").$(th).I$();
+            ctx.reportMergeError(th);
             circuitBreaker.cancel();
         } finally {
             doneLatch.countDown();

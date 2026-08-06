@@ -34,6 +34,7 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -78,6 +79,8 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
+    @Nullable
+    private final RecordSink ownerGroupedDistinctPairMapSink;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<DirectLongList> perWorkerBatchLists;
     private final ObjList<FlyweightPackedMapValue> perWorkerBatchMapValues;
@@ -87,6 +90,10 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
     // Initialized lazily.
     private final ObjList<DirectLongLongSortedList> perWorkerLongTopKLists;
     private final ObjList<RecordSink> perWorkerMapSinks;
+    @Nullable
+    private final ObjList<RecordSink> perWorkerGroupedDistinctPairMapSinks;
+    @Nullable
+    private final GroupedDistinctContext groupedDistinctCtx;
     private final GroupByShardingContext shardingCtx;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
@@ -161,6 +168,25 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
                     perWorkerLocks,
                     workerCount
             );
+            // The flat pair operator is currently one-shot competitive only for unfiltered,
+            // single-key aggregation. Filtered input retains the established nested operator:
+            // selecting flat only after a cached factory has history would make the physical
+            // plan depend on execution count rather than workload shape.
+            if (ownerFilter == null && compiledFilter == null) {
+                groupedDistinctCtx = GroupedDistinctContext.tryCreate(
+                        configuration,
+                        keyTypes,
+                        valueTypes,
+                        listColumnFilter,
+                        ownerGroupByFunctions,
+                        perWorkerGroupByFunctions,
+                        ownerKeyFunctions,
+                        perWorkerLocks,
+                        workerCount
+                );
+            } else {
+                groupedDistinctCtx = null;
+            }
 
             final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
                     configuration,
@@ -204,6 +230,97 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
                 );
             }
 
+            if (groupedDistinctCtx != null) {
+                final ListColumnFilter pairKeyColumnFilter = groupedDistinctCtx.getPairKeyColumnFilter();
+                final Class<RecordSink> pairSinkClass = RecordSinkFactory.getInstanceClass(
+                        configuration,
+                        asm,
+                        columnTypes,
+                        pairKeyColumnFilter,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null
+                );
+                ownerGroupedDistinctPairMapSink = RecordSinkFactory.getInstance(
+                        pairSinkClass,
+                        columnTypes,
+                        pairKeyColumnFilter,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null
+                );
+                perWorkerGroupedDistinctPairMapSinks = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
+                    perWorkerGroupedDistinctPairMapSinks.extendAndSet(
+                            i,
+                            RecordSinkFactory.getInstance(
+                                    pairSinkClass,
+                                    columnTypes,
+                                    pairKeyColumnFilter,
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    null
+                            )
+                    );
+                }
+                if (groupedDistinctCtx.needsPairToGroupMapSink()) {
+                    final ListColumnFilter pairToGroupColumnFilter = new ListColumnFilter();
+                    for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+                        pairToGroupColumnFilter.add(i + 1);
+                    }
+                    final Class<RecordSink> pairToGroupSinkClass = RecordSinkFactory.getInstanceClass(
+                            configuration,
+                            asm,
+                            keyTypes,
+                            pairToGroupColumnFilter,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null
+                    );
+                    final RecordSink ownerPairToGroupMapSink = RecordSinkFactory.getInstance(
+                            pairToGroupSinkClass,
+                            keyTypes,
+                            pairToGroupColumnFilter,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null
+                    );
+                    final ObjList<RecordSink> perWorkerPairToGroupMapSinks = new ObjList<>(workerCount);
+                    for (int i = 0; i < workerCount; i++) {
+                        perWorkerPairToGroupMapSinks.extendAndSet(
+                                i,
+                                RecordSinkFactory.getInstance(
+                                        pairToGroupSinkClass,
+                                        keyTypes,
+                                        pairToGroupColumnFilter,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null
+                                )
+                        );
+                    }
+                    groupedDistinctCtx.setPairToGroupMapSinks(
+                            ownerPairToGroupMapSink,
+                            perWorkerPairToGroupMapSinks
+                    );
+                }
+            } else {
+                ownerGroupedDistinctPairMapSink = null;
+                perWorkerGroupedDistinctPairMapSinks = null;
+            }
+
             // Lazy variant (openOnInit=false): the chunk index is global-counter bookkeeping;
             // only the data chunks it hands out are charged to the per-query tracker.
             ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
@@ -243,6 +360,9 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
     @Override
     public void clear() {
         shardingCtx.clear();
+        if (groupedDistinctCtx != null) {
+            groupedDistinctCtx.clear();
+        }
         Misc.clearObjList(ownerGroupByFunctions);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
@@ -263,6 +383,7 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
     public void close() {
         Throwable cleanupFailure = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, shardingCtx);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, groupedDistinctCtx);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerKeyFunctions);
         // clear() already freed the data chunks under the bound tracker (the index is on the
         // global counter), so close() has nothing tracked to free. Nulling is defensive: any
@@ -328,7 +449,9 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
     }
 
     public ObjList<Map> getDestShards() {
-        return shardingCtx.getDestShards();
+        return groupedDistinctCtx != null && groupedDistinctCtx.isFlat()
+                ? groupedDistinctCtx.getDestShards()
+                : shardingCtx.getDestShards();
     }
 
     public AsyncFilterContext getFilterContext() {
@@ -377,6 +500,44 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         return perWorkerMapSinks.getQuick(slotId);
     }
 
+    public GroupByMapFragment getGroupedDistinctPairFragment(int slotId) {
+        assert groupedDistinctCtx != null;
+        return groupedDistinctCtx.getPairFragment(slotId);
+    }
+
+    public RecordSink getGroupedDistinctPairMapSink(int slotId) {
+        assert groupedDistinctCtx != null;
+        if (slotId == -1) {
+            return ownerGroupedDistinctPairMapSink;
+        }
+        return perWorkerGroupedDistinctPairMapSinks.getQuick(slotId);
+    }
+
+    public GroupByMapFragment getGroupedDistinctOutputFragment(int slotId) {
+        assert groupedDistinctCtx != null;
+        return groupedDistinctCtx.getOutputFragment(slotId);
+    }
+
+    public ObjList<GroupByFunction> getGroupedDistinctOutputFunctions(int slotId) {
+        assert groupedDistinctCtx != null;
+        return groupedDistinctCtx.getOutputFunctions(slotId);
+    }
+
+    @TestOnly
+    public long getGroupedDistinctUnshardedPairCount() {
+        assert groupedDistinctCtx != null;
+        return groupedDistinctCtx.getUnshardedPairCount();
+    }
+
+    public GroupByFunctionsUpdater getGroupedDistinctOutputUpdater(int slotId) {
+        assert groupedDistinctCtx != null;
+        return groupedDistinctCtx.getOutputUpdater(slotId);
+    }
+
+    public boolean hasGroupedDistinctOrdinaryFunctions() {
+        return groupedDistinctCtx != null && groupedDistinctCtx.hasOrdinaryFunctions();
+    }
+
     public MemoryTracker getMemoryTracker() {
         return memoryTracker;
     }
@@ -411,6 +572,11 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         return shardingCtx;
     }
 
+    @Nullable
+    GroupedDistinctContext getGroupedDistinctContext() {
+        return groupedDistinctCtx;
+    }
+
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
@@ -433,7 +599,35 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
     }
 
     public boolean isSharded() {
-        return shardingCtx.isSharded();
+        return groupedDistinctCtx != null && groupedDistinctCtx.isFlat()
+                ? groupedDistinctCtx.isPairSharded()
+                : shardingCtx.isSharded();
+    }
+
+    public boolean isGroupedDistinct() {
+        return groupedDistinctCtx != null;
+    }
+
+    public boolean isGroupedDistinctFlat() {
+        return groupedDistinctCtx != null && groupedDistinctCtx.isFlat();
+    }
+
+    public boolean needsGroupedDistinctModeSelection() {
+        return groupedDistinctCtx != null && groupedDistinctCtx.isModeUndecided();
+    }
+
+    public long getGroupedDistinctSampleGroupHash(Record record, int slotId) {
+        assert groupedDistinctCtx != null;
+        return groupedDistinctCtx.getSampleGroupHash(
+                record,
+                shardingCtx.getFragment(slotId),
+                getMapSink(slotId)
+        );
+    }
+
+    public void selectGroupedDistinctMode(int occupiedGroupBucketCount, int rowCount) {
+        assert groupedDistinctCtx != null;
+        groupedDistinctCtx.selectMode(occupiedGroupBucketCount, rowCount);
     }
 
     /**
@@ -450,7 +644,16 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
     }
 
     public void maybeEnableSharding(GroupByMapFragment fragment) {
-        shardingCtx.maybeEnableSharding(fragment, getTotalFunctionCardinality(fragment.slotId));
+        if (groupedDistinctCtx != null && groupedDistinctCtx.isFlat()) {
+            groupedDistinctCtx.maybeShardPairFragment(fragment, 0);
+        } else {
+            shardingCtx.maybeEnableSharding(fragment, getTotalFunctionCardinality(fragment.slotId));
+        }
+    }
+
+    public boolean maybeShardGroupedDistinctPairFragment(GroupByMapFragment fragment, long pairCountIncrement) {
+        assert groupedDistinctCtx != null && groupedDistinctCtx.isFlat();
+        return groupedDistinctCtx.maybeShardPairFragment(fragment, pairCountIncrement);
     }
 
     public void release(int slotId) {
@@ -465,6 +668,10 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         // worker threads via reopenMap()/reopenShards(); the allocators are reopened here.
         shardingCtx.setMemoryTracker(memoryTracker);
         shardingCtx.reopen();
+        if (groupedDistinctCtx != null) {
+            groupedDistinctCtx.setMemoryTracker(memoryTracker);
+            groupedDistinctCtx.reopen();
+        }
         ownerAllocator.setMemoryTracker(memoryTracker);
         ownerAllocator.reopen();
         if (perWorkerAllocators != null) {

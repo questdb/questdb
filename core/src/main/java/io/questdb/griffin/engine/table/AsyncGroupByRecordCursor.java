@@ -205,8 +205,28 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
         final AsyncGroupByAtom atom = frameSequence.getAtom();
 
+        final GroupedDistinctContext groupedDistinctCtx = atom.getGroupedDistinctContext();
         final GroupByShardingContext shardingCtx = atom.getShardingContext();
-        if (!atom.isSharded()) {
+        if (groupedDistinctCtx != null && groupedDistinctCtx.isFlat() && !atom.isSharded()) {
+            ownerMap = groupedDistinctCtx.mergeOwnerMap();
+            mapCursor = ownerMap.getCursor();
+            shards = null;
+        } else if (groupedDistinctCtx != null && groupedDistinctCtx.isFlat()) {
+            shards = groupedDistinctCtx.mergeShards(
+                    messageBus,
+                    frameSequence.getWorkStealingStrategy(),
+                    circuitBreaker,
+                    postAggregationCircuitBreaker,
+                    postAggregationDoneLatch,
+                    postAggregationStartedCounter
+            );
+            if (postAggregationCircuitBreaker.checkIfTripped()) {
+                throwTimeoutException();
+            }
+            shardedCursor.of(shards);
+            mapCursor = shardedCursor;
+            ownerMap = null;
+        } else if (!atom.isSharded()) {
             // No sharding was necessary, so the maps are small, and we merge them ourselves.
             ownerMap = shardingCtx.mergeOwnerMap();
             mapCursor = ownerMap.getCursor();

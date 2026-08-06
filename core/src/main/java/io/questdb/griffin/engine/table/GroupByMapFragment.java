@@ -55,6 +55,7 @@ public class GroupByMapFragment implements QuietCloseable {
     private final CairoConfiguration configuration;
     private final GroupByFunctionsUpdater groupByFunctionsUpdater;
     private final ColumnTypes keyTypes;
+    private final boolean useCompactFixedSizeKey;
     // Per-query native memory tracker bound by the owning atom (AsyncGroupByAtom or a
     // horizon-join atom) before any map is (re)opened. Null when the query has no
     // per-query memory limit, in which case allocations stay global-only.
@@ -76,7 +77,8 @@ public class GroupByMapFragment implements QuietCloseable {
             ObjList<GroupByMapStats> shardStats,
             GroupByFunctionsUpdater groupByFunctionsUpdater,
             int workerCount,
-            int slotId
+            int slotId,
+            boolean useCompactFixedSizeKey
     ) {
         this.configuration = configuration;
         this.keyTypes = keyTypes;
@@ -85,13 +87,14 @@ public class GroupByMapFragment implements QuietCloseable {
         this.shardStats = shardStats;
         this.groupByFunctionsUpdater = groupByFunctionsUpdater;
         this.workerCount = workerCount;
+        this.useCompactFixedSizeKey = useCompactFixedSizeKey;
         this.shards = new ObjList<>(NUM_SHARDS);
         this.slotId = slotId;
         // Lazy variant: the map's native backing is allocated by the first reopenMap()
         // call, after the owning atom binds a per-query MemoryTracker, so malloc and free
         // are charged symmetrically on the per-query counter. reopenMap() runs
         // setBatchEmptyValue() once the map is open.
-        this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true, false);
+        this.map = createMap();
     }
 
     /**
@@ -109,7 +112,7 @@ public class GroupByMapFragment implements QuietCloseable {
             int workerCount,
             int slotId
     ) {
-        this(configuration, keyTypes, valueTypes, null, newShardStats(), null, workerCount, slotId);
+        this(configuration, keyTypes, valueTypes, null, newShardStats(), null, workerCount, slotId, false);
     }
 
     @Override
@@ -196,7 +199,7 @@ public class GroupByMapFragment implements QuietCloseable {
             // Phase 1: create + register + bind tracker. No native allocation here, so the
             // per-query limit cannot trip; every shard is in the list before any open.
             for (int i = 0; i < NUM_SHARDS; i++) {
-                final Map shard = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true, false);
+                final Map shard = createMap();
                 shards.add(shard);
                 shard.setMemoryTracker(memoryTracker);
             }
@@ -215,6 +218,19 @@ public class GroupByMapFragment implements QuietCloseable {
                 shard.reopen(keyCapacity, heapSize);
             }
         }
+    }
+
+    private Map createMap() {
+        return MapFactory.createUnorderedMap(
+                configuration,
+                keyTypes,
+                valueTypes,
+                configuration.getSqlSmallMapKeyCapacity(),
+                configuration.getSqlSmallMapPageSize(),
+                true,
+                false,
+                useCompactFixedSizeKey
+        );
     }
 
     /**

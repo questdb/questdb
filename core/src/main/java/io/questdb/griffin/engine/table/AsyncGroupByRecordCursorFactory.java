@@ -74,6 +74,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final UnorderedPageFrameReducer AGGREGATE = AsyncGroupByRecordCursorFactory::aggregate;
+    private static final UnorderedPageFrameReducer AGGREGATE_GROUPED_DISTINCT = AsyncGroupByRecordCursorFactory::aggregateGroupedDistinct;
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByRecordCursorFactory::filterAndAggregate;
 
     private RecordCursorFactory base;
@@ -132,12 +133,15 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     perWorkerFilters,
                     workerCount
             );
+            final boolean groupedDistinct = atom.isGroupedDistinct();
             this.frameSequence = new UnorderedPageFrameSequence<>(
                     engine,
                     configuration,
                     messageBus,
                     atom,
-                    filter != null ? FILTER_AND_AGGREGATE : AGGREGATE,
+                    filter != null
+                            ? FILTER_AND_AGGREGATE
+                            : groupedDistinct ? AGGREGATE_GROUPED_DISTINCT : AGGREGATE,
                     workerCount
             );
             this.cursor = new AsyncGroupByRecordCursor(engine, messageBus, recordFunctions);
@@ -223,6 +227,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("keyFunctions", frameSequence.getAtom().getOwnerKeyFunctions(), true);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions(), true);
+        if (frameSequence.getAtom().isGroupedDistinct()) {
+            sink.attr("groupedDistinct").val("adaptive");
+        }
         sink.optAttr("filter", frameSequence.getAtom(), true);
         sink.child(base);
     }
@@ -288,6 +295,84 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
+    private static void aggregateGroupedDistinct(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            int frameIndex,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @NotNull UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+    ) {
+        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        assert frameRowCount > 0;
+        @SuppressWarnings("unchecked") final AsyncGroupByAtom atom = ((UnorderedPageFrameSequence<AsyncGroupByAtom>) frameSequence).getAtom();
+
+        final boolean owner = stealingFrameSequence == frameSequence;
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final AsyncFilterContext filterCtx = atom.getFilterContext();
+        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
+
+        // navigateTo() decodes the frame and can throw, so it must sit inside the try that
+        // releases the slot, see PerWorkerLocks.acquireSlot().
+        try {
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            record.init(frameMemory);
+
+            atom.resetLocalStats(slotId);
+
+            record.setRowIndex(0);
+            long baseRowId = record.getRowId();
+
+            if (atom.needsGroupedDistinctModeSelection()) {
+                selectGroupedDistinctMode(record, frameRowCount, atom, slotId);
+            }
+            final boolean flatGroupedDistinct = atom.isGroupedDistinctFlat();
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            final GroupByMapFragment fragment = flatGroupedDistinct
+                    ? atom.getGroupedDistinctPairFragment(slotId)
+                    : atom.getFragment(slotId);
+            final RecordSink mapSink = flatGroupedDistinct
+                    ? atom.getGroupedDistinctPairMapSink(slotId)
+                    : atom.getMapSink(slotId);
+
+            if (atom.isSharded()) {
+                fragment.shard();
+            }
+
+            if (flatGroupedDistinct) {
+                if (fragment.isNotSharded()) {
+                    deduplicateNonShardedBatched(record, frameRowCount, atom, slotId, fragment, mapSink);
+                } else {
+                    deduplicateSharded(record, frameRowCount, fragment, mapSink);
+                }
+                if (atom.hasGroupedDistinctOrdinaryFunctions()) {
+                    aggregateNonShardedBatched(
+                            record,
+                            frameRowCount,
+                            baseRowId,
+                            atom,
+                            slotId,
+                            atom.getGroupedDistinctOutputFragment(slotId),
+                            atom.getMapSink(slotId),
+                            atom.getGroupedDistinctOutputFunctions(slotId)
+                    );
+                }
+            } else if (fragment.isNotSharded()) {
+                aggregateNonShardedBatched(record, frameRowCount, baseRowId, atom, slotId, fragment, mapSink);
+            } else {
+                aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+            }
+
+            atom.maybeEnableSharding(fragment);
+        } finally {
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
+        }
+    }
+
     private static void aggregateFilteredNonSharded(
             PageFrameMemoryRecord record,
             DirectLongList rows,
@@ -321,8 +406,29 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             GroupByMapFragment fragment,
             RecordSink mapSink
     ) {
+        aggregateFilteredNonShardedBatched(
+                record,
+                rows,
+                baseRowId,
+                atom,
+                slotId,
+                fragment,
+                mapSink,
+                atom.getGroupByFunctions(slotId)
+        );
+    }
+
+    private static void aggregateFilteredNonShardedBatched(
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            long baseRowId,
+            AsyncGroupByAtom atom,
+            int slotId,
+            GroupByMapFragment fragment,
+            RecordSink mapSink,
+            ObjList<GroupByFunction> functions
+    ) {
         final Map map = fragment.reopenMap();
-        final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final DirectLongList batchList = atom.getBatchList(slotId);
         final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
         final int functionCount = functions.size();
@@ -410,8 +516,29 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             GroupByMapFragment fragment,
             RecordSink mapSink
     ) {
+        aggregateNonShardedBatched(
+                record,
+                frameRowCount,
+                baseRowId,
+                atom,
+                slotId,
+                fragment,
+                mapSink,
+                atom.getGroupByFunctions(slotId)
+        );
+    }
+
+    private static void aggregateNonShardedBatched(
+            PageFrameMemoryRecord record,
+            long frameRowCount,
+            long baseRowId,
+            AsyncGroupByAtom atom,
+            int slotId,
+            GroupByMapFragment fragment,
+            RecordSink mapSink,
+            ObjList<GroupByFunction> functions
+    ) {
         final Map map = fragment.reopenMap();
-        final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final DirectLongList batchList = atom.getBatchList(slotId);
         final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
         final int functionCount = functions.size();
@@ -483,6 +610,100 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 functionUpdater.updateExisting(shardValue, record, baseRowId + r);
             }
         }
+    }
+
+    private static void deduplicateNonShardedBatched(
+            PageFrameMemoryRecord record,
+            long frameRowCount,
+            AsyncGroupByAtom atom,
+            int slotId,
+            GroupByMapFragment fragment,
+            RecordSink mapSink
+    ) {
+        final DirectLongList batchList = atom.getBatchList(slotId);
+        final int batchSize = atom.getBatchSize();
+        batchList.ensureCapacity(batchSize);
+        final long batchAddr = batchList.getAddress();
+
+        for (long batchStart = 0; batchStart < frameRowCount; batchStart += batchSize) {
+            final long batchEnd = Math.min(batchStart + batchSize, frameRowCount);
+            if (atom.maybeShardGroupedDistinctPairFragment(fragment, 0)) {
+                deduplicateSharded(record, batchStart, batchEnd, fragment, mapSink);
+            } else {
+                final Map map = fragment.reopenMap();
+                final long pairCountBefore = map.size();
+                map.reserveCapacity(batchEnd - batchStart);
+                map.probeBatch(record, mapSink, batchStart, batchEnd, batchAddr);
+                atom.maybeShardGroupedDistinctPairFragment(fragment, map.size() - pairCountBefore);
+            }
+        }
+    }
+
+    private static void deduplicateSharded(
+            PageFrameMemoryRecord record,
+            long frameRowCount,
+            GroupByMapFragment fragment,
+            RecordSink mapSink
+    ) {
+        deduplicateSharded(record, 0, frameRowCount, fragment, mapSink);
+    }
+
+    private static void deduplicateSharded(
+            PageFrameMemoryRecord record,
+            long rowLo,
+            long rowHi,
+            GroupByMapFragment fragment,
+            RecordSink mapSink
+    ) {
+        for (long r = rowLo; r < rowHi; r++) {
+            record.setRowIndex(r);
+            deduplicateShardedRow(record, fragment, mapSink);
+        }
+    }
+
+    private static void deduplicateShardedRow(
+            PageFrameMemoryRecord record,
+            GroupByMapFragment fragment,
+            RecordSink mapSink
+    ) {
+        final Map lookupShard = fragment.getShards().getQuick(0);
+        final MapKey lookupKey = lookupShard.withKey();
+        mapSink.copy(record, lookupKey);
+        lookupKey.commit();
+        final long hashCode = lookupKey.hash();
+
+        final Map shard = fragment.getShardMap(hashCode);
+        final MapKey shardKey;
+        if (shard != lookupShard) {
+            shardKey = shard.withKey();
+            shardKey.copyFrom(lookupKey);
+        } else {
+            shardKey = lookupKey;
+        }
+        shardKey.createValue(hashCode);
+    }
+
+    private static void selectGroupedDistinctMode(
+            PageFrameMemoryRecord record,
+            long rowCount,
+            AsyncGroupByAtom atom,
+            int slotId
+    ) {
+        final int sampleRowCount = (int) Math.min(rowCount, GroupedDistinctContext.SAMPLE_ROW_COUNT);
+        final long[] groupBuckets = new long[GroupedDistinctContext.SAMPLE_BUCKET_COUNT / Long.SIZE];
+        int occupiedGroupBucketCount = 0;
+        for (int i = 0; i < sampleRowCount; i++) {
+            record.setRowIndex((long) i * rowCount / sampleRowCount);
+            final int bucket = (int) atom.getGroupedDistinctSampleGroupHash(record, slotId)
+                    & (GroupedDistinctContext.SAMPLE_BUCKET_COUNT - 1);
+            final long bit = 1L << (bucket & (Long.SIZE - 1));
+            final int word = bucket / Long.SIZE;
+            if ((groupBuckets[word] & bit) == 0) {
+                groupBuckets[word] |= bit;
+                occupiedGroupBucketCount++;
+            }
+        }
+        atom.selectGroupedDistinctMode(occupiedGroupBucketCount, sampleRowCount);
     }
 
     private static void filterAndAggregate(

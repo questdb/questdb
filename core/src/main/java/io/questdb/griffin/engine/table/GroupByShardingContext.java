@@ -26,9 +26,11 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapRecordMergeFunction;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -53,6 +55,7 @@ import io.questdb.tasks.GroupByMergeShardTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS;
 
@@ -75,6 +78,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private final ColumnTypes keyTypes;
     private final GroupByMapStats lastOwnerStats;
     private final ObjList<GroupByMapStats> lastShardStats;
+    private final AtomicReference<Throwable> mergeError = new AtomicReference<>();
     // Per-query native memory tracker propagated to every fragment and destination
     // shard. Null when no per-query limit applies (the shared horizon-join path never
     // binds one), leaving allocations on the global counter only.
@@ -86,6 +90,9 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final PerWorkerLocks perWorkerLocks;
     private final ColumnTypes valueTypes;
+    private final boolean useCompactFixedSizeKey;
+    @Nullable
+    private GroupByShardMergeReducer shardMergeReducer;
     volatile boolean sharded;
     boolean shardedHint;
 
@@ -98,6 +105,28 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             PerWorkerLocks perWorkerLocks,
             int workerCount
     ) {
+        this(
+                configuration,
+                keyTypes,
+                valueTypes,
+                ownerFunctionUpdater,
+                perWorkerFunctionUpdaters,
+                perWorkerLocks,
+                workerCount,
+                false
+        );
+    }
+
+    GroupByShardingContext(
+            CairoConfiguration configuration,
+            ColumnTypes keyTypes,
+            ColumnTypes valueTypes,
+            GroupByFunctionsUpdater ownerFunctionUpdater,
+            @Nullable ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters,
+            PerWorkerLocks perWorkerLocks,
+            int workerCount,
+            boolean useCompactFixedSizeKey
+    ) {
         try {
             this.configuration = configuration;
             this.keyTypes = keyTypes;
@@ -105,6 +134,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             this.perWorkerLocks = perWorkerLocks;
             this.ownerFunctionUpdater = ownerFunctionUpdater;
             this.perWorkerFunctionUpdaters = perWorkerFunctionUpdaters;
+            this.useCompactFixedSizeKey = useCompactFixedSizeKey;
 
             lastShardStats = new ObjList<>(NUM_SHARDS);
             for (int i = 0; i < NUM_SHARDS; i++) {
@@ -115,12 +145,32 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             destShards = new ObjList<>(NUM_SHARDS);
             destShards.setPos(NUM_SHARDS);
 
-            ownerFragment = new GroupByMapFragment(configuration, keyTypes, valueTypes, lastOwnerStats, lastShardStats, ownerFunctionUpdater, workerCount, -1);
+            ownerFragment = new GroupByMapFragment(
+                    configuration,
+                    keyTypes,
+                    valueTypes,
+                    lastOwnerStats,
+                    lastShardStats,
+                    ownerFunctionUpdater,
+                    workerCount,
+                    -1,
+                    useCompactFixedSizeKey
+            );
             for (int i = 0; i < workerCount; i++) {
                 final GroupByFunctionsUpdater workerUpdater = perWorkerFunctionUpdaters != null
                         ? perWorkerFunctionUpdaters.getQuick(i)
                         : ownerFunctionUpdater;
-                perWorkerFragments.extendAndSet(i, new GroupByMapFragment(configuration, keyTypes, valueTypes, lastOwnerStats, lastShardStats, workerUpdater, workerCount, i));
+                perWorkerFragments.extendAndSet(i, new GroupByMapFragment(
+                        configuration,
+                        keyTypes,
+                        valueTypes,
+                        lastOwnerStats,
+                        lastShardStats,
+                        workerUpdater,
+                        workerCount,
+                        i,
+                        useCompactFixedSizeKey
+                ));
             }
         } catch (Throwable th) {
             close();
@@ -156,14 +206,24 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     }
 
     public void mergeShard(int slotId, int shardIndex) {
-        mergeShard(shardIndex, getFunctionUpdater(slotId));
+        final MapRecordMergeFunction mergeNewFunc = shardMergeReducer != null
+                ? shardMergeReducer.prepare(slotId, shardIndex)
+                : null;
+        mergeShard(shardIndex, getFunctionUpdater(slotId), mergeNewFunc);
+    }
+
+    public void reportMergeError(Throwable th) {
+        mergeError.compareAndSet(null, th);
     }
 
     public void release(int slotId) {
         perWorkerLocks.releaseSlot(slotId);
     }
 
-    private Map mergeOwnerMap(GroupByFunctionsUpdater functionUpdater) {
+    private Map mergeOwnerMap(
+            GroupByFunctionsUpdater functionUpdater,
+            @Nullable MapRecordMergeFunction mergeNewFunc
+    ) {
         final Map destMap = ownerFragment.reopenMap();
         final int perWorkerMapCount = perWorkerFragments.size();
 
@@ -191,11 +251,21 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             }
         }
 
-        // Now do the actual merge.
-        for (int i = 0; i < perWorkerMapCount; i++) {
-            final Map srcMap = perWorkerFragments.getQuick(i).getMap();
-            destMap.merge(srcMap, functionUpdater);
-            srcMap.close();
+        // Keep the established group-by merge loop free of generalized DISTINCT callbacks.
+        // It is hot for every sharded group-by, including factories that are not eligible for
+        // the flat operator.
+        if (mergeNewFunc == null) {
+            for (int i = 0; i < perWorkerMapCount; i++) {
+                final Map srcMap = perWorkerFragments.getQuick(i).getMap();
+                destMap.merge(srcMap, functionUpdater);
+                srcMap.close();
+            }
+        } else {
+            for (int i = 0; i < perWorkerMapCount; i++) {
+                final Map srcMap = perWorkerFragments.getQuick(i).getMap();
+                destMap.merge(srcMap, functionUpdater, mergeNewFunc);
+                srcMap.close();
+            }
         }
 
         // Don't forget to update the stats.
@@ -208,7 +278,11 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         return destMap;
     }
 
-    private void mergeShard(int shardIndex, GroupByFunctionsUpdater functionUpdater) {
+    private Map mergeShard(
+            int shardIndex,
+            GroupByFunctionsUpdater functionUpdater,
+            @Nullable MapRecordMergeFunction mergeNewFunc
+    ) {
         assert sharded;
 
         final Map destMap = reopenDestShard(shardIndex);
@@ -244,21 +318,32 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             }
         }
 
-        // Now do the actual merge.
-        for (int i = 0; i < perWorkerMapCount; i++) {
-            final GroupByMapFragment srcFragment = perWorkerFragments.getQuick(i);
-            final Map srcMap = srcFragment.getShards().getQuick(shardIndex);
-            destMap.merge(srcMap, functionUpdater);
-            srcMap.close();
+        // Keep the established group-by merge loop free of generalized DISTINCT callbacks.
+        if (mergeNewFunc == null) {
+            for (int i = 0; i < perWorkerMapCount; i++) {
+                final GroupByMapFragment srcFragment = perWorkerFragments.getQuick(i);
+                final Map srcMap = srcFragment.getShards().getQuick(shardIndex);
+                destMap.merge(srcMap, functionUpdater);
+                srcMap.close();
+            }
+            destMap.merge(srcOwnerMap, functionUpdater);
+            srcOwnerMap.close();
+        } else {
+            for (int i = 0; i < perWorkerMapCount; i++) {
+                final GroupByMapFragment srcFragment = perWorkerFragments.getQuick(i);
+                final Map srcMap = srcFragment.getShards().getQuick(shardIndex);
+                destMap.merge(srcMap, functionUpdater, mergeNewFunc);
+                srcMap.close();
+            }
+            destMap.merge(srcOwnerMap, functionUpdater, mergeNewFunc);
+            srcOwnerMap.close();
         }
-        // Merge shard from the owner fragment.
-        destMap.merge(srcOwnerMap, functionUpdater);
-        srcOwnerMap.close();
 
         // Don't forget to update the stats.
         if (configuration.isGroupByPresizeEnabled()) {
             stats.update(medianSize, maxHeapSize, destMap.size(), destMap.getHeapSize());
         }
+        return destMap;
     }
 
     private Map reopenDestShard(int shardIndex) {
@@ -266,7 +351,16 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         if (destMap == null) {
             // Lazy variant: the destination shard starts closed so its backing allocates
             // under the bound tracker on the reopen() below, matching the free at clear().
-            destMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, false, false);
+            destMap = MapFactory.createUnorderedMap(
+                    configuration,
+                    keyTypes,
+                    valueTypes,
+                    configuration.getSqlSmallMapKeyCapacity(),
+                    configuration.getSqlSmallMapPageSize(),
+                    false,
+                    false,
+                    useCompactFixedSizeKey
+            );
             destShards.set(shardIndex, destMap);
             destMap.setMemoryTracker(memoryTracker);
             destMap.reopen();
@@ -326,6 +420,14 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         return destShards;
     }
 
+    void closeDestShards() {
+        Misc.freeObjListAndKeepObjects(destShards);
+    }
+
+    void forceSharded() {
+        sharded = true;
+    }
+
     GroupByMapFragment getFragment(int slotId) {
         if (slotId == -1) {
             return ownerFragment;
@@ -354,7 +456,10 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     }
 
     Map mergeOwnerMap() {
-        return mergeOwnerMap(getFunctionUpdater(-1));
+        final MapRecordMergeFunction mergeNewFunc = shardMergeReducer != null
+                ? shardMergeReducer.prepare(-1, 0)
+                : null;
+        return mergeOwnerMap(getFunctionUpdater(-1), mergeNewFunc);
     }
 
     /**
@@ -374,6 +479,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         postAggregationCircuitBreaker.reset();
         postAggregationStartedCounter.set(0);
         postAggregationDoneLatch.reset();
+        mergeError.set(null);
 
         // First, make sure to shard all non-sharded maps, if any.
         shardAll();
@@ -445,6 +551,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             }
         }
 
+        CairoException.rethrowCleanupFailure(mergeError.get());
         if (!postAggregationCircuitBreaker.checkIfTripped()) {
             finalizeShardStats();
         }
@@ -473,10 +580,15 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         }
     }
 
+    void setShardMergeReducer(@Nullable GroupByShardMergeReducer shardMergeReducer) {
+        this.shardMergeReducer = shardMergeReducer;
+    }
+
     void shardAll() {
         ownerFragment.shard();
         for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
             perWorkerFragments.getQuick(i).shard();
         }
     }
+
 }

@@ -26,17 +26,19 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.GroupedDistinctFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
 import io.questdb.std.Numbers;
 
-public class CountDistinctLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
+public class CountDistinctLongGroupByFunction extends LongFunction implements UnaryFunction, GroupedDistinctFunction {
     private final Function arg;
     private final GroupByLongHashSet setA;
     private final GroupByLongHashSet setB;
@@ -105,6 +107,21 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     }
 
     @Override
+    public int getDistinctKeyType() {
+        return arg.getType();
+    }
+
+    @Override
+    public Function getDistinctKeyFunction() {
+        return arg;
+    }
+
+    @Override
+    public long getDistinctValue(MapValue value) {
+        return value.getLong(valueIndex);
+    }
+
+    @Override
     public long getCardinalityStat() {
         return cardinality;
     }
@@ -112,6 +129,21 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     @Override
     public long getLong(Record rec) {
         return rec.getLong(valueIndex);
+    }
+
+    @Override
+    public void incrementDistinctValue(MapValue value) {
+        value.addLong(valueIndex, 1);
+    }
+
+    @Override
+    public boolean isDistinctKeyNull(MapRecord record, int columnIndex) {
+        return record.getLong(columnIndex) == Numbers.LONG_NULL;
+    }
+
+    @Override
+    public boolean isGroupedDistinctStatePresent(MapValue value) {
+        return value.getLong(valueIndex + 1) != 0;
     }
 
     @Override
@@ -209,6 +241,23 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
                 destValue.putLong(valueIndex + 1, setB.ptr());
             }
         }
+    }
+
+    @Override
+    public void mergeDistinctValue(MapValue destValue, MapValue srcValue) {
+        destValue.addLong(valueIndex, srcValue.getLong(valueIndex));
+    }
+
+    @Override
+    public void mergeDistinctValue(MapValue destValue, long distinctValue) {
+        destValue.addLong(valueIndex, distinctValue);
+    }
+
+    @Override
+    public void setGroupedDistinctStatePresent(MapValue value, boolean present) {
+        // The flat path stores only the finalized count, so the nested path's inline-value/
+        // set-pointer slot is available as an ordinary-state presence marker.
+        value.putLong(valueIndex + 1, present ? 1 : 0);
     }
 
     @Override
