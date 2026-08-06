@@ -34,7 +34,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -386,10 +388,12 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
      * cannot stand in for: {@code MemoryARW} only ever appends, so without the truncate-and-copy
      * the arena holds its high-water mark however small the map gets.
      * <p>
-     * Two sweeps, not one. The scratch arena survives a sweep truncated rather than freed, so a
-     * second sweep takes a different path through {@code retainPartitions} than the first: it
-     * empties an existing scratch instead of allocating one, and appends the survivors over the
-     * bytes the previous sweep left behind.
+     * Two sweeps, not one. The scratch arena's INSTANCE survives a sweep but its pages do not,
+     * so a second sweep takes a different path through {@code retainPartitions} than the first:
+     * it finds a scratch that is already there and already empty, and re-allocates its backing
+     * on the first slab it appends. A scratch left resident between sweeps instead would charge
+     * the view one {@code cairo.sql.window.store.page.size} page per ring-shaped call for the
+     * whole of its life, which is what the footprint assertion below holds it to.
      */
     @Test
     public void testFrontierSweepReclaimsARingShapedAnchoredFunctionsStateAndArena() throws Exception {
@@ -426,6 +430,11 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 // count at 1 and 3 - so asserting over both is what catches an enrolment that
                 // reads the right pair for one shape and the wrong one for another.
                 final long[] fourPartitionArenaBytes = captureRingArenas(anchorable, 4);
+                // Every slab of every seeded partition is in the arenas by now, so this is the
+                // view's ring footprint at its pre-sweep peak. Read per memory tag rather than
+                // off the per-view tracker, which also carries the maps and the in-memory tier -
+                // their churn across a refresh would swamp a page.
+                final long peakRingBytes = circularBufferBytes();
 
                 final LiveViewWindow window = instance.getAnchorWindow();
                 Assert.assertNotNull("the view must carry an anchored window", window);
@@ -444,6 +453,7 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                         window.getAnchorMapSize()
                 );
                 assertRingArenasReclaimed(anchorable, fourPartitionArenaBytes);
+                assertRingScratchNotResident(peakRingBytes);
                 final long[] afterFirstSweepArenaBytes = ringArenaExtents(anchorable);
 
                 // The survivor's ring has to still be readable AT ITS NEW HOME. This row lands in
@@ -468,6 +478,11 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 Assert.assertEquals(2, window.getCompactionCount());
                 Assert.assertEquals(1, window.getAnchorMapSize());
                 assertRingArenasReclaimed(anchorable, revivedArenaBytes);
+                // And so does the second sweep, which is a different path: the first ran against
+                // a scratch that had never held anything, this one against one that has been
+                // closed once and re-allocated since. A release that only works the first time
+                // would leave the view a page per call heavier from here on.
+                assertRingScratchNotResident(peakRingBytes);
                 // Both sweeps leave the same one partition with the same slab, so the arena has
                 // to land on the same extent twice. A strict shrink alone would not say this: a
                 // second sweep that appended onto the first one's leftover scratch still shrinks
@@ -1030,6 +1045,31 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Asserts the sweep left none of its scratch arena behind.
+     * <p>
+     * A sweep can only ever shrink a ring arena's logical extent - it just evicted partitions -
+     * so the view's native ring footprint must come out of one no higher than it went in. What
+     * pushes it above the peak is the scratch: truncated rather than freed, it stays at one
+     * {@code cairo.sql.window.store.page.size} page (1 MB by default) per ring-shaped call for
+     * the life of the view, charged to {@code cairo.live.view.refresh.memory.limit.bytes} for
+     * memory only a sweep ever reads.
+     * <p>
+     * The bound is {@code <=} rather than {@code <} because a {@code MemoryARW} allocates whole
+     * pages: four slabs and one slab both fit in the arena's single page, so reclaiming three
+     * partitions moves the append offset - which the sibling assertion covers - and not the
+     * footprint. The refresh is quiesced at every call site, so nothing else is moving the tag.
+     */
+    private static void assertRingScratchNotResident(long peakRingBytes) {
+        final long ringBytes = circularBufferBytes();
+        Assert.assertTrue(
+                "a sweep must hand its scratch arena back, but the view's ring footprint went"
+                        + " from " + peakRingBytes + " at its pre-sweep peak to " + ringBytes
+                        + " after a sweep that dropped three of its four partitions",
+                ringBytes <= peakRingBytes
+        );
+    }
+
+    /**
      * Asserts every anchorable call folded to a ring and is holding one slab per seeded
      * partition, and returns each one's arena extent for the post-sweep shrink to be
      * measured against.
@@ -1056,6 +1096,15 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
             );
         }
         return seededArenaBytes;
+    }
+
+    /**
+     * The process's native footprint under the tag every ring arena and every sweep scratch
+     * allocates from. A live-view test drives one view at a time and quiesces its refresh
+     * before reading this, so the figure moves only when that view's rings do.
+     */
+    private static long circularBufferBytes() {
+        return Unsafe.getMemUsedByTag(MemoryTag.NATIVE_CIRCULAR_BUFFER);
     }
 
     /**

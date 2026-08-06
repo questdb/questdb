@@ -75,8 +75,8 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     protected Map compactionScratch;
     // Scratch arena the frontier sweep re-homes surviving ring slabs into, before one bulk
     // copy puts them back over the truncated primary arena. Null until the first sweep of a
-    // ring-holding function, and truncated (not freed) after each sweep so the next one pays
-    // no allocation for the slabs it has already sized for.
+    // ring-holding function; the instance outlives each sweep but its pages do not - see
+    // compactRingArena for why the sweep hands them back rather than keeping them.
     protected MemoryARW compactionRingScratch;
     // True once a sweep has put evicted keys into checkpointDirtyPartitions and the seal
     // has not consumed them yet. What it decides is whether dropping the dirty set also
@@ -425,7 +425,8 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
                 // exactly the pressure this sweep exists to relieve -- leaves slabs behind that
                 // nothing names. Appending on top of them would copy that dead prefix back into
                 // the primary arena and quietly give away the reclamation this is here to make.
-                compactionRingScratch.truncate();
+                // A sweep that completed already freed the block here, so this is then a no-op.
+                compactionRingScratch.close();
             }
         }
         PartitionStateEvictor.rebuildKeepingMembers(
@@ -579,9 +580,16 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
         if (usedBytes > 0) {
             Vect.memcpy(ringArena.appendAddressFor(usedBytes), compactionRingScratch.getPageAddress(0), usedBytes);
         }
-        // Truncate rather than free: the next sweep re-homes a similar volume of slabs, so
-        // keeping the (now single-page) scratch alive costs one page and saves the regrow.
-        compactionRingScratch.truncate();
+        // Free the scratch rather than truncate it. truncate() reallocates down to ONE page and
+        // keeps it for the life of this function instance, so a view holds
+        // cairo.sql.window.store.page.size (1 MB by default) per ring-shaped call - 18 MB for a
+        // view whose window carries the six decimal widths of avg, avg(x, scale) and sum -
+        // against cairo.live.view.refresh.memory.limit.bytes, for memory only a sweep ever
+        // reads. close() hands the block back and leaves the instance reusable: a MemoryARW
+        // allocates nothing until something appends to it, so the next sweep pays one malloc,
+        // against a sweep that has just memcpy'd every surviving slab twice. The sweep's own
+        // peak is unchanged either way - both arenas are live while the copies run.
+        compactionRingScratch.close();
         final LongList ringFreeList = getRingFreeList();
         if (ringFreeList != null) {
             ringFreeList.clear();
