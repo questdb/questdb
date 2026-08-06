@@ -104,31 +104,36 @@ public class PGResultFormatCodesTest extends BasePGTest {
     }
 
     @Test
-    public void testBinaryIntervalAndDecimalBehindResumableVarcharRewindCleanly() throws Exception {
+    public void testBinaryIntervalRewindsAndDecimalResumesBehindVarchar() throws Exception {
         // A VARCHAR first column is exempt from the "doesn't fit" bail-out because it can be sent in
         // chunks, so calculateRecordTailSize() walks PAST it and sizes the later columns. That is the
-        // only way to reach its INTERVAL and DECIMAL arms - a STRING first column returns -1 straight
-        // away and the walk never gets there. Those arms used to be "assert false", which fired
-        // inside outRecord()'s overflow handler and replaced the exception being handled.
+        // only way to reach its INTERVAL arm - a STRING first column returns -1 straight away and the
+        // walk never gets there. INTERVAL cannot be sized exactly, so it must rewind cleanly. DECIMAL
+        // is exactly sizeable and resumable, so the same row shape must make forward progress.
         assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
             execute("""
                     CREATE TABLE resumable AS (
                       SELECT rnd_str(4000, 4000, 0)::varchar AS v
                       FROM long_sequence(1))""");
 
-            final String[] queries = {
-                    "SELECT v, interval('2020-01-01', '2021-01-01') AS i FROM resumable",
-                    "SELECT v, 1.5::decimal(10, 2) AS d FROM resumable"
-            };
             try (RawPGClient client = new RawPGClient(port)) {
-                for (String sql : queries) {
-                    try {
-                        // text VARCHAR + binary second column: mixed per-column formats
-                        client.query(sql, new short[]{FORMAT_TEXT, FORMAT_BINARY});
-                        Assert.fail("expected a send-buffer error for: " + sql);
-                    } catch (AssertionError e) {
-                        TestUtils.assertContains(e.getMessage(), "not enough space in send buffer");
-                    }
+                final short[] mixedFormats = {FORMAT_TEXT, FORMAT_BINARY};
+                ObjList<ObjList<String>> rows = client.query(
+                        "SELECT v, 1.5::decimal(10, 2) AS d FROM resumable",
+                        mixedFormats
+                );
+                Assert.assertEquals(1, rows.size());
+                Assert.assertEquals(2, rows.getQuick(0).size());
+                Assert.assertEquals(4000, rows.getQuick(0).getQuick(0).length());
+                Assert.assertNotNull(rows.getQuick(0).getQuick(1));
+
+                final String intervalSql =
+                        "SELECT v, interval('2020-01-01', '2021-01-01') AS i FROM resumable";
+                try {
+                    client.query(intervalSql, mixedFormats);
+                    Assert.fail("expected a send-buffer error for: " + intervalSql);
+                } catch (AssertionError e) {
+                    TestUtils.assertContains(e.getMessage(), "not enough space in send buffer");
                 }
             }
         });

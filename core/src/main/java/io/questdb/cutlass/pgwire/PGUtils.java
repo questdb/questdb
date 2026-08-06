@@ -28,8 +28,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
+import io.questdb.std.Decimals;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
@@ -37,7 +42,9 @@ import io.questdb.std.Uuid;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
-class PGUtils {
+public final class PGUtils {
+    static final short NUMERIC_NEG = 0x4000;
+    static final short NUMERIC_POS = 0x0000;
     private static final int MAX_BYTE_TEXT_LEN = String.valueOf(Byte.MIN_VALUE).length();
     private static final int MAX_CHAR_TEXT_LEN = 3;
     private static final int MAX_DATE_TEXT_LEN = 28; // "292278994-08-17 07:12:55.807"
@@ -59,6 +66,7 @@ class PGUtils {
     private static final int MAX_TIMESTAMP_TEXT_LEN = 31; // "294247-01-10 04:00:54.775807123"
     private static final int MAX_UUID_TEXT_LEN = 36;
     private static final int NULL_LITERAL_TEXT_LEN = 4; // "NULL", as ArrayTypeDriver.arrayToPgWire() writes it
+    private static final int PG_NUMERIC_FIXED_BIN_SIZE = Integer.BYTES + 4 * Short.BYTES;
 
     private PGUtils() {
     }
@@ -84,6 +92,7 @@ class PGUtils {
      */
     public static int calculateColumnBinSize(
             PGPipelineEntry pipelineEntry,
+            SqlExecutionContext sqlExecutionContext,
             Record record,
             int columnIndex,
             int columnType,
@@ -124,6 +133,42 @@ class PGUtils {
             case ColumnType.DOUBLE:
                 final double doubleValue = record.getDouble(columnIndex);
                 return Double.isNaN(doubleValue) ? Integer.BYTES : Integer.BYTES + Double.BYTES;
+            case ColumnType.DECIMAL8:
+                final byte decimal8 = record.getDecimal8(columnIndex);
+                return decimal8 == Decimals.DECIMAL8_NULL
+                        ? Integer.BYTES
+                        : calculateDecimalBinSize(decimal8, ColumnType.getDecimalScale(columnType));
+            case ColumnType.DECIMAL16:
+                final short decimal16 = record.getDecimal16(columnIndex);
+                return decimal16 == Decimals.DECIMAL16_NULL
+                        ? Integer.BYTES
+                        : calculateDecimalBinSize(decimal16, ColumnType.getDecimalScale(columnType));
+            case ColumnType.DECIMAL32:
+                final int decimal32 = record.getDecimal32(columnIndex);
+                return decimal32 == Decimals.DECIMAL32_NULL
+                        ? Integer.BYTES
+                        : calculateDecimalBinSize(decimal32, ColumnType.getDecimalScale(columnType));
+            case ColumnType.DECIMAL64:
+                final long decimal64 = record.getDecimal64(columnIndex);
+                return decimal64 == Decimals.DECIMAL64_NULL
+                        ? Integer.BYTES
+                        : calculateDecimalBinSize(decimal64, ColumnType.getDecimalScale(columnType));
+            case ColumnType.DECIMAL128:
+                final Decimal128 decimal128 = sqlExecutionContext.getDecimal128();
+                record.getDecimal128(columnIndex, decimal128);
+                return calculateDecimalBinSize(
+                        decimal128,
+                        ColumnType.getDecimalPrecision(columnType),
+                        ColumnType.getDecimalScale(columnType)
+                );
+            case ColumnType.DECIMAL256:
+                final Decimal256 decimal256 = sqlExecutionContext.getDecimal256();
+                record.getDecimal256(columnIndex, decimal256);
+                return calculateDecimalBinSize(
+                        decimal256,
+                        ColumnType.getDecimalPrecision(columnType),
+                        ColumnType.getDecimalScale(columnType)
+                );
             case ColumnType.UUID:
                 final long lo = record.getLong128Lo(columnIndex);
                 final long hi = record.getLong128Hi(columnIndex);
@@ -198,17 +243,10 @@ class PGUtils {
                 size += calculateArrayResumeColBinSize(notNullCount, remainingElements - notNullCount);
                 return size;
             case ColumnType.INTERVAL:
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-            case ColumnType.DECIMAL128:
-            case ColumnType.DECIMAL256:
                 // This method has to be EXACT, not an upper bound: calculateRecordTailSize() patches
                 // its result into a DataRow length prefix. An interval's size depends on the rendered
-                // timestamps and a binary NUMERIC's on value-level zero-group suppression, so neither
-                // can be sized without doing the work. Report "cannot size" and give up mid-record
-                // resume for these rows; the whole-row rewind still delivers them.
+                // timestamps, so it cannot be sized without doing the work. Report "cannot size" and
+                // give up mid-record resume for this row; the whole-row rewind still delivers it.
                 return -1;
             default:
                 // never assert here: this runs inside outRecord()'s NoSpaceLeftInResponseBufferException
@@ -255,7 +293,7 @@ class PGUtils {
             int columnType
     ) {
         // matches calculateColumnBinSize(), which also derives the tag from the full column type
-        final short typeTag = ColumnType.tagOf(columnType);
+        final int typeTag = ColumnType.tagOf(columnType);
         return switch (typeTag) {
             case ColumnType.NULL -> Integer.BYTES;
             case ColumnType.BOOLEAN -> Integer.BYTES + Byte.BYTES;
@@ -269,6 +307,13 @@ class PGUtils {
             case ColumnType.TIMESTAMP -> Integer.BYTES + MAX_TIMESTAMP_TEXT_LEN;
             case ColumnType.FLOAT -> Integer.BYTES + MAX_FLOAT_TEXT_LEN;
             case ColumnType.DOUBLE -> Integer.BYTES + MAX_DOUBLE_TEXT_LEN;
+            // Reserve bytes for an optional sign, decimal point, and leading zero.
+            case ColumnType.DECIMAL8,
+                 ColumnType.DECIMAL16,
+                 ColumnType.DECIMAL32,
+                 ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128,
+                 ColumnType.DECIMAL256 -> Integer.BYTES + ColumnType.getDecimalPrecision(columnType) + 3L;
             case ColumnType.UUID -> Integer.BYTES + MAX_UUID_TEXT_LEN;
             case ColumnType.LONG256 -> Integer.BYTES + MAX_LONG256_TEXT_LEN;
             case ColumnType.GEOBYTE -> Integer.BYTES + MAX_GEOBYTE_TEXT_LEN;
@@ -302,11 +347,6 @@ class PGUtils {
                 yield Integer.BYTES + arrayTxtSize(array);
             }
             case ColumnType.INTERVAL -> Integer.BYTES + MAX_INTERVAL_TEXT_LEN;
-            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32,
-                 ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
-                // Decimals.appendNonNull() writes at most a sign, `precision` digits, a decimal
-                // point and a leading zero; one spare digit covers the rounding of the scale
-                    Integer.BYTES + ColumnType.getDecimalPrecision(columnType) + 4;
             // NOTE: no ARRAY_STRING arm - txtAndBinSizesCanBeDifferent() reports it as same-sized
             // in both formats, so it is sized by calculateColumnBinSize() and never reaches here.
             default ->
@@ -359,12 +399,328 @@ class PGUtils {
         return 2 * nodes + (cardinality - 1L) + elements;
     }
 
+    /**
+     * Writes one PostgreSQL NUMERIC field: an int32 length prefix, the four int16 header words
+     * (ndigits, weight, sign, dscale) and one int16 per base-10000 digit group. The number of bytes this
+     * writes must match what {@link #calculateColumnBinSize} reports for the same value and column type,
+     * which {@code PGUtilsTest} pins.
+     */
+    public static void outColBinDecimal(PGResponseSink utf8Sink, Decimal128 decimal128, int type) {
+        if (decimal128.isNull()) {
+            utf8Sink.setNullValue();
+            return;
+        }
+
+        final int precision = ColumnType.getDecimalPrecision(type);
+        final int scale = ColumnType.getDecimalScale(type);
+
+        short sign = NUMERIC_POS;
+        if (decimal128.isNegative()) {
+            sign = NUMERIC_NEG;
+            decimal128.negate();
+        }
+
+        // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
+        // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
+        // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
+        // be encoded as an array of 2 shorts: [12, 3400].
+
+        long startAddress = utf8Sink.getSendBufferPtr();
+        utf8Sink.putNetworkInt(4 * Short.BYTES); // type size, defaults to a zero value, we will came back later to rewrite it
+
+        utf8Sink.putNetworkShort((short) 0); // ndigits, same
+        utf8Sink.putNetworkShort((short) 0); // weight, same
+        utf8Sink.putNetworkShort(sign); // sign
+        utf8Sink.putNetworkShort((short) scale); // dscale
+
+        if (decimal128.isZero()) {
+            return;
+        }
+
+        boolean writing = false;
+        int digit = 0;
+        int weight = 0;
+        int pow = precision;
+
+        // We start with the whole part of the decimal
+        final int wholePartPrecision = precision - scale;
+        for (int i = wholePartPrecision - 1; i >= 0; i--) {
+            final int mul = decimal128.getDigitAtPowerOfTen(--pow);
+            digit = digit * 10 + mul;
+            decimal128.subtractPowerOfTenMultiple(pow, mul);
+            if (i % 4 == 0 && (writing || digit != 0)) {
+                if (!writing) {
+                    writing = true;
+                    weight = (i + 3) / 4;
+                }
+                utf8Sink.putNetworkShort((short) digit);
+                digit = 0;
+            }
+        }
+
+        // And then the decimal part
+        for (int i = 0, n = (scale + 3) / 4; i < n; i++) {
+            digit = 0;
+            for (int j = 0; j < 4; j++) {
+                final int mul = pow > 0 ? decimal128.getDigitAtPowerOfTen(--pow) : 0;
+                digit = digit * 10 + mul;
+                decimal128.subtractPowerOfTenMultiple(pow, mul);
+            }
+            if (writing || digit != 0) {
+                if (!writing) {
+                    writing = true;
+                    weight = -i - 1;
+                }
+                utf8Sink.putNetworkShort((short) digit);
+            }
+        }
+
+        // We now need to fix previous values
+        long endAddress = utf8Sink.getSendBufferPtr();
+        final int typeLen = (int) (endAddress - startAddress - Integer.BYTES);
+        // Patching the whole type len
+        utf8Sink.putNetworkInt(startAddress, typeLen);
+        // Patching the number of digits (remove the static attributes first)
+        utf8Sink.putNetworkShort(startAddress + Integer.BYTES, (short) ((typeLen - 4 * Short.BYTES) / Short.BYTES));
+        // Patching the weight
+        utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
+    }
+
+    /**
+     * @see #outColBinDecimal(PGResponseSink, Decimal128, int)
+     */
+    public static void outColBinDecimal(PGResponseSink utf8Sink, Decimal256 decimal256, int type) {
+        if (decimal256.isNull()) {
+            utf8Sink.setNullValue();
+            return;
+        }
+
+        final int precision = ColumnType.getDecimalPrecision(type);
+        final int scale = ColumnType.getDecimalScale(type);
+
+        short sign = NUMERIC_POS;
+        if (decimal256.isNegative()) {
+            sign = NUMERIC_NEG;
+            decimal256.negate();
+        }
+
+        // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
+        // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
+        // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
+        // be encoded as an array of 2 shorts: [12, 3400].
+
+        long startAddress = utf8Sink.getSendBufferPtr();
+        utf8Sink.putNetworkInt(4 * Short.BYTES); // type size, defaults to a zero value, we will came back later to rewrite it
+
+        utf8Sink.putNetworkShort((short) 0); // ndigits, same
+        utf8Sink.putNetworkShort((short) 0); // weight, same
+        utf8Sink.putNetworkShort(sign); // sign
+        utf8Sink.putNetworkShort((short) scale); // dscale
+
+        if (decimal256.isZero()) {
+            return;
+        }
+
+        boolean writing = false;
+        int digit = 0;
+        int weight = 0;
+        int pow = precision;
+
+        // We start with the whole part of the decimal
+        final int wholePartPrecision = precision - scale;
+        for (int i = wholePartPrecision - 1; i >= 0; i--) {
+            final int mul = decimal256.getDigitAtPowerOfTen(--pow);
+            digit = digit * 10 + mul;
+            decimal256.subtractPowerOfTenMultiple(pow, mul);
+            if (i % 4 == 0 && (writing || digit != 0)) {
+                if (!writing) {
+                    writing = true;
+                    weight = (i + 3) / 4;
+                }
+                utf8Sink.putNetworkShort((short) digit);
+                digit = 0;
+            }
+        }
+
+        // And then the decimal part
+        for (int i = 0, n = (scale + 3) / 4; i < n; i++) {
+            digit = 0;
+            for (int j = 0; j < 4; j++) {
+                final int mul = pow > 0 ? decimal256.getDigitAtPowerOfTen(--pow) : 0;
+                digit = digit * 10 + mul;
+                decimal256.subtractPowerOfTenMultiple(pow, mul);
+            }
+            if (writing || digit != 0) {
+                if (!writing) {
+                    writing = true;
+                    weight = -i - 1;
+                }
+                utf8Sink.putNetworkShort((short) digit);
+            }
+        }
+
+        // We now need to fix previous values
+        long endAddress = utf8Sink.getSendBufferPtr();
+        final int typeLen = (int) (endAddress - startAddress - Integer.BYTES);
+        // Patching the whole type len
+        utf8Sink.putNetworkInt(startAddress, typeLen);
+        // Patching the number of digits (remove the static attributes first)
+        utf8Sink.putNetworkShort(startAddress + Integer.BYTES, (short) ((typeLen - 4 * Short.BYTES) / Short.BYTES));
+        // Patching the weight
+        utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
+    }
+
+    /**
+     * @see #outColBinDecimal(PGResponseSink, Decimal128, int)
+     */
+    public static void outColBinDecimal(PGResponseSink utf8Sink, Decimal64 decimal64, int type) {
+        if (decimal64.isNull()) {
+            utf8Sink.setNullValue();
+            return;
+        }
+
+        final int precision = ColumnType.getDecimalPrecision(type);
+        final int scale = ColumnType.getDecimalScale(type);
+
+        short sign = NUMERIC_POS;
+        if (decimal64.isNegative()) {
+            sign = NUMERIC_NEG;
+            decimal64.negate();
+        }
+
+        // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
+        // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
+        // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
+        // be encoded as an array of 2 shorts: [12, 3400].
+
+        long startAddress = utf8Sink.getSendBufferPtr();
+        utf8Sink.putNetworkInt(4 * Short.BYTES); // type size, defaults to a zero value, we will came back later to rewrite it
+
+        utf8Sink.putNetworkShort((short) 0); // ndigits, same
+        utf8Sink.putNetworkShort((short) 0); // weight, same
+        utf8Sink.putNetworkShort(sign); // sign
+        utf8Sink.putNetworkShort((short) scale); // dscale
+
+        if (decimal64.isZero()) {
+            return;
+        }
+
+        boolean writing = false;
+        int digit = 0;
+        int weight = 0;
+        int pow = precision;
+
+        // We start with the whole part of the decimal
+        final int wholePartPrecision = precision - scale;
+        for (int i = wholePartPrecision - 1; i >= 0; i--) {
+            final int mul = decimal64.getDigitAtPowerOfTen(--pow);
+            digit = digit * 10 + mul;
+            decimal64.subtractPowerOfTenMultiple(pow, mul);
+            if (i % 4 == 0 && (writing || digit != 0)) {
+                if (!writing) {
+                    writing = true;
+                    weight = (i + 3) / 4;
+                }
+                utf8Sink.putNetworkShort((short) digit);
+                digit = 0;
+            }
+        }
+
+        // And then the decimal part
+        for (int i = 0, n = (scale + 3) / 4; i < n; i++) {
+            digit = 0;
+            for (int j = 0; j < 4; j++) {
+                final int mul = pow > 0 ? decimal64.getDigitAtPowerOfTen(--pow) : 0;
+                digit = digit * 10 + mul;
+                decimal64.subtractPowerOfTenMultiple(pow, mul);
+            }
+            if (writing || digit != 0) {
+                if (!writing) {
+                    writing = true;
+                    weight = -i - 1;
+                }
+                utf8Sink.putNetworkShort((short) digit);
+            }
+        }
+
+        // We now need to fix previous values
+        long endAddress = utf8Sink.getSendBufferPtr();
+        final int typeLen = (int) (endAddress - startAddress - Integer.BYTES);
+        // Patching the whole type len
+        utf8Sink.putNetworkInt(startAddress, typeLen);
+        // Patching the number of digits (remove the static attributes first)
+        utf8Sink.putNetworkShort(startAddress + Integer.BYTES, (short) ((typeLen - 4 * Short.BYTES) / Short.BYTES));
+        // Patching the weight
+        utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
+    }
+
     private static int calculateArrayHeaderSize(ArrayView array) {
         return Integer.BYTES // size field (stores the number returned from this method)
                 + Integer.BYTES // dimension count
                 + Integer.BYTES // "has nulls" flag
                 + Integer.BYTES // component type
                 + array.getDimCount() * (2 * Integer.BYTES); // dimension lengths
+    }
+
+    private static int calculateDecimalBinSize(long value, int scale) {
+        if (value == 0) {
+            return PG_NUMERIC_FIXED_BIN_SIZE;
+        }
+
+        if (value < 0) {
+            value = -value;
+        }
+        int highestPower = 0;
+        while (value >= 10) {
+            value /= 10;
+            highestPower++;
+        }
+        return calculateNonZeroDecimalBinSize(highestPower, scale);
+    }
+
+    private static int calculateDecimalBinSize(Decimal128 decimal, int precision, int scale) {
+        if (decimal.isNull()) {
+            return Integer.BYTES;
+        }
+        if (decimal.isZero()) {
+            return PG_NUMERIC_FIXED_BIN_SIZE;
+        }
+        if (decimal.isNegative()) {
+            decimal.negate();
+        }
+
+        int highestPower = precision - 1;
+        while (decimal.getDigitAtPowerOfTen(highestPower) == 0) {
+            highestPower--;
+        }
+        return calculateNonZeroDecimalBinSize(highestPower, scale);
+    }
+
+    private static int calculateDecimalBinSize(Decimal256 decimal, int precision, int scale) {
+        if (decimal.isNull()) {
+            return Integer.BYTES;
+        }
+        if (decimal.isZero()) {
+            return PG_NUMERIC_FIXED_BIN_SIZE;
+        }
+        if (decimal.isNegative()) {
+            decimal.negate();
+        }
+
+        int highestPower = precision - 1;
+        while (decimal.getDigitAtPowerOfTen(highestPower) == 0) {
+            highestPower--;
+        }
+        return calculateNonZeroDecimalBinSize(highestPower, scale);
+    }
+
+    private static int calculateNonZeroDecimalBinSize(int highestPower, int scale) {
+        // PostgreSQL NUMERIC groups decimal digits in base 10000. The first group's weight comes from the
+        // highest non-zero decimal digit, while the final group covers the end of the declared scale.
+        final int firstWeight = Math.floorDiv(highestPower - scale, 4);
+        final int digitCount = firstWeight + (scale + 3) / 4 + 1;
+        assert digitCount > 0;
+        return PG_NUMERIC_FIXED_BIN_SIZE + digitCount * Short.BYTES;
     }
 
     private static int countNotNullRecursive(
