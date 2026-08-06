@@ -40,7 +40,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -288,23 +287,13 @@ public class QwpSymbolDecoderTest {
     }
 
     @Test
-    @Ignore
-    // Temporary disabled, until the client is updated.
-    public void testClientAndServerAgreeOnTheSymbolDictionaryCap() {
-        // The client refuses the 2,000,001st distinct symbol at registration precisely so
-        // everything it has already buffered references ids this decoder will accept:
-        // parseDeltaSymbolDict rejects deltaStartId + deltaCount > MAX_SYMBOL_DICTIONARY_SIZE
-        // as a parse error, which the sender treats as terminal, stranding a
-        // store-and-forward backlog no drainer can deliver.
-        //
-        // The client pins its own constant against a literal, which only catches the
-        // CLIENT moving. Lowering the server's constant would leave that green while the
-        // client over-admitted, so pin the two against each other from the side that can
-        // see both -- the client is on this module's test classpath.
-        Assert.assertEquals(
-                "client and server symbol-dictionary caps must move together",
-                MAX_SYMBOL_DICTIONARY_SIZE,
-                io.questdb.client.cutlass.qwp.protocol.QwpConstants.MAX_SYMBOL_DICTIONARY_SIZE);
+    public void testClientSymbolDictionaryCapDoesNotExceedTheServer() {
+        int clientCap = io.questdb.client.cutlass.qwp.protocol.QwpConstants.MAX_SYMBOL_DICTIONARY_SIZE;
+        Assert.assertTrue(
+                "client symbol-dictionary cap (" + clientCap + ") must not exceed the server's ("
+                        + MAX_SYMBOL_DICTIONARY_SIZE + "): a client that admits ids this decoder"
+                        + " rejects strands its store-and-forward backlog",
+                clientCap <= MAX_SYMBOL_DICTIONARY_SIZE);
     }
 
     @Test

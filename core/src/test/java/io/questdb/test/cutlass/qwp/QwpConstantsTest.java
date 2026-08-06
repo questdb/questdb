@@ -37,9 +37,10 @@ public class QwpConstantsTest {
         Assert.assertEquals(16 * 1024 * 1024, DEFAULT_MAX_BATCH_SIZE);
         Assert.assertEquals(1_000_000, DEFAULT_MAX_ROWS_PER_TABLE);
         Assert.assertEquals(2048, MAX_COLUMNS_PER_TABLE);
-        // Wire constant: senders enforce the same ceiling at registration time, so
-        // moving it here alone desyncs every already-shipped client. See
-        // QwpSymbolDecoderTest#testClientAndServerAgreeOnTheSymbolDictionaryCap.
+        // Wire constant: a sender enforces its own ceiling at registration time, and that
+        // ceiling must not exceed this one. Raising it here is safe; lowering it strands
+        // any sender that already admitted higher ids. See
+        // QwpSymbolDecoderTest#testClientSymbolDictionaryCapDoesNotExceedTheServer.
         Assert.assertEquals(2_000_000, MAX_SYMBOL_DICTIONARY_SIZE);
     }
 
