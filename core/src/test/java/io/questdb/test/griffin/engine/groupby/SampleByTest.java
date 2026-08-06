@@ -5340,6 +5340,53 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByDayFillNullAlignToCalendarDSTNYFallBack() throws Exception {
+        // America/New_York: UTC-4 (EDT) -> UTC-5 (EST)
+        // Fall back: Nov 3, 2013 at 2:00 EDT -> 1:00 EST (= Nov 3 06:00 UTC)
+        //
+        // The local Nov 3 day is 25 hours long, so its bucket holds 25 hourly rows and the
+        // day boundary moves from 04:00Z to 05:00Z. FILL must reuse the same calendar-aware
+        // bucket progression: the data is gapless, so no bucket may be filled in.
+        assertMemoryLeak(() -> assertQuery("SELECT ts, count() FROM (" +
+                "SELECT timestamp_sequence('2013-11-01T04:00:00.000000Z', 3_600_000_000L) ts " +
+                "FROM long_sequence(120)) timestamp(ts) " +
+                "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York';")
+                .timestamp("ts")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("""
+                        ts\tcount
+                        2013-11-01T04:00:00.000000Z\t24
+                        2013-11-02T04:00:00.000000Z\t24
+                        2013-11-03T04:00:00.000000Z\t25
+                        2013-11-04T05:00:00.000000Z\t24
+                        2013-11-05T05:00:00.000000Z\t23
+                        """));
+    }
+
+    @Test
+    public void testSampleByDayFillPrevAlignToCalendarDSTNYFallBack() throws Exception {
+        // Same setup as testSampleByDayFillNullAlignToCalendarDSTNYFallBack.
+        // FILL(PREV) used to emit a phantom bucket at 2013-11-04T04:00:00Z, one hour before the
+        // genuine next boundary, carrying a copy of the previous bucket's value.
+        assertMemoryLeak(() -> assertQuery("SELECT ts, count() FROM (" +
+                "SELECT timestamp_sequence('2013-11-01T04:00:00.000000Z', 3_600_000_000L) ts " +
+                "FROM long_sequence(120)) timestamp(ts) " +
+                "SAMPLE BY 1d FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'America/New_York';")
+                .timestamp("ts")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("""
+                        ts\tcount
+                        2013-11-01T04:00:00.000000Z\t24
+                        2013-11-02T04:00:00.000000Z\t24
+                        2013-11-03T04:00:00.000000Z\t25
+                        2013-11-04T05:00:00.000000Z\t24
+                        2013-11-05T05:00:00.000000Z\t23
+                        """));
+    }
+
+    @Test
     public void testSampleByDayFromAlignToCalendarDSTBerlinFallBack() throws Exception {
         // Europe/Berlin: UTC+2 (CEST) -> UTC+1 (CET)
         // Fall back: Oct 31, 2021 at 3:00 CEST -> 2:00 CET (= Oct 31 01:00 UTC)
