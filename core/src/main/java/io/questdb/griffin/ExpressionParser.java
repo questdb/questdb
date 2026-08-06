@@ -2177,6 +2177,12 @@ public class ExpressionParser {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
                         if (scopeStack.notEmpty()) {
+                            if (last != null && SqlKeywords.isDistinctKeyword(last.token)) {
+                                // e.g. "(distinct col)": DISTINCT is being used as if it were a
+                                // function or a parenthesised modifier. It is only valid right after
+                                // SELECT, or inside count(distinct ...) / string_agg(distinct ...).
+                                throw SqlException.$(last.position, "'distinct' is not allowed here [use 'select distinct ...', or 'count(distinct ...)' / 'string_agg(distinct ...)']");
+                            }
                             throw SqlException.$(lastPos, "dangling literal");
                         }
                         lexer.unparseLast();
