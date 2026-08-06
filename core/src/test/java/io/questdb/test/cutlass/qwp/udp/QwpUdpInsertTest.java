@@ -1498,16 +1498,21 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                     sender.table("timer_active").symbol("host", "a1").doubleColumn("v", 3.0).at(2_000_000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
+                // Eviction of the dropped table and the survivor's interval
+                // commit happen on independent schedules: the staleness check
+                // fires on every pass, the commit only when the 50 ms interval
+                // elapses. Assert both inside one eventually-loop so the test
+                // does not exit between the two.
                 TestUtils.assertEventually(() -> {
                     receiver.runSerially();
                     Assert.assertEquals("interval commit path should evict the dropped table", 1, receiver.getCachedTableCount());
+                    drainWalQueue();
+                    assertQuery("SELECT count() FROM timer_active")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n2\n");
                 }, 10);
-                drainWalQueue();
-                assertQuery("SELECT count() FROM timer_active")
-                        .noLeakCheck()
-                        .expectSize()
-                        .noRandomAccess()
-                        .returns("count\n2\n");
             }
         });
     }
