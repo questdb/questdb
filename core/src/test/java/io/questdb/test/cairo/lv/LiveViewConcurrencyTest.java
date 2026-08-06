@@ -58,14 +58,16 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -181,6 +183,16 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
+        // The soaks advance the mocked microsecond clock to drive FLUSH EVERY while readers hold
+        // cursors open. Keep millisecond deadlines on the production wall clock so those synthetic
+        // jumps cannot consume TableReader's spin timeout.
+        AbstractCairoTest.configurationFactory = (root, telemetry, overrides) ->
+                new CairoTestConfiguration(root, telemetry, overrides) {
+                    @Override
+                    public MillisecondClock getMillisecondClock() {
+                        return MillisecondClockImpl.INSTANCE;
+                    }
+                };
         // The engine builds its LiveViewStateStore once, in load(), via the createLiveViewStateStore
         // hook. Wrapping it here - rather than reflecting the field out of a live engine and setting
         // it back afterwards - keeps the swap inside the API the engine already exposes for it.
@@ -201,21 +213,6 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             }
         };
         AbstractCairoTest.setUpStatic();
-    }
-
-    @Before
-    @Override
-    public void setUp() {
-        super.setUp();
-        // The soaks in this class advance the mocked microsecond clock (CLOCK_ADVANCE_MICROS
-        // per driver tick) while reader threads hold cursors open, and CairoTestConfiguration
-        // derives the millisecond timeout clock from the same mock. A reader spinning in
-        // TableReader.readTxnSlow() against the driver's ticks therefore consumes the default
-        // 5s deadline after ~20 ticks of synthetic time - milliseconds of wall time - and dies
-        // with "Transaction read timeout" (seen on Windows CI, where slow txn loads widen the
-        // reader's spin window). Push the deadline out to an hour of synthetic time, far beyond
-        // the few hundred ticks a soak runs; tearDown() restores the default.
-        spinLockTimeout = 3_600_000;
     }
 
     @Test
