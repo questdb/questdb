@@ -132,6 +132,19 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         int oracle(int k, int n) throws Exception;
 
         /**
+         * Whether a table left SUSPENDED by the count pass (which runs with NO fault armed) means the
+         * drawn workload cannot exercise crash recovery and should be rejected.
+         * <p>
+         * Only RANDOMIZED workloads want this: a generator can emit a combination the product does not
+         * support (e.g. a replace-range insert over a Parquet partition), and sweeping it would report a
+         * pre-existing suspend as a crash-recovery failure at every crash point. Curated workloads are
+         * deliberately hand-built and some end their clean pass suspended by design, so they opt out.
+         */
+        default boolean rejectWhenCountPassSuspends() {
+            return false;
+        }
+
+        /**
          * Declare how many of the clean pass's {@code countedOps} belong to the atomic durability phase.
          * The default sweeps the full clean count. An override is valid only when workload semantics prove
          * that op {@code returnValue + 1} is the first post-commit, best-effort durability operation; it must
@@ -263,6 +276,31 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         return n;
     }
 
+    /**
+     * Reason the first suspended table gives, or null when none is suspended.
+     */
+    protected String firstSuspendReason(TableToken... tokens) {
+        for (TableToken tt : tokens) {
+            if (engine.getTableSequencerAPI().isSuspended(tt)) {
+                final io.questdb.cairo.wal.seq.SeqTxnTracker t = engine.getTableSequencerAPI().getTxnTracker(tt);
+                return "[table=" + tt.getTableName() + ", errorTag=" + t.getErrorTag()
+                        + ", errorMessage=" + t.getErrorMessage() + "]";
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The drawn workload suspends the table with NO fault injected, so it cannot test crash recovery.
+     * Thrown from the count pass; a randomized caller redraws the seed, a pinned one fails loudly.
+     */
+    public static final class WorkloadNotCrashTestableException extends RuntimeException {
+        public WorkloadNotCrashTestableException(String reason) {
+            super("workload suspends the table with NO fault injected, so it cannot exercise crash "
+                    + "recovery: " + reason);
+        }
+    }
+
     protected SweepResult forEachAdaptiveCrashPoint(AdaptiveCrashWorkload workload, int cap) throws Exception {
         if (crashFf == null) {
             throw new IllegalStateException("call runWithCrashFacade(...) first");
@@ -273,7 +311,7 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         final java.util.Set<Long> nonCacheFdBaseline = new java.util.HashSet<>(crashFf.noCacheOpenFdsSnapshot());
 
         // ---- 1. COUNT PASS: no fault armed; N = durability ops performed by the commit phase. ----
-        workload.setup(0);
+        final TableToken[] countPassTokens = workload.setup(0);
         final int opsBeforeCommit = crashFf.durabilityOpCount();
         workload.commit();
         final int n = crashFf.durabilityOpCount() - opsBeforeCommit;
@@ -281,9 +319,21 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         // actually saw. Recorded BEFORE teardown, whose own ops would otherwise be mistaken for the phase's.
         phaseFirstOp = opsBeforeCommit + 1; // the facade numbers ops from 1
         phaseOpCount = n;
+        // SAFETY CHECK: the count pass ran with NO fault armed. If it already suspended the table, the
+        // WORKLOAD is unusable for crash testing -- every crash point would then "fail" on a condition that
+        // has nothing to do with durability. A randomized generator can legitimately emit such a
+        // combination (e.g. a replace-range insert over a partition an earlier txn converted to Parquet,
+        // which QuestDB does not support), so this is a property of the drawn seed, not a defect.
+        // Detect it HERE, once, rather than letting it masquerade as a crash-recovery failure N times.
+        final String uncrashedSuspend = workload.rejectWhenCountPassSuspends()
+                ? firstSuspendReason(countPassTokens)
+                : null;
         workload.teardown();
         releaseEngineHandles();
         reclaimLingeringNonCacheFds(nonCacheFdBaseline);
+        if (uncrashedSuspend != null) {
+            throw new WorkloadNotCrashTestableException(uncrashedSuspend);
+        }
         Assert.assertTrue("workload commit phase must perform >= 1 durability op (N=" + n + ")", n > 0);
 
         final int atomicCommitOps = workload.atomicCommitDurabilityOpCount(n);

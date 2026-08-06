@@ -206,6 +206,11 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         }
 
         @Override
+        public boolean rejectWhenCountPassSuspends() {
+            return true;   // randomized: a suspend with no fault injected means the SEED is unusable
+        }
+
+        @Override
         public TableToken[] setup(int iteration) throws Exception {
             execute("drop table if exists " + WAL_TABLE);
             // Every crash point recreates cf_wal with a new physical token. Purge the dropped token now so
@@ -524,6 +529,18 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             }
             try {
                 r = body.run(seed[0], seed[1]);
+            } catch (WorkloadNotCrashTestableException notTestable) {
+                // The drawn workload suspends with NO fault injected -- a property of the generator (e.g. a
+                // replace-range insert over a Parquet partition, which is unsupported), not a durability
+                // defect. Redraw rather than sweeping it: every crash point would otherwise "fail" on a
+                // pre-existing condition, and on the soak that is a false alert per run. Logged, never
+                // silent, so a generator that starts producing these constantly is visible.
+                System.out.printf("[seed] REJECTED %dL, %dL: %s%n", seed[0], seed[1], notTestable.getMessage());
+                Assert.assertNotNull("a PINNED seed produced a workload that cannot be crash-tested; fix the "
+                        + "seed or the fuzz probabilities rather than redrawing: " + notTestable.getMessage(),
+                        redraw);
+                r = null;
+                continue;
             } catch (AssertionError e) {
                 throw new AssertionError("seed " + seed[0] + "L, " + seed[1] + "L (replay with -D" + SEED_PROP
                         + "=" + seed[0] + "," + seed[1] + "): " + e.getMessage(), e);
