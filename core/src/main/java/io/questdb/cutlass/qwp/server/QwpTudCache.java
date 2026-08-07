@@ -605,9 +605,16 @@ public class QwpTudCache implements QuietCloseable {
      * ack channel to refuse through. The UDP receiver makes that unbounded --
      * it holds ONE cache for every sender, with no reconnect to heal it.
      * <p>
-     * Gated on the sequencer's transaction counter, which an ALTER advances, so
-     * the change log is only opened when something has actually been committed
-     * since the last look -- not on every frame.
+     * Gated on the sequencer's transaction counter. The counter advances on
+     * EVERY committed txn -- structure changes, other writers' data commits,
+     * and this entry's own commits -- so the gate does not mean "a structure
+     * change happened": on the per-frame WS commit path the previous frame's
+     * own commit reopens it, and goActive() runs about once per frame. What
+     * the gate does avoid is replaying the change log more than once within
+     * one commit batch, and any replay at all on idle tables. An up-to-date
+     * goActive() is cheap: when the writer's structure version is current the
+     * sequencer answers with EmptyOperationCursor, no IO -- but it still
+     * costs a sequencer acquire/release per open gate.
      * <p>
      * Any failure here -- a table dropped concurrently, or a transient I/O error
      * reading the change log -- makes {@code goActive} throw and leaves the
@@ -624,6 +631,10 @@ public class QwpTudCache implements QuietCloseable {
      * writer's token and defeat the sequencer's token-mismatch check, silently
      * committing rows keyed by the old name into the renamed table. See the
      * directory-name guard below.
+     * When the rename lands concurrently with the lookup -- the registry not
+     * yet updated when the guard reads it -- the replay does rebind the
+     * writer; the token comparison around goActive() below catches exactly
+     * that case, salvages and refuses. See the in-method comment.
      */
     private void applyPendingStructureChanges(WalTableUpdateDetails tud) {
         if (!(tud.getWriter() instanceof WalWriter walWriter)) {
