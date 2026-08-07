@@ -44,14 +44,14 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
     // first MAX_CACHED_PRINCIPALS distinct principals hold it for the process lifetime, and once it is full
     // every further principal re-derives (allocate-per-call) on each request instead of the cache growing
     // without bound. Not an LRU -- saturation degrades the uncached tail, it does not reshuffle who is cached.
-    // The bound is soft: concurrent first-derivations can each see room and overshoot by however many of them
-    // race. Bounding retention is the point, not hitting the number exactly.
     public static final int MAX_CACHED_PRINCIPALS = 256;
     // A constant, so it captures nothing and the JVM hands back the same instance every time. A method
     // reference to an instance method would allocate a capturing lambda on each miss; computeIfAbsent's token
     // overload exists precisely to take `this` as a parameter instead.
     private static final BiFunction<CharSequence, Object, SecurityContext> NEW_PRINCIPAL_CONTEXT =
-            (principal, self) -> ((AbstractPrincipalAwareSecurityContext) self).newCheckedPrincipalContext(principal);
+            (principal, self) -> ((AbstractPrincipalAwareSecurityContext) self).newCachedPrincipalContext(principal);
+    private static final long PRINCIPAL_CONTEXT_CACHE_COUNT_OFFSET =
+            Unsafe.getFieldOffset(AbstractPrincipalAwareSecurityContext.class, "principalContextCacheCount");
     private static final long PRINCIPAL_CONTEXT_CACHE_OFFSET =
             Unsafe.getFieldOffset(AbstractPrincipalAwareSecurityContext.class, "principalContextCache");
 
@@ -71,6 +71,10 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
     // and process-global counter bump its constructor does -- once per derivation and, for the validation
     // context, once per /validate request.
     private volatile ConcurrentHashMap<SecurityContext> principalContextCache;
+    // Reserved and established cache entries. Admission is reserved inside computeIfAbsent's per-key atomic
+    // mapping step, so distinct principals racing for the last slot cannot overshoot the hard cap. Keeping the
+    // count as a primitive field avoids allocating an AtomicInteger on every derived context.
+    private volatile int principalContextCacheCount;
 
     protected AbstractPrincipalAwareSecurityContext(boolean settingsReadOnly, CharSequence principal) {
         this.settingsReadOnly = settingsReadOnly;
@@ -125,17 +129,44 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
             // saturated: derive and hand back without caching, rather than retaining contexts without bound
             return newCheckedPrincipalContext(Chars.toString(principal));
         }
-        // Copy the principal before it is stored: the parameter is @Transient (a flyweight over a reused
+        // Copy the principal before it may be stored: the parameter is @Transient (a flyweight over a reused
         // request buffer), and ConcurrentHashMap.computeIfAbsent does NOT clone the key on every insert path,
         // so the copy is required rather than defensive -- without it a stored key could later alias the next
         // request's buffer. Racing first-derivations of the same principal converge on one instance inside
-        // computeIfAbsent.
-        return cache.computeIfAbsent(Chars.toString(principal), this, NEW_PRINCIPAL_CONTEXT);
+        // computeIfAbsent. The mapping returns null when another principal reserved the final cache slot; in
+        // that case derive from the same stable copy without retaining the context.
+        final String stablePrincipal = Chars.toString(principal);
+        final SecurityContext cached = cache.computeIfAbsent(stablePrincipal, this, NEW_PRINCIPAL_CONTEXT);
+        return cached != null ? cached : newCheckedPrincipalContext(stablePrincipal);
     }
 
     @Override
     public CharSequence getPrincipal() {
         return principal;
+    }
+
+    /**
+     * Reserves one cache admission and derives its context. Called only by the map's atomic per-key
+     * {@code computeIfAbsent} step, so callers racing for the same principal share one reservation while
+     * distinct principals compete through the CAS counter. Returning null tells the map not to retain the
+     * context when the hard cap is already reserved.
+     */
+    private SecurityContext newCachedPrincipalContext(CharSequence principal) {
+        int count;
+        do {
+            count = principalContextCacheCount;
+            if (count >= MAX_CACHED_PRINCIPALS) {
+                return null;
+            }
+        } while (!Unsafe.cas(this, PRINCIPAL_CONTEXT_CACHE_COUNT_OFFSET, count, count + 1));
+
+        try {
+            return newCheckedPrincipalContext(principal);
+        } catch (RuntimeException | Error e) {
+            // computeIfAbsent leaves the mapping absent when construction fails, so release its reservation.
+            Unsafe.getAndAddInt(this, PRINCIPAL_CONTEXT_CACHE_COUNT_OFFSET, -1);
+            throw e;
+        }
     }
 
     /**

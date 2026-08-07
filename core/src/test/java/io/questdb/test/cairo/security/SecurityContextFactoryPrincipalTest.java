@@ -216,6 +216,38 @@ public class SecurityContextFactoryPrincipalTest {
     }
 
     @Test
+    public void testForPrincipalConcurrentCacheCapDoesNotOvershoot() throws Exception {
+        final int racingPrincipalCount = 8;
+        final CacheCapTestAllowAllSecurityContext root =
+                new CacheCapTestAllowAllSecurityContext(racingPrincipalCount);
+        for (int i = 0; i < CACHE_CAP - 1; i++) {
+            root.forPrincipal("p" + i);
+        }
+
+        // Hold every distinct final-slot derivation inside newPrincipalContext until all callers have passed
+        // the outer size check. Without atomic admission they are then all retained and the cache overshoots
+        // by racingPrincipalCount - 1; with the hard cap, exactly one reserves the remaining slot.
+        root.blockDerivationsAtBarrier();
+        final String[] principals = new String[racingPrincipalCount];
+        final SecurityContext[] first = new SecurityContext[racingPrincipalCount];
+        TestUtils.runConcurrently(racingPrincipalCount, t -> {
+            principals[t] = "last-slot-racer-" + t;
+            first[t] = root.forPrincipal(principals[t]);
+            TestUtils.assertEquals(principals[t], first[t].getPrincipal());
+        });
+
+        int retainedCount = 0;
+        for (int i = 0; i < racingPrincipalCount; i++) {
+            final SecurityContext again = root.forPrincipal(principals[i]);
+            TestUtils.assertEquals(principals[i], again.getPrincipal());
+            if (again == first[i]) {
+                retainedCount++;
+            }
+        }
+        Assert.assertEquals("only one racing principal may claim the final cache slot", 1, retainedCount);
+    }
+
+    @Test
     public void testForPrincipalConcurrentDistinctPrincipalsRetainedNoThrash() throws Exception {
         // the core M1 guarantee under contention: each thread owns a distinct principal and, after the
         // cache is warmed, every one of its repeated calls must return the *same* cached instance. The
@@ -347,6 +379,28 @@ public class SecurityContextFactoryPrincipalTest {
         SecurityContext context = AllowAllSecurityContext.INSTANCE.forPrincipal("");
         Assert.assertSame(AllowAllSecurityContext.INSTANCE, context);
         TestUtils.assertEquals("admin", context.getPrincipal());
+    }
+
+    @Test
+    public void testForPrincipalFailedDerivationReleasesCacheAdmission() {
+        final FailingOnceTestAllowAllSecurityContext root = new FailingOnceTestAllowAllSecurityContext();
+        try {
+            root.forPrincipal("failing-principal");
+            Assert.fail("expected the injected derivation failure");
+        } catch (IllegalStateException e) {
+            Assert.assertEquals("injected derivation failure", e.getMessage());
+        }
+
+        SecurityContext last = null;
+        for (int i = 0; i < CACHE_CAP; i++) {
+            last = root.forPrincipal("p" + i);
+        }
+        Assert.assertNotNull(last);
+        Assert.assertSame(
+                "a failed construction must not consume one of the process-lifetime cache admissions",
+                last,
+                root.forPrincipal("p" + (CACHE_CAP - 1))
+        );
     }
 
     @Test
@@ -709,6 +763,62 @@ public class SecurityContextFactoryPrincipalTest {
                 return name;
             }
         };
+    }
+
+    private static final class CacheCapTestAllowAllSecurityContext extends AllowAllSecurityContext {
+        private final CountDownLatch derivationBarrier;
+        private volatile boolean blockDerivations;
+
+        private CacheCapTestAllowAllSecurityContext(int racingPrincipalCount) {
+            derivationBarrier = new CountDownLatch(racingPrincipalCount);
+        }
+
+        private CacheCapTestAllowAllSecurityContext(boolean settingsReadOnly, CharSequence principal) {
+            super(settingsReadOnly, principal);
+            derivationBarrier = null;
+        }
+
+        private void blockDerivationsAtBarrier() {
+            blockDerivations = true;
+        }
+
+        @Override
+        protected SecurityContext newPrincipalContext(CharSequence principal) {
+            if (blockDerivations) {
+                derivationBarrier.countDown();
+                try {
+                    Assert.assertTrue(
+                            "all final-slot contenders must reach the derivation barrier",
+                            derivationBarrier.await(10, TimeUnit.SECONDS)
+                    );
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError("interrupted at the final-slot derivation barrier", e);
+                }
+            }
+            return new CacheCapTestAllowAllSecurityContext(settingsReadOnly, principal);
+        }
+    }
+
+    private static final class FailingOnceTestAllowAllSecurityContext extends AllowAllSecurityContext {
+        private boolean failNextDerivation;
+
+        private FailingOnceTestAllowAllSecurityContext() {
+            failNextDerivation = true;
+        }
+
+        private FailingOnceTestAllowAllSecurityContext(boolean settingsReadOnly, CharSequence principal) {
+            super(settingsReadOnly, principal);
+        }
+
+        @Override
+        protected SecurityContext newPrincipalContext(CharSequence principal) {
+            if (failNextDerivation) {
+                failNextDerivation = false;
+                throw new IllegalStateException("injected derivation failure");
+            }
+            return new FailingOnceTestAllowAllSecurityContext(settingsReadOnly, principal);
+        }
     }
 
     /**
