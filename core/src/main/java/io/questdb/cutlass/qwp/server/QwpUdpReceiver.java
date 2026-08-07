@@ -222,10 +222,13 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
             fd = -1;
 
-            tudCache.commitAllBestEffort();
-            Misc.free(tudCache);
-            Misc.free(walAppender);
-            Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);
+            try {
+                tudCache.commitAllBestEffort();
+            } finally {
+                Misc.free(tudCache);
+                Misc.free(walAppender);
+                Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);
+            }
         }
     }
 

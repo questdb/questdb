@@ -351,7 +351,17 @@ public class QwpTudCache implements QuietCloseable {
             if (tud.isDropped()) {
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
                 cachedTableCount = tableUpdateDetails.size();
-                Misc.free(tud);
+                try {
+                    Misc.free(tud);
+                } catch (Throwable th) {
+                    // Closing the evicted writer rolls back its buffered rows --
+                    // real file IO that can fail on ENOSPC/EIO. The entry is
+                    // already out of the map; swallowing keeps this best-effort
+                    // loop alive for the remaining tables and keeps close()
+                    // releasing the rest of the cache.
+                    LOG.error().$("could not close evicted writer [table=").$(tableName)
+                            .$(", e=").$safe(th.getMessage()).I$();
+                }
             } else {
                 i++;
             }
@@ -410,7 +420,17 @@ public class QwpTudCache implements QuietCloseable {
             if (tud.isDropped()) {
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
                 cachedTableCount = tableUpdateDetails.size();
-                Misc.free(tud);
+                try {
+                    Misc.free(tud);
+                } catch (Throwable th) {
+                    // Closing the evicted writer rolls back its buffered rows --
+                    // real file IO that can fail on ENOSPC/EIO. The entry is
+                    // already out of the map; swallowing keeps this best-effort
+                    // loop alive for the remaining tables and keeps close()
+                    // releasing the rest of the cache.
+                    LOG.error().$("could not close evicted writer [table=").$(tableName)
+                            .$(", e=").$safe(th.getMessage()).I$();
+                }
             } else {
                 i++;
             }

@@ -1716,6 +1716,43 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitAllBestEffortSurvivesEvictionCloseFailure() throws Exception {
+        // M2: the eviction free in the UDP loops closes the evicted writer,
+        // which rolls back its buffered rows through real file IO that can
+        // fail on ENOSPC/EIO. That failure must not escape the best-effort
+        // loop: it would kill the receiver thread in own-thread mode and
+        // abort close() mid-cleanup, leaking the cache, appender and buffer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE evict_io (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("evict_io"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+
+                // Simulate the evicted writer's close() failing (the real
+                // rollback-on-close IO hitting ENOSPC/EIO), then drop the
+                // entry directly so the loop's own commit attempt is
+                // skipped, keeping the eviction path exactly the one under
+                // test: the free of an already-dropped entry.
+                replaceWriterWithFailingClose(tud);
+                tud.setIsDropped();
+
+                cache.commitAllBestEffort();
+
+                // The loop swallowed the close failure and completed the eviction.
+                Assert.assertEquals(0, cache.size());
+            }
+        });
+    }
+
+    @Test
     public void testCommitAllInvokesConsumerWithDirName() throws Exception {
         // Regression test for the C1 bug: the consumer must receive the on-disk
         // directory name (e.g. "dir_vs_name~<tableId>"), not the client-facing
@@ -4399,6 +4436,28 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 return 1;
             }
         };
+    }
+
+    private static void replaceWriterWithFailingClose(WalTableUpdateDetails tud) throws Exception {
+        Field writerField = TableUpdateDetails.class.getDeclaredField("writerAPI");
+        writerField.setAccessible(true);
+
+        // Free the real writer to avoid native memory leaks.
+        Misc.free((TableWriterAPI) writerField.get(tud));
+
+        writerField.set(tud, Proxy.newProxyInstance(
+                TableWriterAPI.class.getClassLoader(),
+                new Class[]{TableWriterAPI.class},
+                (_, method, _) -> {
+                    if ("close".equals(method.getName())) {
+                        // Simulates the evicted writer's close() rolling back
+                        // its buffered rows and hitting ENOSPC/EIO on the
+                        // real file IO.
+                        throw CairoException.critical(5).put("simulated close failure");
+                    }
+                    throw new UnsupportedOperationException(method.getName());
+                }
+        ));
     }
 
     private static void replaceWriterWithFake(WalTableUpdateDetails tud, boolean isTableDropped) throws Exception {
