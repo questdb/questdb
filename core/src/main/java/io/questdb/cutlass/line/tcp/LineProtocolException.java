@@ -104,6 +104,12 @@ public class LineProtocolException extends CairoException {
                 .put("; invalid column name: ").put(columnName);
     }
 
+    public static LineProtocolException malformedUtf8(String tableNameUtf16, CharSequence cause) {
+        return instance()
+                .put("table: ").put(tableNameUtf16)
+                .put("; ").put(cause);
+    }
+
     public static LineProtocolException newColumnsNotAllowed(String columnName, String tableNameUtf16) {
         return instance()
                 .put("table: ").put(tableNameUtf16)
