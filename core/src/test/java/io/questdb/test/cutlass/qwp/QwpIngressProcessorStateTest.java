@@ -36,6 +36,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurableAckRegistry;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
@@ -3047,6 +3048,115 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 } catch (CairoException e) {
                     Assert.assertTrue(e.getMessage().contains("too many distinct tables"));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testLookupDuringRenameWindowRefusesInsteadOfRebinding() throws Exception {
+        // C1: CairoEngine.rename() publishes the RENAME to the sequencer change
+        // log BEFORE it updates the name registry. Inside that window a cache-hit
+        // lookup for the old name sees: not stale (name still resolves to the
+        // cached token), dir-name guard passes (dir still resolves to it too),
+        // seqTxn gate open (the RENAME advanced it) -- and goActive() replays the
+        // RENAME into the cached writer, silently rebinding it to the renamed
+        // table while the cache key, TUD and acks keep the old name. From then on
+        // every commit succeeds into the renamed table with OK acks, forever.
+        // The lookup must instead salvage the buffered rows (they belong to the
+        // same physical table), evict the entry and refuse the frame, so the
+        // client retries after the registry has caught up. The window is frozen
+        // here by publishing the sequencer-level rename WITHOUT the registry
+        // update that CairoEngine.rename() would perform afterwards.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE win_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("win_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                tud.getWriter().newRow(1_000_000L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                // Freeze the C1 race window: sequencer knows the rename, the name
+                // registry does not.
+                TableToken token = engine.verifyTableName("win_src");
+                long renameTxn;
+                try (WalWriter w = engine.getWalWriter(token)) {
+                    renameTxn = w.renameTable("win_src", "win_dst", AllowAllSecurityContext.INSTANCE);
+                }
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("win_src"), null, null, 1
+                    );
+                    Assert.fail("lookup during the rename window must refuse, not adopt the rebound writer");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "is being renamed");
+                }
+                Assert.assertEquals(0, cache.size());
+
+                // The buffered row was salvage-committed through the rebound
+                // writer before eviction: the sequencer advanced exactly one data
+                // txn past the rename.
+                Assert.assertEquals(
+                        renameTxn + 1,
+                        engine.getTableSequencerAPI().getTxnTracker(token).getSeqTxn()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testSalvageAuthorizesAgainstReboundTableToken() throws Exception {
+        // M6: a salvage commit writes into the RENAMED table (goActive() rebound
+        // the writer), so the ACL check must name that table. The TUD's pinned
+        // token still carries the OLD name -- which, on this path, has already
+        // been re-used by a DIFFERENT table -- so authorizing against it asks
+        // about the wrong table entirely (invisible under AllowAll, wrong
+        // permit/deny under an enterprise ACL).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE acl_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            ObjList<TableToken> authorized = new ObjList<>();
+            SecurityContext recording = new AllowAllSecurityContext() {
+                @Override
+                public void authorizeInsert(TableToken tableToken) {
+                    authorized.add(tableToken);
+                }
+            };
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        recording, new Utf8String("acl_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                tud.getWriter().newRow(1_000_000L).append();
+
+                execute("RENAME TABLE acl_src TO acl_dst");
+                execute("CREATE TABLE acl_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                authorized.clear();
+                cache.getTableUpdateDetails(recording, new Utf8String("acl_src"), null, null, 1);
+
+                // The salvage commit ran during the lookup above. Its insert
+                // authorization must name the table the rows landed in.
+                Assert.assertTrue("salvage must authorize an insert", authorized.size() > 0);
+                Assert.assertEquals(
+                        "salvage must authorize against the writer's rebound token",
+                        "acl_dst",
+                        authorized.getQuick(0).getTableName()
+                );
             }
         });
     }

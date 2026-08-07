@@ -84,7 +84,7 @@ public class TableUpdateDetails implements Closeable {
     // Set only for WAL tables, i.e. when writerThreadId == -1.
     private final SecurityContext ownSecurityContext;
     private final Utf8String tableNameUtf8;
-    private final TableToken tableToken;
+    private TableToken tableToken;
     private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final long writerTickRowsCountMod;
@@ -405,6 +405,17 @@ public class TableUpdateDetails implements Closeable {
         if (metadataService != null) {
             metadataService.tick();
         }
+    }
+
+    /**
+     * Rebinds this entry's table token. Called by QWP salvage after
+     * {@code goActive()} replayed a RENAME into the writer: the salvage commit
+     * and its insert authorization must run under the renamed table's identity,
+     * not the name this entry was cached under. The entry is evicted right
+     * after the salvage, so the rebound token never serves another lookup.
+     */
+    public void updateTableToken(TableToken tableToken) {
+        this.tableToken = tableToken;
     }
 
     private void authorizeCommit() {

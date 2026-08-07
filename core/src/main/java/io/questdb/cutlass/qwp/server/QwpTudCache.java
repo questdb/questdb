@@ -432,13 +432,18 @@ public class QwpTudCache implements QuietCloseable {
                 try {
                     applyPendingStructureChanges(tud);
                 } catch (Throwable th) {
-                    // goActive() failed: the writer is distressed (the flag never
-                    // clears) while the table is alive, so no staleness check would
-                    // ever evict this entry and the table would be wedged on this
-                    // receiver until restart. Evict and free it -- rolling back any
-                    // buffered rows -- and rethrow so the QWP layer refuses the
-                    // frame (the deferred-ack clamp holds; the client replays). The
-                    // next lookup acquires a fresh writer from the pool.
+                    // Two ways to get here. (1) goActive() failed: the writer is
+                    // distressed (the flag never clears) while the table is alive,
+                    // so no staleness check would ever evict this entry and the
+                    // table would be wedged on this receiver until restart.
+                    // (2) goActive() replayed a concurrent RENAME (see
+                    // applyPendingStructureChanges): buffered rows are already
+                    // salvaged and the entry must not serve another lookup under
+                    // the old name. Either way: evict and free the entry --
+                    // rolling back any still-uncommitted rows -- and rethrow so
+                    // the QWP layer refuses the frame (the deferred-ack clamp
+                    // holds; the client replays). The next lookup acquires a
+                    // fresh writer from the pool.
                     tableUpdateDetails.removeAt(key);
                     cachedTableCount = tableUpdateDetails.size();
                     Misc.free(tud, th);
@@ -596,7 +601,26 @@ public class QwpTudCache implements QuietCloseable {
         if (seqTxn == tud.getLastStructureCheckSeqTxn()) {
             return;
         }
+        final TableToken tokenBeforeReplay = walWriter.getTableToken();
         walWriter.goActive();
+        if (walWriter.getTableToken() != tokenBeforeReplay) {
+            // goActive() replayed a RENAME that the registry guard above could
+            // not see yet: CairoEngine.rename() publishes the sequencer txn
+            // BEFORE it updates the name registry, and this lookup ran inside
+            // that window. The writer is now bound to the renamed table;
+            // letting the lookup proceed would silently commit rows keyed by
+            // the OLD name into it, with OK acks, for the life of the
+            // connection. Salvage the buffered rows -- they belong to this
+            // same physical table -- then throw: the caller evicts the entry
+            // and refuses the frame, and the client's retry lands after the
+            // registry has caught up. Rebuilding within this lookup instead
+            // would re-acquire a writer that rebinds the same way.
+            salvageBufferedRows(tud, walWriter);
+            throw CairoException.nonCritical()
+                    .put("table is being renamed, cannot ingest [table=")
+                    .put(tokenBeforeReplay.getTableName())
+                    .put(']');
+        }
         // Only a successful replay advances the gate: a failure must be retried
         // by the next lookup, not latched as done.
         tud.setLastStructureCheckSeqTxn(seqTxn);
@@ -622,25 +646,10 @@ public class QwpTudCache implements QuietCloseable {
             // token can never serve another lookup under the old name.
             try {
                 walWriter.goActive();
-                tud.commit(false);
-                isSalvaged = true;
+                isSalvaged = salvageBufferedRows(tud, walWriter);
             } catch (Throwable th) {
                 LOG.error().$("could not salvage buffered rows of a renamed table [table=")
                         .$(tableNameUtf8).$(", e=").$safe(th.getMessage()).I$();
-            }
-            // The salvage commit bypasses commitAll/commitIfMaxUncommittedRowsReached,
-            // so it must notify committedTxnConsumer itself -- otherwise a durable-ack
-            // client's pendingDurableSeqTxns bookkeeping never learns about these rows
-            // and a later durable ack could cover a WAL segment never registered for
-            // upload. Use the WRITER's rebound token (goActive() replayed the RENAME
-            // and updated it), not tud's cached token, which stays pinned to the OLD
-            // identity for the TUD's whole lifetime.
-            if (isSalvaged && committedTxnConsumer != null) {
-                committedTxnConsumer.accept(
-                        walWriter.getTableToken().getTableName(),
-                        walWriter.getTableToken().getDirName(),
-                        tud.getLastSeqTxn()
-                );
             }
         }
         tableUpdateDetails.removeAt(key);
@@ -734,6 +743,40 @@ public class QwpTudCache implements QuietCloseable {
         // stale: the entry stays cached and commits keep failing with
         // TableReferenceOutOfDateException, exactly as on master.
         return byName != null || engine.getTableTokenByDirName(cachedToken.getDirName()) == null;
+    }
+
+    /**
+     * Commits a stale entry's buffered rows through its writer AFTER
+     * {@code goActive()} replayed a RENAME into it -- the rows land in the
+     * renamed table: the same physical table that accepted them. Rebinds the
+     * TUD's token to the writer's first, so the commit's insert authorization
+     * names the table the rows actually land in, not the old name (which on
+     * the evictStaleTud path already belongs to a different table). Notifies
+     * {@link #committedTxnConsumer} because this commit bypasses
+     * commitAll/commitIfMaxUncommittedRowsReached, so durable-ack bookkeeping
+     * would otherwise never learn about the txn.
+     *
+     * @return true when the rows were committed; false when the commit failed
+     * (the caller frees the entry, rolling the rows back)
+     */
+    private boolean salvageBufferedRows(WalTableUpdateDetails tud, WalWriter walWriter) {
+        try {
+            tud.updateTableToken(walWriter.getTableToken());
+            tud.commit(false);
+        } catch (Throwable th) {
+            LOG.error().$("could not salvage buffered rows of a renamed table [table=")
+                    .$safe(walWriter.getTableToken().getTableName())
+                    .$(", e=").$safe(th.getMessage()).I$();
+            return false;
+        }
+        if (committedTxnConsumer != null) {
+            committedTxnConsumer.accept(
+                    walWriter.getTableToken().getTableName(),
+                    walWriter.getTableToken().getDirName(),
+                    tud.getLastSeqTxn()
+            );
+        }
+        return true;
     }
 
     /**
