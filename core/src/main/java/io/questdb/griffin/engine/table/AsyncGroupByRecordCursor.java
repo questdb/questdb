@@ -196,6 +196,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
     }
 
+    private CairoException buildInterruptionException() {
+        return frameSequence.buildInterruptionException();
+    }
+
     private void buildMap() {
         // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
@@ -222,7 +226,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     postAggregationStartedCounter
             );
             if (postAggregationCircuitBreaker.checkIfTripped()) {
-                throwTimeoutException();
+                throw buildInterruptionException();
             }
             // The shards contain non-intersecting row groups, so we can return what's in the shards without merging them.
             shardedCursor.of(shards);
@@ -317,7 +321,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
 
         if (postAggregationCircuitBreaker.checkIfTripped()) {
-            throwTimeoutException();
+            throw buildInterruptionException();
         }
 
         // Now merge everything into the destination list.
@@ -344,14 +348,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 .$(", reclaimed=").$(reclaimed)
                 .$(", queuedCount=").$(queuedCount)
                 .I$();
-    }
-
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
-        }
     }
 
     void buildMapConditionally() {

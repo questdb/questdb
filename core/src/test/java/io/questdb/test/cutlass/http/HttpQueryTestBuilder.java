@@ -84,6 +84,7 @@ public class HttpQueryTestBuilder {
     private int forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
     private int forceSendFragmentationChunkSize = Integer.MAX_VALUE;
     private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
+    private HttpServer httpServer;
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private long maxWriterWaitTimeout = 30_000L;
@@ -98,6 +99,10 @@ public class HttpQueryTestBuilder {
     private boolean telemetry;
     private String temp;
     private int workerCount = 1;
+
+    public HttpServer getHttpServer() {
+        return httpServer;
+    }
 
     public int getWorkerCount() {
         return this.workerCount;
@@ -121,7 +126,8 @@ public class HttpQueryTestBuilder {
                 .withNanosClock(nanosecondClock)
                 .withForceSendFragmentationChunkSize(forceSendFragmentationChunkSize)
                 .withForceRecvFragmentationChunkSize(forceRecvFragmentationChunkSize)
-                .withQueryFutureUpdateListener(queryFutureUpdateListener);
+                .withQueryFutureUpdateListener(queryFutureUpdateListener)
+                .withWorkerCount(workerCount);
         if (sendBufferSize != -1) {
             serverConfigBuilder.withSendBufferSize(sendBufferSize);
         }
@@ -137,7 +143,7 @@ public class HttpQueryTestBuilder {
             });
         }
         final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder.build(configuration);
-        final WorkerPool workerPool = new TestWorkerPool(workerCount, httpConfiguration.getMetrics());
+        final WorkerPool workerPool = new TestWorkerPool(httpConfiguration);
 
         CairoConfiguration cairoConfiguration = configuration;
         if (cairoConfiguration == null) {
@@ -206,6 +212,7 @@ public class HttpQueryTestBuilder {
                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
         ) {
+            this.httpServer = httpServer;
             TelemetryJob telemetryJob = null;
             if (telemetry) {
                 telemetryJob = new TelemetryJob(engine);
@@ -330,12 +337,14 @@ public class HttpQueryTestBuilder {
             try {
                 code.run(engine, sqlExecutionContext);
             } finally {
-                workerPool.halt();
+                workerPool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
 
                 if (telemetryJob != null) {
                     Misc.free(telemetryJob);
                 }
             }
+        } finally {
+            this.httpServer = null;
         }
     }
 

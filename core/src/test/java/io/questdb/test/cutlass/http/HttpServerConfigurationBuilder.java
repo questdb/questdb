@@ -52,6 +52,8 @@ public class HttpServerConfigurationBuilder {
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
     private boolean dumpTraffic;
     private FactoryProvider factoryProvider;
+    private boolean fiberEnabled = true;
+    private int fiberMaxLiveCount;
     private int forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
     private int forceSendFragmentationChunkSize = Integer.MAX_VALUE;
     private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
@@ -146,6 +148,16 @@ public class HttpServerConfigurationBuilder {
             @Override
             public int getBindPort() {
                 return port != -1 ? port : super.getBindPort();
+            }
+
+            @Override
+            public int getFiberMaxLiveCount() {
+                return fiberMaxLiveCount > 0 ? fiberMaxLiveCount : super.getFiberMaxLiveCount();
+            }
+
+            @Override
+            public int getFiberRetainedCount() {
+                return fiberMaxLiveCount > 0 ? fiberMaxLiveCount : super.getFiberRetainedCount();
             }
 
             @Override
@@ -279,6 +291,11 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
+            public boolean isFiberEnabled() {
+                return fiberEnabled;
+            }
+
+            @Override
             public boolean isPessimisticHealthCheckEnabled() {
                 return pessimisticHealthCheck;
             }
@@ -307,6 +324,16 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withFactoryProvider(FactoryProvider factoryProvider) {
         this.factoryProvider = factoryProvider;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withFiberEnabled(boolean fiberEnabled) {
+        this.fiberEnabled = fiberEnabled;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withFiberMaxLiveCount(int fiberMaxLiveCount) {
+        this.fiberMaxLiveCount = fiberMaxLiveCount;
         return this;
     }
 

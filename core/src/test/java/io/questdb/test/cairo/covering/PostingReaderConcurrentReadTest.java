@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -58,160 +58,6 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
     // Mirror of PostingGenLookup.CACHE_NOT_PRESENT (package-private there).
     private static final long CACHE_NOT_PRESENT = -1L;
     private static final ColumnVersionReader EMPTY_CVR = new ColumnVersionReader();
-
-    /**
-     * warmForKeys must drive a full cursor pass per key so the (per-reader,
-     * idempotent) genLookup cache is populated, and it must pre-open the
-     * required cover sidecars and pre-extend valueMem to its full published
-     * size — all single-threaded, before any concurrent cursors run.
-     * <p>
-     * Oracle (a): a cursor opened on a WARMED reader yields exactly the same
-     * (rowId, covered value) sequence as a cursor on a fresh COLD reader, i.e.
-     * warming does not change results.
-     * <p>
-     * Oracle (b): the genLookup cache is empty for a key before warming and
-     * populated after — proving warmForKeys is what filled it. The dataset uses
-     * several committed generations so sparse gens (hence cacheable keys) exist.
-     */
-    @Test
-    public void testWarmForKeysPopulatesCacheAndPreservesResults() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final String name = "warm_posting";
-                final int plen = path.size();
-
-                // Layout: gen 0 covers every key (becomes the dense base), then
-                // several gens that touch only a SUBSET of keys. Those later gens
-                // are encoded sparse, so anySparseGen == true and the subset keys
-                // are cacheable. The head is left UNSEALED so the multi-gen sparse
-                // layout is what the reader serves (seal() would re-encode the head
-                // into a single dense gen and erase the sparse gens).
-                final int keyCount = 4;
-                final int extraGens = 4;          // sparse gens appended after the base
-                final int sparseKeyCount = 2;     // keys 0 and 1 appear in every extra gen
-                // rows: base gen has keyCount*3 rows; each extra gen has sparseKeyCount*3.
-                final int baseRows = keyCount * 3;
-                final int extraRowsPerGen = sparseKeyCount * 3;
-                final int totalRows = baseRows + extraGens * extraRowsPerGen;
-
-                // One covered LONG column whose value mirrors the row id, so the
-                // oracle can check covered payload, not just row ids.
-                final long colBytes = (long) totalRows * Long.BYTES;
-                final long colAddr = Unsafe.malloc(colBytes, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    for (int i = 0; i < totalRows; i++) {
-                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
-                    }
-
-                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
-                        writer.configureCovering(
-                                new long[]{colAddr},
-                                new long[]{0},
-                                new int[]{3},               // shift for LONG (8 bytes == 2^3)
-                                new int[]{1},               // covered column writer index
-                                new int[]{ColumnType.LONG},
-                                1
-                        );
-                        int row = 0;
-                        // Base (dense) gen: every key present.
-                        for (int j = 0; j < baseRows; j++) {
-                            writer.add(j % keyCount, row++);
-                        }
-                        writer.setMaxValue(row - 1);
-                        writer.commit();
-                        // Extra (sparse) gens: only the first sparseKeyCount keys.
-                        for (int g = 0; g < extraGens; g++) {
-                            for (int j = 0; j < extraRowsPerGen; j++) {
-                                writer.add(j % sparseKeyCount, row++);
-                            }
-                            writer.setMaxValue(row - 1);
-                            writer.commit();
-                        }
-                        // No seal(): keep the multi-gen sparse head.
-                    }
-
-                    final RecordMetadata md = coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG});
-                    final int[] keys = new int[keyCount];
-                    for (int k = 0; k < keyCount; k++) {
-                        keys[k] = k;
-                    }
-                    final int[] required = {0};
-
-                    // Capture the cold (un-warmed) expected sequence per key.
-                    final LongList[] expectedRows = new LongList[keyCount];
-                    final LongList[] expectedVals = new LongList[keyCount];
-                    try (PostingIndexFwdReader cold = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
-                        for (int k = 0; k < keyCount; k++) {
-                            expectedRows[k] = new LongList();
-                            expectedVals[k] = new LongList();
-                            CoveringRowCursor cc = (CoveringRowCursor) cold.getCursor(k, 0, Long.MAX_VALUE, required);
-                            while (cc.hasNext()) {
-                                long r = cc.next();
-                                expectedRows[k].add(r);
-                                expectedVals[k].add(cc.getCoveredLong(0));
-                            }
-                            Misc.free(cc);
-                        }
-                    }
-
-                    // The warmed reader: assert cache empty before, populated after.
-                    try (PostingIndexFwdReader warm = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
-                        // Force metadata so cacheLookup's anySparseGen flag is meaningful.
-                        warm.reloadConditionally();
-                        PostingGenLookup lookup = genLookupOf(warm);
-                        for (int k = 0; k < keyCount; k++) {
-                            assertEquals("cache must be cold before warm for key " + k,
-                                    CACHE_NOT_PRESENT, cacheLookup(lookup, k));
-                        }
-
-                        warm.warmForKeys(keys, required);
-
-                        // (b) warming populated the per-key cache (sparse gens exist).
-                        int cachedKeys = 0;
-                        for (int k = 0; k < keyCount; k++) {
-                            if (cacheLookup(lookup, k) != CACHE_NOT_PRESENT) {
-                                cachedKeys++;
-                            }
-                        }
-                        assertTrue("warmForKeys must populate the genLookup cache for at least one key"
-                                + " (anySparseGen layout); cachedKeys=" + cachedKeys, cachedKeys > 0);
-
-                        // side effect: required sidecar pre-opened.
-                        assertTrue("required cover sidecar must be mapped after warm",
-                                sidecarMmapSize(warm, 0) > 0);
-
-                        // side effect: valueMem pre-extended to its full published size.
-                        assertEquals("valueMem must be pre-extended to valueMemSize",
-                                valueMemSize(warm), valueMemSizeField(warm));
-                        assertTrue("valueMem size must be non-zero after warm", valueMemSize(warm) > 0);
-
-                        // (a) a cursor on the warmed reader yields identical results.
-                        for (int k = 0; k < keyCount; k++) {
-                            CoveringRowCursor cc = (CoveringRowCursor) warm.getCursor(k, 0, Long.MAX_VALUE, required);
-                            int i = 0;
-                            while (cc.hasNext()) {
-                                long r = cc.next();
-                                assertTrue("warmed cursor produced more rows than cold for key " + k,
-                                        i < expectedRows[k].size());
-                                assertEquals("row id mismatch key " + k + " idx " + i,
-                                        expectedRows[k].getQuick(i), r);
-                                assertEquals("covered value mismatch key " + k + " idx " + i,
-                                        expectedVals[k].getQuick(i), cc.getCoveredLong(0));
-                                i++;
-                            }
-                            assertEquals("warmed cursor produced fewer rows than cold for key " + k,
-                                    expectedRows[k].size(), i);
-                            Misc.free(cc);
-                        }
-                    }
-                } finally {
-                    Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
-                }
-            }
-        });
-    }
 
     /**
      * CRITICAL parallel-decode race (single sparse gen). The old populateCacheForKey bailed when
@@ -330,6 +176,175 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                         }
                         assertEquals("detached cursors must not push to freeCursors", poolAfterWarm, freeCursorsSize(reader));
                         reader.setFrozen(false);
+                    }
+                } finally {
+                    Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
+     * Freeze guard: while a reader is frozen, {@code reloadConditionally()} must be a
+     * complete no-op so the value mmap (and everything keyed off it) stays put for
+     * in-flight worker cursors holding raw page addresses. We:
+     * <ol>
+     *   <li>build a covering dataset and leave the writer OPEN,</li>
+     *   <li>open a reader, {@code warmForKeys}, and snapshot the value mmap base
+     *       address + size, the picked {@code chainSequence}, and the probe key's
+     *       full (rowId, coveredValue) sequence,</li>
+     *   <li>publish MORE generations through the still-open writer so an unfrozen
+     *       reload WOULD grow / remap {@code valueMem} (same {@code .pv}, larger
+     *       {@code valueMemSize} -&gt; the {@code changeSize} branch),</li>
+     *   <li>{@code setFrozen(true)} then {@code reloadConditionally()} and assert
+     *       NOTHING moved: same base, same size, same {@code chainSequence}, and the
+     *       probe cursor still yields the pre-freeze snapshot,</li>
+     *   <li>{@code setFrozen(false)} then {@code reloadConditionally()} and assert the
+     *       suppression lifted: {@code chainSequence} advanced and the probe key now
+     *       surfaces the extra rows the writer published while we were frozen.</li>
+     * </ol>
+     */
+    @Test
+    public void testFrozenReaderSuppressesReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "frozen_posting";
+                final int plen = path.size();
+
+                final int keyCount = 4;
+                final int extraGens = 4;
+                final int sparseKeyCount = 2;
+                final int baseRows = keyCount * 3;
+                final int extraRowsPerGen = sparseKeyCount * 3;
+                // Gens published AFTER the reader warms (mirror layout: touch the
+                // probe key so its visible row count strictly grows on a real reload).
+                final int postGens = 3;
+                final int postRowsPerGen = sparseKeyCount * 3;
+                final int totalRows = baseRows + extraGens * extraRowsPerGen + postGens * postRowsPerGen;
+
+                // Covered LONG column mirrors row id (+1000) so the oracle checks
+                // covered payload, not just row ids.
+                final long colBytes = (long) totalRows * Long.BYTES;
+                final long colAddr = Unsafe.malloc(colBytes, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < totalRows; i++) {
+                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
+                    }
+
+                    final RecordMetadata md = coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG});
+                    final int[] keys = new int[keyCount];
+                    for (int k = 0; k < keyCount; k++) {
+                        keys[k] = k;
+                    }
+                    final int[] required = {0};
+                    // Key 0 is present in the base gen, every extra (pre-warm) sparse
+                    // gen, AND every post-warm gen, so its visible row count is the
+                    // sharpest signal of whether a reload was applied.
+                    final int probeKey = 0;
+
+                    // Keep the writer OPEN across the whole test so the post-warm
+                    // commits publish into the same chain / same .pv the reader mapped.
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},               // shift for LONG (8 bytes == 2^3)
+                                new int[]{1},               // covered column writer index
+                                new int[]{ColumnType.LONG},
+                                1
+                        );
+                        int row = 0;
+                        // Base (dense) gen: every key present.
+                        for (int j = 0; j < baseRows; j++) {
+                            writer.add(j % keyCount, row++);
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+                        // Pre-warm sparse gens: only the first sparseKeyCount keys.
+                        for (int g = 0; g < extraGens; g++) {
+                            for (int j = 0; j < extraRowsPerGen; j++) {
+                                writer.add(j % sparseKeyCount, row++);
+                            }
+                            writer.setMaxValue(row - 1);
+                            writer.commit();
+                        }
+
+                        try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
+                            reader.warmForKeys(keys, required);
+
+                            // Pre-freeze snapshot of the mmap and picker state.
+                            final long baseAddrBefore = reader.getValueBaseAddress();   // == valueMem.addressOf(0)
+                            final long sizeBefore = reader.getValueMemorySize();        // == valueMem.size()
+                            final long chainSeqBefore = chainSequence(reader);
+                            assertTrue("valueMem must be mapped after warm", sizeBefore > 0);
+
+                            // Pre-freeze cursor result for the probe key.
+                            final LongList preRows = new LongList();
+                            final LongList preVals = new LongList();
+                            CoveringRowCursor pre = (CoveringRowCursor) reader.getCursor(probeKey, 0, Long.MAX_VALUE, required);
+                            while (pre.hasNext()) {
+                                preRows.add(pre.next());
+                                preVals.add(pre.getCoveredLong(0));
+                            }
+                            Misc.free(pre);
+                            assertTrue("probe key must yield rows before freeze", preRows.size() > 0);
+
+                            // Publish MORE gens through the still-open writer. Same .pv,
+                            // larger valueMemSize -> an unfrozen reload would changeSize()
+                            // (remap) the value mmap and advance chainSequence.
+                            for (int g = 0; g < postGens; g++) {
+                                for (int j = 0; j < postRowsPerGen; j++) {
+                                    writer.add(j % sparseKeyCount, row++);
+                                }
+                                writer.setMaxValue(row - 1);
+                                writer.commit();
+                            }
+
+                            // --- FROZEN: reloadConditionally must do nothing observable. ---
+                            reader.setFrozen(true);
+                            reader.reloadConditionally();
+
+                            assertEquals("frozen reload must not remap valueMem (base address)",
+                                    baseAddrBefore, reader.getValueBaseAddress());
+                            assertEquals("frozen reload must not resize valueMem (size)",
+                                    sizeBefore, reader.getValueMemorySize());
+                            assertEquals("frozen reload must not advance the picked chainSequence",
+                                    chainSeqBefore, chainSequence(reader));
+
+                            CoveringRowCursor frozenCursor =
+                                    (CoveringRowCursor) reader.getCursor(probeKey, 0, Long.MAX_VALUE, required);
+                            int fi = 0;
+                            while (frozenCursor.hasNext()) {
+                                long r = frozenCursor.next();
+                                long v = frozenCursor.getCoveredLong(0);
+                                assertTrue("frozen cursor yielded more rows than the pre-freeze snapshot (idx " + fi + ")",
+                                        fi < preRows.size());
+                                assertEquals("frozen cursor row id mismatch at idx " + fi, preRows.getQuick(fi), r);
+                                assertEquals("frozen cursor covered value mismatch at idx " + fi, preVals.getQuick(fi), v);
+                                fi++;
+                            }
+                            assertEquals("frozen cursor must still yield exactly the pre-freeze snapshot",
+                                    preRows.size(), fi);
+                            Misc.free(frozenCursor);
+
+                            // --- UNFROZEN: reload resumes and picks up the new chain state. ---
+                            reader.setFrozen(false);
+                            reader.reloadConditionally();
+
+                            assertTrue("unfrozen reload must advance the picked chainSequence",
+                                    chainSequence(reader) > chainSeqBefore);
+
+                            final LongList postRows = new LongList();
+                            CoveringRowCursor post = (CoveringRowCursor) reader.getCursor(probeKey, 0, Long.MAX_VALUE, required);
+                            while (post.hasNext()) {
+                                postRows.add(post.next());
+                            }
+                            Misc.free(post);
+                            assertTrue("unfrozen reload must surface the gens published while frozen"
+                                            + " (pre=" + preRows.size() + ", post=" + postRows.size() + ")",
+                                    postRows.size() > preRows.size());
+                        }
                     }
                 } finally {
                     Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
@@ -566,201 +581,6 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
     }
 
     /**
-     * Freeze guard: while a reader is frozen, {@code reloadConditionally()} must be a
-     * complete no-op so the value mmap (and everything keyed off it) stays put for
-     * in-flight worker cursors holding raw page addresses. We:
-     * <ol>
-     *   <li>build a covering dataset and leave the writer OPEN,</li>
-     *   <li>open a reader, {@code warmForKeys}, and snapshot the value mmap base
-     *       address + size, the picked {@code chainSequence}, and the probe key's
-     *       full (rowId, coveredValue) sequence,</li>
-     *   <li>publish MORE generations through the still-open writer so an unfrozen
-     *       reload WOULD grow / remap {@code valueMem} (same {@code .pv}, larger
-     *       {@code valueMemSize} -&gt; the {@code changeSize} branch),</li>
-     *   <li>{@code setFrozen(true)} then {@code reloadConditionally()} and assert
-     *       NOTHING moved: same base, same size, same {@code chainSequence}, and the
-     *       probe cursor still yields the pre-freeze snapshot,</li>
-     *   <li>{@code setFrozen(false)} then {@code reloadConditionally()} and assert the
-     *       suppression lifted: {@code chainSequence} advanced and the probe key now
-     *       surfaces the extra rows the writer published while we were frozen.</li>
-     * </ol>
-     */
-    @Test
-    public void testFrozenReaderSuppressesReload() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final String name = "frozen_posting";
-                final int plen = path.size();
-
-                final int keyCount = 4;
-                final int extraGens = 4;
-                final int sparseKeyCount = 2;
-                final int baseRows = keyCount * 3;
-                final int extraRowsPerGen = sparseKeyCount * 3;
-                // Gens published AFTER the reader warms (mirror layout: touch the
-                // probe key so its visible row count strictly grows on a real reload).
-                final int postGens = 3;
-                final int postRowsPerGen = sparseKeyCount * 3;
-                final int totalRows = baseRows + extraGens * extraRowsPerGen + postGens * postRowsPerGen;
-
-                // Covered LONG column mirrors row id (+1000) so the oracle checks
-                // covered payload, not just row ids.
-                final long colBytes = (long) totalRows * Long.BYTES;
-                final long colAddr = Unsafe.malloc(colBytes, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    for (int i = 0; i < totalRows; i++) {
-                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
-                    }
-
-                    final RecordMetadata md = coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG});
-                    final int[] keys = new int[keyCount];
-                    for (int k = 0; k < keyCount; k++) {
-                        keys[k] = k;
-                    }
-                    final int[] required = {0};
-                    // Key 0 is present in the base gen, every extra (pre-warm) sparse
-                    // gen, AND every post-warm gen, so its visible row count is the
-                    // sharpest signal of whether a reload was applied.
-                    final int probeKey = 0;
-
-                    // Keep the writer OPEN across the whole test so the post-warm
-                    // commits publish into the same chain / same .pv the reader mapped.
-                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
-                        writer.configureCovering(
-                                new long[]{colAddr},
-                                new long[]{0},
-                                new int[]{3},               // shift for LONG (8 bytes == 2^3)
-                                new int[]{1},               // covered column writer index
-                                new int[]{ColumnType.LONG},
-                                1
-                        );
-                        int row = 0;
-                        // Base (dense) gen: every key present.
-                        for (int j = 0; j < baseRows; j++) {
-                            writer.add(j % keyCount, row++);
-                        }
-                        writer.setMaxValue(row - 1);
-                        writer.commit();
-                        // Pre-warm sparse gens: only the first sparseKeyCount keys.
-                        for (int g = 0; g < extraGens; g++) {
-                            for (int j = 0; j < extraRowsPerGen; j++) {
-                                writer.add(j % sparseKeyCount, row++);
-                            }
-                            writer.setMaxValue(row - 1);
-                            writer.commit();
-                        }
-
-                        try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                                configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
-                            reader.warmForKeys(keys, required);
-
-                            // Pre-freeze snapshot of the mmap and picker state.
-                            final long baseAddrBefore = reader.getValueBaseAddress();   // == valueMem.addressOf(0)
-                            final long sizeBefore = reader.getValueMemorySize();        // == valueMem.size()
-                            final long chainSeqBefore = chainSequence(reader);
-                            assertTrue("valueMem must be mapped after warm", sizeBefore > 0);
-
-                            // Pre-freeze cursor result for the probe key.
-                            final LongList preRows = new LongList();
-                            final LongList preVals = new LongList();
-                            CoveringRowCursor pre = (CoveringRowCursor) reader.getCursor(probeKey, 0, Long.MAX_VALUE, required);
-                            while (pre.hasNext()) {
-                                preRows.add(pre.next());
-                                preVals.add(pre.getCoveredLong(0));
-                            }
-                            Misc.free(pre);
-                            assertTrue("probe key must yield rows before freeze", preRows.size() > 0);
-
-                            // Publish MORE gens through the still-open writer. Same .pv,
-                            // larger valueMemSize -> an unfrozen reload would changeSize()
-                            // (remap) the value mmap and advance chainSequence.
-                            for (int g = 0; g < postGens; g++) {
-                                for (int j = 0; j < postRowsPerGen; j++) {
-                                    writer.add(j % sparseKeyCount, row++);
-                                }
-                                writer.setMaxValue(row - 1);
-                                writer.commit();
-                            }
-
-                            // --- FROZEN: reloadConditionally must do nothing observable. ---
-                            reader.setFrozen(true);
-                            reader.reloadConditionally();
-
-                            assertEquals("frozen reload must not remap valueMem (base address)",
-                                    baseAddrBefore, reader.getValueBaseAddress());
-                            assertEquals("frozen reload must not resize valueMem (size)",
-                                    sizeBefore, reader.getValueMemorySize());
-                            assertEquals("frozen reload must not advance the picked chainSequence",
-                                    chainSeqBefore, chainSequence(reader));
-
-                            CoveringRowCursor frozenCursor =
-                                    (CoveringRowCursor) reader.getCursor(probeKey, 0, Long.MAX_VALUE, required);
-                            int fi = 0;
-                            while (frozenCursor.hasNext()) {
-                                long r = frozenCursor.next();
-                                long v = frozenCursor.getCoveredLong(0);
-                                assertTrue("frozen cursor yielded more rows than the pre-freeze snapshot (idx " + fi + ")",
-                                        fi < preRows.size());
-                                assertEquals("frozen cursor row id mismatch at idx " + fi, preRows.getQuick(fi), r);
-                                assertEquals("frozen cursor covered value mismatch at idx " + fi, preVals.getQuick(fi), v);
-                                fi++;
-                            }
-                            assertEquals("frozen cursor must still yield exactly the pre-freeze snapshot",
-                                    preRows.size(), fi);
-                            Misc.free(frozenCursor);
-
-                            // --- UNFROZEN: reload resumes and picks up the new chain state. ---
-                            reader.setFrozen(false);
-                            reader.reloadConditionally();
-
-                            assertTrue("unfrozen reload must advance the picked chainSequence",
-                                    chainSequence(reader) > chainSeqBefore);
-
-                            final LongList postRows = new LongList();
-                            CoveringRowCursor post = (CoveringRowCursor) reader.getCursor(probeKey, 0, Long.MAX_VALUE, required);
-                            while (post.hasNext()) {
-                                postRows.add(post.next());
-                            }
-                            Misc.free(post);
-                            assertTrue("unfrozen reload must surface the gens published while frozen"
-                                            + " (pre=" + preRows.size() + ", post=" + postRows.size() + ")",
-                                    postRows.size() > preRows.size());
-                        }
-                    }
-                } finally {
-                    Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
-                }
-            }
-        });
-    }
-
-    private static boolean anySparseGen(PostingGenLookup lookup) throws Exception {
-        // active.anySparseGen gates whether cacheLookup can ever return a hit; a
-        // test layout must produce sparse gens for the warm assertion to bite.
-        Field activeF = lookup.getClass().getDeclaredField("active");
-        activeF.setAccessible(true);
-        Object active = activeF.get(lookup);
-        Field anyF = active.getClass().getDeclaredField("anySparseGen");
-        anyF.setAccessible(true);
-        return anyF.getBoolean(active);
-    }
-
-    private static long cacheLookup(PostingGenLookup lookup, int key) {
-        // cacheLookup() is public; it short-circuits to CACHE_NOT_PRESENT when
-        // the active snapshot has no sparse gens, otherwise returns the key's slot.
-        return lookup.cacheLookup(key);
-    }
-
-    private static long chainSequence(PostingIndexFwdReader reader) throws Exception {
-        // chainSequence is the private seqlock stamp of the last picked chain
-        // header on the abstract base; it advances on every applied reload.
-        Class<?> base = reader.getClass().getSuperclass();
-        Field f = base.getDeclaredField("chainSequence");
-        f.setAccessible(true);
-        return f.getLong(reader);
-    }
-
-    /**
      * Two DETACHED (non-pooled) cursors over the SAME warmed reader and SAME key,
      * driven from two threads that overlap their iteration via a CyclicBarrier.
      * Each detached cursor owns its private decode scratch and never touches the
@@ -907,10 +727,190 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * warmForKeys must drive a full cursor pass per key so the (per-reader,
+     * idempotent) genLookup cache is populated, and it must pre-open the
+     * required cover sidecars and pre-extend valueMem to its full published
+     * size — all single-threaded, before any concurrent cursors run.
+     * <p>
+     * Oracle (a): a cursor opened on a WARMED reader yields exactly the same
+     * (rowId, covered value) sequence as a cursor on a fresh COLD reader, i.e.
+     * warming does not change results.
+     * <p>
+     * Oracle (b): the genLookup cache is empty for a key before warming and
+     * populated after — proving warmForKeys is what filled it. The dataset uses
+     * several committed generations so sparse gens (hence cacheable keys) exist.
+     */
+    @Test
+    public void testWarmForKeysPopulatesCacheAndPreservesResults() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "warm_posting";
+                final int plen = path.size();
+
+                // Layout: gen 0 covers every key (becomes the dense base), then
+                // several gens that touch only a SUBSET of keys. Those later gens
+                // are encoded sparse, so anySparseGen == true and the subset keys
+                // are cacheable. The head is left UNSEALED so the multi-gen sparse
+                // layout is what the reader serves (seal() would re-encode the head
+                // into a single dense gen and erase the sparse gens).
+                final int keyCount = 4;
+                final int extraGens = 4;          // sparse gens appended after the base
+                final int sparseKeyCount = 2;     // keys 0 and 1 appear in every extra gen
+                // rows: base gen has keyCount*3 rows; each extra gen has sparseKeyCount*3.
+                final int baseRows = keyCount * 3;
+                final int extraRowsPerGen = sparseKeyCount * 3;
+                final int totalRows = baseRows + extraGens * extraRowsPerGen;
+
+                // One covered LONG column whose value mirrors the row id, so the
+                // oracle can check covered payload, not just row ids.
+                final long colBytes = (long) totalRows * Long.BYTES;
+                final long colAddr = Unsafe.malloc(colBytes, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < totalRows; i++) {
+                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
+                    }
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},               // shift for LONG (8 bytes == 2^3)
+                                new int[]{1},               // covered column writer index
+                                new int[]{ColumnType.LONG},
+                                1
+                        );
+                        int row = 0;
+                        // Base (dense) gen: every key present.
+                        for (int j = 0; j < baseRows; j++) {
+                            writer.add(j % keyCount, row++);
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+                        // Extra (sparse) gens: only the first sparseKeyCount keys.
+                        for (int g = 0; g < extraGens; g++) {
+                            for (int j = 0; j < extraRowsPerGen; j++) {
+                                writer.add(j % sparseKeyCount, row++);
+                            }
+                            writer.setMaxValue(row - 1);
+                            writer.commit();
+                        }
+                        // No seal(): keep the multi-gen sparse head.
+                    }
+
+                    final RecordMetadata md = coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG});
+                    final int[] keys = new int[keyCount];
+                    for (int k = 0; k < keyCount; k++) {
+                        keys[k] = k;
+                    }
+                    final int[] required = {0};
+
+                    // Capture the cold (un-warmed) expected sequence per key.
+                    final LongList[] expectedRows = new LongList[keyCount];
+                    final LongList[] expectedVals = new LongList[keyCount];
+                    try (PostingIndexFwdReader cold = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
+                        for (int k = 0; k < keyCount; k++) {
+                            expectedRows[k] = new LongList();
+                            expectedVals[k] = new LongList();
+                            CoveringRowCursor cc = (CoveringRowCursor) cold.getCursor(k, 0, Long.MAX_VALUE, required);
+                            while (cc.hasNext()) {
+                                long r = cc.next();
+                                expectedRows[k].add(r);
+                                expectedVals[k].add(cc.getCoveredLong(0));
+                            }
+                            Misc.free(cc);
+                        }
+                    }
+
+                    // The warmed reader: assert cache empty before, populated after.
+                    try (PostingIndexFwdReader warm = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
+                        // Force metadata so cacheLookup's anySparseGen flag is meaningful.
+                        warm.reloadConditionally();
+                        PostingGenLookup lookup = genLookupOf(warm);
+                        for (int k = 0; k < keyCount; k++) {
+                            assertEquals("cache must be cold before warm for key " + k,
+                                    CACHE_NOT_PRESENT, cacheLookup(lookup, k));
+                        }
+
+                        warm.warmForKeys(keys, required);
+
+                        // (b) warming populated the per-key cache (sparse gens exist).
+                        int cachedKeys = 0;
+                        for (int k = 0; k < keyCount; k++) {
+                            if (cacheLookup(lookup, k) != CACHE_NOT_PRESENT) {
+                                cachedKeys++;
+                            }
+                        }
+                        assertTrue("warmForKeys must populate the genLookup cache for at least one key"
+                                + " (anySparseGen layout); cachedKeys=" + cachedKeys, cachedKeys > 0);
+
+                        // side effect: required sidecar pre-opened.
+                        assertTrue("required cover sidecar must be mapped after warm",
+                                sidecarMmapSize(warm, 0) > 0);
+
+                        // side effect: valueMem pre-extended to its full published size.
+                        assertEquals("valueMem must be pre-extended to valueMemSize",
+                                valueMemSize(warm), valueMemSizeField(warm));
+                        assertTrue("valueMem size must be non-zero after warm", valueMemSize(warm) > 0);
+
+                        // (a) a cursor on the warmed reader yields identical results.
+                        for (int k = 0; k < keyCount; k++) {
+                            CoveringRowCursor cc = (CoveringRowCursor) warm.getCursor(k, 0, Long.MAX_VALUE, required);
+                            int i = 0;
+                            while (cc.hasNext()) {
+                                long r = cc.next();
+                                assertTrue("warmed cursor produced more rows than cold for key " + k,
+                                        i < expectedRows[k].size());
+                                assertEquals("row id mismatch key " + k + " idx " + i,
+                                        expectedRows[k].getQuick(i), r);
+                                assertEquals("covered value mismatch key " + k + " idx " + i,
+                                        expectedVals[k].getQuick(i), cc.getCoveredLong(0));
+                                i++;
+                            }
+                            assertEquals("warmed cursor produced fewer rows than cold for key " + k,
+                                    expectedRows[k].size(), i);
+                            Misc.free(cc);
+                        }
+                    }
+                } finally {
+                    Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    private static boolean anySparseGen(PostingGenLookup lookup) throws Exception {
+        // active.anySparseGen gates whether cacheLookup can ever return a hit; a
+        // test layout must produce sparse gens for the warm assertion to bite.
+        Field activeF = lookup.getClass().getDeclaredField("active");
+        activeF.setAccessible(true);
+        Object active = activeF.get(lookup);
+        Field anyF = active.getClass().getDeclaredField("anySparseGen");
+        anyF.setAccessible(true);
+        return anyF.getBoolean(active);
+    }
+
     private static int bwdFreeCursorsSize(PostingIndexBwdReader reader) throws Exception {
         Field f = reader.getClass().getDeclaredField("freeCursors");
         f.setAccessible(true);
         return ((ObjList<?>) f.get(reader)).size();
+    }
+
+    private static long cacheLookup(PostingGenLookup lookup, int key) {
+        // cacheLookup() is public; it short-circuits to CACHE_NOT_PRESENT when
+        // the active snapshot has no sparse gens, otherwise returns the key's slot.
+        return lookup.cacheLookup(key);
+    }
+
+    private static long chainSequence(PostingIndexFwdReader reader) throws Exception {
+        // chainSequence is the private seqlock stamp of the last picked chain
+        // header on the abstract base; it advances on every applied reload.
+        Class<?> base = reader.getClass().getSuperclass();
+        Field f = base.getDeclaredField("chainSequence");
+        f.setAccessible(true);
+        return f.getLong(reader);
     }
 
     private static RecordMetadata coveringMetadata(int[] coveredIndices, int[] coveredTypes) {

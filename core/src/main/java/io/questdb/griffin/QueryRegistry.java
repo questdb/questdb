@@ -29,8 +29,10 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.ConcurrentPool;
 import io.questdb.mp.Worker;
-import io.questdb.std.CarrierLocal;
+import io.questdb.mp.continuation.CancellationBinding;
+import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentLongHashMap;
 import io.questdb.std.LongList;
@@ -41,7 +43,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.WeakMutableObjectPool;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -57,19 +58,24 @@ public class QueryRegistry {
     private static final Log LOG = LogFactory.getLog(QueryRegistry.class);
     private final Clock clock;
     private final AtomicLong idSeq = new AtomicLong();
+    private final ConcurrentPool<Entry> queryPool = new ConcurrentPool<>();
+    private final int queryPoolCapacity;
     private final ConcurrentLongHashMap<Entry> registry = new ConcurrentLongHashMap<>();
-    private final CarrierLocal<WeakMutableObjectPool<Entry>> tlQueryPool;
 
     private volatile Listener listener;
 
     public QueryRegistry(CairoConfiguration configuration) {
         this.clock = configuration.getMicrosecondClock();
-        tlQueryPool = new CarrierLocal<>(() -> new WeakMutableObjectPool<>(Entry::new, configuration.getQueryRegistryPoolSize()));
+        this.queryPoolCapacity = configuration.getQueryRegistryPoolSize();
+        for (int i = 0; i < queryPoolCapacity; i++) {
+            queryPool.push(new Entry());
+        }
     }
 
     /**
      * Cancels command with given id.
-     * Cancellation is not immediate and depends on how often the running command checks circuit breaker.
+     * Running commands observe cancellation at their next circuit-breaker check. A fiber
+     * registered on the command's cancellation signal wakes immediately.
      * Cancelling commands issued by other users is allowed for admin user only.
      *
      * @param queryId          id of query to cancel, must be non-negative
@@ -166,6 +172,11 @@ public class QueryRegistry {
         }
     }
 
+    @TestOnly
+    public int getPoolSize() {
+        return queryPool.count();
+    }
+
     /**
      * Add given command to registry.
      *
@@ -175,7 +186,10 @@ public class QueryRegistry {
      */
     public long register(CharSequence query, SqlExecutionContext executionContext) {
         final long queryId = idSeq.getAndIncrement();
-        final Entry e = tlQueryPool.get().pop();
+        Entry e = queryPool.pop();
+        if (e == null) {
+            e = new Entry();
+        }
         // Just in case something messed the cached Entry
         // while it was in the pool, like late query cancel()
         // clean the object before using.
@@ -192,8 +206,8 @@ public class QueryRegistry {
             e.query.put(query);
         }
 
-        final Thread thread = Thread.currentThread();
-        if (thread instanceof Worker worker) {
+        final Worker worker = Worker.current();
+        if (worker != null) {
             e.workerId = worker.getWorkerId();
             e.poolName = worker.getPoolName();
         }
@@ -258,14 +272,15 @@ public class QueryRegistry {
                 e.memoryTracker = null;
             }
             if (e.retire(queryId)) {
-                tlQueryPool.get().push(e);
+                recycle(e);
             } else {
                 LOG.error().$("query lifecycle mismatch on register rollback [id=").$(queryId).I$();
             }
             throw th;
         }
 
-        executionContext.setCancelledFlag(e.cancelled);
+        executionContext.getCircuitBreaker().copyCancelledFlagTo(e.previousCancelledBinding);
+        executionContext.setCancelledFlag(e.cancelled, e.cancelledGeneration);
         return queryId;
     }
 
@@ -286,11 +301,15 @@ public class QueryRegistry {
             return;
         }
 
-        // Remove shared AtomicBoolean from execution context CircuitBreaker
-        // before returning Entry to the pool
-        executionContext.setCancelledFlag(null);
         final Entry e = registry.remove(queryId);
         if (e != null) {
+            final AtomicBoolean previousCancelledFlag = e.previousCancelledBinding.getFlag();
+            if (previousCancelledFlag instanceof FiberCancellationSignal previousSignal
+                    && previousSignal.getGeneration()
+                    != e.previousCancelledBinding.getGeneration(previousCancelledFlag)) {
+                e.previousCancelledBinding.clear();
+            }
+            executionContext.restoreCancelledFlag(e.cancelled, e.previousCancelledBinding);
             // Release the per-workload memory tracker if this register() call
             // acquired it. A null e.memoryTracker means the registration was
             // nested under an outer workload that owns the tracker; in that
@@ -310,7 +329,7 @@ public class QueryRegistry {
             // Retire the entry to guard pooled reuse: this waits out an in-flight
             // canceller and only recycles the entry once it owns the lifecycle word.
             if (e.retire(queryId)) {
-                tlQueryPool.get().push(e);
+                recycle(e);
             } else {
                 LOG.error().$("query lifecycle mismatch [id=").$(queryId).I$();
             }
@@ -318,6 +337,11 @@ public class QueryRegistry {
             // this might happen if query was cancelled
             LOG.error().$("query to unregister not found [id=").$(queryId).I$();
         }
+    }
+
+    private void recycle(Entry entry) {
+        entry.clear();
+        queryPool.tryPush(entry, queryPoolCapacity);
     }
 
     public interface Listener {
@@ -351,8 +375,10 @@ public class QueryRegistry {
         private static final long LIFECYCLE_STATE_CANCELLING = 1;
         private static final long LIFECYCLE_STATE_RETIRED = 2;
 
-        private final AtomicBoolean cancelled = new AtomicBoolean();
+        private final FiberCancellationSignal cancelled = new FiberCancellationSignal();
+        private final CancellationBinding previousCancelledBinding = new CancellationBinding();
         private final StringSink query = new StringSink();
+        private long cancelledGeneration;
         private long changedAtNs;
         private boolean isWAL;
         // Packs query id and state into one CAS word to guard pooled Entry reuse.
@@ -387,7 +413,7 @@ public class QueryRegistry {
         }
 
         public void cancel() {
-            cancelled.set(true);
+            cancelled.cancel(cancelledGeneration);
         }
 
         @Override
@@ -395,9 +421,10 @@ public class QueryRegistry {
             query.clear();
             registeredAtNs = 0;
             changedAtNs = 0;
-            cancelled.set(false);
+            cancelledGeneration = cancelled.reopen();
             memoryTracker = null;
             poolName = null;
+            previousCancelledBinding.clear();
             workerId = -1;
             principal = null;
             state = State.IDLE;
@@ -407,6 +434,10 @@ public class QueryRegistry {
 
         public AtomicBoolean getCancelled() {
             return cancelled;
+        }
+
+        public long getCancelledGeneration() {
+            return cancelledGeneration;
         }
 
         public long getChangedAtNs() {

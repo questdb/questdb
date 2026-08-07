@@ -34,6 +34,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -139,7 +140,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationBinaryColumn() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -185,7 +186,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationBooleanFilter() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -225,7 +226,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationColTops() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -287,7 +288,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationDateColumn() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -326,7 +327,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationFuzzMixedPartitions() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -365,7 +366,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationGeoHashColumns() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -405,7 +406,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationIpv4Column() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -443,7 +444,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationLong256Column() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -480,7 +481,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationMultiplePartitions() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -519,7 +520,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationSelectSpecificColumns() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -557,7 +558,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationUuidColumn() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -595,7 +596,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationVarcharFilter() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -643,7 +644,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationWithLimit() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -694,7 +695,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationWithNulls() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -824,7 +825,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         // Smaller table on slow CI runners; expected is computed from the same data pre-conversion,
         // so the assertion holds at any size.
         final int rowCount = Os.isLinux() ? 2000 : 500;
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -930,7 +931,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     private void testLateMaterializationWithArrayColumn(boolean rawArrayEncoding) throws Exception {
         node1.setProperty(CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, rawArrayEncoding);
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {

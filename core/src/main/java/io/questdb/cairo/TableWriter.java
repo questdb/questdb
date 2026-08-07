@@ -232,6 +232,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final int detachedMkDirMode;
+    private final Path detachedPath = new Path();
     private final DetachedPostingFileRemover detachedPostingFileRemover = new DetachedPostingFileRemover();
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -292,6 +293,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Object parquetSealPurgeLock = new Object();
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
+    private final Path partitionPath = new Path();
     private final LongList partitionRemoveCandidates = new LongList();
     private final Path path;
     private final int pathRootSize;
@@ -301,6 +303,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Three longs per entry: [partitionTimestamp, oldPartitionNameTxn, lastPartitionConvertedFlag].
     private final LongList pendingParquetToNativeConversions = new LongList();
     private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
+    private final Path repairPath = new Path();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
@@ -1017,7 +1020,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return AttachDetachStatus.ATTACH_ERR_DIR_EXISTS;
         }
 
-        Path detachedPath = Path.PATH.get().of(configuration.getDbRoot()).concat(tableToken);
+        final Path detachedPath = this.detachedPath.of(configuration.getDbRoot()).concat(tableToken);
         setPathForNativePartition(detachedPath, timestampType, partitionBy, timestamp, -1L);
         detachedPath.put(configuration.getAttachPartitionSuffix()).$();
         int detachedRootLen = detachedPath.size();
@@ -2007,7 +2010,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long minTimestamp = txWriter.getMinTimestamp();
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        Path detachedPath = Path.PATH.get();
+        final Path detachedPath = this.detachedPath;
 
         try {
             // path: partition folder to be detached
@@ -6953,7 +6956,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         denseIndexers.clear();
         Misc.free(txWriter);
         Misc.free(ddlMem);
+        Misc.free(detachedPath);
         Misc.free(other);
+        Misc.free(partitionPath);
+        Misc.free(repairPath);
         Misc.free(todoMem);
         Misc.free(attachMetaMem);
         Misc.free(attachColumnVersionReader);
@@ -10172,7 +10178,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
 
                         columnCounter.set(compressColumnCount(metadata));
-                        Path pathToPartition = Path.getThreadLocal(path);
+                        final Path pathToPartition = partitionPath.of(path);
                         setPathForNativePartition(
                                 pathToPartition,
                                 timestampType,
@@ -13199,7 +13205,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         fixedRowCount += partitionSize;
                         lastTimestamp = ts;
                     } else {
-                        Path other = Path.getThreadLocal2(path.trimTo(p));
+                        final Path other = repairPath.of(path.trimTo(p));
                         oldPartitionName(other, getTxn());
                         if (ff.exists(other.$())) {
                             if (ff.rename(other.$(), path.$()) != FILES_RENAME_OK) {
@@ -13218,7 +13224,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     path.trimTo(pathSize);
                     setStateForTimestamp(path, tsLimit);
                     if (!ff.exists(path.$())) {
-                        Path other = Path.getThreadLocal2(path);
+                        final Path other = repairPath.of(path);
                         oldPartitionName(other, getTxn());
                         if (ff.exists(other.$())) {
                             if (ff.rename(other.$(), path.$()) != FILES_RENAME_OK) {

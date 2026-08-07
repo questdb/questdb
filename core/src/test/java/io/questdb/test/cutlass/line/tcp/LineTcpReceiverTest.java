@@ -54,6 +54,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.std.CharSequenceHashSet;
@@ -515,6 +516,54 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     """;
             assertTable(expected, weather);
         }, false, 250);
+    }
+
+    @Test
+    public void testFiberHostWriterPoolIngestsWithoutMountingFibers() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE fiber_host_ilp (
+                        value LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            minIdleMsBeforeWriterRelease = 25;
+            final WorkerPool ioPool = new TestWorkerPool(
+                    "fiber-host-ilp-io",
+                    1,
+                    engine.getMetrics(),
+                    WorkerPoolMode.LEGACY
+            );
+            final WorkerPool writerPool = new TestWorkerPool(
+                    "fiber-host-ilp-writer",
+                    1,
+                    engine.getMetrics(),
+                    WorkerPoolMode.FIBER_HOST
+            );
+            final LineTcpReceiver receiver = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool);
+            try {
+                writerPool.start(LOG);
+                ioPool.start(LOG);
+                send("fiber_host_ilp", WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket("""
+                        fiber_host_ilp value=42i 1000000000
+                        fiber_host_ilp value=43i 2000000000
+                        """));
+                assertQuery("SELECT value, ts FROM fiber_host_ilp")
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                value\tts
+                                42\t1970-01-01T00:00:01.000000Z
+                                43\t1970-01-01T00:00:02.000000Z
+                                """);
+                Assert.assertEquals(0L, writerPool.getFiberRuntime().getMountCount());
+            } finally {
+                ioPool.halt();
+                writerPool.halt();
+                receiver.close();
+                Path.clearThreadLocals();
+            }
+        });
     }
 
     @Test

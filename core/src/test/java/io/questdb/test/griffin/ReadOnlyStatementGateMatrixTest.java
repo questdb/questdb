@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -238,5 +238,22 @@ public class ReadOnlyStatementGateMatrixTest extends AbstractCairoTest {
 
     private static CairoConfiguration newConfiguration() {
         return new DefaultCairoConfiguration(root);
+    }
+
+    static {
+        EXPECTED_REFUSED.add("INSERT");
+        EXPECTED_REFUSED.add("INSERT_AS_SELECT");
+        EXPECTED_REFUSED.add("UPDATE");
+        EXPECTED_REFUSED.add("ALTER");
+        EXPECTED_REFUSED.add("TRUNCATE");
+        EXPECTED_REFUSED.add("RENAME_TABLE");
+        EXPECTED_REFUSED.add("CREATE_TABLE");
+        EXPECTED_REFUSED.add("CREATE_TABLE_AS_SELECT");
+        EXPECTED_REFUSED.add("CREATE_MAT_VIEW");
+        EXPECTED_REFUSED.add("REFRESH_MAT_VIEW");
+        EXPECTED_REFUSED.add("CREATE_VIEW");
+        EXPECTED_REFUSED.add("ALTER_VIEW");
+        EXPECTED_REFUSED.add("ALTER_STORAGE_POLICY");
+        EXPECTED_REFUSED.add("DROP");
     }
 }

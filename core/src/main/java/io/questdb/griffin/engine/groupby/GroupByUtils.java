@@ -646,7 +646,8 @@ public class GroupByUtils {
 
     public static boolean isParallelismSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
-            if (!functions.getQuick(i).supportsParallelism()) {
+            final GroupByFunction function = functions.getQuick(i);
+            if (!function.supportsParallelism()) {
                 return false;
             }
         }

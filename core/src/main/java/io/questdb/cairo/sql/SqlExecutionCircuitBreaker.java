@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.mp.continuation.CancellationBinding;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -44,6 +45,10 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         @Override
         public boolean checkIfTripped(long millis, long fd) {
             return false;
+        }
+
+        @Override
+        public void clearCancelledFlag(AtomicBoolean expected) {
         }
 
         @Override
@@ -122,6 +127,24 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
      */
     void cancel();
 
+    default void clearCancelledFlag(AtomicBoolean expected) {
+        synchronized (this) {
+            if (getCancelledFlag() == expected) {
+                setCancelledFlag((AtomicBoolean) null);
+            }
+        }
+    }
+
+    default void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        clearCancelledFlag(expected);
+    }
+
+    default void copyCancelledFlagTo(CancellationBinding target) {
+        synchronized (this) {
+            target.set(getCancelledFlag());
+        }
+    }
+
     boolean checkIfTripped(long millis, long fd);
 
     /**
@@ -175,6 +198,17 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     void resetTimer();
 
     void setCancelledFlag(AtomicBoolean cancelled);
+
+    default void setCancelledFlag(CancellationBinding source) {
+        synchronized (source) {
+            final AtomicBoolean flag = source.getFlag();
+            setCancelledFlag(flag, source.getGeneration(flag));
+        }
+    }
+
+    default void setCancelledFlag(AtomicBoolean cancelled, long generation) {
+        setCancelledFlag(cancelled);
+    }
 
     void setFd(long fd);
 

@@ -80,11 +80,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -104,7 +106,6 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -146,12 +147,14 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -162,7 +165,10 @@ import static org.junit.Assert.assertNotNull;
 public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
+    public static final String WORKER_POOL_MODE_PROPERTY = "questdb.test.worker.pool.mode";
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
+    private static final @Nullable WorkerPoolMode WORKER_POOL_MODE_OVERRIDE = readWorkerPoolModeOverride();
+    private static final AtomicInteger WORKER_POOL_MODE_SEQUENCE = createWorkerPoolModeSequence();
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
 
     private TestUtils() {
@@ -1831,6 +1837,31 @@ public final class TestUtils {
         return rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
     }
 
+    /**
+     * Returns the mode for the next unpinned {@link io.questdb.test.mp.TestWorkerPool}. Modes alternate
+     * from a randomized starting point, so a full JVM run exercises both without random streaks.
+     * {@value #WORKER_POOL_MODE_PROPERTY} pins every pool when reproducing a failure.
+     */
+    public static WorkerPoolMode getWorkerPoolMode() {
+        final WorkerPoolMode override = WORKER_POOL_MODE_OVERRIDE;
+        if (override != null) {
+            return override;
+        }
+        return (WORKER_POOL_MODE_SEQUENCE.getAndIncrement() & 1) == 0
+                ? WorkerPoolMode.FIBER_HOST
+                : WorkerPoolMode.LEGACY;
+    }
+
+    public static WorkerPoolMode getWorkerPoolMode(Rnd rnd) {
+        final WorkerPoolMode override = WORKER_POOL_MODE_OVERRIDE;
+        if (override != null) {
+            return override;
+        }
+        return (rnd.getSeed0() ^ rnd.getSeed1()) < 0
+                ? WorkerPoolMode.FIBER_HOST
+                : WorkerPoolMode.LEGACY;
+    }
+
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
         return getWriter(engine, engine.verifyTableName(tableName));
     }
@@ -2122,22 +2153,6 @@ public final class TestUtils {
         return sink.toString();
     }
 
-    public static String readStringFromFile(File file) {
-        try {
-            try (FileInputStream fis = new FileInputStream(file)) {
-                byte[] buffer = new byte[(int) fis.getChannel().size()];
-                int totalRead = 0;
-                int read;
-                while (totalRead < buffer.length && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
-                    totalRead += read;
-                }
-                return new String(buffer, Files.UTF_8);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Cannot read from " + file.getAbsolutePath(), e);
-        }
-    }
-
     /**
      * Reads the {@code seqTxn} stamped into the footer of the {@code _pm}
      * snapshot identified by {@code parquetFileSize} (the MVCC version token
@@ -2166,6 +2181,22 @@ public final class TestUtils {
             if (addr != 0) {
                 ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
+        }
+    }
+
+    public static String readStringFromFile(File file) {
+        try {
+            try (FileInputStream fis = new FileInputStream(file)) {
+                byte[] buffer = new byte[(int) fis.getChannel().size()];
+                int totalRead = 0;
+                int read;
+                while (totalRead < buffer.length && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
+                    totalRead += read;
+                }
+                return new String(buffer, Files.UTF_8);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Cannot read from " + file.getAbsolutePath(), e);
         }
     }
 
@@ -2263,7 +2294,7 @@ public final class TestUtils {
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine);
+        WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine, true);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
     }
 
@@ -2594,6 +2625,16 @@ public final class TestUtils {
         return res;
     }
 
+    private static AtomicInteger createWorkerPoolModeSequence() {
+        final WorkerPoolMode mode = WORKER_POOL_MODE_OVERRIDE != null
+                ? WORKER_POOL_MODE_OVERRIDE
+                : ThreadLocalRandom.current().nextBoolean()
+                  ? WorkerPoolMode.FIBER_HOST
+                  : WorkerPoolMode.LEGACY;
+        LOG.info().$("test worker pool mode sequence starts with [mode=").$(mode.name()).I$();
+        return new AtomicInteger(mode == WorkerPoolMode.FIBER_HOST ? 0 : 1);
+    }
+
     // Independent oracle for the SHOW PARTITIONS / table_partitions() seqTxn column: reads
     // each live partition's seqTxn straight from _txn (native) or the _pm footer (parquet),
     // never via the factory under test. Keyed by the rendered partition name. Absent names
@@ -2728,6 +2769,16 @@ public final class TestUtils {
             default ->
                     throw new UnsupportedOperationException("Unexpected column type: " + ColumnType.nameOf(columnType));
         };
+    }
+
+    private static @Nullable WorkerPoolMode readWorkerPoolModeOverride() {
+        final String override = System.getProperty(WORKER_POOL_MODE_PROPERTY);
+        if (override != null && !override.isEmpty()) {
+            final WorkerPoolMode mode = WorkerPoolMode.valueOf(override.trim().toUpperCase(Locale.ROOT));
+            LOG.info().$("worker pool mode pinned [").$(WORKER_POOL_MODE_PROPERTY).$('=').$(mode.name()).I$();
+            return mode;
+        }
+        return null;
     }
 
     private static String recordToString(Record record, RecordMetadata metadata, boolean genericStringMatch) {

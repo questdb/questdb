@@ -97,6 +97,11 @@ public class ViewStateStoreImpl implements ViewStateStore {
     }
 
     @Override
+    public void reenqueueCompileTask(ViewCompilerTask task) {
+        taskQueue.enqueue(task);
+    }
+
+    @Override
     public boolean tryDequeueCompilerTask(ViewCompilerTask task) {
         return taskQueue.tryDequeue(task);
     }

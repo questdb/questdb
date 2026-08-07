@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -242,6 +242,22 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
         sink.val("AsyncMultiHorizonGroupByAtom");
     }
 
+    private ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
+        if (slotId == -1 || perWorkerGroupByFunctions == null) {
+            return ownerGroupByFunctions;
+        }
+        return perWorkerGroupByFunctions.getQuick(slotId);
+    }
+
+    private long getTotalFunctionCardinality(int slotId) {
+        final ObjList<GroupByFunction> groupByFunctions = getGroupByFunctions(slotId);
+        long totalCardinality = 0;
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            totalCardinality += groupByFunctions.getQuick(i).getCardinalityStat();
+        }
+        return totalCardinality;
+    }
+
     @Override
     protected void clearAggregationState() {
         shardingCtx.clear();
@@ -270,21 +286,5 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
             }
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
-    }
-
-    private ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
-        if (slotId == -1 || perWorkerGroupByFunctions == null) {
-            return ownerGroupByFunctions;
-        }
-        return perWorkerGroupByFunctions.getQuick(slotId);
-    }
-
-    private long getTotalFunctionCardinality(int slotId) {
-        final ObjList<GroupByFunction> groupByFunctions = getGroupByFunctions(slotId);
-        long totalCardinality = 0;
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            totalCardinality += groupByFunctions.getQuick(i).getCardinalityStat();
-        }
-        return totalCardinality;
     }
 }

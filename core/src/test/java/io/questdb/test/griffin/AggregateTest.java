@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.mp.Worker;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.MemoryTag;
@@ -51,6 +52,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -59,6 +61,9 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class AggregateTest extends AbstractCairoTest {
@@ -1856,6 +1861,79 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRostiWorkerErrorIsPropagatedAfterCleanup() throws Exception {
+        final AtomicBoolean isFailureInjected = new AtomicBoolean();
+        final CountDownLatch workerFailed = new CountDownLatch(1);
+        final RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {
+            @Override
+            public void updateMemoryUsage(long pRosti, long oldSize) {
+                super.updateMemoryUsage(pRosti, oldSize);
+                if (Worker.current() != null && isFailureInjected.compareAndSet(false, true)) {
+                    workerFailed.countDown();
+                    throw CairoException.critical(42)
+                            .position(7)
+                            .put("injected vector worker failure")
+                            .setOutOfMemory(true);
+                }
+                if (Worker.current() == null && !isFailureInjected.get()) {
+                    try {
+                        if (!workerFailed.await(30, TimeUnit.SECONDS)) {
+                            throw new AssertionError("timed out waiting for vector worker failure");
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError("interrupted waiting for vector worker failure", e);
+                    }
+                }
+            }
+        };
+
+        executeWithPool(
+                4,
+                16,
+                rostiAllocFacade,
+                (CairoEngine engine, SqlCompiler _, SqlExecutionContext sqlExecutionContext, String _) -> {
+                    engine.execute(
+                            "CREATE TABLE tab AS (SELECT rnd_double() d, (x % 16)::int i FROM long_sequence(10_000))",
+                            sqlExecutionContext
+                    );
+                    final String query = "SELECT i, sum(d) FROM tab GROUP BY i";
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .assertsPlanContaining("GroupBy vectorized: true");
+
+                    try (
+                            RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                            RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                    ) {
+                        while (cursor.hasNext()) {
+                        }
+                        Assert.fail("expected vector worker failure");
+                    } catch (CairoException e) {
+                        Assert.assertEquals(42, e.getErrno());
+                        Assert.assertEquals(7, e.getPosition());
+                        Assert.assertTrue(e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "injected vector worker failure");
+                    }
+
+                    Assert.assertTrue(isFailureInjected.get());
+                    assertQuery("SELECT count() FROM (" + query + ")")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    count
+                                    16
+                                    """);
+                }
+        );
+    }
+
+    @Test
     public void testStrFunctionKey() throws Exception {
         // An important aspect of this test is that both replace() and count_distinct()
         // functions use the same column as the input.
@@ -2261,7 +2339,7 @@ public class AggregateTest extends AbstractCairoTest {
                     }
                 };
 
-                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                WorkerPool pool = TestWorkerPool.createWithRandomMode(new WorkerPoolConfiguration() {
                     @Override
                     public long getSleepTimeout() {
                         return 1;

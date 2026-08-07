@@ -29,6 +29,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
+import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
+import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -40,6 +44,35 @@ public class CoveringIndexFilterCompilationLeakTest extends AbstractCairoTest {
     public void setUp() {
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         super.setUp();
+    }
+
+    @Test
+    public void testNonParallelCoveringFilterDisablesAsyncFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (s),
+                        s STRING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            engine.releaseAllWriters();
+
+            try (RecordCursorFactory factory = select(
+                    "SELECT s FROM tab WHERE sym = 'A' AND length(s) > 0"
+            )) {
+                Assert.assertTrue(containsFactory(factory, CoveringIndexRecordCursorFactory.class));
+                Assert.assertTrue(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+            }
+            try (RecordCursorFactory factory = select(
+                    "SELECT s FROM tab WHERE sym = 'A' AND length((s)::symbol) > 0"
+            )) {
+                Assert.assertTrue(containsFactory(factory, CoveringIndexRecordCursorFactory.class));
+                Assert.assertTrue(containsFactory(factory, FilteredRecordCursorFactory.class));
+                Assert.assertFalse(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+                Assert.assertFalse(containsFactory(factory, AsyncJitFilteredRecordCursorFactory.class));
+            }
+        });
     }
 
     @Test
@@ -95,5 +128,15 @@ public class CoveringIndexFilterCompilationLeakTest extends AbstractCairoTest {
             // residual filter leaks and this would be 1.
             Assert.assertEquals(2, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
         });
+    }
+
+    private static boolean containsFactory(RecordCursorFactory factory, Class<?> factoryClass) {
+        while (factory != null) {
+            if (factoryClass.isInstance(factory)) {
+                return true;
+            }
+            factory = factory.getBaseFactory();
+        }
+        return false;
     }
 }

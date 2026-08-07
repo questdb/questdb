@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -199,6 +199,10 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
         }
     }
 
+    private CairoException buildInterruptionException() {
+        return frameSequence.buildInterruptionException();
+    }
+
     private void buildMap() {
         // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
@@ -222,7 +226,7 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                     postAggregationStartedCounter
             );
             if (postAggregationCircuitBreaker.checkIfTripped()) {
-                throwTimeoutException();
+                throw buildInterruptionException();
             }
             shardedCursor.of(shards);
             mapCursor = shardedCursor;
@@ -277,14 +281,6 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
             }
 
             isSlaveTimeFrameCacheBuilt = true;
-        }
-    }
-
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
         }
     }
 

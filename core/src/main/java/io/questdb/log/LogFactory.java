@@ -80,6 +80,7 @@ public class LogFactory implements Closeable {
     public static final String DEFAULT_CONFIG_NAME = "log.conf";
     // placeholder that can be used in log.conf to point to $root/log/ dir
     public static final String LOG_DIR_VAR = "${log.dir}";
+    private static final int CLOSE_ATTEMPTS = 3;
     private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
     private static final int DEFAULT_LOG_LEVEL = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
     private static final int DEFAULT_MSG_SIZE = 4 * 1024;
@@ -101,6 +102,10 @@ public class LogFactory implements Closeable {
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
     private final StringSink sink = new StringSink();
     private boolean configured = false;
+    @TestOnly
+    private volatile boolean isHaltRefusedForTesting;
+    private boolean isThreadHaltComplete;
+    private boolean isThreadHaltStarted;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
 
@@ -134,11 +139,18 @@ public class LogFactory implements Closeable {
     }
 
     public static synchronized void closeInstance() {
-        LogFactory logFactory = INSTANCE;
-        if (logFactory != null) {
-            logFactory.close(true);
-            INSTANCE = null;
+        closeInstanceWithin(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+    }
+
+    public static synchronized void closeInstanceWithin(long timeoutNanos) {
+        final LogFactory logFactory = INSTANCE;
+        if (logFactory == null) {
+            return;
         }
+        if (!logFactory.closeWithin(true, timeoutNanos)) {
+            throw new IllegalStateException("logging worker pool did not halt");
+        }
+        INSTANCE = null;
     }
 
     public static void configureRootDir(String rootDir) {
@@ -198,8 +210,8 @@ public class LogFactory implements Closeable {
 
     public static synchronized void haltInstance() {
         LogFactory logFactory = INSTANCE;
-        if (logFactory != null) {
-            logFactory.haltThread();
+        if (logFactory != null && !logFactory.haltThread()) {
+            throw new IllegalStateException("logging worker pool did not halt");
         }
     }
 
@@ -247,29 +259,8 @@ public class LogFactory implements Closeable {
     }
 
     public void close(boolean flush) {
-        if (closed.compareAndSet(false, true)) {
-            haltThread();
-            for (int i = 0, n = jobs.size(); i < n; i++) {
-                LogWriter job = jobs.get(i);
-                try {
-                    if (job != null && flush) {
-                        try {
-                            // noinspection StatementWithEmptyBody
-                            while (job.run(Job.TERMINATING_STATUS)) {
-                                // Keep running the job until it returns false to log all the buffered messages
-                            }
-                        } catch (Exception th) {
-                            // Exception means we cannot log anymore. Perhaps network is down or disk is full.
-                            // Switch to the next job.
-                        }
-                    }
-                } finally {
-                    Misc.freeIfCloseable(job);
-                }
-            }
-            for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
-                Misc.free(scopeConfigs.getQuick(i));
-            }
+        if (!closeWithin(flush, WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
+            throw new IllegalStateException("logging worker pool did not halt");
         }
     }
 
@@ -407,8 +398,21 @@ public class LogFactory implements Closeable {
         startThread();
     }
 
+    @TestOnly
+    public boolean isClosed() {
+        return closed.get();
+    }
+
+    @TestOnly
+    public void setHaltRefusedForTesting(boolean isHaltRefusedForTesting) {
+        this.isHaltRefusedForTesting = isHaltRefusedForTesting;
+    }
+
     public void startThread() {
         assert !closed.get();
+        if (isThreadHaltStarted) {
+            throw new IllegalStateException("logging worker pool cannot restart after halt");
+        }
         if (running.compareAndSet(false, true)) {
             for (int i = 0, n = jobs.size(); i < n; i++) {
                 loggingWorkerPool.assign(jobs.get(i));
@@ -572,6 +576,55 @@ public class LogFactory implements Closeable {
         }
     }
 
+    private synchronized boolean closeInternal(boolean flush, long haltTimeoutNanos) {
+        if (!closed.compareAndSet(false, true)) {
+            return true;
+        }
+        try {
+            if (!haltThread(haltTimeoutNanos)) {
+                closed.set(false);
+                return false;
+            }
+        } catch (Throwable th) {
+            closed.set(false);
+            throw th;
+        }
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            LogWriter job = jobs.get(i);
+            try {
+                if (job != null && flush) {
+                    try {
+                        // noinspection StatementWithEmptyBody
+                        while (job.run(Job.TERMINATING_STATUS)) {
+                            // Keep running the job until it returns false to log all the buffered messages
+                        }
+                    } catch (Exception th) {
+                        // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+                        // Switch to the next job.
+                    }
+                }
+            } finally {
+                Misc.freeIfCloseable(job);
+            }
+        }
+        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+            Misc.free(scopeConfigs.getQuick(i));
+        }
+        return true;
+    }
+
+    private synchronized boolean closeWithin(boolean flush, long timeoutNanos) {
+        final long deadline = System.nanoTime() + timeoutNanos;
+        for (int i = 0; i < CLOSE_ATTEMPTS; i++) {
+            final int remainingAttempts = CLOSE_ATTEMPTS - i;
+            final long remainingNanos = Math.max(1, deadline - System.nanoTime());
+            if (closeInternal(flush, Math.max(1, remainingNanos / remainingAttempts))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void configure(InputStream fis, String rootDir) throws IOException {
         Properties properties = new Properties();
         properties.load(fis);
@@ -710,10 +763,24 @@ public class LogFactory implements Closeable {
         return scopeConfigMap.get(k);
     }
 
-    private void haltThread() {
-        if (running.compareAndSet(true, false)) {
-            loggingWorkerPool.halt();
+    private boolean haltThread() {
+        return haltThread(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+    }
+
+    private boolean haltThread(long timeoutNanos) {
+        if (isThreadHaltComplete) {
+            return true;
         }
+        if (isHaltRefusedForTesting) {
+            return false;
+        }
+        isThreadHaltStarted = true;
+        running.set(false);
+        if (!loggingWorkerPool.haltWithin(timeoutNanos)) {
+            return false;
+        }
+        isThreadHaltComplete = true;
+        return true;
     }
 
     @TestOnly

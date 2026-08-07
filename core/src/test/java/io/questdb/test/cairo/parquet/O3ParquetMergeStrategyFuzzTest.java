@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -395,133 +395,6 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testSmallInOrderAppendsProduceAtMostOneSmallRowGroup() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-
-        setFuzzProbabilities(
-                0,      // cancelRow
-                0,      // notSet
-                0,      // null
-                0,      // rollback
-                0,      // colAdd
-                0,      // colRemove
-                0,      // colRename
-                0,      // colTypeChange
-                1.0,    // dataAdd
-                0,      // equalTs
-                0,      // partitionDrop
-                0,      // truncate
-                0,      // tableDrop
-                0,      // setTtl
-                0,      // replace
-                0       // symbolAccess
-        );
-
-        int rowGroupSize = 500 + rnd.nextInt(2000);
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
-
-        int parquetVersion = rnd.nextBoolean() ? ParquetVersion.PARQUET_VERSION_V1 : ParquetVersion.PARQUET_VERSION_V2;
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, parquetVersion);
-
-        String compressionCodec = randomCompressionCodec(rnd);
-        int compressionLevel = randomCompressionLevel(rnd, compressionCodec);
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, compressionCodec);
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, compressionLevel);
-
-        int initialRowCount = 2000 + rnd.nextInt(5000);
-        // Small in-order transactions: low row count per round, no O3 within each batch.
-        // A single transaction per round avoids intra-round timestamp overlap.
-        fuzzer.setFuzzCounts(
-                false,          // isO3
-                rowGroupSize / 8, // fuzzRowCount — small relative to RG size
-                1,              // transactionCount
-                20,             // strLen
-                10,             // symbolStrLenMax
-                20,             // symbolCountMax
-                initialRowCount,
-                1,              // partitionCount
-                -1,             // parallelWalCount (unused)
-                0               // ioFailureCount
-        );
-
-        assertMemoryLeak(() -> {
-            String walTable = getTestName();
-            fuzzer.createInitialTableWal(walTable, initialRowCount);
-            drainWalQueue();
-
-            String oracleTable = walTable + "_oracle";
-            fuzzer.createInitialTableNonWal(oracleTable, null);
-
-            // Insert rows into the next day so that 2022-02-24 is no longer
-            // the active (last) partition and can be converted to Parquet.
-            execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
-            execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
-            drainWalQueue();
-
-            final long partitionTs;
-            StringSink partName = new StringSink();
-            try (TableReader reader = engine.getReader(walTable)) {
-                Assert.assertTrue("expected at least 2 partitions", reader.getPartitionCount() >= 2);
-                partitionTs = reader.getPartitionTimestampByIndex(0);
-                PartitionBy.setSinkForPartition(
-                        partName,
-                        reader.getMetadata().getTimestampType(),
-                        reader.getPartitionedBy(),
-                        partitionTs
-                );
-            }
-            execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
-            drainWalQueue();
-
-            // Generate in-order transactions with timestamps after existing data.
-            // Initial data covers roughly [00:00, 00:00 + initialRowCount seconds].
-            // Each round uses a non-overlapping window advancing through the second
-            // half of the day, so every batch appends after the previous one.
-            long dayEnd = partitionTs + DAY_MICROS;
-            // fewer rounds on slow CI runners (Mac, Windows)
-            int rounds = Os.isLinux() ? 5 + rnd.nextInt(6) : 5 + rnd.nextInt(2);
-            long windowSize = (dayEnd - partitionTs - DAY_MICROS / 2) / rounds;
-
-            LOG.info()
-                    .$("starting in-order fuzz: initialRowCount=").$(initialRowCount)
-                    .$(", rounds=").$(rounds)
-                    .$(", rowGroupSize=").$(rowGroupSize)
-                    .$(", parquetVersion=V").$(parquetVersion)
-                    .$(", compression=").$(compressionCodec)
-                    .$(", compressionLevel=").$(compressionLevel)
-                    .$(", partitionTs=").$(partitionTs)
-                    .$();
-
-            for (int round = 0; round < rounds; round++) {
-                long start = partitionTs + DAY_MICROS / 2 + round * windowSize;
-                long end = start + windowSize;
-
-                LOG.info()
-                        .$("round ").$(round)
-                        .$(", start=").$(start)
-                        .$(", end=").$(end)
-                        .$();
-
-                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(walTable, rnd, start, end);
-                try {
-                    fuzzer.applyNonWal(transactions, oracleTable, rnd);
-                    fuzzer.applyWal(transactions, walTable, 1, rnd);
-                } finally {
-                    Misc.freeObjListAndClear(transactions);
-                }
-                drainWalQueue();
-            }
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
-            }
-
-            assertRowGroupSizes(walTable, rowGroupSize, true);
-            assertParquetMetaInvariants(walTable);
-        });
-    }
-
-    @Test
     public void testO3MergeWithIoFailures() throws Exception {
         Rnd rnd = generateRandom(LOG);
 
@@ -835,6 +708,133 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             }
 
             assertRowGroupSizes(walTable, rowGroupSize);
+            assertParquetMetaInvariants(walTable);
+        });
+    }
+
+    @Test
+    public void testSmallInOrderAppendsProduceAtMostOneSmallRowGroup() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+
+        setFuzzProbabilities(
+                0,      // cancelRow
+                0,      // notSet
+                0,      // null
+                0,      // rollback
+                0,      // colAdd
+                0,      // colRemove
+                0,      // colRename
+                0,      // colTypeChange
+                1.0,    // dataAdd
+                0,      // equalTs
+                0,      // partitionDrop
+                0,      // truncate
+                0,      // tableDrop
+                0,      // setTtl
+                0,      // replace
+                0       // symbolAccess
+        );
+
+        int rowGroupSize = 500 + rnd.nextInt(2000);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+
+        int parquetVersion = rnd.nextBoolean() ? ParquetVersion.PARQUET_VERSION_V1 : ParquetVersion.PARQUET_VERSION_V2;
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, parquetVersion);
+
+        String compressionCodec = randomCompressionCodec(rnd);
+        int compressionLevel = randomCompressionLevel(rnd, compressionCodec);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, compressionCodec);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, compressionLevel);
+
+        int initialRowCount = 2000 + rnd.nextInt(5000);
+        // Small in-order transactions: low row count per round, no O3 within each batch.
+        // A single transaction per round avoids intra-round timestamp overlap.
+        fuzzer.setFuzzCounts(
+                false,          // isO3
+                rowGroupSize / 8, // fuzzRowCount — small relative to RG size
+                1,              // transactionCount
+                20,             // strLen
+                10,             // symbolStrLenMax
+                20,             // symbolCountMax
+                initialRowCount,
+                1,              // partitionCount
+                -1,             // parallelWalCount (unused)
+                0               // ioFailureCount
+        );
+
+        assertMemoryLeak(() -> {
+            String walTable = getTestName();
+            fuzzer.createInitialTableWal(walTable, initialRowCount);
+            drainWalQueue();
+
+            String oracleTable = walTable + "_oracle";
+            fuzzer.createInitialTableNonWal(oracleTable, null);
+
+            // Insert rows into the next day so that 2022-02-24 is no longer
+            // the active (last) partition and can be converted to Parquet.
+            execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
+            execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
+            drainWalQueue();
+
+            final long partitionTs;
+            StringSink partName = new StringSink();
+            try (TableReader reader = engine.getReader(walTable)) {
+                Assert.assertTrue("expected at least 2 partitions", reader.getPartitionCount() >= 2);
+                partitionTs = reader.getPartitionTimestampByIndex(0);
+                PartitionBy.setSinkForPartition(
+                        partName,
+                        reader.getMetadata().getTimestampType(),
+                        reader.getPartitionedBy(),
+                        partitionTs
+                );
+            }
+            execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
+            drainWalQueue();
+
+            // Generate in-order transactions with timestamps after existing data.
+            // Initial data covers roughly [00:00, 00:00 + initialRowCount seconds].
+            // Each round uses a non-overlapping window advancing through the second
+            // half of the day, so every batch appends after the previous one.
+            long dayEnd = partitionTs + DAY_MICROS;
+            // fewer rounds on slow CI runners (Mac, Windows)
+            int rounds = Os.isLinux() ? 5 + rnd.nextInt(6) : 5 + rnd.nextInt(2);
+            long windowSize = (dayEnd - partitionTs - DAY_MICROS / 2) / rounds;
+
+            LOG.info()
+                    .$("starting in-order fuzz: initialRowCount=").$(initialRowCount)
+                    .$(", rounds=").$(rounds)
+                    .$(", rowGroupSize=").$(rowGroupSize)
+                    .$(", parquetVersion=V").$(parquetVersion)
+                    .$(", compression=").$(compressionCodec)
+                    .$(", compressionLevel=").$(compressionLevel)
+                    .$(", partitionTs=").$(partitionTs)
+                    .$();
+
+            for (int round = 0; round < rounds; round++) {
+                long start = partitionTs + DAY_MICROS / 2 + round * windowSize;
+                long end = start + windowSize;
+
+                LOG.info()
+                        .$("round ").$(round)
+                        .$(", start=").$(start)
+                        .$(", end=").$(end)
+                        .$();
+
+                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(walTable, rnd, start, end);
+                try {
+                    fuzzer.applyNonWal(transactions, oracleTable, rnd);
+                    fuzzer.applyWal(transactions, walTable, 1, rnd);
+                } finally {
+                    Misc.freeObjListAndClear(transactions);
+                }
+                drainWalQueue();
+            }
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
+            }
+
+            assertRowGroupSizes(walTable, rowGroupSize, true);
             assertParquetMetaInvariants(walTable);
         });
     }

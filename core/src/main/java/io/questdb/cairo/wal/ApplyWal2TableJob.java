@@ -44,6 +44,7 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cairo.wal.seq.TableSequencerCursorPool;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -52,6 +53,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -88,17 +90,24 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
+    boolean isPooled;
+    ApplyWal2TableJob nextFree;
     private final BlockFileWriter blockFileWriter;
     private final CairoConfiguration config;
     private final CairoEngine engine;
+    private long lastAttemptSeqTxn;
+    private long lastCommittedRows;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
     private final OperationExecutor operationExecutor;
+    private final Path secondaryPath = new Path();
     private final int sharedQueryWorkerCount;
+    private final TableSequencerCursorPool tableSequencerCursorPool = new TableSequencerCursorPool();
     private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
+    private final Path tempPath = new Path();
     private final WalEventReader walEventReader;
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
@@ -106,8 +115,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     // commit's applied state diverges from its raw WAL stream (dedup / skip / non-DATA op).
     // Read once by applyOutstandingWalTransactions right after processWalCommit returns.
     private boolean lastCommitDiverged;
-    private long lastAttemptSeqTxn;
-    private long lastCommittedRows;
 
     public ApplyWal2TableJob(CairoEngine engine, int sharedQueryWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
@@ -134,24 +141,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
     @Override
     public void close() {
-        Misc.free(operationExecutor);
-        Misc.free(walEventReader);
-        Misc.free(blockFileWriter);
+        Throwable failure = null;
+        failure = Misc.freeBestEffort(failure, blockFileWriter);
+        failure = Misc.freeBestEffort(failure, operationExecutor);
+        failure = Misc.freeBestEffort(failure, secondaryPath);
+        failure = Misc.freeBestEffort(failure, tableSequencerCursorPool);
+        failure = Misc.freeBestEffort(failure, tempPath);
+        failure = Misc.freeBestEffort(failure, walEventReader);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
     public void closeInstance() {
-        // cloneInstance() mints a fresh job per generation, so the pool frees
-        // each instance's native resources through this hook at halt. Misc.free
-        // nulls the fields, keeping the call idempotent.
         close();
-    }
-
-    @Override
-    public void recycleInstance() {
-        mvRefreshTask.clear();
-        lastAttemptSeqTxn = 0L;
-        lastCommittedRows = 0L;
     }
 
     private static long calculateSkipTransactionCount(TableToken tableToken, long initialSeqTxn, WalTxnDetails walTxnDetails) {
@@ -413,7 +415,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         mvRefreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
         mvRefreshTask.baseTableToken = writer.getTableToken();
 
-        try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getAppliedSeqTxn())) {
+        try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(
+                tableToken,
+                writer.getAppliedSeqTxn(),
+                tableSequencerCursorPool
+        )) {
             TableMetadataChangeLog structuralChangeCursor = null;
             // WAL_APPLY tracker for the batch; SQL applied below inherits it. Acquired
             // after the cursor open (so that can't leak it), released in the finally.
@@ -472,7 +478,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 if (structuralChangeCursor == null || !(hasNext = structuralChangeCursor.hasNext())) {
                                     Misc.free(structuralChangeCursor);
                                     // Re-read the sequencer files to get the metadata change cursor.
-                                    structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogSlow(tableToken, newStructureVersion - 1);
+                                    structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogSlow(
+                                            tableToken,
+                                            newStructureVersion - 1,
+                                            tableSequencerCursorPool
+                                    );
                                     hasNext = structuralChangeCursor.hasNext();
                                     if (!hasNext) {
                                         // In very rare cases, when sequencer files are changed externally, we need to reload them here
@@ -480,7 +490,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         // We cannot do it in the previous call because we need to have sequencer writer lock to reload it.
                                         Misc.free(structuralChangeCursor);
                                         tableSequencerAPI.reload(tableToken);
-                                        structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogSlow(tableToken, newStructureVersion - 1);
+                                        structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogSlow(
+                                                tableToken,
+                                                newStructureVersion - 1,
+                                                tableSequencerCursorPool
+                                        );
                                         hasNext = structuralChangeCursor.hasNext();
                                     }
                                 }
@@ -682,7 +696,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             // that the table we work on is already dropped. In this case, we can ignore the exception.
             // WARNING: do not treat "table does not exist" same as "table is dropped"
             // table can be renamed, not dropped and deleting table files is not the right thing to do.
-            purgeTableFiles(tableToken, null, engine, Path.PATH.get());
+            purgeTableFiles(tableToken, null, engine, tempPath);
             return;
         }
 
@@ -797,7 +811,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         byte txnType = txnDetails.getWalTxnType(s);
                         if (txnType == MAT_VIEW_DATA) {
                             try {
-                                final Path path = Path.PATH2.get();
+                                final Path path = secondaryPath;
                                 final TableToken token = writer.getTableToken();
                                 path.of(engine.getConfiguration().getDbRoot()).concat(token);
                                 updateMatViewRefreshState(
@@ -874,7 +888,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 return 1;
             case MAT_VIEW_INVALIDATE:
                 try (WalEventReader eventReader = walEventReader) {
-                    final Path path = Path.PATH2.get();
+                    final Path path = secondaryPath;
                     final TableToken token = writer.getTableToken();
                     path.of(engine.getConfiguration().getDbRoot()).concat(token);
                     int tablePathLen = path.size();
@@ -905,7 +919,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             case VIEW_DEFINITION:
                 final TableToken viewToken = writer.getTableToken();
                 try (WalEventReader eventReader = walEventReader) {
-                    final Path path = Path.PATH2.get();
+                    final Path path = secondaryPath;
                     path.of(engine.getConfiguration().getDbRoot()).concat(viewToken);
                     path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                     final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
@@ -1106,8 +1120,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      * {@link #doRun(long, WorkerContext)} path skips live-view tokens so a global
      * pool worker never races the LV's own refresh worker.
      */
-    public void applyWalDirect(@NotNull TableToken tableToken, WorkerContext runStatus) {
+    void applyWal(@NotNull TableToken tableToken, WorkerContext runStatus) {
         applyWal(tableToken, engine, operationExecutor, runStatus);
+    }
+
+    public void applyWalDirect(@NotNull TableToken tableToken, WorkerContext runStatus) {
+        applyWal(tableToken, runStatus);
     }
 
     /**
@@ -1133,7 +1151,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             OperationExecutor operationExecutor,
             WorkerContext runStatus
     ) {
-        final Path tempPath = Path.PATH.get();
         SeqTxnTracker txnTracker = null;
         this.lastAttemptSeqTxn = -1;
         try {
@@ -1169,13 +1186,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         LOG.critical().$("unsolicited table lock [table=").$(tableToken)
                                 .$(", lockReason=").$(tableBusy.getReason())
                                 .I$();
-                        // This is abnormal termination but table is not set to suspended state.
-                        // Reset state of SeqTxnTracker so that next CheckWalTransactionJob run will send job notification if necessary.
                         engine.notifyWalTxnRepublisher(tableToken);
                     }
-                    // Do not suspend table. Perhaps writer will be unlocked with no transaction applied.
-                    // We do not suspend table because of having initial value on writerTxn. It will either be
-                    // "ignore" or last txn we applied.
                     return;
                 } catch (Throwable th) {
                     // There is some unexpected error and table will likely to be suspended.
@@ -1230,7 +1242,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return true;
         }
 
-        applyWal(tableToken, engine, operationExecutor, workerContext);
+        final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
+        try {
+            applyWal(tableToken, workerContext);
+        } finally {
+            SuspensionScope.restore(previousMode);
+        }
         return true;
     }
 

@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.async.PageFrameReduceDispatcher;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceTask;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
@@ -52,6 +53,7 @@ import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.tasks.WalTxnNotificationTask;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -141,6 +143,11 @@ public interface MessageBus extends Closeable {
 
     FanOut getPageFrameCollectFanOut(int shard);
 
+    @Nullable
+    default PageFrameReduceDispatcher getPageFrameReduceDispatcher() {
+        return null;
+    }
+
     MPSequence getPageFrameReducePubSeq(int shard);
 
     RingQueue<PageFrameReduceTask> getPageFrameReduceQueue(int shard);
@@ -184,4 +191,10 @@ public interface MessageBus extends Closeable {
     RingQueue<WalTxnNotificationTask> getWalTxnNotificationQueue();
 
     MCSequence getWalTxnNotificationSubSequence();
+
+    default void setPageFrameReduceDispatcher(@Nullable PageFrameReduceDispatcher dispatcher) {
+        if (dispatcher != null) {
+            throw new UnsupportedOperationException("page frame reduce dispatcher is not supported");
+        }
+    }
 }

@@ -52,6 +52,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
@@ -230,6 +232,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFaultToleranceBrokenConnection() throws Exception {
+        testFaultToleranceBrokenConnection("");
+    }
+
+    @Test
     public void testFaultToleranceImplicitCastException() throws Exception {
         withPool0(
                 (_, compiler, sqlExecutionContext) -> {
@@ -258,6 +265,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }
                 }, 3, 3
         );
+    }
+
+    @Test
+    public void testFaultToleranceNegativeLimitBrokenConnection() throws Exception {
+        testFaultToleranceBrokenConnection(" LIMIT -1");
     }
 
     @Test
@@ -428,6 +440,16 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }
                 }, 4, 1
         ); // sharedQueryWorkerCount < workerCount
+    }
+
+    @Test
+    public void testFunctionWithNonParallelArgumentDisablesAsyncFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s STRING, x DOUBLE)");
+            try (RecordCursorFactory factory = select("SELECT * FROM tab WHERE atan2(x, length((s)::symbol)) > -10")) {
+                assertSerialFilter(factory);
+            }
+        });
     }
 
     @Test
@@ -619,6 +641,47 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonParallelFilterFunctionDisablesAsyncFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s STRING, x DOUBLE)");
+            try (RecordCursorFactory factory = select("SELECT * FROM tab WHERE length((s)::symbol) > 0")) {
+                assertSerialFilter(factory);
+            }
+        });
+    }
+
+    @Test
+    public void testNonParallelPostJoinFilterDisablesAsyncFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (s STRING, x DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (s STRING, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (RecordCursorFactory factory = select(
+                    """
+                            SELECT t1.s, t1.ts, sum(t2.y)
+                            FROM t1
+                            WINDOW JOIN t2 ON (0 = 1)
+                            RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                            WHERE now() = now()
+                            """
+            )) {
+                Assert.assertTrue(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+            }
+            try (RecordCursorFactory factory = select(
+                    """
+                            SELECT t1.s, t1.ts, sum(t2.y)
+                            FROM t1
+                            WINDOW JOIN t2 ON (0 = 1)
+                            RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                            WHERE length((rnd_str('a', 'b'))::symbol) > 0
+                            """
+            )) {
+                Assert.assertFalse(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+                Assert.assertFalse(containsFactory(factory, AsyncJitFilteredRecordCursorFactory.class));
+            }
+        });
+    }
+
+    @Test
     public void testPageFrameSequenceJit() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
@@ -628,6 +691,20 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testPageFrameSequenceNonJit() throws Exception {
         testPageFrameSequence(SqlJitMode.JIT_MODE_DISABLED, AsyncFilteredRecordCursorFactory.class);
+    }
+
+    @Test
+    public void testParallelFilterFunctionKeepsAsyncFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s STRING, x DOUBLE)");
+            try (RecordCursorFactory factory = select("SELECT * FROM tab WHERE atan2(x, x) > -10")) {
+                Assert.assertFalse(containsFactory(factory, FilteredRecordCursorFactory.class));
+                Assert.assertTrue(
+                        containsFactory(factory, AsyncFilteredRecordCursorFactory.class)
+                                || containsFactory(factory, AsyncJitFilteredRecordCursorFactory.class)
+                );
+            }
+        });
     }
 
     @Test
@@ -692,6 +769,38 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }, wrapper
             );
         }
+    }
+
+    @Test
+    public void testPostJoinFilterCompileFailureClosesOwnerFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            TestThrowingFilterFunctionFactory.reset(3);
+            try {
+                try (
+                        SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine, 4);
+                        RecordCursorFactory ignored = engine.select(
+                                """
+                                        SELECT t1.x, t1.ts, sum(t2.y)
+                                        FROM t1
+                                        WINDOW JOIN t2 ON (0 = 1)
+                                        RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                                        WHERE test_throwing_filter()
+                                        """,
+                                context
+                        )
+                ) {
+                    Assert.fail("expected SqlException from test_throwing_filter");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "configured to throw on call 3");
+                }
+                Assert.assertEquals(3, TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get());
+                Assert.assertEquals(2, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
+            } finally {
+                TestThrowingFilterFunctionFactory.reset(-1);
+            }
+        });
     }
 
     @Test
@@ -774,6 +883,22 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         );
     }
 
+    private static void assertSerialFilter(RecordCursorFactory factory) {
+        Assert.assertTrue(containsFactory(factory, FilteredRecordCursorFactory.class));
+        Assert.assertFalse(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+        Assert.assertFalse(containsFactory(factory, AsyncJitFilteredRecordCursorFactory.class));
+    }
+
+    private static boolean containsFactory(RecordCursorFactory factory, Class<?> factoryClass) {
+        while (factory != null) {
+            if (factoryClass.isInstance(factory)) {
+                return true;
+            }
+            factory = factory.getBaseFactory();
+        }
+        return false;
+    }
+
     private static Class<?> getClass(SqlExecutionCircuitBreaker circuitBreaker) {
         if (circuitBreaker instanceof SqlExecutionCircuitBreakerWrapper) {
             return getClass(((SqlExecutionCircuitBreakerWrapper) circuitBreaker).getDelegate());
@@ -825,6 +950,48 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                 """
                 );
         resetTaskCapacities();
+    }
+
+    private void testFaultToleranceBrokenConnection(String limitClause) throws Exception {
+        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+            @Override
+            public boolean onGet(Record rec, int count) {
+                throw CairoException.queryDisconnected(-1);
+            }
+        });
+        try {
+            withPool0(
+                    (_, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                        execute(
+                                compiler,
+                                "CREATE TABLE x AS (SELECT x FROM long_sequence(4))",
+                                sqlExecutionContext
+                        );
+                        try (
+                                RecordCursorFactory factory = compiler.compile(
+                                        "SELECT * FROM x WHERE test_latched_counter()" + limitClause,
+                                        sqlExecutionContext
+                                ).getRecordCursorFactory();
+                                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                        ) {
+                            Assert.assertTrue(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+                            cursor.hasNext();
+                            Assert.fail("expected a broken-connection interruption");
+                        } catch (CairoException e) {
+                            Assert.assertEquals(
+                                    SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION,
+                                    e.getInterruptionReason()
+                            );
+                            TestUtils.assertContains(e.getFlyweightMessage(), "remote disconnected, query aborted");
+                        }
+                    },
+                    4,
+                    4
+            );
+        } finally {
+            TestLatchedCounterFunctionFactory.reset(null);
+        }
     }
 
     private void testFullQueue(String query) throws Exception {

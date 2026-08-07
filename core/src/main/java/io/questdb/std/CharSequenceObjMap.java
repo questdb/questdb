@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,13 +27,13 @@ package io.questdb.std;
 import org.jetbrains.annotations.NotNull;
 
 public interface CharSequenceObjMap<V> {
-    int size();
+    V get(@NotNull CharSequence key);
 
     V getAt(int i);
-
-    V get(@NotNull CharSequence key);
 
     boolean put(@NotNull CharSequence key, V value);
 
     int remove(@NotNull CharSequence key);
+
+    int size();
 }

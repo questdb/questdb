@@ -100,6 +100,20 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testCloseReportsHaltRefusalAndCanRetry() {
+        try (LogFactory factory = new LogFactory()) {
+            factory.setHaltRefusedForTesting(true);
+            final IllegalStateException exception = Assert.assertThrows(IllegalStateException.class, factory::close);
+            TestUtils.assertContains(exception.getMessage(), "logging worker pool did not halt");
+            Assert.assertFalse(factory.isClosed());
+
+            factory.setHaltRefusedForTesting(false);
+            factory.close();
+            Assert.assertTrue(factory.isClosed());
+        }
+    }
+
+    @Test
     public void testDefaultLevel() {
         try (LogFactory factory = new LogFactory()) {
             factory.add(new LogWriterConfig(LogLevel.ALL, LogConsoleWriter::new));

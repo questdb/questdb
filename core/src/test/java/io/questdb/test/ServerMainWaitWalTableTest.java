@@ -85,7 +85,7 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
                 PropertyKey.SHARED_WORKER_COUNT + "=1",
                 PropertyKey.PG_WORKER_COUNT + "=1",
                 // Tighter than the 1s production default: tests that rely on a
-                // wake-cycle to observe timeout/cancel/dropped should not stretch
+                // wake-cycle to observe timeout/disconnect should not stretch
                 // out to a full second per cycle.
                 PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL + "=100"
         ));
@@ -107,12 +107,11 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
             //   - multi-waiter notifyOnDrop terminal: K helpers parked, then DROP;
             //   - multi-waiter setSuspended terminal: K helpers parked, then suspend.
             // Background drainer + inserter threads keep the shared tracker hot, so
-            // concurrent fireWaiters vs registerWaiter races and the
-            // ContinuationQueue MPMC drain path are exercised throughout. The shard
+            // concurrent fireWaiters vs registerWaiter races and the fiber
+            // run queue are exercised throughout. The shard
             // count is set to >= 2 so register() distribution and concurrent timer
             // threads contend on different shards; the worker count is >= 2 so two
-            // parked waits can each be on a different carrier and concurrent
-            // scheduleResume traffic on the origin pools' resume queues is exercised.
+            // parked waits can each be on a different carrier.
             // The two terminal scenarios are the explicit gap closures: until now,
             // notifyOnDrop / setSuspended were only validated with a single waiter.
             Rnd rnd = TestUtils.generateRandom(LOG);
@@ -945,8 +944,7 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
     }
 
     private static void runCancelledWaitFuzz(Rnd tr, AtomicInteger counter) throws Exception {
-        // stmt.cancel mid-park: the breaker tripper observes the cancel on the
-        // next wake-recheck and the parked body throws.
+        // stmt.cancel mid-park directly fires the cancellation wait registration.
         try (
                 Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                 Statement stmt = conn.createStatement()

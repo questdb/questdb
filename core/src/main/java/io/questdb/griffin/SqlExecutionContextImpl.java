@@ -44,6 +44,9 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.mp.continuation.CancellationBinding;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -158,6 +161,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public synchronized void clearCancelledFlag(AtomicBoolean expected) {
+        circuitBreaker.clearCancelledFlag(expected);
+        simpleCircuitBreaker.clearCancelledFlag(expected);
+    }
+
+    @Override
+    public synchronized void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        circuitBreaker.clearCancelledFlag(expected, expectedGeneration);
+        simpleCircuitBreaker.clearCancelledFlag(expected, expectedGeneration);
+    }
+
+    @Override
     public void clearWindowContext() {
         windowContext.clear();
     }
@@ -226,6 +241,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void containsSecret(boolean containsSecret) {
         this.containsSecret = containsSecret;
+    }
+
+    @Override
+    public Rnd getAsyncRandom() {
+        if (SuspensionScope.getMode() == SuspensionScope.Mode.FIBER) {
+            final Fiber fiber = Fiber.current();
+            if (fiber == null || !Fiber.isMounted()) {
+                throw new IllegalStateException("fiber async random requires a mounted fiber");
+            }
+            return fiber.getAsyncRandom(nanoClock, microClock);
+        }
+        return SharedRandom.getAsyncRandom(cairoConfiguration);
     }
 
     @Override
@@ -321,7 +348,17 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public Rnd getRandom() {
-        return random != null ? random : SharedRandom.getRandom(cairoConfiguration);
+        if (random != null) {
+            return random;
+        }
+        if (SuspensionScope.getMode() == SuspensionScope.Mode.FIBER) {
+            final Fiber fiber = Fiber.current();
+            if (fiber == null || !Fiber.isMounted()) {
+                throw new IllegalStateException("fiber random requires a mounted fiber");
+            }
+            return fiber.getRandom(nanoClock, microClock);
+        }
+        return SharedRandom.getRandom(cairoConfiguration);
     }
 
     @Override
@@ -345,7 +382,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
+    public @NotNull SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
         return simpleCircuitBreaker;
     }
 
@@ -487,6 +524,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public synchronized void restoreCancelledFlag(AtomicBoolean expected, CancellationBinding previous) {
+        if (circuitBreaker.getCancelledFlag() == expected) {
+            circuitBreaker.setCancelledFlag(previous);
+        }
+        if (simpleCircuitBreaker.getCancelledFlag() == expected) {
+            simpleCircuitBreaker.setCancelledFlag(previous);
+        }
+    }
+
+    @Override
     public void restoreToDefaultPageFrameSizes() {
         this.pageFrameMinRows = defaultPageFrameMinRows;
         this.pageFrameMaxRows = defaultPageFrameMaxRows;
@@ -503,9 +550,21 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelled) {
+    public synchronized void setCancelledFlag(AtomicBoolean cancelled) {
         circuitBreaker.setCancelledFlag(cancelled);
         simpleCircuitBreaker.setCancelledFlag(cancelled);
+    }
+
+    @Override
+    public synchronized void setCancelledFlag(CancellationBinding source) {
+        circuitBreaker.setCancelledFlag(source);
+        simpleCircuitBreaker.setCancelledFlag(source);
+    }
+
+    @Override
+    public synchronized void setCancelledFlag(AtomicBoolean cancelled, long generation) {
+        circuitBreaker.setCancelledFlag(cancelled, generation);
+        simpleCircuitBreaker.setCancelledFlag(cancelled, generation);
     }
 
     @Override

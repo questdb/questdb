@@ -33,6 +33,28 @@ import org.junit.Test;
 public class Atan2DoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
+    public void testArgumentsAreClosed() throws Exception {
+        assertQuery("SELECT count(*) cnt FROM tab WHERE atan2(length((s)::symbol), 1.0) >= 0.0")
+                .ddl("CREATE TABLE tab AS (SELECT rnd_symbol('a','bb','ccc') s FROM long_sequence(100))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("cnt\n100\n");
+    }
+
+    @Test
+    public void testArgumentsReceiveInit() throws Exception {
+        // rnd_double() only assigns its Rnd in init(); without the BinaryFunction cascade this NPEs.
+        // atan2(y, 1.0) with y in [0, 1) is in [0, PI/4], so the count is deterministic.
+        assertQuery("""
+                SELECT count(*) cnt FROM (
+                  SELECT atan2(rnd_double(), 1.0) v FROM long_sequence(100)
+                ) WHERE v >= 0.0 AND v <= 0.7853981634""")
+                .noRandomAccess()
+                .expectSize()
+                .returns("cnt\n100\n");
+    }
+
+    @Test
     public void testNaN() throws SqlException {
         call(Double.NaN, Double.NaN).andAssert(Double.NaN, DELTA);
     }

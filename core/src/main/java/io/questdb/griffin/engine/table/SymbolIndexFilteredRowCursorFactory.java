@@ -95,4 +95,3 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
         sink.attr("filter").putBaseColumnName(columnIndex).val('=').val(cursor.getSymbolKey()).val(" and ").val(cursor.getFilter());
     }
 }
-

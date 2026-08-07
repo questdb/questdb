@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.mp.continuation.CancellationBinding;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -35,9 +36,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * and only allows cancelling statement via CANCEL QUERY command.
  */
 public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
+    @Deprecated
+    protected volatile AtomicBoolean cancelledFlag = new AtomicBoolean(false);
+    private final CancellationBinding cancellationBinding;
     private final CairoEngine engine;
     private final int throttle;
-    protected volatile AtomicBoolean cancelledFlag = new AtomicBoolean(false);
     private long fd = -1;
     private int testCount = 0;
 
@@ -46,16 +49,30 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     public AtomicBooleanCircuitBreaker(CairoEngine engine, int throttle) {
+        this.cancellationBinding = new CancellationBinding(cancelledFlag);
         this.engine = engine;
         this.throttle = throttle;
     }
 
-    public void cancel() {
-        // This call can be concurrent with the call to setCancelledFlag
-        AtomicBoolean cf = cancelledFlag;
-        if (cf != null) {
-            cf.set(true);
-        }
+    public synchronized void cancel() {
+        cancellationBinding.cancel();
+    }
+
+    @Override
+    public synchronized void clearCancelledFlag(AtomicBoolean expected) {
+        cancellationBinding.clear(expected);
+        cancelledFlag = cancellationBinding.getFlag();
+    }
+
+    @Override
+    public synchronized void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        cancellationBinding.clear(expected, expectedGeneration);
+        cancelledFlag = cancellationBinding.getFlag();
+    }
+
+    @Override
+    public void copyCancelledFlagTo(CancellationBinding target) {
+        cancellationBinding.copyTo(target);
     }
 
     @Override
@@ -75,7 +92,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
 
     @Override
     public AtomicBoolean getCancelledFlag() {
-        return cancelledFlag;
+        return cancellationBinding.getFlag();
     }
 
     @Override
@@ -113,10 +130,8 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
         return true;
     }
 
-    public void reset() {
-        if (cancelledFlag != null) {
-            cancelledFlag.set(false);
-        }
+    public synchronized void reset() {
+        cancellationBinding.reset();
     }
 
     @Override
@@ -127,7 +142,20 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+    public synchronized void setCancelledFlag(AtomicBoolean cancelledFlag) {
+        cancellationBinding.set(cancelledFlag);
+        this.cancelledFlag = cancelledFlag;
+    }
+
+    @Override
+    public synchronized void setCancelledFlag(CancellationBinding source) {
+        source.copyTo(cancellationBinding);
+        cancelledFlag = cancellationBinding.getFlag();
+    }
+
+    @Override
+    public synchronized void setCancelledFlag(AtomicBoolean cancelledFlag, long generation) {
+        cancellationBinding.set(cancelledFlag, generation);
         this.cancelledFlag = cancelledFlag;
     }
 
@@ -160,6 +188,6 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     private boolean isCancelled() {
-        return cancelledFlag == null || cancelledFlag.get() || engine.isClosing();
+        return cancellationBinding.isCancelledOrUnbound() || engine.isClosing();
     }
 }

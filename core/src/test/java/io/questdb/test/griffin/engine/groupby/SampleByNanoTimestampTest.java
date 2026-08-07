@@ -56,6 +56,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
@@ -15144,7 +15145,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         final int threadCount = 4;
         final int workerCount = 2;
 
-        try (WorkerPool pool = new WorkerPool(() -> workerCount)) {
+        try (WorkerPool pool = new TestWorkerPool(workerCount)) {
             assertMemoryLeak(() -> TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {

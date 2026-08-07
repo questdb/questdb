@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
@@ -142,6 +143,21 @@ public class PGConfigurationWrapper implements PGConfiguration {
     @Override
     public FactoryProvider getFactoryProvider() {
         return getDelegate().getFactoryProvider();
+    }
+
+    @Override
+    public int getFiberMaxLiveCount() {
+        return getDelegate().getFiberMaxLiveCount();
+    }
+
+    @Override
+    public int getFiberMountBudget() {
+        return getDelegate().getFiberMountBudget();
+    }
+
+    @Override
+    public int getFiberRetainedCount() {
+        return getDelegate().getFiberRetainedCount();
     }
 
     @Override
@@ -335,6 +351,11 @@ public class PGConfigurationWrapper implements PGConfiguration {
     }
 
     @Override
+    public WorkerPoolMode getWorkerPoolMode() {
+        return getDelegate().getWorkerPoolMode();
+    }
+
+    @Override
     public long getYieldThreshold() {
         return getDelegate().getYieldThreshold();
     }
@@ -352,6 +373,11 @@ public class PGConfigurationWrapper implements PGConfiguration {
     @Override
     public boolean isEnabled() {
         return getDelegate().isEnabled();
+    }
+
+    @Override
+    public boolean isFiberEnabled() {
+        return getDelegate().isFiberEnabled();
     }
 
     @Override
