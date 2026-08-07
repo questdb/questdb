@@ -617,7 +617,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void putDecimal256(long offset, long hh, long hl, long lh, long ll) {
         if (roOffsetLo < offset && offset < roOffsetHi - Decimal256.BYTES) {
-            Decimal256.put(hh, hl, lh, ll, appendPointer + offset);
+            Decimal256.put(hh, hl, lh, ll, absolutePointer + offset);
         } else {
             putLong(offset, hh);
             putLong(offset + Long.BYTES, hl);

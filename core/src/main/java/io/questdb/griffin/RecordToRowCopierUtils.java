@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -539,6 +540,8 @@ public class RecordToRowCopierUtils {
         int wPutVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
         int wPutArray = asm.poolInterfaceMethod(TableWriter.Row.class, "putArray", "(ILio/questdb/cairo/arr/ArrayView;)V");
         int wPutDecimalStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putDecimalStr", "(ILjava/lang/CharSequence;)V");
+        int wPutDecimalChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putDecimalChar", "(IC)V");
+        int wPutDecimalVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putDecimalVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
 
         int implicitCastCharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastCharAsByte", "(CI)B");
         int implicitCastCharAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastCharAsGeoHash", "(CI)B");
@@ -1175,6 +1178,14 @@ public class RecordToRowCopierUtils {
                                 asm.invokeStatic(implicitCastCharAsGeoHash);
                                 asm.invokeInterface(wPutByte, 2);
                                 break;
+                            case ColumnType.DECIMAL8:
+                            case ColumnType.DECIMAL16:
+                            case ColumnType.DECIMAL32:
+                            case ColumnType.DECIMAL64:
+                            case ColumnType.DECIMAL128:
+                            case ColumnType.DECIMAL256:
+                                asm.invokeInterface(wPutDecimalChar, 2);
+                                break;
                             default:
                                 assert false;
                                 break;
@@ -1375,6 +1386,15 @@ public class RecordToRowCopierUtils {
                             case ColumnType.LONG256:
                                 asm.invokeInterface(rGetVarchar);
                                 asm.invokeInterface(wPutLong256Utf8, 2);
+                                break;
+                            case ColumnType.DECIMAL8:
+                            case ColumnType.DECIMAL16:
+                            case ColumnType.DECIMAL32:
+                            case ColumnType.DECIMAL64:
+                            case ColumnType.DECIMAL128:
+                            case ColumnType.DECIMAL256:
+                                asm.invokeInterface(rGetVarchar);
+                                asm.invokeInterface(wPutDecimalVarchar, 2);
                                 break;
                             default:
                                 assert false;
@@ -1683,6 +1703,8 @@ public class RecordToRowCopierUtils {
         int wPutVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
         int wPutArray = asm.poolInterfaceMethod(TableWriter.Row.class, "putArray", "(ILio/questdb/cairo/arr/ArrayView;)V");
         int wPutDecimalStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putDecimalStr", "(ILjava/lang/CharSequence;)V");
+        int wPutDecimalChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putDecimalChar", "(IC)V");
+        int wPutDecimalVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putDecimalVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
 
         int implicitCastCharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastCharAsByte", "(CI)B");
         int implicitCastCharAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastCharAsGeoHash", "(CI)B");
@@ -2357,6 +2379,14 @@ public class RecordToRowCopierUtils {
                             asm.invokeStatic(implicitCastCharAsGeoHash);
                             asm.invokeInterface(wPutByte, 2);
                             break;
+                        case ColumnType.DECIMAL8:
+                        case ColumnType.DECIMAL16:
+                        case ColumnType.DECIMAL32:
+                        case ColumnType.DECIMAL64:
+                        case ColumnType.DECIMAL128:
+                        case ColumnType.DECIMAL256:
+                            asm.invokeInterface(wPutDecimalChar, 2);
+                            break;
                         default:
                             assert false;
                             break;
@@ -2465,6 +2495,15 @@ public class RecordToRowCopierUtils {
                         case ColumnType.LONG256:
                             asm.invokeInterface(rGetVarchar);
                             asm.invokeInterface(wPutLong256Utf8, 2);
+                            break;
+                        case ColumnType.DECIMAL8:
+                        case ColumnType.DECIMAL16:
+                        case ColumnType.DECIMAL32:
+                        case ColumnType.DECIMAL64:
+                        case ColumnType.DECIMAL128:
+                        case ColumnType.DECIMAL256:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeInterface(wPutDecimalVarchar, 2);
                             break;
                         default:
                             assert false;
@@ -2917,6 +2956,9 @@ public class RecordToRowCopierUtils {
             case ColumnType.DECIMAL256:
                 row.putDecimal256(col, decimal256.getHh(), decimal256.getHl(), decimal256.getLh(), decimal256.getLl());
                 break;
+            default:
+                throw CairoException.nonCritical()
+                        .put("cannot store decimal into column type: ").put(ColumnType.nameOf(toType));
         }
     }
 

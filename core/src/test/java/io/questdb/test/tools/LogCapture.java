@@ -72,8 +72,8 @@ public class LogCapture {
         while (sink.indexOf(value) == -1 && (System.currentTimeMillis() - start) < maxWait) {
             Os.sleep(1);
         }
-        if ((System.currentTimeMillis() - start) > maxWait) {
-            throw new AssertionError("timed out waiting for log to populate");
+        if (sink.indexOf(value) == -1) {
+            throw new AssertionError("timed out waiting for log to contain: " + value);
         }
     }
 
@@ -85,8 +85,8 @@ public class LogCapture {
             Os.sleep(1);
             m.reset(sink);
         }
-        if ((System.currentTimeMillis() - start) > maxWait) {
-            throw new AssertionError("timed out waiting for log to populate");
+        if (!m.reset(sink).find()) {
+            throw new AssertionError("timed out waiting for log to match: " + regex);
         }
     }
 

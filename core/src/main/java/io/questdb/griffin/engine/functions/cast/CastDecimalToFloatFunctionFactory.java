@@ -38,9 +38,19 @@ import io.questdb.std.Decimal64;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.StringSink;
 
 public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
+    // 10^22 is the largest power of ten a double holds exactly.
+    private static final int MAX_EXACT_SCALE = 22;
+    // a double carries 53 significand bits
+    private static final long MAX_EXACT_UNSCALED = 1L << 53;
+    private static final double[] POW10 = {
+            1E0, 1E1, 1E2, 1E3, 1E4, 1E5, 1E6, 1E7, 1E8, 1E9, 1E10, 1E11,
+            1E12, 1E13, 1E14, 1E15, 1E16, 1E17, 1E18, 1E19, 1E20, 1E21, 1E22
+    };
+
     @Override
     public String getSignature() {
         return "cast(Ξf)";
@@ -63,6 +73,86 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
         };
     }
 
+    static float toFloat(StringSink sink, Decimal128 value, int scale, int precision) {
+        final long high = value.getHigh();
+        final long low = value.getLow();
+        if (isExact(low, scale) && high == (low >> 63)) {
+            final double quotient = (double) low / POW10[scale];
+            if (isRoundedOnce(quotient)) {
+                return (float) quotient;
+            }
+        }
+        sink.clear();
+        Decimal128.toSink(sink, high, low, scale, precision);
+        return toFloat(sink);
+    }
+
+    static float toFloat(StringSink sink, Decimal256 value, int scale, int precision) {
+        final long hh = value.getHh();
+        final long hl = value.getHl();
+        final long lh = value.getLh();
+        final long ll = value.getLl();
+        final long signExtension = ll >> 63;
+        if (isExact(ll, scale) && hh == signExtension && hl == signExtension && lh == signExtension) {
+            final double quotient = (double) ll / POW10[scale];
+            if (isRoundedOnce(quotient)) {
+                return (float) quotient;
+            }
+        }
+        sink.clear();
+        Decimal256.toSink(sink, hh, hl, lh, ll, scale, precision);
+        return toFloat(sink);
+    }
+
+    static float toFloat(StringSink sink, long value, int scale, int precision) {
+        if (isExact(value, scale)) {
+            final double quotient = (double) value / POW10[scale];
+            if (isRoundedOnce(quotient)) {
+                return (float) quotient;
+            }
+        }
+        sink.clear();
+        Decimal64.toSink(sink, value, scale, precision);
+        return toFloat(sink);
+    }
+
+    /**
+     * When the unscaled value and 10^scale are both exact doubles the division is correctly
+     * rounded, so it can stand in for parsing the decimal text.
+     */
+    private static boolean isExact(long unscaled, int scale) {
+        return scale <= MAX_EXACT_SCALE && unscaled >= -MAX_EXACT_UNSCALED && unscaled <= MAX_EXACT_UNSCALED;
+    }
+
+    /**
+     * Narrowing the quotient to a float rounds a second time. That only disagrees with rounding
+     * the exact value once when the quotient lands on a float midpoint, where ties-to-even can
+     * pick the wrong neighbour; a midpoint carries the half-ulp bit and no bit below it.
+     */
+    private static boolean isRoundedOnce(double quotient) {
+        return (Double.doubleToRawLongBits(quotient) & 0x1FFFFFFFL) != 0x10000000L;
+    }
+
+    /**
+     * Rounds the decimal text to a float in a single step. Out of the float range yields NULL,
+     * same as cast(double as float). Everything above Float.MAX_VALUE rounds either to it or to
+     * infinity, so only that one magnitude needs the double to settle which side of the range it is.
+     */
+    private static float toFloat(StringSink sink) {
+        // rejectOverflow=false keeps overflow and underflow out of the exception path
+        final float f = FastFloatParser.parseFloat(sink, false);
+        if (Float.isInfinite(f)) {
+            return Float.NaN;
+        }
+        if (f == Float.MAX_VALUE || f == -Float.MAX_VALUE) {
+            final double magnitude = Numbers.parseDouble(sink);
+            if (magnitude > Float.MAX_VALUE || magnitude < -Float.MAX_VALUE) {
+                return Float.NaN;
+            }
+        }
+        return f;
+    }
+
     private static class Func extends AbstractCastToFloatFunction {
         private final Decimal256 decimal256 = new Decimal256();
         private final int fromPrecision;
@@ -76,22 +166,13 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             fromPrecision = ColumnType.getDecimalPrecision(type);
         }
 
+        @Override
         public float getFloat(Record rec) {
             arg.getDecimal256(rec, decimal256);
             if (decimal256.isNull()) {
                 return Float.NaN;
             }
-            sink.clear();
-            Decimal256.toSink(
-                    sink,
-                    decimal256.getHh(),
-                    decimal256.getHl(),
-                    decimal256.getLh(),
-                    decimal256.getLl(),
-                    fromScale,
-                    fromPrecision
-            );
-            return Numbers.parseFloat(sink);
+            return toFloat(sink, decimal256, fromScale, fromPrecision);
         }
 
         @Override
@@ -113,14 +194,13 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             this.fromPrecision = ColumnType.getDecimalPrecision(type);
         }
 
+        @Override
         public float getFloat(Record rec) {
             arg.getDecimal128(rec, decimal128);
             if (decimal128.isNull()) {
                 return Float.NaN;
             }
-            sink.clear();
-            Decimal128.toSink(sink, decimal128.getHigh(), decimal128.getLow(), fromScale, fromPrecision);
-            return Numbers.parseFloat(sink);
+            return toFloat(sink, decimal128, fromScale, fromPrecision);
         }
 
         @Override
@@ -141,14 +221,13 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             this.fromScale = ColumnType.getDecimalScale(type);
         }
 
+        @Override
         public float getFloat(Record rec) {
             long v = arg.getDecimal64(rec);
             if (Decimal64.isNull(v)) {
                 return Float.NaN;
             }
-            sink.clear();
-            Decimal64.toSink(sink, v, fromScale, fromPrecision);
-            return Numbers.parseFloat(sink);
+            return toFloat(sink, v, fromScale, fromPrecision);
         }
 
         @Override
