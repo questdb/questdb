@@ -616,10 +616,6 @@ public class ServerMain implements Closeable {
             }
         };
 
-        // make sure view definitions are loaded before the view compiler job is started,
-        // all views have to be loaded with their dependencies before the compiler starts processing notifications
-        engine.buildViewGraphs();
-
         setupDedicatedPools(log, isReadOnly, config);
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
@@ -954,6 +950,12 @@ public class ServerMain implements Closeable {
                 ServerMain.this.engine.completeInit();
             }
             ServerMain.this.engine.load();
+            // Load view definitions before publishing READY: load() mints a fresh, empty
+            // ViewStateStore, and every component that keys off engine READY -- the hydration
+            // envelope's compileAllViews and hydrateRecentWriteTracker among them -- walks the
+            // table name registry, which already carries the view tokens. Leaving the graph
+            // empty past this point makes those walks report every view as missing.
+            ServerMain.this.engine.buildViewGraphs();
             ctx.publish(State.READY);
         }
 
