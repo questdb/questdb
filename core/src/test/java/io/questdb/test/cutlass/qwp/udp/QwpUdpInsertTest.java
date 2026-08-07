@@ -1732,6 +1732,87 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUdpRenameAndRecreateSalvagesBufferedRows() throws Exception {
+        // Companion to testUdpRenameAndRecreateRoutesRowsToNewTable that PINS
+        // the salvage premise: v=1 is still buffered (uncommitted) when the
+        // rename+recreate lands, so the eviction on the next lookup must
+        // salvage it into the renamed table rather than discard it.
+        //
+        // LOW_COMMIT_RATE_CONF does not work here: its getMaxUncommittedDatagrams()
+        // = 1 force-commits after every datagram that leaves rows buffered, so
+        // v=1 is already committed and WAL-applied before the rename and the
+        // premise assertion below fails with count=1 (confirmed experimentally).
+        // This local config disables both commit triggers -- a nearly-infinite
+        // commit interval and an effectively unbounded uncommitted-datagram
+        // count -- so v=1 provably stays buffered until the receiver closes.
+        QwpUdpReceiverConfiguration bufferedConf = new DefaultQwpUdpReceiverConfiguration() {
+            @Override
+            public long getCommitInterval() {
+                return Long.MAX_VALUE / 4;
+            }
+
+            @Override
+            public int getMaxUncommittedDatagrams() {
+                return Integer.MAX_VALUE;
+            }
+
+            @Override
+            public int getPort() {
+                return PORT;
+            }
+
+            @Override
+            public boolean isOwnThread() {
+                return false;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(bufferedConf, engine)) {
+                execute("CREATE TABLE sal_udp (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("sal_udp").longColumn("v", 1).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                // Pin the premise: nothing is committed yet -- v=1 is buffered in
+                // the cached writer. If this fails, the receiver config commits
+                // too eagerly and the salvage path is not being exercised.
+                assertQuery("SELECT count() FROM sal_udp")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n0\n");
+
+                execute("RENAME TABLE sal_udp TO sal_udp_old");
+                execute("CREATE TABLE sal_udp (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+                drainWalQueue();
+
+                // The next datagram's lookup finds the entry stale (old name
+                // re-used), salvages v=1 into sal_udp_old and rebuilds against
+                // the new sal_udp.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("sal_udp").longColumn("v", 2).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+            // Receiver close commits v=2 best-effort; drain and assert the split.
+            drainWalQueue();
+            assertQuery("SELECT v FROM sal_udp_old")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n1\n");
+            assertQuery("SELECT v FROM sal_udp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n2\n");
+        });
+    }
+
+    @Test
     public void testUdpStaleTableWithBufferedRowsDropsDatagramAndHeals() throws Exception {
         // M4: end-to-end through processDatagram. A datagram buffers rows for a
         // table that is then DROPped WITHOUT a commit, so the cached TUD still
