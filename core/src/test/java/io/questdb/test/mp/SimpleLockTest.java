@@ -269,11 +269,13 @@ public class SimpleLockTest {
     @Test
     public void testTryLockWhileInterrupted() throws Exception {
         final SimpleWaitingLock lock = new SimpleWaitingLock();
+        final long timeoutMillis = 500;
         Assert.assertTrue(lock.tryLock());
         try {
             TestUtils.assertInterruptedWaitTimesOutWithoutSpin(
                     "SimpleWaitingLock tryLock",
-                    () -> lock.tryLock(500, TimeUnit.MILLISECONDS),
+                    TimeUnit.MILLISECONDS.toNanos(timeoutMillis),
+                    () -> lock.tryLock(timeoutMillis, TimeUnit.MILLISECONDS),
                     () -> lock.tryLock(30, TimeUnit.SECONDS),
                     lock::unlock
             );

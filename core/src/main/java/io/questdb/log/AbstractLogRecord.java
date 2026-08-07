@@ -182,7 +182,15 @@ abstract class AbstractLogRecord implements Log {
         if (logError == null) {
             return rec;
         }
-        logError.printStackTrace(System.out);
+        try {
+            logError.printStackTrace(System.out);
+        } catch (Throwable th) {
+            // The producer reserved this cursor before reporting the abandoned
+            // record. Publish the empty slot so consumers can keep advancing.
+            rec.isLogRecordInProgress = false;
+            seq.done(cursor);
+            throw th;
+        }
         if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
             seq.done(cursor);
             throw logError;

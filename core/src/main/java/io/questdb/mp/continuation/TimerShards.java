@@ -75,6 +75,7 @@ public final class TimerShards {
     private final DelayHeap<DelayedFireable>[] shards;
     private final String threadNamePrefix;
     private final Thread[] threads;
+    private volatile boolean hasTimedOutThread;
     private volatile boolean running;
 
     @SuppressWarnings("unchecked")
@@ -189,6 +190,7 @@ public final class TimerShards {
         if (running) {
             return;
         }
+        hasTimedOutThread = false;
         running = true;
         for (int i = 0; i < shards.length; i++) {
             final DelayHeap<DelayedFireable> shard = shards[i];
@@ -199,9 +201,23 @@ public final class TimerShards {
         }
     }
 
-    private void joinThreadsQuietly() {
+    private synchronized void joinThreadsQuietly() {
         boolean isInterrupted = Thread.interrupted();
         try {
+            if (hasTimedOutThread) {
+                hasTimedOutThread = false;
+                for (int i = 0; i < threads.length; i++) {
+                    final Thread t = threads[i];
+                    if (t != null) {
+                        if (t.isAlive()) {
+                            hasTimedOutThread = true;
+                        } else {
+                            threads[i] = null;
+                        }
+                    }
+                }
+                return;
+            }
             for (int i = 0; i < threads.length; i++) {
                 Thread t = threads[i];
                 if (t == null) {
@@ -219,7 +235,9 @@ public final class TimerShards {
                         isInterrupted = true;
                     }
                 }
-                if (!t.isAlive()) {
+                if (t.isAlive()) {
+                    hasTimedOutThread = true;
+                } else {
                     threads[i] = null;
                 }
             }

@@ -218,6 +218,9 @@ final class AsyncLogRecord implements LogRecord {
 
     @Override
     public void $() {
+        if (!isLogRecordInProgress) {
+            return;
+        }
         try {
             sink.putEOL();
             if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
@@ -338,6 +341,13 @@ final class AsyncLogRecord implements LogRecord {
     public LogRecord $uuid(long lo, long hi) {
         Numbers.appendUuid(lo, hi, this);
         return this;
+    }
+
+    @Override
+    public void I$() {
+        if (isLogRecordInProgress) {
+            $(']').$();
+        }
     }
 
     @Override

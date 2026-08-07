@@ -70,26 +70,24 @@ public class SOCountDownLatch implements CountDownLatchSPI {
         if (getCount() == 0) {
             return true;
         }
+        if (nanos <= 0) {
+            return getCount() == 0;
+        }
 
+        final long deadline = System.nanoTime() + nanos;
         boolean isInterrupted = false;
+        long remainingNanos = nanos;
         try {
-            while (true) {
-                long start = System.nanoTime();
-                LockSupport.parkNanos(nanos);
+            while (remainingNanos > 0) {
+                LockSupport.parkNanos(remainingNanos);
                 // Consume interrupts so the next park can block; restore the flag on exit.
                 isInterrupted |= Thread.interrupted();
-                long elapsed = System.nanoTime() - start;
-
-                if (elapsed < nanos) {
-                    if (getCount() == 0) {
-                        return true;
-                    } else {
-                        nanos -= elapsed;
-                    }
-                } else {
-                    return getCount() == 0;
+                if (getCount() == 0) {
+                    return true;
                 }
+                remainingNanos = deadline - System.nanoTime();
             }
+            return getCount() == 0;
         } finally {
             if (isInterrupted) {
                 Thread.currentThread().interrupt();

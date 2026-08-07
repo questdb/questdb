@@ -66,9 +66,11 @@ public class SOCountDownLatchTest {
     @Test
     public void testAwaitTimeoutWhileInterrupted() throws Exception {
         final SOCountDownLatch latch = new SOCountDownLatch(1);
+        final long timeoutNanos = TimeUnit.MILLISECONDS.toNanos(500);
         TestUtils.assertInterruptedWaitTimesOutWithoutSpin(
                 "SOCountDownLatch await",
-                () -> latch.await(TimeUnit.MILLISECONDS.toNanos(500)),
+                timeoutNanos,
+                () -> latch.await(timeoutNanos),
                 () -> latch.await(TimeUnit.SECONDS.toNanos(30)),
                 latch::countDown
         );

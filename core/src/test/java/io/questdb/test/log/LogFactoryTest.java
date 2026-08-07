@@ -75,6 +75,7 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
@@ -114,6 +115,7 @@ public class LogFactoryTest {
         ) + File.pathSeparator + Paths.get(
                 LogFactory.class.getProtectionDomain().getCodeSource().getLocation().toURI()
         );
+        final File outputFile = temp.newFile("production-mode-log-record-main.out");
         final Process process = new ProcessBuilder(
                 javaExecutable.getAbsolutePath(),
                 "--enable-native-access=ALL-UNNAMED",
@@ -121,14 +123,24 @@ public class LogFactoryTest {
                 "-cp",
                 classPath,
                 ProductionModeLogRecordMain.class.getName()
-        ).redirectErrorStream(true).start();
-        if (!process.waitFor(15, TimeUnit.SECONDS)) {
-            process.destroyForcibly();
-            process.waitFor();
-            Assert.fail("production-mode log regression process timed out");
+        ).redirectErrorStream(true).redirectOutput(outputFile).start();
+        try {
+            process.getOutputStream().close();
+            if (!process.waitFor(15, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                process.waitFor();
+                Assert.fail(
+                        "production-mode log regression process timed out:\n"
+                                + java.nio.file.Files.readString(outputFile.toPath(), StandardCharsets.UTF_8)
+                );
+            }
+            final String output = java.nio.file.Files.readString(outputFile.toPath(), StandardCharsets.UTF_8);
+            Assert.assertEquals(output, 0, process.exitValue());
+        } finally {
+            if (process.isAlive()) {
+                process.destroyForcibly().onExit().join();
+            }
         }
-        final String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        Assert.assertEquals(output, 0, process.exitValue());
     }
 
     @Test
@@ -434,6 +446,70 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testLogSequenceIsReleasedWhenAbandonedErrorPrintingThrows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
+            try (LogFactory factory = new LogFactory()) {
+                factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
+                    consumerSequence.set(seq);
+                    return new LogWriter() {
+                        @Override
+                        public void bindProperties(LogFactory factory) {
+                        }
+
+                        @Override
+                        public boolean run(@NotNull WorkerContext workerContext) {
+                            return false;
+                        }
+                    };
+                }));
+                factory.bind();
+
+                final Log logger = factory.create("x");
+                final LogRecord record = logger.info();
+                record.$("abandoned");
+
+                final Class<?> recordClass = record.getClass();
+                final Field abandonedErrorField = recordClass.getDeclaredField("abandonedLogRecordError");
+                final long abandonedErrorOffset = Unsafe.objectFieldOffset(abandonedErrorField);
+                final Object originalError = Unsafe.getUnsafe().getObject(record, abandonedErrorOffset);
+                final RuntimeException printFailure = new RuntimeException("print failure");
+                final LogError throwingError = new LogError("throwing abandoned-record error", false) {
+                    @Override
+                    public void printStackTrace(PrintStream stream) {
+                        throw printFailure;
+                    }
+                };
+                Unsafe.putObject(record, abandonedErrorOffset, throwingError);
+                try {
+                    logger.info();
+                    Assert.fail("expected abandoned-record error printing to fail");
+                } catch (RuntimeException e) {
+                    Assert.assertSame(printFailure, e);
+                } finally {
+                    Unsafe.putObject(record, abandonedErrorOffset, originalError);
+                }
+
+                final Field isLogRecordInProgressField = recordClass.getDeclaredField("isLogRecordInProgress");
+                isLogRecordInProgressField.setAccessible(true);
+                Assert.assertFalse(isLogRecordInProgressField.getBoolean(record));
+
+                final SCSequence sequence = consumerSequence.get();
+                for (int expectedCursor = 0; expectedCursor < 2; expectedCursor++) {
+                    final long cursor = sequence.next();
+                    Assert.assertEquals(expectedCursor, cursor);
+                    sequence.done(cursor);
+                }
+
+                logger.info().$("after failure").$();
+                final long cursor = sequence.next();
+                Assert.assertEquals(2, cursor);
+                sequence.done(cursor);
+            }
+        });
+    }
+
+    @Test
     public void testLogSequenceIsReleasedWhenAbandonedErrorRefreshThrows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
@@ -480,7 +556,7 @@ public class LogFactoryTest {
                 isArmed.set(true);
                 Unsafe.putObject(record, abandonedErrorOffset, throwingError);
                 try {
-                    logger.info();
+                    logger.info().$();
                     Assert.fail("expected abandoned-record stack refresh to fail");
                 } catch (RuntimeException e) {
                     Assert.assertSame(stackTraceFailure, e);
@@ -618,7 +694,7 @@ public class LogFactoryTest {
                 });
 
                 try {
-                    logger.info();
+                    logger.info().$();
                     Assert.fail("expected abandoned-record marker to fail");
                 } catch (RuntimeException e) {
                     Assert.assertSame(markerFailure, e);
@@ -649,9 +725,11 @@ public class LogFactoryTest {
     public void testLogSequenceIsReleasedWhenThrowableRenderingThrows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
+            final AtomicReference<RingQueue<LogRecordUtf8Sink>> logRing = new AtomicReference<>();
             try (LogFactory factory = new LogFactory()) {
                 factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                     consumerSequence.set(seq);
+                    logRing.set(ring);
                     return new LogWriter() {
                         @Override
                         public void bindProperties(LogFactory factory) {
@@ -673,12 +751,19 @@ public class LogFactoryTest {
                         throw messageFailure;
                     }
                 };
+                final LogRecord record = logger.info();
+                int sizeAfterFailure = -1;
                 try {
-                    logger.info().$(throwable);
+                    record.$(throwable);
                     Assert.fail("expected Throwable.getMessage() to fail");
                 } catch (RuntimeException e) {
                     Assert.assertSame(messageFailure, e);
+                    sizeAfterFailure = logRing.get().get(0).size();
+                } finally {
+                    record.I$();
                 }
+                record.$();
+                Assert.assertEquals(sizeAfterFailure, logRing.get().get(0).size());
 
                 final SCSequence sequence = consumerSequence.get();
                 long cursor = sequence.next();

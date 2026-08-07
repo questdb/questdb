@@ -914,6 +914,7 @@ public final class TestUtils {
 
     public static void assertInterruptedWaitTimesOutWithoutSpin(
             String operation,
+            long timeoutNanos,
             BooleanSupplier timedWait,
             BooleanSupplier releasedWait,
             Runnable release
@@ -922,6 +923,7 @@ public final class TestUtils {
             assertInterruptedWaitTimesOutWithoutSpin0(
                     scope.getBean(),
                     operation,
+                    timeoutNanos,
                     timedWait,
                     releasedWait,
                     release
@@ -2628,6 +2630,7 @@ public final class TestUtils {
     private static void assertInterruptedWaitTimesOutWithoutSpin0(
             ThreadMXBean bean,
             String operation,
+            long timeoutNanos,
             BooleanSupplier timedWait,
             BooleanSupplier releasedWait,
             Runnable release
@@ -2636,6 +2639,7 @@ public final class TestUtils {
         Os.sleep(1);
 
         final AtomicLong cpuNanos = new AtomicLong(-1);
+        final AtomicLong elapsedNanos = new AtomicLong(-1);
         final AtomicReference<Throwable> failure = new AtomicReference<>();
         final AtomicBoolean hasCompletedAfterRelease = new AtomicBoolean();
         final AtomicBoolean hasTimedOut = new AtomicBoolean();
@@ -2646,8 +2650,10 @@ public final class TestUtils {
             try {
                 Thread.currentThread().interrupt();
                 final long cpuBefore = bean.getCurrentThreadCpuTime();
+                final long startNanos = System.nanoTime();
                 Assert.assertTrue("CPU time measurement is disabled", cpuBefore >= 0);
                 hasTimedOut.set(!timedWait.getAsBoolean());
+                elapsedNanos.set(System.nanoTime() - startNanos);
                 final long cpuAfter = bean.getCurrentThreadCpuTime();
                 Assert.assertTrue("CPU time moved backwards", cpuAfter >= cpuBefore);
                 cpuNanos.set(cpuAfter - cpuBefore);
@@ -2685,6 +2691,10 @@ public final class TestUtils {
         Assert.assertTrue(operation + " did not complete after release", hasCompletedAfterRelease.get());
         Assert.assertTrue(operation + " did not restore the interrupt flag on timeout", isInterruptedAfterTimeout.get());
         Assert.assertTrue(operation + " did not preserve the interrupt flag", isInterruptedAfter.get());
+        Assert.assertTrue(
+                operation + " returned after " + elapsedNanos.get() + "ns, before the " + timeoutNanos + "ns timeout",
+                elapsedNanos.get() >= timeoutNanos
+        );
         Assert.assertTrue(operation + " CPU time was not recorded", cpuNanos.get() >= 0);
         Assert.assertTrue(
                 operation + " burned " + cpuNanos.get() + "ns of CPU time",

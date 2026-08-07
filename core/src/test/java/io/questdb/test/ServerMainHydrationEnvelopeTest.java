@@ -111,6 +111,7 @@ public class ServerMainHydrationEnvelopeTest extends AbstractBootstrapTest {
                     interruptRestored.set(Thread.currentThread().isInterrupted());
                     awaitReturned.set(true);
                 }, "await-startup-test");
+                awaitStartupThread.setDaemon(true);
                 awaitStartupThread.start();
 
                 final Thread thread = awaitStartupThread;
@@ -121,12 +122,13 @@ public class ServerMainHydrationEnvelopeTest extends AbstractBootstrapTest {
                 Assert.assertFalse("awaitStartup returned before hydration completed", awaitReturned.get());
 
                 releaseHydration.countDown();
-                awaitStartupThread.join();
+                awaitStartupThread.join(TimeUnit.SECONDS.toMillis(10));
+                Assert.assertFalse("awaitStartup thread did not stop", awaitStartupThread.isAlive());
                 Assert.assertTrue("awaitStartup did not restore interrupt status", interruptRestored.get());
             } finally {
                 releaseHydration.countDown();
                 if (awaitStartupThread != null) {
-                    awaitStartupThread.join();
+                    awaitStartupThread.join(TimeUnit.SECONDS.toMillis(10));
                 }
                 serverMain.close();
             }

@@ -28,10 +28,10 @@ import io.questdb.ParanoiaState;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogLevel;
+import io.questdb.log.LogRecord;
 import io.questdb.log.LogRecordUtf8Sink;
 import io.questdb.log.LogWriter;
 import io.questdb.log.LogWriterConfig;
-import io.questdb.mp.Job.WorkerContext;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -66,8 +66,10 @@ public final class ProductionModeLogRecordMain {
         factory.startThread();
 
         final Log logger = factory.create("production-abandoned-record-test");
-        logger.info().$("first abandoned record");
-        logger.info().$("second abandoned record");
+        final LogRecord firstRecord = logger.info();
+        firstRecord.$("first abandoned record");
+        final LogRecord secondRecord = logger.info();
+        secondRecord.$("second abandoned record");
         logger.info().$("complete record").$();
 
         if (!consumed.await(5, TimeUnit.SECONDS)) {
