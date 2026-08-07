@@ -494,8 +494,15 @@ public class PGResultFormatCodesTest extends BasePGTest {
                         client.query(sql, formats(2, code));
                         Assert.fail("expected a rejection for format code " + code);
                     } catch (AssertionError e) {
-                        TestUtils.assertContains(e.getMessage(), "unsupported column type in result set");
-                        TestUtils.assertContains(e.getMessage(), "LONG128");
+                        final String message = e.getMessage();
+                        final String rejection = "unsupported column type in result set";
+                        TestUtils.assertContains(message, rejection);
+                        TestUtils.assertContains(message, "LONG128");
+                        Assert.assertEquals(
+                                "extended-query error text must not be duplicated [formatCode=" + code + ']',
+                                message.indexOf(rejection),
+                                message.lastIndexOf(rejection)
+                        );
                     }
                 }
             }

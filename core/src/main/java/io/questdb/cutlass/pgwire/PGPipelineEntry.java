@@ -2434,7 +2434,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     errorMsgSink.put(errno);
                     errorMsgSink.put("] ");
                 }
-                errorMsgSink.put(((FlyweightMessageContainer) th).getFlyweightMessage());
+                final CharSequence message = ((FlyweightMessageContainer) th).getFlyweightMessage();
+                if (message != errorMsgSink) {
+                    errorMsgSink.put(message);
+                }
             } else {
                 String msg = th.getMessage();
                 if (msg != null) {
