@@ -1250,7 +1250,8 @@ public final class WindowAccumulatorDescriptor {
             switch (ColumnType.tagOf(slotType)) {
                 case ColumnType.DECIMAL128 -> value.putDecimal128Null(slotBase + i);
                 case ColumnType.DECIMAL256 -> value.putDecimal256Null(slotBase + i);
-                case ColumnType.DOUBLE -> value.putDouble(slotBase + i, Double.longBitsToDouble(getSlotIdentityBits(i)));
+                case ColumnType.DOUBLE ->
+                        value.putDouble(slotBase + i, Double.longBitsToDouble(getSlotIdentityBits(i)));
                 default -> value.putLong(slotBase + i, getSlotIdentityBits(i));
             }
         }

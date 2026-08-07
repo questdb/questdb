@@ -946,11 +946,11 @@ public class LiveViewWindow implements QuietCloseable {
      * safe because a frozen partition never mutates its key: {@code FrozenPartition.key} is
      * final and the directory and partition-map writers only read it.
      *
-     * @param entryStateBytes    the state bytes one published entry carries, per member
-     * @param payloadsOut        the per-key images, per member, or null for the legacy
-     *                           anchor-only shape that publishes no payload
-     * @param logicalBytesInOut  each member's running logical total: seeded by the caller
-     *                           with the root the freeze builds on, charged in place here
+     * @param entryStateBytes   the state bytes one published entry carries, per member
+     * @param payloadsOut       the per-key images, per member, or null for the legacy
+     *                          anchor-only shape that publishes no payload
+     * @param logicalBytesInOut each member's running logical total: seeded by the caller
+     *                          with the root the freeze builds on, charged in place here
      */
     private void freezeCheckpointEntries(
             @NotNull MemoryCARW keyBuffer,

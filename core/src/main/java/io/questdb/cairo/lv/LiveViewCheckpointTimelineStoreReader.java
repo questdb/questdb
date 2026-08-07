@@ -845,7 +845,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
      * group does not carry it or the root being restored is a legacy one.
      *
      * @param isDurable when true, answers only for a projection the fused payload carries;
-     *                when false, only for a runtime-only member
+     *                  when false, only for a runtime-only member
      */
     private int memberProjectionIndex(
             @Nullable LiveViewWindow anchorWindow,

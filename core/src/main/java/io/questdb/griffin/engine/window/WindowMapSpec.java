@@ -177,7 +177,7 @@ public final class WindowMapSpec {
      *                          again
      * @param orderBy           the window's ORDER BY terms, as written
      * @param orderByDirections one direction per term
-     * @param isOrderDismissed    whether the compiler proved the base cursor already
+     * @param isOrderDismissed  whether the compiler proved the base cursor already
      *                          produces this order, so no sort stands between the two
      * @param function          the compiled window function, read for its pass structure
      * @param baseMetadata      the metadata the window's expressions were compiled against,
