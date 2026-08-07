@@ -14126,6 +14126,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void rollbackSymbolTables(boolean quiet) {
         int expectedMapWriters = txWriter.unsafeReadSymbolColumnCount();
+        // _txn's symbol area and denseSymbolMapWriters are two views of the same list -- _txn is written FROM
+        // the dense list, and the dense list is rebuilt from _meta's live symbol columns on every open. They
+        // can only disagree if the two files were not captured from the same table shape, which recovery can
+        // produce by restoring a _txn from a durable epoch that does not match the _meta beside it.
+        //
+        // Without this, that lands as a bare "Array index out of range: N" from ObjList.get, thrown from
+        // inside the TableWriter CONSTRUCTOR (initLastPartition -> performRecovery), naming neither the table
+        // nor the mismatch. It cost a long investigation to trace one back to its source. Fail with the two
+        // counts instead; the caller's `quiet` contract is unchanged.
+        if (expectedMapWriters > denseSymbolMapWriters.size()) {
+            final CairoException e = CairoException.critical(0)
+                    .put("table _txn and _meta disagree on symbol column count, refusing to roll back symbol tables [table=")
+                    .put(tableToken.getTableName())
+                    .put(", txnSymbolColumns=").put(expectedMapWriters)
+                    .put(", metaSymbolWriters=").put(denseSymbolMapWriters.size())
+                    .put(']');
+            if (quiet) {
+                distressed = true;
+                LOG.error().$safe(e.getFlyweightMessage()).$();
+                return;
+            }
+            throw e;
+        }
         for (int i = 0; i < expectedMapWriters; i++) {
             try {
                 denseSymbolMapWriters.get(i).rollback(txWriter.unsafeReadSymbolWriterIndexOffset(i));
@@ -15290,12 +15313,61 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         advanceDurableEpoch(nowMs, false);
     }
 
+    /**
+     * Number of LIVE symbol columns in the writer's metadata. Dropped columns carry a negated type and are
+     * excluded, matching how configureSymbolTable() decides which columns get a symbol map writer.
+     */
+    private int countLiveSymbolColumns() {
+        int n = 0;
+        for (int i = 0, c = metadata.getColumnCount(); i < c; i++) {
+            final int type = metadata.getColumnType(i);
+            if (type > -1 && ColumnType.isSymbol(type)) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /**
+     * True when the symbol writers backing _txn agree with the symbol columns declared by _meta -- i.e. the
+     * writer is not part-way through a structural change. See the call site in advanceDurableEpoch().
+     */
+    private boolean symbolStateMatchesMetadata() {
+        return denseSymbolMapWriters.size() == countLiveSymbolColumns();
+    }
+
     private void advanceDurableEpoch(long nowMs, boolean forceBaseline) {
         // Demote-in-window re-check: bail before writing anything if local durability was disabled since
         // the caller's gate (an Enterprise replica demote). Baseline enrollment is exempt: publishing the
         // first trustworthy anchor must complete before current-format adaptive metadata can be exposed.
         if (!forceBaseline && !engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
             LOG.info().$("adaptive durable epoch skipped: local durability disabled [table=").$(tableToken).I$();
+            return;
+        }
+
+        // An epoch is only a usable recovery cut if its _meta.epoch and _txn.epoch payloads describe the
+        // SAME table shape. _txn's symbol area is written from denseSymbolMapWriters, while _meta carries
+        // the live symbol columns, so those two counts agreeing is precisely the precondition for a
+        // mutually consistent pair. Structural operations transiently break it: changeColumnType() creates
+        // the destination SYMBOL column's map writer BEFORE the conversion, and only publishes the column
+        // to _meta afterwards -- and the conversion itself takes an epoch cut
+        // (ConvertOperatorImpl.convertColumn -> commitPendingParquetToNativeConversions). A cut taken in
+        // that window records a _txn counting the not-yet-published symbol column against a _meta without
+        // it, at the SAME metadataVersion, so every identity check downstream passes.
+        //
+        // Adopting that pair rewinds the table into a state nothing can open: rollbackSymbolTables()
+        // iterates the _txn count over denseSymbolMapWriters and throws ArrayIndexOutOfBounds inside the
+        // TableWriter constructor; past that, WAL apply rejects the table with "unexpected new WAL
+        // structure version". The table is then permanently suspended while the sequencer runs ahead.
+        //
+        // Declining to publish is the safe outcome and already the documented contract for this method: the
+        // prior epoch stays intact and the next batch retries. The only cost is the one this caller wanted
+        // to avoid -- superseded parquet dirs are reclaimed by the async O3PartitionPurgeJob rather than
+        // inline. Correctness over timing; the epoch bounds WAL replay, it never holds the only copy.
+        if (!symbolStateMatchesMetadata()) {
+            LOG.info().$("adaptive durable epoch skipped: structural change in flight [table=").$(tableToken)
+                    .$(", denseSymbolWriters=").$(denseSymbolMapWriters.size())
+                    .$(", metaSymbolColumns=").$(countLiveSymbolColumns()).I$();
             return;
         }
 

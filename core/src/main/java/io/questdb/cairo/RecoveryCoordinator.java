@@ -548,6 +548,39 @@ public class RecoveryCoordinator {
                 return false;
             }
 
+            // Cross-check the two copies against EACH OTHER. Integrity is already covered -- the A/B
+            // checksums prove each payload is intact, and DurableEpochManifest.validate() proves each is the
+            // byte-for-byte file this generation published. Neither says the payloads describe the same table
+            // SHAPE, because a checksum cannot tell a faithfully-recorded skew from a faithfully-recorded
+            // consistent cut. Only a semantic comparison can.
+            //
+            // _txn's symbol area is written from denseSymbolMapWriters and _meta carries the live symbol
+            // columns, so these two counts agreeing is exactly that comparison. Equal metadataVersions do not
+            // imply it: TableWriter.changeColumnType moves the symbol count on a commit that does not bump the
+            // version, so a cut taken inside its structural window records both copies at the SAME version
+            // while they disagree by one. (That write-side window is closed in advanceDurableEpoch; this is
+            // the read-side backstop, and it is what stands between any future variant and an unopenable
+            // table.) Restoring a mismatched pair rewinds the table into a state nothing can open -- symbol
+            // rollback indexes past the writer list, then WAL apply rejects the table outright and it stays
+            // suspended while the sequencer runs ahead. Reject, exactly as for a torn payload: the marker's
+            // other generation is tried, and failing that recovery aborts startup rather than bricking.
+            if (epochMetadata != null) {
+                int metaSymbolColumns = 0;
+                for (int c = 0, n = epochMetadata.getColumnCount(); c < n; c++) {
+                    final int type = epochMetadata.getColumnType(c);
+                    if (type > -1 && ColumnType.isSymbol(type)) {
+                        metaSymbolColumns++;
+                    }
+                }
+                if (txReader.getSymbolColumnCount() != metaSymbolColumns) {
+                    LOG.error().$("adaptive epoch _txn and _meta disagree on symbol columns [table=").$(token)
+                            .$(", generation=").$(epochGeneration)
+                            .$(", txnSymbolColumns=").$(txReader.getSymbolColumnCount())
+                            .$(", metaSymbolColumns=").$(metaSymbolColumns).I$();
+                    return false;
+                }
+            }
+
             // Validate _cv.epoch: a clean A/B-checksummed load (readSafe verifies the live area's checksum
             // and only adopts a self-consistent record).
             epochCopyPath(scratch, token, TableUtils.COLUMN_VERSION_FILE_NAME, epochGeneration);
