@@ -269,6 +269,69 @@ public class PGResultFormatCodesTest extends BasePGTest {
     }
 
     @Test
+    public void testBinaryStridedThreeDimensionalArrayDeclaresCorrectRowLength() throws Exception {
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            final int dimLen = 6;
+            final StringBuilder arrayLiteral = new StringBuilder("ARRAY[");
+            int expectedNotNullCount = 0;
+            for (int plane = 0; plane < dimLen; plane++) {
+                if (plane > 0) {
+                    arrayLiteral.append(',');
+                }
+                arrayLiteral.append('[');
+                for (int row = 0; row < dimLen; row++) {
+                    if (row > 0) {
+                        arrayLiteral.append(',');
+                    }
+                    arrayLiteral.append('[');
+                    for (int col = 0; col < dimLen; col++) {
+                        if (col > 0) {
+                            arrayLiteral.append(',');
+                        }
+                        final int flatIndex = dimLen * dimLen * plane + dimLen * row + col;
+                        if (flatIndex % 7 == 0) {
+                            // DOUBLE-array NULL elements use the NaN sentinel internally.
+                            arrayLiteral.append("NULL");
+                        } else {
+                            arrayLiteral.append(flatIndex).append(".0");
+                            if (plane > 0 && row > 0 && col > 0) {
+                                expectedNotNullCount++;
+                            }
+                        }
+                    }
+                    arrayLiteral.append(']');
+                }
+                arrayLiteral.append(']');
+            }
+            arrayLiteral.append(']');
+            execute("CREATE TABLE strided3d AS (SELECT " + arrayLiteral
+                    + " AS a FROM long_sequence(2))");
+
+            final String slice = "a[2:,2:,2:]";
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT array_count(" + slice + ") FROM strided3d");
+                 ResultSet rs = stmt.executeQuery()) {
+                Assert.assertTrue(rs.next());
+                Assert.assertEquals(expectedNotNullCount, rs.getInt(1));
+                Assert.assertTrue(rs.next());
+                Assert.assertEquals(expectedNotNullCount, rs.getInt(1));
+                Assert.assertFalse(rs.next());
+            }
+
+            try (RawPGClient client = new RawPGClient(port)) {
+                ObjList<ObjList<String>> rows = client.query(
+                        "SELECT " + slice + " FROM strided3d",
+                        formats(1, FORMAT_BINARY)
+                );
+                Assert.assertEquals(2, rows.size());
+                for (int i = 0; i < rows.size(); i++) {
+                    Assert.assertEquals(1, rows.getQuick(i).size());
+                }
+            }
+        }, () -> sendBufferSize = 512);
+    }
+
+    @Test
     public void testCachedLongArrayResultsAreRejectedWithActionableError() throws Exception {
         final IntList inParameterTypes = new IntList();
         final LongList outParameterTypes = new LongList();
