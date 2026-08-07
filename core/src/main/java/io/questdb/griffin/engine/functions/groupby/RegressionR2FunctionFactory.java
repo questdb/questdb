@@ -74,7 +74,25 @@ public class RegressionR2FunctionFactory implements FunctionFactory {
                 return 1.0;
             }
             double sumXY = rec.getDouble(valueIndex + 4);
-            return (sumXY * sumXY) / (sumX * sumY);
+            // Guard against intermediate overflow and underflow in the denominator product.
+            // sumX * sumY can overflow to +Inf (inputs near ±1e153) or underflow to 0.0
+            // (inputs near ±1e-150); both produce NaN from the subsequent division.
+            // By Cauchy–Schwarz, sumXY² ≤ sumX·sumY, so when the product is finite the
+            // numerator cannot overflow and the original formula is used unchanged.
+            // When the product overflows or underflows we fall back to the split-sqrt form
+            // sqrt(sumX) * sqrt(sumY), which keeps each factor well below overflow.
+            // The result is clamped to ≤ 1.0 to absorb sub-ULP rounding drift from the
+            // split-sqrt path (r² can be 1.0000000000000002 for perfect-correlation inputs).
+            final double product = sumX * sumY;
+            final double r2;
+            if (product == 0.0 || Double.isInfinite(product)) {
+                // Rare tail: fall back to split-sqrt to avoid Inf/NaN.
+                final double r = sumXY / (Math.sqrt(sumX) * Math.sqrt(sumY));
+                r2 = r * r;
+            } else {
+                r2 = (sumXY * sumXY) / product;
+            }
+            return r2 > 1.0 ? 1.0 : r2;
         }
 
         @Override
