@@ -40,18 +40,14 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
@@ -129,16 +125,6 @@ public class TelemetryTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    @Test
-    public void testTelemetryConfigRecreatedWhenMetadataIsCorrupt() throws Exception {
-        assertTelemetryTableRecreatedWhenMetadataIsCorrupt(TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
-    }
-
-    @Test
-    public void testTelemetryRecreatedWhenMetadataIsCorrupt() throws Exception {
-        assertTelemetryTableRecreatedWhenMetadataIsCorrupt(TELEMETRY);
     }
 
     @Test
@@ -513,44 +499,6 @@ public class TelemetryTest extends AbstractCairoTest {
                 return buildInformation;
             }
         };
-    }
-
-    private void assertTelemetryTableRecreatedWhenMetadataIsCorrupt(String tableName) throws Exception {
-        assertMemoryLeak(() -> {
-            final String dirName;
-            final int expectedColumnCount;
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (TelemetryJob ignore = new TelemetryJob(engine)) {
-                    TableToken token = engine.verifyTableName(tableName);
-                    dirName = token.getDirName();
-                    try (TableMetadata meta = engine.getTableMetadata(token)) {
-                        expectedColumnCount = meta.getColumnCount();
-                    }
-                }
-            }
-
-            // corrupt the table metadata the way a bad replacing column index does: the
-            // chain walk then reads off the end of the mapped _meta file
-            try (
-                    Path path = new Path();
-                    MemoryCMARW mem = Vm.getCMARWInstance()
-            ) {
-                path.of(root).concat(dirName).concat(TableUtils.META_FILE_NAME).$();
-                mem.smallFile(FF, path.$(), MemoryTag.MMAP_DEFAULT);
-                mem.putInt(TableUtils.META_OFFSET_COLUMN_TYPES + TableUtils.META_COLUMN_DATA_SIZE + 24, 100_001);
-            }
-
-            // telemetry data is ephemeral, so a corrupt table must be recreated rather
-            // than bring the whole instance down on startup
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (TelemetryJob ignore = new TelemetryJob(engine)) {
-                    TableToken token = engine.verifyTableName(tableName);
-                    try (TableMetadata meta = engine.getTableMetadata(token)) {
-                        Assert.assertEquals(expectedColumnCount, meta.getColumnCount());
-                    }
-                }
-            }
-        });
     }
 
     @SuppressWarnings("SameParameterValue")

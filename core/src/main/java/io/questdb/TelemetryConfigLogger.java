@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -200,40 +199,7 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
         }
     }
 
-    /**
-     * Drops the config table when its metadata cannot be read, so that {@link #init} can build a
-     * fresh one. Metadata we cannot read would fail the ADD COLUMN statements below and, because
-     * telemetry is initialised during startup, take the whole instance down with it. The table
-     * only holds an instance id and the current instance description, both of which are
-     * regenerated on the next write, so recreating it is cheaper than refusing to start.
-     */
-    private static void dropConfigTableIfMetadataCorrupt(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContextImpl sqlExecutionContext
-    ) throws SqlException {
-        try (TableMetadata ignore = engine.getTableMetadata(engine.verifyTableName(TELEMETRY_CONFIG_TABLE_NAME))) {
-            return;
-        } catch (CairoException e) {
-            if (!e.isMetadataValidation()) {
-                // the table not existing yet is the common case, CREATE TABLE handles it
-                return;
-            }
-            LOG.error()
-                    .$("could not read config telemetry metadata, recreating [table=").$(TELEMETRY_CONFIG_TABLE_NAME)
-                    .$(", msg=").$safe(e.getFlyweightMessage())
-                    .I$();
-        }
-        compiler.query().$("DROP TABLE '").$(TELEMETRY_CONFIG_TABLE_NAME).$("'")
-                .compile(sqlExecutionContext)
-                .getOperation()
-                .execute(sqlExecutionContext, null)
-                .await();
-    }
-
     void init(CairoEngine engine, SqlCompiler compiler, SqlExecutionContextImpl sqlExecutionContext) throws SqlException {
-        dropConfigTableIfMetadataCorrupt(engine, compiler, sqlExecutionContext);
-
         configTableToken = compiler.query()
                 .$("CREATE TABLE IF NOT EXISTS ")
                 .$(TELEMETRY_CONFIG_TABLE_NAME)

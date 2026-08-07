@@ -165,19 +165,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
                 }
             }
         } catch (CairoException e) {
-            if (e.isMetadataValidation()) {
-                // Metadata we cannot read would fail every subsequent DDL against this table
-                // and, because telemetry is initialised during startup, take the whole
-                // instance down with it. Telemetry rows are short-TTL and expendable, so
-                // treat the table the same way a schema change is treated above: drop it and
-                // let the CREATE TABLE below build a fresh one.
-                LOG.error()
-                        .$("could not read telemetry table metadata, recreating [table=").$(tableName)
-                        .$(", msg=").$safe(e.getFlyweightMessage())
-                        .I$();
-                shouldDropTable = true;
-                shouldAlterTtl = false;
-            } else if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")) {
+            if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")) {
                 throw e;
             }
         }
