@@ -189,15 +189,8 @@ public class QwpTudCache implements QuietCloseable {
                 WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
                 try {
                     if (!tud.isDropped()) {
-                        final boolean willAdvance = consumer != null && !tud.isFirstRow();
                         tud.commit(false);
-                        if (willAdvance && !tud.isDropped()) {
-                            consumer.accept(
-                                    tud.getTableToken().getTableName(),
-                                    tud.getTableToken().getDirName(),
-                                    tud.getLastSeqTxn()
-                            );
-                        }
+                        reportCommittedTxn(tud, consumer);
                     }
                 } catch (CommitFailedException e) {
                     if (!e.isTableDropped()) {
@@ -226,16 +219,14 @@ public class QwpTudCache implements QuietCloseable {
                 Utf8Sequence tableName = keys.get(i);
                 WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
                 try {
-                    if (!tud.isDropped() && !tud.isFirstRow()) {
-                        final long seqTxnBefore = tud.getLastSeqTxn();
-                        tud.commitIfMaxUncommittedRowsCountReached();
-                        if (consumer != null && tud.getLastSeqTxn() != seqTxnBefore && !tud.isDropped()) {
-                            consumer.accept(
-                                    tud.getTableToken().getTableName(),
-                                    tud.getTableToken().getDirName(),
-                                    tud.getLastSeqTxn()
-                            );
+                    if (!tud.isDropped()) {
+                        // The guard belongs to the COMMIT (an empty writer has nothing to
+                        // flush), not to the reporting: a prior force-commit inside the
+                        // appender may have left work that is committed but unreported.
+                        if (!tud.isFirstRow()) {
+                            tud.commitIfMaxUncommittedRowsCountReached();
                         }
+                        reportCommittedTxn(tud, consumer);
                     }
                 } catch (CommitFailedException e) {
                     if (!e.isTableDropped()) {
@@ -408,6 +399,41 @@ public class QwpTudCache implements QuietCloseable {
     @FunctionalInterface
     public interface CommittedTxnConsumer {
         void accept(String tableName, String tableDirName, long seqTxn);
+    }
+
+    /**
+     * Hands the consumer every seqTxn advance this connection has produced for
+     * {@code tud} that it has not already seen.
+     * <p>
+     * This reconciles against the last REPORTED seqTxn rather than trying to detect
+     * commit events, because not every commit happens here: {@code QwpWalAppender}
+     * force-commits inside the append when a table crosses
+     * {@code qwp.max.uncommitted.rows}, outside any wrapper in this class. The two
+     * event-detecting proxies this method replaces both went blind to that commit --
+     * {@code isFirstRow()} because the force-commit drains the writer, and the
+     * local seqTxn bracket because the advance happened before it was taken -- so the
+     * txn never reached the ack / durable-upload watermarks and a durable ack could
+     * be issued over a WAL segment the upload tracker never saw (#7482).
+     * <p>
+     * Reconciliation is also why a future commit site cannot reintroduce the bug:
+     * correctness depends on the writer's seqTxn, not on the caller remembering to
+     * bracket anything.
+     */
+    private static void reportCommittedTxn(WalTableUpdateDetails tud, CommittedTxnConsumer consumer) {
+        if (consumer == null || tud.isDropped()) {
+            return;
+        }
+        final long seqTxn = tud.getLastSeqTxn();
+        // getLastSeqTxn() is negative when the writer is gone or has no txn yet.
+        if (seqTxn < 0 || seqTxn <= tud.getLastReportedSeqTxn()) {
+            return;
+        }
+        tud.setLastReportedSeqTxn(seqTxn);
+        consumer.accept(
+                tud.getTableToken().getTableName(),
+                tud.getTableToken().getDirName(),
+                seqTxn
+        );
     }
 
     private static boolean isValidQwpSchemaColumnName(QwpColumnDef columnDef, int maxFileNameLength) {
