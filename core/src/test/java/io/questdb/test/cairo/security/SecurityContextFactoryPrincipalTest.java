@@ -218,16 +218,17 @@ public class SecurityContextFactoryPrincipalTest {
     @Test
     public void testForPrincipalConcurrentCacheCapDoesNotOvershoot() throws Exception {
         final int racingPrincipalCount = 8;
-        final CacheCapTestAllowAllSecurityContext root =
-                new CacheCapTestAllowAllSecurityContext(racingPrincipalCount);
+        final AllowAllSecurityContext root = freshAllowAll();
         for (int i = 0; i < CACHE_CAP - 1; i++) {
             root.forPrincipal("p" + i);
         }
 
-        // Hold every distinct final-slot derivation inside newPrincipalContext until all callers have passed
-        // the outer size check. Without atomic admission they are then all retained and the cache overshoots
-        // by racingPrincipalCount - 1; with the hard cap, exactly one reserves the remaining slot.
-        root.blockDerivationsAtBarrier();
+        // runConcurrently releases all workers from a single barrier, so they enter forPrincipal together,
+        // clear the outer `cache.size() < MAX` check at the same size, and then contend on the admission CAS.
+        // Without atomic admission they would all pass the soft check at size()==MAX-1 and each get cached,
+        // overshooting the bound by racingPrincipalCount - 1; with the hard cap exactly one reserves the
+        // remaining slot. The barrier stays OUTSIDE forPrincipal on purpose -- blocking inside
+        // newPrincipalContext would run under computeIfAbsent's bin lock and could wedge a same-bin racer.
         final String[] principals = new String[racingPrincipalCount];
         final SecurityContext[] first = new SecurityContext[racingPrincipalCount];
         TestUtils.runConcurrently(racingPrincipalCount, t -> {
@@ -763,41 +764,6 @@ public class SecurityContextFactoryPrincipalTest {
                 return name;
             }
         };
-    }
-
-    private static final class CacheCapTestAllowAllSecurityContext extends AllowAllSecurityContext {
-        private final CountDownLatch derivationBarrier;
-        private volatile boolean blockDerivations;
-
-        private CacheCapTestAllowAllSecurityContext(int racingPrincipalCount) {
-            derivationBarrier = new CountDownLatch(racingPrincipalCount);
-        }
-
-        private CacheCapTestAllowAllSecurityContext(boolean settingsReadOnly, CharSequence principal) {
-            super(settingsReadOnly, principal);
-            derivationBarrier = null;
-        }
-
-        private void blockDerivationsAtBarrier() {
-            blockDerivations = true;
-        }
-
-        @Override
-        protected SecurityContext newPrincipalContext(CharSequence principal) {
-            if (blockDerivations) {
-                derivationBarrier.countDown();
-                try {
-                    Assert.assertTrue(
-                            "all final-slot contenders must reach the derivation barrier",
-                            derivationBarrier.await(10, TimeUnit.SECONDS)
-                    );
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new AssertionError("interrupted at the final-slot derivation barrier", e);
-                }
-            }
-            return new CacheCapTestAllowAllSecurityContext(settingsReadOnly, principal);
-        }
     }
 
     private static final class FailingOnceTestAllowAllSecurityContext extends AllowAllSecurityContext {
