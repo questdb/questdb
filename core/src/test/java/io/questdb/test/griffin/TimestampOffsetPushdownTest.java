@@ -39,6 +39,23 @@ import org.junit.Test;
 public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
+    public void testAndOffsetWithSubQueryPredicateArg() throws Exception {
+        // a sub-query expression node has a null token; and_offset intrinsic analysis
+        // recurses into its predicate argument and used to NPE on it. It must fail
+        // with a clean SQL error instead (and_offset is not a user-callable function).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE flags (b BOOLEAN);");
+            execute("INSERT INTO flags VALUES (true);");
+            assertException(
+                    "select * from trades where and_offset((select b from flags limit 1), 'h', 1)",
+                    27,
+                    "unknown function name"
+            );
+        });
+    }
+
+    @Test
     public void testDayOffsetPushdown() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
