@@ -482,7 +482,7 @@ public class LogFactoryTest {
                 };
                 Unsafe.putObject(record, abandonedErrorOffset, throwingError);
                 try {
-                    logger.info();
+                    logger.info().$();
                     Assert.fail("expected abandoned-record error printing to fail");
                 } catch (RuntimeException e) {
                     Assert.assertSame(printFailure, e);
