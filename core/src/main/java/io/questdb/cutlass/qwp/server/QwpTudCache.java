@@ -87,7 +87,7 @@ public class QwpTudCache implements QuietCloseable {
     // NOTE: salvage is not the only commit path without a consumer hook --
     // QwpWalAppender's internal threshold commit (appendToWalColumnar ->
     // tud.commitIfMaxUncommittedRowsCountReached()) also advances lastSeqTxn
-    // without notifying anyone; see the tracking issue referenced there.
+    // without notifying anyone; see issue #7482.
     private CommittedTxnConsumer committedTxnConsumer;
     private MemoryMARW ddlMem;
     private boolean isDistressed = false;
