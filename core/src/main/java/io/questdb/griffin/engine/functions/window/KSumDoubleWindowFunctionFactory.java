@@ -1576,21 +1576,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public void markPartitionAlive(Record record) {
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                return;
-            }
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue value = key.findValue();
-            if (value != null && value.getByte(tombstoneValueIndex) == 1) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
-        }
-
-        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);

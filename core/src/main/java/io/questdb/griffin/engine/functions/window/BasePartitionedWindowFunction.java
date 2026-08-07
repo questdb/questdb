@@ -78,6 +78,14 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     // ring-holding function; the instance outlives each sweep but its pages do not - see
     // compactRingArena for why the sweep hands them back rather than keeping them.
     protected MemoryARW compactionRingScratch;
+    // True once markCheckpointPartitionDirty has built the dirty set, which is the one
+    // thing that says this function names every key its own rows move. The sweep reads
+    // it before recording an eviction: a subclass whose markPartitionAlive override
+    // never marks dirty has to keep the complete freeze, and a dirty set holding
+    // nothing but the sweep's own eviction markers would hand it the incremental path
+    // instead - freezing the removals and leaving every advanced accumulator at its
+    // stale durable image.
+    protected boolean hasCheckpointDirtyTracking;
     // True once a sweep has put evicted keys into checkpointDirtyPartitions and the seal
     // has not consumed them yet. What it decides is whether dropping the dirty set also
     // hands the backing memory back - see clearCheckpointDirtyPartitions.
@@ -156,6 +164,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
         Misc.free(compactionScratch);
         Misc.free(compactionRingScratch);
         Misc.free(checkpointDirtyPartitions);
+        // Goes with the map here for the same reason it does in reset(): the flag is an
+        // invariant of a live dirty set, and this one is no longer live.
+        hasCheckpointDirtyTracking = false;
         Misc.freeObjList(partitionByRecord.getFunctions());
     }
 
@@ -213,9 +224,12 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
      * missing-live-value branch safe: a dirty key that lost its state to anything other
      * than this sweep still carries a {@code 0} there and still raises.
      * <p>
-     * Declines - returning false - when the function tracks no tombstone slot or opts out
-     * of the scratch map, which is exactly the population that never freezes incrementally
-     * anyway.
+     * Declines - returning false - when the function tracks no tombstone slot or does not
+     * maintain a dirty set of its own, which is exactly the population that never freezes
+     * incrementally anyway. It never creates the dirty set: only
+     * {@link #markCheckpointPartitionDirty(Record)} does, so a function whose
+     * {@link #markPartitionAlive(Record)} never marks cannot be handed the incremental
+     * path by the sweep alone.
      */
     @Override
     public boolean markCheckpointPartitionEvicted(Record record, RecordSink keySink) {
@@ -226,21 +240,10 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
             // and true is the honest answer: the removal is tracked, just not here.
             return true;
         }
-        if (tombstoneValueIndex < 0) {
+        if (tombstoneValueIndex < 0 || !hasCheckpointDirtyTracking) {
             return false;
         }
         hasCheckpointEvictionsRecorded = true;
-        if (checkpointDirtyPartitions == null) {
-            checkpointDirtyPartitions = newCompactionScratch();
-            if (checkpointDirtyPartitions == null) {
-                return false;
-            }
-            if (memoryTracker != null) {
-                checkpointDirtyPartitions.close();
-                checkpointDirtyPartitions.setMemoryTracker(memoryTracker);
-                checkpointDirtyPartitions.reopen();
-            }
-        }
         // The key columns come off the anchor map's own record, so this writes through
         // the caller's sink rather than partitionBySink.
         final MapKey key = checkpointDirtyPartitions.withKey();
@@ -453,6 +456,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
         compactionScratch = Misc.free(compactionScratch);
         compactionRingScratch = Misc.free(compactionRingScratch);
         checkpointDirtyPartitions = Misc.free(checkpointDirtyPartitions);
+        // Goes with the map: the field names a map this function no longer holds, and a
+        // rebound cursor has to earn the tracking back through markCheckpointPartitionDirty.
+        hasCheckpointDirtyTracking = false;
         hasCheckpointEvictionsRecorded = false;
         tombstoneCount = 0;
         checkpointBaselineGeneration = Numbers.LONG_NULL;
@@ -520,10 +526,11 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
      * names and leaves every other entry of the persistent root alone, so a key
      * whose state moved without being marked keeps the root's stale image - a wrong
      * result that only surfaces on a restart. Opting out is fail-safe by
-     * construction: the map is created here, so a function that never calls this
-     * leaves it null, {@link #getCheckpointDirtyPartitionMap()} returns null, and
-     * every seal full-scans. There is no correct middle ground, and a partial mark
-     * is indistinguishable from a complete one at the seal.
+     * construction: this is the only place the map is created and the only place
+     * {@code hasCheckpointDirtyTracking} is set, so a function that never calls this
+     * leaves {@link #getCheckpointDirtyPartitionMap()} null, has the sweep's eviction
+     * hook decline on its behalf, and every seal full-scans. There is no correct middle
+     * ground, and a partial mark is indistinguishable from a complete one at the seal.
      */
     protected void markCheckpointPartitionDirty(Record record) {
         if (checkpointDirtyPartitions == null) {
@@ -533,15 +540,32 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
             // seal encodes them from; a narrower layout would have to carry that
             // index too, through every one of the subclasses that override the
             // factory.
-            checkpointDirtyPartitions = newCompactionScratch();
-            if (checkpointDirtyPartitions == null) {
+            // Into a local, and published only once it is open: reopen() allocates
+            // through the per-view tracker and throws on a breach of
+            // cairo.live.view.refresh.memory.limit.bytes - which is the very limit this
+            // map is charged against - and assigning first would leave the field naming a
+            // closed map that the seal reads anyway. Publishing both together is what
+            // makes hasCheckpointDirtyTracking an invariant of the map rather than a
+            // second thing to keep in step. LiveViewWindow.createTrackedAnchorMap has the
+            // same shape for the same reason.
+            final Map dirtyPartitions = newCompactionScratch();
+            if (dirtyPartitions == null) {
                 return;
             }
             if (memoryTracker != null) {
-                checkpointDirtyPartitions.close();
-                checkpointDirtyPartitions.setMemoryTracker(memoryTracker);
-                checkpointDirtyPartitions.reopen();
+                try {
+                    dirtyPartitions.close();
+                    dirtyPartitions.setMemoryTracker(memoryTracker);
+                    dirtyPartitions.reopen();
+                } catch (Throwable th) {
+                    // Holding it in a local is what puts this cleanup here: no field names
+                    // it yet, so close() and reset() would both walk straight past it.
+                    Misc.free(dirtyPartitions);
+                    throw th;
+                }
             }
+            checkpointDirtyPartitions = dirtyPartitions;
+            hasCheckpointDirtyTracking = true;
         }
         partitionByRecord.of(record);
         MapKey key = checkpointDirtyPartitions.withKey();

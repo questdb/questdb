@@ -25,9 +25,11 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
@@ -45,14 +47,19 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.functions.columns.LongColumn;
+import io.questdb.griffin.engine.functions.window.BasePartitionedWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.LongList;
@@ -538,6 +545,82 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
+    /**
+     * The sweep must never be what starts a function's dirty tracking. An unbounded-rows
+     * avg or ksum whose own markPartitionAlive skipped
+     * {@code markCheckpointPartitionDirty} named none of the keys its rows moved, so a
+     * dirty set the sweep built out of eviction markers alone opened the incremental gate
+     * on it: the seal froze the removals and nothing else, and every partition whose
+     * accumulator had advanced between the two seals kept its stale durable image. The
+     * runtime went on answering correctly out of memory, so only a restart showed it.
+     * <p>
+     * Both calls here are residual - an expression argument, as in
+     * {@link #createUnfusedView} - so what the case reads is each function's own dirty
+     * set and its own root rather than the window's fused entry.
+     */
+    @Test
+    public void testASweptResidualAvgStillFreezesTheKeysItsRowsMoved() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            createUnfusedAvgView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                // The whole case rests on both calls staying residual. Every per-function
+                // assertion below falls back to the anchor's own numbers for a fused
+                // group, so a plan that learned to accept an expression argument would
+                // leave this passing against state it no longer describes.
+                Assert.assertFalse(
+                        "both calls must decline the fused plan",
+                        isWindowStateFused()
+                );
+                assertDirtySetsClearedByPublish();
+                assertHeadRootPartitionCount(4);
+                final long generation = publishedGeneration();
+
+                // Two bucket advances with only acct-1 following along, both under the
+                // four-row boundary, so the second one sweeps without sealing.
+                commit("('2026-01-02T01:00:00.000000Z', 'acct-1', 1.0)", job);
+                commit("('2026-01-03T01:00:00.000000Z', 'acct-1', 2.0)", job);
+                Assert.assertEquals(1, anchorWindow().getCompactionCount());
+                Assert.assertEquals(
+                        "only the account that followed the frontier survives",
+                        1,
+                        anchorWindow().getAnchorMapSize()
+                );
+                assertIncrementalGateOpen(generation);
+
+                // Four keys rather than three: the survivor these two commits moved is
+                // named alongside the three the sweep dropped. A dirty set the sweep
+                // started on its own holds the evictions and nothing else.
+                assertFunctionDirtySize(4);
+                assertEvictionMarkerCount(3);
+
+                // Two more rows into the survivor's live bucket - the accumulator advance
+                // the seal owes the root - and the fourth row of the cadence seals.
+                commit("('2026-01-03T02:00:00.000000Z', 'acct-1', 3.0), "
+                        + "('2026-01-03T03:00:00.000000Z', 'acct-1', 4.0)", job);
+                assertDirtySetsClearedByPublish();
+                assertHeadRootPartitionCount(1);
+                assertUnfusedAvgViewMatchesRecompute(MIDNIGHT_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertUnfusedAvgViewMatchesRecompute(MIDNIGHT_ANCHOR);
+
+                // A row in the bucket the survivor is already accumulating in, so it reads
+                // the restored accumulator rather than starting a fresh one. A root left
+                // holding the pre-sweep image answers 7.5 here where the oracle says 3.5.
+                commit("('2026-01-03T04:00:00.000000Z', 'acct-1', 5.0)", job);
+                assertUnfusedAvgViewMatchesRecompute(MIDNIGHT_ANCHOR);
+            }
+        });
+    }
+
     @Test
     public void testKeyEvictedThenRecreatedInOneCadenceIsUpserted() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
@@ -668,6 +751,58 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         final RetainingFunctionStub fullScan = new RetainingFunctionStub(true);
         fullScan.retainPartitions(null, null, false);
         Assert.assertTrue(fullScan.isRetained);
+    }
+
+    /**
+     * The same fail-safe one step earlier, at the hook the sweep calls per evicted key. A
+     * partitioned function that offers everything but the marking - a tombstone slot and
+     * a scratch-map factory, with a markPartitionAlive that names nothing - must have the
+     * hook decline for it, because the dirty set it would otherwise build names none of
+     * the keys the function's own rows moved.
+     */
+    @Test
+    public void testTheSweepCannotStartDirtyTrackingOnItsOwn() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongKeyRecordStub record = new LongKeyRecordStub();
+            final NonMarkingFunctionStub function = new NonMarkingFunctionStub();
+            try {
+                // The state a published seal leaves behind, and the only state an
+                // incremental freeze can build on at all.
+                function.onCheckpointPersisted(0, 7);
+                Assert.assertFalse(function.isCheckpointFullScanRequired());
+
+                record.value = 1;
+                Assert.assertFalse(
+                        "a function that names no touched key must decline the eviction hook",
+                        function.markCheckpointPartitionEvicted(record, LongKeyRecordStub.SINK)
+                );
+                Assert.assertNull(
+                        "declining must leave no dirty set for the seal to read",
+                        function.getCheckpointDirtyPartitionMap()
+                );
+
+                // The same function once it does mark, which is what says the guard reads
+                // the tracking rather than refusing outright.
+                function.markDirty(record);
+                Assert.assertEquals(1, function.getCheckpointDirtyPartitionMap().size());
+                record.value = 2;
+                Assert.assertTrue(
+                        function.markCheckpointPartitionEvicted(record, LongKeyRecordStub.SINK)
+                );
+                Assert.assertEquals(2, function.getCheckpointDirtyPartitionMap().size());
+            } finally {
+                function.reset();
+            }
+
+            // reset() hands the dirty set back, so the tracking has to go with it: a rebound
+            // cursor earns it again through the marking or not at all.
+            Assert.assertNull(function.getCheckpointDirtyPartitionMap());
+            Assert.assertFalse(
+                    "reset() must take the tracking with the map it freed",
+                    function.markCheckpointPartitionEvicted(record, LongKeyRecordStub.SINK)
+            );
+            function.reset();
+        });
     }
 
     @Test
@@ -1452,6 +1587,30 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         Assert.assertTrue("no window function carries partition state", isWindowStateFused() || checked > 0);
     }
 
+    /**
+     * The {@link #createUnfusedAvgView} shape's oracle, built the same way
+     * {@link #recompute(String)} builds the fused view's.
+     */
+    private void assertUnfusedAvgViewMatchesRecompute(String anchorTime) throws Exception {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T"
+                + anchorTime + ":00.000000Z'::timestamp)";
+        final String recompute = "select created_at, cod_acct_no, "
+                + "avg(amt_txn + 0.0) over (partition by cod_acct_no, bucket order by created_at "
+                + "rows between unbounded preceding and current row) as cumulative_avg, "
+                + "ksum(amt_txn + 0.0) over (partition by cod_acct_no, bucket order by created_at "
+                + "rows between unbounded preceding and current row) as cumulative_ksum "
+                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + recompute + ") order by 2, 1",
+                "(lv) order by 2, 1",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
+    }
+
     private void assertViewMatchesRecompute(String anchorTime) throws Exception {
         TestUtils.assertSqlCursors(
                 engine,
@@ -1516,6 +1675,25 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         execute("insert into tx values " + values);
         drainWalQueue();
         driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * The unfused view again, over the two accumulators whose own markPartitionAlive
+     * used to skip the dirty marking. Both arguments are expressions, so the fused
+     * window-state plan declines them and each function keeps the private map, dirty set
+     * and root the case reads - see {@link #createUnfusedView}.
+     */
+    private void createUnfusedAvgView(String anchorTime, String seedRows) throws Exception {
+        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
+                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("insert into tx values " + seedRows);
+        drainWalQueue();
+        execute("create live view lv flush every 100ms start from beginning as "
+                + "select created_at, cod_acct_no, "
+                + "avg(amt_txn + 0.0) over w as cumulative_avg, "
+                + "ksum(amt_txn + 0.0) over w as cumulative_ksum "
+                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '"
+                + anchorTime + "')");
     }
 
     /**
@@ -1743,6 +1921,79 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull("live view 'lv' must be registered", instance);
         return instance;
+    }
+
+    /**
+     * One LONG column, so the stub function's key sink has something to serialise and a
+     * case can move the key between calls.
+     */
+    private static final class LongKeyRecordStub implements Record {
+        private static final RecordSink SINK = new RecordSink() {
+            @Override
+            public void copy(Record r, RecordSinkSPI w) {
+                w.putLong(r.getLong(0));
+            }
+
+            @Override
+            public void setFunctions(ObjList<Function> keyFunctions) {
+            }
+        };
+        private long value;
+
+        @Override
+        public long getLong(int col) {
+            return value;
+        }
+    }
+
+    /**
+     * A partitioned window function carrying everything the frontier sweep needs except
+     * the marking itself - a tombstone slot and a scratch-map factory, with a
+     * markPartitionAlive that names no key. The shape two unbounded-rows accumulators
+     * carried before the mark moved back to the base class.
+     */
+    private static final class NonMarkingFunctionStub extends BasePartitionedWindowFunction {
+        private static final ArrayColumnTypes KEY_TYPES = new ArrayColumnTypes().add(ColumnType.LONG);
+        private static final ArrayColumnTypes VALUE_TYPES = new ArrayColumnTypes().add(ColumnType.BYTE);
+
+        private NonMarkingFunctionStub() {
+            super(null, new VirtualRecord(keyFunctions()), LongKeyRecordStub.SINK, null);
+            this.tombstoneValueIndex = 0;
+        }
+
+        @Override
+        public String getName() {
+            return "non_marking";
+        }
+
+        @Override
+        public int getType() {
+            return ColumnType.DOUBLE;
+        }
+
+        @Override
+        public void markPartitionAlive(Record record) {
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            throw new UnsupportedOperationException();
+        }
+
+        void markDirty(Record record) {
+            markCheckpointPartitionDirty(record);
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, KEY_TYPES, VALUE_TYPES);
+        }
+
+        private static ObjList<Function> keyFunctions() {
+            final ObjList<Function> functions = new ObjList<>();
+            functions.add(LongColumn.newInstance(0));
+            return functions;
+        }
     }
 
     /**
