@@ -31,6 +31,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -228,6 +229,25 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplacingColumnIndexBeyondColumnCount() throws Exception {
+        // a replacing index far outside the column list makes the chain walk read
+        // past the end of the mapped _meta file
+        assertReplacingIndexRejected(100_000, 2);
+    }
+
+    @Test
+    public void testReplacingColumnIndexForwardReference() throws Exception {
+        // replacing index must always point at an earlier column, a forward reference
+        // makes the dense column list walk a slot it has not populated yet
+        assertReplacingIndexRejected(9, 2);
+    }
+
+    @Test
+    public void testReplacingColumnIndexSelfReference() throws Exception {
+        assertReplacingIndexRejected(3, 3);
+    }
+
+    @Test
     public void testTransitionIndexWhenColumnCountIsBeyondFileSize() throws Exception {
         // this test asserts that validator compares column count to file size, where
         // file is prepared to be smaller than count. On Windows this setup does not work
@@ -334,5 +354,39 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
             }
         });
 
+    }
+
+    private void assertReplacingIndexRejected(int replacingIndex, int columnIndex) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO);
+
+                TableToken tableToken = engine.verifyTableName("all");
+                path.of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+
+                // poke a bogus replacing column index into the column entry, the on-disk
+                // encoding is 1-based with 0 meaning "no replacement"
+                try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    mem.smallFile(TestFilesFacadeImpl.INSTANCE, path.$(), MemoryTag.MMAP_DEFAULT);
+                    mem.putInt(
+                            TableUtils.META_OFFSET_COLUMN_TYPES + columnIndex * TableUtils.META_COLUMN_DATA_SIZE + 24,
+                            replacingIndex + 1
+                    );
+                }
+
+                try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken)) {
+                    metadata.loadMetadata();
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid replacing column index");
+                }
+
+                try (TableWriter ignore = TestUtils.newOffPoolWriter(configuration, tableToken, engine)) {
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid replacing column index");
+                }
+            }
+        });
     }
 }

@@ -2811,6 +2811,21 @@ public final class TableUtils {
                                 .put(']');
                     }
                 }
+
+                // A replacing column is always appended after the column it replaces, so a valid
+                // replacing index is strictly less than the index of the column carrying it. Enforcing
+                // that here keeps every replacing chain in-bounds and acyclic, which is what the chain
+                // walks in getReplacingChainHead() and buildColumnListFromMetadataFile() rely on:
+                // without it a corrupt index reads past the end of the mapped metadata file, or off the
+                // end of the dense column list, instead of failing with a diagnosable error.
+                final int replacingIndex = getReplacingColumnIndex(metaMem, i);
+                if (replacingIndex < -1 || replacingIndex >= i) {
+                    throw validationException()
+                            .put("invalid replacing column index [path=").put(metaPath)
+                            .put(", replacingIndex=").put(replacingIndex)
+                            .put(", columnIndex=").put(i)
+                            .put(']');
+                }
             }
 
             // validate column names
