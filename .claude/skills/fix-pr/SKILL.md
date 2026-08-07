@@ -2,6 +2,7 @@
 name: fix-pr
 description: Validate and fix pasted QuestDB pull-request review findings one at a time, with claim verification, a failing regression test where feasible, robust and performant implementation, testing, and an independent review/fix loop. Use when the user pastes Critical, Moderate, or other actionable PR review items.
 argument-hint: "[--max-review-rounds=N] <pasted review findings>"
+disable-model-invocation: true
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent, AskUserQuestion
 ---
 
