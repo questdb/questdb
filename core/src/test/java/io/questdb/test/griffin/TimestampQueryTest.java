@@ -1103,6 +1103,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             assertQuery(query1)
                     .noLeakCheck()
                     .timestamp("timestamp")
+                    .expectSize()
                     .returns(expected);
 
             expected = """

@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -60,6 +59,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private final int partitionBy;
     private final StringSink sink = new StringSink();
     private final TimestampDriver timestampDriver;
+    private SqlExecutionContext intervalPlanContext;
+    private long intervalPlanGeneration;
     // This used to assemble the result
     private LongList outIntervals;
 
@@ -96,6 +97,9 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             return intervals;
         }
 
+        final long currentIntervalPlanGeneration = sqlExecutionContext.getIntervalPlanGeneration();
+        intervalPlanContext = null;
+        intervalPlanGeneration = 0;
         if (outIntervals == null) {
             outIntervals = new LongList();
         } else {
@@ -115,6 +119,10 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             sqlExecutionContext.setIntervalFunctionType(oldIntervalType);
         }
 
+        if (currentIntervalPlanGeneration < 0) {
+            intervalPlanContext = sqlExecutionContext;
+            intervalPlanGeneration = -currentIntervalPlanGeneration;
+        }
         return outIntervals;
     }
 
@@ -136,6 +144,36 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         return timestampDriver;
     }
 
+    // Static placeholders align encoded intervals with dynamic functions and contribute no
+    // instability of their own. Classify only the functions stored in non-null slots.
+    @Override
+    public boolean isNonDeterministic() {
+        if (isStatic()) {
+            return false;
+        }
+        for (int i = 0, n = dynamicRangeList.size(); i < n; i++) {
+            final Function function = dynamicRangeList.getQuick(i);
+            if (function != null && function.isNonDeterministic()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        if (isStatic()) {
+            return true;
+        }
+        for (int i = 0, n = dynamicRangeList.size(); i < n; i++) {
+            final Function function = dynamicRangeList.getQuick(i);
+            if (function != null && !function.isStableWithinExecution()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Override
     public boolean isStatic() {
         return dynamicRangeList == null || dynamicRangeList.size() == 0;
@@ -145,20 +183,31 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     public void toPlan(PlanSink sink) {
         if (intervals != null && intervals.size() > 0) {
             sink.val('[');
+            final SqlExecutionContext executionContext = sink.getExecutionContext();
             try {
-                LongList intervals = calculateIntervals(sink.getExecutionContext());
-                for (int i = 0, n = intervals.size(); i < n; i += 2) {
+                // EXPLAIN may reuse intervals calculated by its immediately preceding base-cursor open.
+                // Context identity and generation prevent normal execution or another render from
+                // publishing state that this render can consume.
+                final LongList planIntervals = intervalPlanContext == executionContext
+                        && intervalPlanGeneration != 0
+                        && intervalPlanGeneration == executionContext.getIntervalPlanGeneration()
+                        ? outIntervals
+                        : calculateIntervals(executionContext);
+                for (int i = 0, n = planIntervals.size(); i < n; i += 2) {
                     if (i > 0) {
                         sink.val(',');
                     }
                     sink.val("(\"");
-                    valTs(sink, timestampDriver, intervals.getQuick(i));
+                    valTs(sink, timestampDriver, planIntervals.getQuick(i));
                     sink.val("\",\"");
-                    valTs(sink, timestampDriver, intervals.getQuick(i + 1));
+                    valTs(sink, timestampDriver, planIntervals.getQuick(i + 1));
                     sink.val("\")");
                 }
             } catch (SqlException e) {
                 LOG.error().$("Can't calculate intervals: ").$safe(e.getFlyweightMessage()).$();
+            } finally {
+                intervalPlanContext = null;
+                intervalPlanGeneration = 0;
             }
             sink.val(']');
         }
@@ -180,12 +229,20 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         int cursorFunctionIndex = 0;
         int dynamicIndex = 0;
         boolean firstFuncApplied = false;
+        // Start index of a pending run of batched UNION leaves, or -1 when no run is open.
+        int unionRunStart = -1;
 
         for (int i = dynamicStart; i < size; i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
             Function dynamicFunction = dynamicRangeList.getQuick(dynamicIndex);
             dynamicIndex++;
             short operation = IntervalUtils.getEncodedOperation(intervals, i);
             boolean negated = operation > IntervalOperation.NEGATED_BORDERLINE;
+            if (unionRunStart >= 0 && operation != IntervalOperation.UNION) {
+                // A non-union operation is about to read the accumulated result: fold the pending
+                // union run into it first, in one pass.
+                mergePendingUnionRun(outIntervals, unionRunStart);
+                unionRunStart = -1;
+            }
             int divider = outIntervals.size();
 
             // Get day filter mask (stored in high byte of periodCount)
@@ -282,13 +339,28 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
                         if (dynamicValue == Numbers.LONG_NULL || dynamicValue2 == Numbers.LONG_NULL) {
                             // functions evaluated to null
+                            if (operation == IntervalOperation.UNION) {
+                                // A NULL/empty bound under UNION is the empty-set identity: it
+                                // contributes no interval, so leave the accumulated union untouched
+                                // and drop this disjunct. Unlike INTERSECT, a NULL union leaf must
+                                // NOT collapse the whole set, or `ts = (empty sub) OR ts = x` would
+                                // wrongly drop x's rows.
+                                outIntervals.setPos(divider);
+                                // The union expression still counts as applied: when every leaf of
+                                // the run is empty its value is the empty set, and a following
+                                // INTERSECT/SUBTRACT must combine with that empty result (yielding
+                                // the empty set) instead of seeding the intervals as if it were
+                                // the first expression.
+                                firstFuncApplied = true;
+                                continue;
+                            }
                             if (!negated) {
                                 // return an empty set if it's not negated
                                 outIntervals.clear();
                                 return;
                             } else {
                                 // or full set
-                                negatedNothing(outIntervals, divider);
+                                negatedNothing(outIntervals, divider, firstFuncApplied);
                                 continue;
                             }
                         }
@@ -300,7 +372,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                                 outIntervals.clear();
                                 return;
                             } else {
-                                negatedNothing(outIntervals, divider);
+                                negatedNothing(outIntervals, divider, firstFuncApplied);
                                 continue;
                             }
                         }
@@ -322,9 +394,11 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
                         outIntervals.extendAndSet(divider + 1, hi);
                         outIntervals.setQuick(divider, lo);
-                        if (divider == 0 && negated) {
+                        if (divider == 0 && negated && operation != IntervalOperation.UNION) {
                             // Divider == 0 means it's the first interval applied
-                            // Invert the interval, since it will not be applied negated to anything
+                            // Invert the interval, since it will not be applied negated to anything.
+                            // UNION shares the negated encoding range but is not a subtraction: a
+                            // union anchor must seed the interval verbatim, not its complement.
                             IntervalUtils.invert(outIntervals, divider);
                         }
                     } else {
@@ -350,7 +424,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                                 // This is a subtraction
                                 if (tryParseInterval(outIntervals, strInterval, configuration)) {
                                     // full set
-                                    negatedNothing(outIntervals, divider);
+                                    negatedNothing(outIntervals, divider, firstFuncApplied);
                                     continue;
                                 }
                                 IntervalUtils.invert(outIntervals, divider);
@@ -360,23 +434,33 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 }
             }
 
-            // Do not apply operation (intersection, subtraction).
-            // If this is the first element and no pre-calculated static intervals exist.
-            if (firstFuncApplied || divider > 0) {
+            if (operation == IntervalOperation.UNION) {
+                // Union leaves (OR-ed disjuncts, bracket expansion) are batched: each leaf appends
+                // its intervals verbatim in SQL evaluation order (preserving deterministic errors
+                // and side effects) and the whole run is merged once when it ends. D disjuncts
+                // then cost one O(D log D) sort-and-coalesce instead of D incremental merges
+                // against a growing accumulator costing O(D^2).
+                if (unionRunStart < 0) {
+                    unionRunStart = divider;
+                }
+            } else if (firstFuncApplied || divider > 0) {
+                // Do not apply operation (intersection, subtraction).
+                // If this is the first element and no pre-calculated static intervals exist.
                 switch (operation) {
                     case IntervalOperation.INTERSECT, IntervalOperation.INTERSECT_BETWEEN,
                          IntervalOperation.INTERSECT_INTERVALS, IntervalOperation.SUBTRACT_INTERVALS ->
                             IntervalUtils.intersectInPlace(outIntervals, divider);
                     case IntervalOperation.SUBTRACT, IntervalOperation.SUBTRACT_BETWEEN ->
                             IntervalUtils.subtract(outIntervals, divider);
-                    case IntervalOperation.UNION ->
-                        // Union with previous intervals (used for bracket expansion)
-                            IntervalUtils.unionInPlace(outIntervals, divider);
                     default ->
                             throw new UnsupportedOperationException("Interval operation " + operation + " is not supported");
                 }
             }
             firstFuncApplied = true;
+        }
+
+        if (unionRunStart >= 0) {
+            mergePendingUnionRun(outIntervals, unionRunStart);
         }
     }
 
@@ -419,30 +503,51 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             }
             return Numbers.LONG_NULL;
         } else if (functionType == ColumnType.CURSOR) {
-            // special case for ts = (<subquery>) and similar cases, where the designated timestamp
-            // column routes ts =/</> (select ...) into an interval intrinsic instead of a cursor-
-            // comparison factory. A scalar sub-query must still yield at most one row: read the first
-            // row, then enforce there is no second one - otherwise an arbitrary first row would be
-            // taken silently, diverging from the cursor-comparison factories that reject it.
+            // special case for ts = (<subquery>) and similar cases
             final RecordCursorFactory factory = dynamicFunction.getRecordCursorFactory();
             assert factory != null;
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                if (cursor.hasNext()) {
-                    final long timestamp = timestampDriver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
-                    ScalarSubQueryUtils.assertNoMoreRows(cursor, getCursorFunctionPosition(cursorFunctionIndex));
-                    return timestamp;
-                } else {
-                    return Numbers.LONG_NULL;
-                }
-            }
+            final long value = ScalarSubQueryUtils.readTimestamp(
+                    factory,
+                    sqlExecutionContext,
+                    getCursorFunctionPosition(cursorFunctionIndex)
+            );
+            return value == Numbers.LONG_NULL
+                    ? Numbers.LONG_NULL
+                    : timestampDriver.from(
+                    value,
+                    ColumnType.getTimestampType(factory.getMetadata().getColumnType(0))
+            );
         } else {
             return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType));
         }
     }
 
-    private void negatedNothing(LongList outIntervals, int divider) {
+    /**
+     * Folds a batched run of union leaves into the accumulated intervals. The run's leaves sit
+     * unmerged at {@code [runStart, size)} in SQL evaluation order; they are sorted, coalesced
+     * and merged with the preceding result {@code [0, runStart)} in one pass. Both stages use
+     * the same coalescing rule, so the outcome is identical to merging each leaf incrementally.
+     */
+    private static void mergePendingUnionRun(LongList outIntervals, int runStart) {
+        if (outIntervals.size() == runStart) {
+            // every union leaf in the run evaluated to the empty set
+            return;
+        }
+        IntervalUtils.sortAndUnionInPlace(outIntervals, runStart);
+        if (runStart > 0) {
+            IntervalUtils.unionInPlace(outIntervals, runStart);
+        }
+    }
+
+    private void negatedNothing(LongList outIntervals, int divider, boolean firstFuncApplied) {
         outIntervals.setPos(divider);
-        if (divider == 0) {
+        // divider == 0 is ambiguous on its own: it means either "nothing has been applied yet"
+        // (this negated term is the anchor, so subtracting nothing leaves the full domain) or
+        // "a previous expression already evaluated to the empty set" (an all-NULL union run, or
+        // an intersection that produced no overlap). Only the former may seed the full domain;
+        // in the latter case the accumulator is an established empty set and must stay empty,
+        // because the residual predicate has already been removed from the filter.
+        if (divider == 0 && !firstFuncApplied) {
             outIntervals.extendAndSet(1, Long.MAX_VALUE);
             outIntervals.extendAndSet(0, Long.MIN_VALUE);
         }
