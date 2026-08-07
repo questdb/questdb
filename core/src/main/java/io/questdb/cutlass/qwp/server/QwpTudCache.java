@@ -336,14 +336,24 @@ public class QwpTudCache implements QuietCloseable {
             //
             // A writer whose commit failed for any other reason is evicted as
             // well: retrying generally cannot succeed for a distressed or
-            // out-of-date writer -- the one transient exception is a
-            // role-derived read-only refusal (TableUpdateDetails.commit()
-            // throws readOnlyAccess() before marking the writer in error),
-            // which this same branch also evicts on -- and this
-            // fire-and-forget path has no client to report to -- the next
-            // datagram rebuilds a fresh entry. Eviction may drop this entry's
-            // buffered rows, but that is bounded loss within the UDP no-ack
-            // contract.
+            // out-of-date writer, and this fire-and-forget path has no client
+            // to report to -- the next datagram rebuilds a fresh entry.
+            //
+            // That includes the one TRANSIENT failure, a role-derived
+            // read-only refusal (TableUpdateDetails.commit() throws
+            // readOnlyAccess() before marking the writer in error), and the
+            // eviction there is deliberate, not collateral: ENT quiesces this
+            // whole loop on demote (switchRole publishes acceptOpen=false
+            // before runSerially's commit check), so the refusal can only fire
+            // in the narrow flip window -- at most one tick, discarding at
+            // most one commit window's rows, within the UDP no-ack contract.
+            // Retaining the entry instead would keep an already-acquired
+            // writer absorbing rows on a node whose getWalWriter fence (ENT
+            // refuses acquisition while read-only) exists precisely to block
+            // client writes there -- and would inject those rows on a later
+            // promote. The WS path answers this same refusal by severing the
+            // connection (rejectCairoError -> roleChangeClosePending);
+            // eviction is this ack-less path's analog of that close.
             if (!tud.isDropped() && (tud.isWriterInError() || isTableTokenStale(tud))) {
                 tud.setIsDropped();
             }
@@ -405,14 +415,24 @@ public class QwpTudCache implements QuietCloseable {
             //
             // A writer whose commit failed for any other reason is evicted as
             // well: retrying generally cannot succeed for a distressed or
-            // out-of-date writer -- the one transient exception is a
-            // role-derived read-only refusal (TableUpdateDetails.commit()
-            // throws readOnlyAccess() before marking the writer in error),
-            // which this same branch also evicts on -- and this
-            // fire-and-forget path has no client to report to -- the next
-            // datagram rebuilds a fresh entry. Eviction may drop this entry's
-            // buffered rows, but that is bounded loss within the UDP no-ack
-            // contract.
+            // out-of-date writer, and this fire-and-forget path has no client
+            // to report to -- the next datagram rebuilds a fresh entry.
+            //
+            // That includes the one TRANSIENT failure, a role-derived
+            // read-only refusal (TableUpdateDetails.commit() throws
+            // readOnlyAccess() before marking the writer in error), and the
+            // eviction there is deliberate, not collateral: ENT quiesces this
+            // whole loop on demote (switchRole publishes acceptOpen=false
+            // before runSerially's commit check), so the refusal can only fire
+            // in the narrow flip window -- at most one tick, discarding at
+            // most one commit window's rows, within the UDP no-ack contract.
+            // Retaining the entry instead would keep an already-acquired
+            // writer absorbing rows on a node whose getWalWriter fence (ENT
+            // refuses acquisition while read-only) exists precisely to block
+            // client writes there -- and would inject those rows on a later
+            // promote. The WS path answers this same refusal by severing the
+            // connection (rejectCairoError -> roleChangeClosePending);
+            // eviction is this ack-less path's analog of that close.
             if (!tud.isDropped() && (tud.isWriterInError() || isTableTokenStale(tud))) {
                 tud.setIsDropped();
             }

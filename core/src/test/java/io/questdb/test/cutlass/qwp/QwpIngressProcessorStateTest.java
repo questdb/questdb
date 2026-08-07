@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.qwp;
 
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
@@ -63,6 +64,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -2529,6 +2531,58 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertTrue(tud.isWriterInError());
                 Assert.assertEquals(0, getCacheSize(cache));
             }
+        });
+    }
+
+    @Test
+    public void testReadOnlyRefusalEvictsCachedTableFromUdpLoop() throws Exception {
+        // M3 (decided): a role-derived read-only refusal EVICTS the cached entry,
+        // discarding its buffered rows. This is deliberate, not an oversight:
+        // ENT quiesces the UDP loop on demote (acceptOpen=false), so this path
+        // only fires in the narrow flip window -- once, bounded by one commit
+        // window; the WS path answers the same refusal by severing the
+        // connection (roleChangeClosePending), and ENT's getWalWriter refuses
+        // acquisition on a read-only node, so retaining a held writer would keep
+        // a hole in that fence open. See the comment in commitWalTables.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ro_evict (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            AtomicBoolean readOnly = new AtomicBoolean(false);
+            try (CairoEngine roEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                @Override
+                public boolean isReadOnlyMode() {
+                    return readOnly.get();
+                }
+            }) {
+                LineHttpProcessorConfiguration lineConfig =
+                        new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+                DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+                try (QwpTudCache cache = new QwpTudCache(
+                        roEngine, true, true, defaultColumnTypes, PartitionBy.DAY, 1, 500_000)
+                ) {
+                    WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("ro_evict"), null, null, 1
+                    );
+                    Assert.assertNotNull(tud);
+                    tud.getWriter().newRow(1_000_000L).append();
+                    Assert.assertEquals(1, cache.size());
+
+                    // Demote: the next interval commit refuses with readOnlyAccess()
+                    // and the loop evicts the entry, rolling its buffered row back.
+                    readOnly.set(true);
+                    cache.commitWalTables(Long.MAX_VALUE - 1);
+                    Assert.assertEquals(
+                            "read-only refusal must evict the cached entry", 0, cache.size()
+                    );
+                }
+            }
+            // The buffered row was rolled back by the eviction, not committed.
+            drainWalQueue();
+            assertQuery("SELECT count() FROM ro_evict")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
         });
     }
 
