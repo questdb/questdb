@@ -542,10 +542,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // table (no commit-mode field at all) reads back UNSET and is therefore covered by the same
             // rule as a table that was created while the instance ran nosync and only became adaptive when
             // the default changed under it. Both have no anchor, both must get one at their live cut.
-            this.adaptiveEnrollmentPending = metadata.isWalEnabled()
+            // A writer opened against a root other than the engine's dbRoot is a PRIVATE STAGING writer --
+            // CopyImportTask builds one per worker under the SQL COPY work directory, cloning the target
+            // table's metadata (so isWalEnabled() is true) but with no sequencer, no txn_seq and no durable
+            // WAL behind it. The adaptive lifecycle belongs to the real table these rows are merged into,
+            // not to the staging copy: attempting to enrol one fails with "could not publish adaptive
+            // enrollment baseline" and aborts the whole parallel import.
+            final boolean privateRootWriter = !Chars.equals(root, configuration.getDbRoot());
+            this.adaptiveEnrollmentPending = !privateRootWriter
+                    && metadata.isWalEnabled()
                     && resolvedCommitMode == CommitMode.ADAPTIVE
                     && metadata.getEnrolledCommitMode() != CommitMode.ADAPTIVE;
-            this.adaptiveExitPending = metadata.isWalEnabled()
+            this.adaptiveExitPending = !privateRootWriter
+                    && metadata.isWalEnabled()
                     && resolvedCommitMode != CommitMode.ADAPTIVE
                     && metadata.getEnrolledCommitMode() == CommitMode.ADAPTIVE;
             // An unenrolled table cannot use lazy adaptive apply until a full durable baseline has been
@@ -3867,7 +3876,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long expectedSeqTxn = getSeqTxn();
         final long expectedTxn = getTxn();
         boolean valid = false;
-        durableEpochSnapshotPath.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.SNAPSHOT_FILE_NAME);
+        // Build from THIS writer's own root, not configuration.getDbRoot(): a writer can be opened against
+        // a different root (CopyImportTask constructs one under the SQL COPY work directory), and there the
+        // dbRoot-derived path names a directory that does not exist -- SnapshotMarker.of() then fails ENOENT
+        // and aborts the whole parallel import. `path` is already root + tableToken.
+        durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(TableUtils.SNAPSHOT_FILE_NAME);
         if (ff.exists(durableEpochSnapshotPath.$())) {
             try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
                 marker.of(durableEpochSnapshotPath.$());
@@ -15291,7 +15304,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (durableEpochMarker == null) {
             durableEpochMarker = new SnapshotMarker(configuration);
         }
-        durableEpochSnapshotPath.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.SNAPSHOT_FILE_NAME);
+        // Build from THIS writer's own root, not configuration.getDbRoot(): a writer can be opened against
+        // a different root (CopyImportTask constructs one under the SQL COPY work directory), and there the
+        // dbRoot-derived path names a directory that does not exist -- SnapshotMarker.of() then fails ENOENT
+        // and aborts the whole parallel import. `path` is already root + tableToken.
+        durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(TableUtils.SNAPSHOT_FILE_NAME);
         durableEpochMarker.of(durableEpochSnapshotPath.$());
         final int epochGeneration = durableEpochMarker.tryLoad()
                 && durableEpochMarker.getGeneration() != SnapshotMarker.LEGACY_GENERATION
