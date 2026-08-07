@@ -746,13 +746,33 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     /**
      * Records that a FLAG_DEFER_COMMIT frame buffered rows into WAL writers
      * without a covering commit. Cleared by {@link #commit()} (successful
-     * commitAll) or {@link #clear()} (rollback). The per-table force-commit
-     * at the max-uncommitted-rows cap does NOT clear this: it commits single
-     * tables and gives no full-coverage guarantee, so the watermark stays put
-     * and those rows are simply replayed (at-least-once) after a reconnect.
+     * commitAll) or {@link #clear()} (rollback).
+     *
+     * @see #refreshUncommittedDeferredRows() for the deferred-frame path, which derives the flag
      */
     public void markUncommittedDeferredRows() {
         uncommittedDeferredRows = true;
+    }
+
+    /**
+     * Recompute the deferred-rows clamp from what is ACTUALLY uncommitted, and return the result.
+     * <p>
+     * The per-table force-commit at the max-uncommitted-rows cap fires for whichever tables crossed the
+     * cap, so after a deferred frame the connection may hold everything, something, or nothing
+     * uncommitted. Marking unconditionally pinned the cumulative-ack watermark to the group-closing frame
+     * even when the server had already committed the whole group -- correct (never over-claims) but it
+     * makes a mid-group reconnect replay rows that ARE durable, duplicating them. Deriving the flag keeps
+     * the #7144 guarantee exactly ("ack implies committed") while letting the watermark advance the moment
+     * coverage is complete, which is what stops the duplicate.
+     * <p>
+     * Strictly narrowing: this can only CLEAR the clamp when nothing is uncommitted, and any table still
+     * holding rows keeps it set.
+     *
+     * @return {@code true} if rows remain uncommitted (the watermark stays clamped)
+     */
+    public boolean refreshUncommittedDeferredRows() {
+        uncommittedDeferredRows = tudCache.hasUncommittedRows();
+        return uncommittedDeferredRows;
     }
 
     public long nextMessageSequence() {
