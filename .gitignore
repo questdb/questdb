@@ -36,6 +36,9 @@ core/rust/parquet2/target
 core/rust/qdb-core/target
 core/rust/qdbr/target
 core/rust/parquet2/parquet-tools/target/
+
+# pi agent artifacts
+.pi-subagents/
 # pgwire compatibility tests - build artifacts
 compat/src/test/rust-tokio/target/
 compat/src/test/rust-sqlx/target/

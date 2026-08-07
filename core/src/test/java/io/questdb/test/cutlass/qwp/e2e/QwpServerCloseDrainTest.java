@@ -68,8 +68,60 @@ import java.util.Base64;
  *   <li><b>Silent peer</b>: reaped by the transport idle timeout — existing
  *       dispatcher behavior, not re-pinned here.</li>
  * </ul>
+ * <p>
+ * {@link #testClientCloseDrainsPipelinedTailInsteadOfResetting} covers the
+ * other teardown of the same file, the client-initiated CLOSE
+ * ({@code gracefulCloseAndDisconnect}): that one closes the fd within the
+ * dispatch instead of parking a drain, so it must half-close and drain inline
+ * or the very same RST destroys the close response and the ACKs ahead of it.
  */
 public class QwpServerCloseDrainTest extends AbstractQwpWebSocketTest {
+
+    /**
+     * Client-initiated CLOSE teardown ({@code handleWebSocketFrame}'s CLOSE
+     * arm): the server must half-close and drain before it lets the framework
+     * close the fd. An 8-byte recv cap makes the pipelined tail behind the
+     * client's 8-byte CLOSE frame provably unread at dispatch time -- the two
+     * frames leave in one segment, but the server can only lift the CLOSE out
+     * of the kernel receive queue -- and a close(2) that leaves unread bytes
+     * queued emits RST instead of FIN. The RST destroys the close response
+     * (and, on a durable-ack connection, the final ACKs ahead of it) that the
+     * peer has not read yet, so the client's trim watermark never advances and
+     * it replays every committed-but-unacked batch after reconnecting.
+     */
+    @Test
+    public void testClientCloseDrainsPipelinedTailInsteadOfResetting() throws Exception {
+        runInContext((port) -> {
+            try (Socket socket = new Socket("localhost", port)) {
+                socket.setSoTimeout(30_000);
+                performWebSocketHandshake(socket, port);
+                OutputStream out = socket.getOutputStream();
+                InputStream in = socket.getInputStream();
+
+                byte[] clientClose = createMaskedFrame(WebSocketOpcode.CLOSE,
+                        new byte[]{0x03, (byte) 0xE8}, true);
+                Assert.assertEquals("the recv cap below must admit exactly the CLOSE frame",
+                        8, clientClose.length);
+                byte[] tail = createMaskedFrame(WebSocketOpcode.BINARY, new byte[64], true);
+                byte[] closeThenTail = new byte[clientClose.length + tail.length];
+                System.arraycopy(clientClose, 0, closeThenTail, 0, clientClose.length);
+                System.arraycopy(tail, 0, closeThenTail, clientClose.length, tail.length);
+
+                // One write, one segment: the tail is in the server's receive
+                // queue by the time the CLOSE dispatch runs, and the 8-byte
+                // recv cap leaves it there. The test assumes the loopback
+                // stack keeps these 78 bytes in ONE segment that lands before
+                // the server's first dispatch -- were they ever split so the
+                // tail arrived after the drain and after close(2), the server
+                // would RST the late tail and this test would fail without any
+                // production regression.
+                out.write(closeThenTail);
+                out.flush();
+
+                assertCloseFrameThenEof(in, WebSocketCloseCode.NORMAL_CLOSURE);
+            }
+        }, 65_536, 8, 65_536);
+    }
 
     @Test
     public void testCloseDrainDeadlineBoundsLingerAgainstLiveWriter() throws Exception {
@@ -83,7 +135,7 @@ public class QwpServerCloseDrainTest extends AbstractQwpWebSocketTest {
                 out.write(createMaskedFrame(WebSocketOpcode.TEXT,
                         "text is not QWP".getBytes(StandardCharsets.UTF_8), true));
                 out.flush();
-                assertCloseFrameThenEof(in);
+                assertCloseFrameThenEof(in, WebSocketCloseCode.UNSUPPORTED_DATA);
 
                 // A live writer that never reads its receive queue and never
                 // closes: the server cannot wait on its FIN forever, but must
@@ -133,7 +185,7 @@ public class QwpServerCloseDrainTest extends AbstractQwpWebSocketTest {
                 out.write(createMaskedFrame(WebSocketOpcode.TEXT,
                         "text is not QWP".getBytes(StandardCharsets.UTF_8), true));
                 out.flush();
-                assertCloseFrameThenEof(in);
+                assertCloseFrameThenEof(in, WebSocketCloseCode.UNSUPPORTED_DATA);
 
                 // Behave like a mid-stream writer that has not yet processed
                 // the goodbye: keep pipelining frames. Pre-fix the server had
@@ -157,10 +209,23 @@ public class QwpServerCloseDrainTest extends AbstractQwpWebSocketTest {
     }
 
     /**
-     * Reads the server's unmasked CLOSE frame (code 1003, UNSUPPORTED_DATA),
-     * then the EOF of the server's half-close directly behind it.
+     * Reads the server's unmasked CLOSE frame carrying {@code expectedCloseCode},
+     * then the EOF of the server's half-close directly behind it. An
+     * {@link IOException} anywhere in that sequence is the abortive close this
+     * suite exists to prevent: an RST wipes whatever the peer has not read yet,
+     * so it fails with that diagnosis rather than a bare stack trace.
      */
-    private static void assertCloseFrameThenEof(InputStream in) throws Exception {
+    private static void assertCloseFrameThenEof(InputStream in, int expectedCloseCode) throws Exception {
+        try {
+            assertCloseFrameThenEof0(in, expectedCloseCode);
+        } catch (IOException e) {
+            throw new AssertionError("server must send FIN behind its CLOSE frame, never RST -- a reset "
+                    + "destroys the goodbye (CLOSE frame and the ACKs ahead of it) still queued unread "
+                    + "in the peer's receive buffer", e);
+        }
+    }
+
+    private static void assertCloseFrameThenEof0(InputStream in, int expectedCloseCode) throws Exception {
         int byte0 = in.read();
         Assert.assertNotEquals("expected a CLOSE frame before EOF", -1, byte0);
         Assert.assertEquals("expected CLOSE opcode", WebSocketOpcode.CLOSE, byte0 & 0x0F);
@@ -177,7 +242,7 @@ public class QwpServerCloseDrainTest extends AbstractQwpWebSocketTest {
             totalRead += n;
         }
         int closeCode = ((payload[0] & 0xFF) << 8) | (payload[1] & 0xFF);
-        Assert.assertEquals(WebSocketCloseCode.UNSUPPORTED_DATA, closeCode);
+        Assert.assertEquals(expectedCloseCode, closeCode);
 
         // shutdown(WR) behind the CLOSE frame: EOF, not an exception -- the
         // goodbye must arrive on a clean half-close, never a reset.
