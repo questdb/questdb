@@ -43,6 +43,11 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        return base.getArrayDimLen(col, columnType, dim);
+    }
+
+    @Override
     public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
         return base.getArrayDouble1d2d(col, columnType, idx0, idx1);
     }

@@ -197,7 +197,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.frameMemoryPools = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
                 // Single sequential scan; no LRU caching needed across frames.
-                frameMemoryPools.add(new PageFrameMemoryPool(0L));
+                frameMemoryPools.add(new PageFrameMemoryPool(configuration, 0L));
             }
         } catch (Throwable th) {
             close();
@@ -602,7 +602,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         while (true) {
                             long cursor = pubSeq.next();
                             if (cursor < 0) {
-                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
                                 if (workStealingStrategy.shouldSteal(mergedCount)) {
                                     VectorAggregateEntry.aggregateUnsafe(

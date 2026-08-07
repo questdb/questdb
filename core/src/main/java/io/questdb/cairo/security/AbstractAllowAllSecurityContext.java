@@ -154,6 +154,14 @@ public abstract class AbstractAllowAllSecurityContext extends AbstractPrincipalA
     }
 
     @Override
+    public void authorizeLiveViewCreate() {
+    }
+
+    @Override
+    public void authorizeLiveViewDrop(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeMatViewCreate() {
     }
 

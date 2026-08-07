@@ -27,9 +27,13 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapWriter;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.std.MemoryTag;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -1356,6 +1360,56 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
     private void assertPartitionDoesNotExist(String tableName, String partition) {
         assertPartitionOnDisk0(tableName, false, partition);
+    }
+
+    @Test
+    public void testConvertPartitionEmbedsSeqTxnInPm() throws Exception {
+        // The produced _pm must carry TableWriter's current seqTxn.
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = "testConvertSeqTxn";
+            createTable(
+                    tableName,
+                    "INSERT INTO " + tableName + " VALUES(1, '2024-06-10T00:00:00.000000Z')",
+                    "INSERT INTO " + tableName + " VALUES(2, '2024-06-11T00:00:00.000000Z')"
+            );
+
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+
+            final TableToken token = engine.verifyTableName(tableName);
+            final long expectedSeqTxn;
+            final long partitionTimestamp;
+            final long parquetNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                expectedSeqTxn = reader.getTxFile().getSeqTxn();
+                partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                parquetNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            try (Path pmPath = new Path()) {
+                TableUtils.setPathForParquetPartitionMetadata(
+                        pmPath.of(configuration.getDbRoot()).concat(token),
+                        timestampType.getTimestampType(),
+                        PartitionBy.DAY,
+                        partitionTimestamp,
+                        parquetNameTxn
+                );
+                Assert.assertTrue("produced _pm must exist at " + pmPath, ff.exists(pmPath.$()));
+
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                final long addr = ParquetMetaFileReader.openAndMapRO(ff, pmPath.$(), reader);
+                Assert.assertTrue("openAndMapRO should succeed", addr > 0);
+                try {
+                    Assert.assertTrue(reader.resolveLastFooter());
+                    Assert.assertEquals(
+                            "seqTxn in _pm must match TableWriter.getSeqTxn()",
+                            expectedSeqTxn, reader.getResolvedSeqTxn()
+                    );
+                } finally {
+                    ff.munmap(addr, reader.getFileSize(), MemoryTag.MMAP_PARQUET_METADATA_READER);
+                    reader.clear();
+                }
+            }
+        });
     }
 
     private void assertPartitionExists(String tableName, String partition) {

@@ -1405,6 +1405,29 @@ public class UnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnnest2DArrayMixedUnequalLengthsDimLenAndElement() throws Exception {
+        // The pad rows of the shorter source have no array behind them. Selecting the column whole
+        // reads it through a @Nullable path, but dim_length() and x[i] take Record's
+        // getArrayDimLen()/getArrayDouble1d2d() defaults, which dereference what getArray() hands
+        // back. The pad rows have to read as a NULL array there too, not blow up.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE[][], b DOUBLE[])");
+            execute("INSERT INTO t VALUES ("
+                    + "ARRAY[[1.0, 2.0]], "
+                    + "ARRAY[100.0, 200.0, 300.0])");
+            assertQuery("SELECT dim_length(u.x, 1) len, u.x[1] first, u.y FROM t, UNNEST(t.a, t.b) u(x, y)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            len\tfirst\ty
+                            2\t1.0\t100.0
+                            null\tnull\t200.0
+                            null\tnull\t300.0
+                            """);
+        });
+    }
+
+    @Test
     public void testUnnest2DArrayMultipleRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (id LONG, arr DOUBLE[][])");

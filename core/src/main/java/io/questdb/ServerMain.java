@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataID;
 import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.view.ViewCompilerJob;
@@ -76,9 +77,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.questdb.PropertyKey.*;
 
 public class ServerMain implements Closeable {
-    private final CairoEngine engine;
     private final Bootstrap bootstrap;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
     private WorkerPoolManager workerPoolManager;
@@ -608,10 +609,6 @@ public class ServerMain implements Closeable {
             }
         };
 
-        // make sure view definitions are loaded before the view compiler job is started,
-        // all views have to be loaded with their dependencies before the compiler starts processing notifications
-        engine.buildViewGraphs();
-
         setupDedicatedPools(log, isReadOnly, config);
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
@@ -715,9 +712,16 @@ public class ServerMain implements Closeable {
     }
 
     protected void setupDedicatedPools(Log log, boolean isReadOnly, ServerConfiguration config) {
-        if (config.getCairoConfiguration().isMatViewEnabled() && !isReadOnly) {
+        // Mat views and live views run the same workload shape (compile SELECT, run cursor,
+        // materialize) triggered by WAL commits, but they own separate pools. Sharing one made
+        // mat.view.refresh.worker.count silently govern live views too, and the engine cannot
+        // read a mat-view knob to answer "will a live view ever be refreshed?" - the question
+        // CairoEngine.buildViewGraphs and WalPurgeJob have to answer before they register a view
+        // or hold the base WAL on its behalf. Both counts default to the wal-apply worker count.
+        final boolean isMatViewEnabled = config.getCairoConfiguration().isMatViewEnabled();
+        if (isMatViewEnabled && !isReadOnly) {
             if (config.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0) {
-                // This starts mat view refresh jobs only when there is a dedicated pool for mat view refresh
+                // This starts refresh jobs only when there is a dedicated pool configured;
                 // this will not use shared pool write because getWorkerCount() > 0
                 WorkerPool mvRefreshWorkerPool = workerPoolManager.getSharedPoolWrite(
                         config.getMatViewRefreshPoolConfiguration(),
@@ -727,9 +731,22 @@ public class ServerMain implements Closeable {
             } else {
                 log.advisory().$("mat view refresh is disabled; set ")
                         .$(MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath())
-                        .$(" to a positive value or keep default to enable mat view refresh.")
+                        .$(" to a positive value or keep default to enable refresh. CREATE MATERIALIZED VIEW")
+                        .$(" still succeeds, but nothing will refresh the view.")
                         .$();
             }
+        }
+
+        // No else-branch advisory: a zero live view worker count is no longer a half-on state to
+        // warn about. SqlParser rejects CREATE LIVE VIEW, buildViewGraphs registers nothing, and
+        // WalPurgeJob holds no base WAL - the same shape as cairo.live.view.enabled=false, which
+        // logs nothing either.
+        if (config.getCairoConfiguration().isLiveViewRefreshEnabled() && !isReadOnly) {
+            WorkerPool lvRefreshWorkerPool = workerPoolManager.getSharedPoolWrite(
+                    config.getLiveViewRefreshPoolConfiguration(),
+                    WorkerPoolManager.Requester.LIVE_VIEW_REFRESH
+            );
+            setupLiveViewJobs(lvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
         }
 
         if (config.getViewCompilerPoolConfiguration().getWorkerCount() > 0) {
@@ -750,6 +767,18 @@ public class ServerMain implements Closeable {
 
     protected Job setupEngineMaintenanceJob(CairoEngine engine) {
         return new EngineMaintenanceJob(engine);
+    }
+
+    protected void setupLiveViewJobs(WorkerPool lvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
+        for (int i = 0, workerCount = lvWorkerPool.getWorkerCount(); i < workerCount; i++) {
+            // create job per worker; workerCount lets each job shard the idle registry
+            // scan by live-view table id so the pool does O(views), not O(workers x views).
+            final LiveViewRefreshJob liveViewRefreshJob = new LiveViewRefreshJob(i, workerCount, engine, sharedQueryWorkerCount);
+            lvWorkerPool.assign(i, liveViewRefreshJob);
+            lvWorkerPool.freeOnExit(liveViewRefreshJob);
+        }
+        // There is no LiveViewTimerJob: idle flushes are driven by FLUSH EVERY
+        // ticks polled inside LiveViewRefreshJob, not by a separate timer.
     }
 
     protected void setupMatViewJobs(WorkerPool mvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
@@ -914,6 +943,12 @@ public class ServerMain implements Closeable {
                 ServerMain.this.engine.completeInit();
             }
             ServerMain.this.engine.load();
+            // Load view definitions before publishing READY: load() mints a fresh, empty
+            // ViewStateStore, and every component that keys off engine READY -- the hydration
+            // envelope's compileAllViews and hydrateRecentWriteTracker among them -- walks the
+            // table name registry, which already carries the view tokens. Leaving the graph
+            // empty past this point makes those walks report every view as missing.
+            ServerMain.this.engine.buildViewGraphs();
             ctx.publish(io.questdb.lifecycle.State.READY);
         }
 

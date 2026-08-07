@@ -180,6 +180,16 @@ public abstract class AbstractReadOnlySecurityContext extends AbstractPrincipalA
     }
 
     @Override
+    public void authorizeLiveViewCreate() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeLiveViewDrop(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeMatViewCreate() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }

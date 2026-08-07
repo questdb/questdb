@@ -25,14 +25,27 @@
 package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.lv.LiveViewCheckpointDependency;
+import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -41,6 +54,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -51,6 +65,38 @@ public interface WindowFunction extends Function {
     int ONE_PASS = 1;
     int TWO_PASS = 2;
     int ZERO_PASS = 0;
+
+    /**
+     * @return the capacity {@link #restoreCheckpointRingState} and
+     * {@link #restoreCheckpointState} open a partition's ring at. Restoring at
+     * exactly the restored row count leaves the ring full, so the first row the
+     * replay appends behind it doubles the ring and copies all of it - once per
+     * partition, on every restore, and a live view restores several times a second.
+     * Half again of headroom absorbs a replay's worth of new rows instead, and holds
+     * less arena than the expansion it avoids: that allocates the doubled ring beside
+     * the one it copies out of, and only the free list may hand the old block back
+     */
+    static long restoredRingCapacity(long size, long initialBufferSize) {
+        return Math.max(size + (size >> 1), initialBufferSize);
+    }
+
+    /**
+     * Returns the compiler-produced localized-repair dependency descriptor, or
+     * {@code null} outside a live-view compile / for a function that does not
+     * support checkpoint state.
+     */
+    @Nullable
+    default LiveViewCheckpointDependency checkpointDependency() {
+        return null;
+    }
+
+    /**
+     * Returns the stable identity persisted in the timeline function directory.
+     */
+    @Nullable
+    default LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity() {
+        return null;
+    }
 
     default void computeNext(Record record) {
     }
@@ -83,6 +129,71 @@ public interface WindowFunction extends Function {
     @Override
     default char getChar(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @return the checkpoint generation the incremental baseline this function holds
+     * was recorded against, or {@link Numbers#LONG_NULL} when it holds none. A seal
+     * may only freeze incrementally on top of the root that generation named: every
+     * other publication - a repair, a truncate, a compaction - moves the generation
+     * on without this function's state having produced the new root, which makes
+     * both the untouched-key assumption and the logical-bytes baseline stale.
+     */
+    default long getCheckpointBaselineGeneration() {
+        return Numbers.LONG_NULL;
+    }
+
+    /**
+     * @return the partition keys this function has touched since the last durable
+     * cadence checkpoint, or {@code null} when it does not track them. A non-null
+     * map lets a seal freeze only those keys instead of the whole live domain.
+     * <p>
+     * A function opts in by calling
+     * {@link io.questdb.griffin.engine.functions.window.BasePartitionedWindowFunction#markCheckpointPartitionDirty}
+     * from {@link #markPartitionAlive(Record)}. That call must be unconditional or
+     * absent altogether: a partial mark leaves a changed key out of the map, and the
+     * seal then publishes a root that still names the key's stale state. Opting out
+     * is fail-safe - the map stays null, the seal full-scans, and correctness does
+     * not depend on the function at all.
+     */
+    @Nullable
+    default Map getCheckpointDirtyPartitionMap() {
+        return null;
+    }
+
+    /**
+     * @return the partition-key {@link ColumnTypes} the live-view checkpoint framework
+     * writes into the state payload's key-shape header and validates on restore.
+     * Returns {@code null} for scalar (no-map) functions, which the framework treats
+     * as a single keyless partition. Partitioned functions override to return their
+     * own partition-key types.
+     */
+    @Nullable
+    default ColumnTypes getCheckpointKeyColumnTypes() {
+        return null;
+    }
+
+    /**
+     * @return the index of the first partition-key column inside the partition-state
+     * {@link Map} record's column layout ({@code [value0..valueN, key0..keyM]}), i.e.
+     * the value-slot count. The framework passes this to
+     * {@link io.questdb.cairo.lv.LiveViewSnapshotKeyCodec#writeKey} when emitting a
+     * partition's key. Default {@code 0}; partitioned functions override.
+     */
+    default int getCheckpointKeyStartIndex() {
+        return 0;
+    }
+
+    /**
+     * @return the logical bytes the last durably published root charges for this
+     * function's state. An incremental seal starts from this figure and adjusts it by
+     * the keys it froze, so the total it reports still means "this boundary's whole
+     * live state" rather than a delta. Meaningful only while
+     * {@link #getCheckpointBaselineGeneration()} names the generation being sealed on
+     * top of.
+     */
+    default long getCheckpointLogicalStateBytes() {
+        return 0;
     }
 
     @Override
@@ -197,6 +308,23 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Exposes the per-instance partition-state {@link Map} used by the live-view
+     * tombstone-compaction routine to rebuild the function's state container.
+     * Returns {@code null} by default; window functions that maintain per-partition
+     * state in a Map keyed by the named window's PARTITION BY columns override this
+     * once they sign up for full compaction by overriding this method.
+     * <p>
+     * A function that does not override this leaves its per-function Map out of the
+     * rebuild; only the anchor-map compaction trigger runs for it. While the
+     * default returns {@code null}, the function's Map continues to grow and is
+     * reclaimed only when the live view is dropped.
+     */
+    @Nullable
+    default Map getPartitionMap() {
+        return null;
+    }
+
+    /**
      * @return pass1 scan direction.
      * Some {@link #ONE_PASS} and {@link #TWO_PASS} window functions may be more efficient when using a backward scan.
      */
@@ -264,6 +392,27 @@ public interface WindowFunction extends Function {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * @return the number of tombstoned (logically-evicted) partitions currently in
+     * the partition-state {@link Map}. The live-view checkpoint framework uses it to
+     * pick the cheap {@code map.size()} live-count when no entry is tombstoned, and
+     * the two-pass count otherwise. Default {@code 0}; functions that track a
+     * per-partition tombstone bit override.
+     */
+    default long getTombstoneCount() {
+        return 0;
+    }
+
+    /**
+     * @return the value-slot index of the per-partition tombstone byte, or {@code -1}
+     * when the function tracks no tombstone bit. The snapshot framework reads this to
+     * skip tombstoned partitions when emitting. Default {@code -1}; partitioned
+     * functions in live-view mode override.
+     */
+    default int getTombstoneValueIndex() {
+        return -1;
+    }
+
     @Override
     default Utf8Sequence getVarcharA(Record rec) {
         throw new UnsupportedOperationException();
@@ -279,6 +428,58 @@ public interface WindowFunction extends Function {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Reports whether this function's checkpoint state is <b>frame-local</b>: every value
+     * it produces from a given row onward is determined by the rows within the look-behind
+     * its descriptor declares - the
+     * {@link LiveViewCheckpointDependency#getStateExtentLo() state extent} - so a replay
+     * warmed up over that extent reproduces them. The extent is the declared frame's own
+     * look-behind for every function that answers true today, which is where the name comes
+     * from; a function whose state needs less than its frame says so by carrying a narrower
+     * extent in the descriptor, not by answering differently here.
+     * <p>
+     * The live-view localized out-of-order repair rebuilds state from the dependency floor
+     * {@code L} - the extent's lower edge at the output floor - and reads nothing below it.
+     * A function whose value depends on rows outside the extent it declares would be
+     * replayed against a warm-up that never fed those rows and would emit wrong output:
+     * {@code lag(x, 5) OVER (... ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)} reaches five
+     * rows back through a frame that promises three. Declaring {@code false} costs the
+     * view only the localized path - the repair falls back to the rebuild from the
+     * {@code START FROM} boundary, which needs no such guarantee.
+     * <p>
+     * Frame-local does not require the replayed state bytes to equal a whole-history
+     * recompute's. A ring buffer replayed from {@code L} starts at a different rotation,
+     * and a counter that saturates at the frame size stops short of the true total; both
+     * produce the same values from the output floor onward, which is what the contract
+     * asks for.
+     * <p>
+     * Default {@code false} fails closed: a function is enabled here only once its state
+     * is proven to converge, one function and type at a time.
+     */
+    default boolean hasFrameLocalCheckpointState() {
+        return false;
+    }
+
+    /**
+     * Rebinds every inner expression that depends on the base cursor's per-cursor state -
+     * the partition-by expressions, the function's {@code arg}, and any extra argument a
+     * subclass carries (lag/lead's {@code defaultValue}, a bivariate function's second
+     * arg) - to the new cursor, without resetting the accumulated per-partition state.
+     * <p>
+     * The live-view incremental refresh path skips the regular {@link #init} call on
+     * window functions so their cross-cycle accumulator state survives, and calls this
+     * instead. Every cycle hands the function a fresh WAL-segment-scoped
+     * SymbolTableSource, and the WAL writer re-assigns symbol keys per commit, so any
+     * binding cached against the previous cursor - a SYMBOL column's symbol table, the
+     * int key a symbol comparison resolved its constant to - names the wrong value from
+     * the second cycle on. Miss one and the window silently aggregates the wrong rows.
+     * <p>
+     * Despite the name, this is not partition-by-only: implementations must rebind every
+     * such expression they own, and overrides must call super.
+     */
+    default void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+    }
+
     default void initRecordComparator(
             SqlCodeGenerator sqlGenerator,
             RecordMetadata metadata,
@@ -289,8 +490,101 @@ public interface WindowFunction extends Function {
     ) throws SqlException {
     }
 
+    /**
+     * @return true when the next seal must walk this function's whole partition map
+     * rather than the keys {@link #getCheckpointDirtyPartitionMap()} names. A restore,
+     * a repair and a frontier compaction all remove keys, and only a full scan detects
+     * a key the root still holds but the runtime no longer does.
+     */
+    default boolean isCheckpointFullScanRequired() {
+        return true;
+    }
+
+    /**
+     * Reports whether this function holds no checkpoint state at all: the value it emits at a
+     * row is that row's alone, so a freeze has nothing to write and a restore nothing to put
+     * back. {@code last_value} over a frame ending at the current row is the family that
+     * answers true - whatever its frame nominally spans, the whole of its {@code computeNext}
+     * is {@code value = readArgValue(record)}, which makes the call equivalent to projecting
+     * its own argument.
+     * <p>
+     * This is a disposition rather than an empty implementation of the freeze/restore pair. A
+     * freeze that writes nothing is indistinguishable, at the call site, from one that forgot
+     * to write something, and the whole checkpoint contract rests on that call site being
+     * honest. Declaring the absence instead keeps {@link #supportsCheckpointState()} meaning
+     * what it says, so every site that walks the checkpoint image keeps skipping this function
+     * rather than carrying a zero-length entry for it. The two answers are therefore exclusive,
+     * and {@code CairoEngine.validateLiveViewWindowFunction} rejects a function claiming both.
+     * <p>
+     * A live view still needs a dependency descriptor from such a function, because a repair
+     * has to know the influence is bounded rather than merely that the state is empty. The
+     * compiler gives it a state extent of zero under
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointContracts.DependencyKind#STATELESS_CURRENT_ROW},
+     * and the bounds that follow are the cheapest the system can express: the replay floor is
+     * the output floor itself, so no warm-up runs at all, and convergence is one tick above the
+     * highest changed timestamp.
+     */
+    default boolean isCheckpointStateless() {
+        return false;
+    }
+
     default boolean isIgnoreNulls() {
         return false;
+    }
+
+    /**
+     * Clears the per-function tombstone bit for the partition the supplied record
+     * belongs to, if currently set. Called once per row by
+     * {@link io.questdb.cairo.lv.LiveViewWindow#processRow(Record)} (post-projection,
+     * post-filter) before the row reaches the underlying cursor stack's
+     * {@link #computeNext(Record)} dispatch.
+     * <p>
+     * Decouples the "partition saw a row" signal from {@link #computeNext(Record)},
+     * which previously cancelled the tombstone bit set by {@link #resetPartition(Record)}
+     * on the same anchor-cross row. With markPartitionAlive driving the clear,
+     * the anchor-map's tombstoneCount actually grows across anchor crosses and the
+     * compaction trigger can engage in steady state.
+     * <p>
+     * Default no-op; override on every window function that tracks a per-partition
+     * tombstone bit. Implementations must be branchless on the common (no-tombstone)
+     * case -- check the function-local tombstoneCount first and bail before the
+     * Map lookup.
+     */
+    default void markPartitionAlive(Record record) {
+    }
+
+    /**
+     * Adopts the state the seal just published as this function's incremental
+     * baseline. Called only after the checkpoint superblock is durably published, so
+     * a seal that fails anywhere before that leaves the dirty set and the previous
+     * baseline intact and the next seal repeats the work.
+     *
+     * @param logicalStateBytes what the published root charges for this function
+     * @param generation        the generation the publication produced. The next seal
+     *                          freezes incrementally only when it is sealing on top of
+     *                          exactly this generation
+     */
+    default void onCheckpointPersisted(long logicalStateBytes, long generation) {
+    }
+
+    /**
+     * Resets this function's per-partition state to empty before the live-view
+     * snapshot framework rehydrates partitions via
+     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue)}. Partitioned
+     * functions clear their {@link Map} and zero the tombstone counter here;
+     * native-memory-backed ring/deque functions also rewind their backing arena
+     * and clear their free list. Default no-op (scalar functions hold a single
+     * field that {@code restoreCheckpointState} overwrites directly).
+     * <p>
+     * The arena rewinds through {@link MemoryA#jumpTo(long) jumpTo(0)} rather
+     * than {@link MemoryA#truncate()}: truncate reallocates the region down to a
+     * single page, and the restore about to run refills it to roughly the size it
+     * just held, so the pages would go back to the allocator only to be faulted
+     * in again - a full re-grow per replay on the live-view refresh loop.
+     * Rewinding leaves stale bytes above the append offset, which is safe because
+     * every restore path writes each slot before reading it.
+     */
+    default void onCheckpointRestoreBegin() {
     }
 
     /**
@@ -324,6 +618,75 @@ public interface WindowFunction extends Function {
      **/
     void reset();
 
+    /**
+     * Resets the per-partition accumulator for the partition the supplied record
+     * belongs to. Called by the live-view ANCHOR runtime when the anchor expression's
+     * value changes within a partition — the partition's state must be cleared to
+     * the identity value before the new bucket's first row is processed.
+     * <p>
+     * The default no-op is correct for window functions whose state is intrinsically
+     * per-row (ranking) or that do not maintain partitioned state. Window functions
+     * that key per-partition state on PARTITION BY override this to reset the matching
+     * Map entry's value bytes to identity (e.g. {@code sum -> 0}, {@code count -> 0},
+     * {@code min/max -> NaN}, etc.).
+     * <p>
+     * The function is expected to use its own {@code partitionByRecord} +
+     * {@code partitionBySink} to derive the Map key from {@code record}; for the
+     * common case of multiple functions on the same named WINDOW, all of them use
+     * the same partition shape, so the per-record cost of re-keying is just a
+     * memcpy.
+     * <p>
+     * The live-view ANCHOR runtime drives this from {@link io.questdb.cairo.lv.LiveViewInstance};
+     * non-live-view queries never invoke it.
+     */
+    default void resetPartition(Record record) {
+    }
+
+    /**
+     * Rehydrates ONE partition's accumulator state previously written by
+     * {@link #freezeCheckpointState(LiveViewStatePageWriter, MapValue)}. The live-view snapshot
+     * framework owns iteration: it has already read the partition key and called
+     * {@code createValue()}, passing the fresh {@code value} here; for scalar
+     * (no-map) functions {@code value} is {@code null}. The function reads its own
+     * state bytes from {@code source} starting at {@code offset} and returns the
+     * advanced offset just past them. Native-memory-backed functions allocate the
+     * partition's ring/deque from their arena here.
+     * <p>
+     * The default throws — only window functions that {@link #supportsCheckpointState()}
+     * override.
+     *
+     * @return the offset just past this partition's consumed state bytes
+     */
+    default long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+        throw new UnsupportedOperationException(
+                "restoreCheckpointState not implemented for " + getClass().getName()
+        );
+    }
+
+    /**
+     * Rebuilds the per-partition state {@link Map} to keep only partitions whose
+     * key is present in {@code survivingKeys}, dropping the rest. The live-view
+     * ANCHOR runtime ({@link io.questdb.cairo.lv.LiveViewWindow#compact()}) calls
+     * this after a frontier-gated sweep drops anchor-map partitions whose bucket
+     * has fallen behind the retained window, so each function's map stays in
+     * lockstep with the anchor map.
+     * <p>
+     * {@code survivingKeys} is the rebuilt anchor map. It shares this function's
+     * partition-by key layout, but NOT necessarily its {@link Map} implementation:
+     * {@code MapFactory.createUnorderedMap} selects on value size as well as key shape,
+     * and the anchor map's 10-byte value routinely lands on a different implementation
+     * than a function whose live-view value payload is larger.
+     * <p>
+     * {@code survivingKeySink} reads the partition-by key columns off
+     * {@code survivingKeys}' own map record, which is what lets
+     * {@link io.questdb.griffin.engine.functions.window.PartitionStateEvictor#rebuildKeepingMembers}
+     * bridge that gap: it writes keys through the per-column putters instead of casting to
+     * a concrete implementation's key, so an implementer never has to reconcile the two
+     * implementations itself. Default no-op for functions without per-partition state.
+     */
+    default void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
+    }
+
     /*
       Set index of record chain column used to store window function result.
      */
@@ -331,20 +694,223 @@ public interface WindowFunction extends Function {
 
     /**
      * Binds the per-query native memory tracker on this function's tracker-aware
-     * state (e.g. a per-partition map). The owning window cursor calls this before
-     * reopen() at cursor start, so the state allocates against the bound tracker and
-     * frees against it at cursor close. A null tracker degrades to global-only
-     * accounting. Default no-op for functions with no tracker-aware state.
+     * state: the per-partition map, and the ring buffers (plus the Max/Min monotonic
+     * deque) of RANGE frames, of partitioned ROWS frames, and of partitioned
+     * lag()/lead(). The owning window cursor calls this before reopen() at cursor
+     * start, so the state allocates against the bound tracker and frees against it at
+     * cursor close. A null tracker degrades to global-only accounting. Default no-op
+     * for functions with no tracker-aware state.
      * <p>
-     * Coverage limitation: ROWS-frame functions bind only their per-partition map,
-     * not the per-partition ring buffers that hold the sliding-window values. Those
-     * buffers stay global-only. A single ROWS frame is bounded by the frame literal,
-     * but under PARTITION BY ... ROWS the total ring-buffer memory scales with the
-     * partition cardinality and is not charged to the per-query counter; the bound
-     * per-partition map is only a partial backstop. RANGE-frame functions bind their
-     * tracker-aware state and are not affected.
+     * Deliberately excluded: the ring buffer (and Max/Min deque) of a NON-partitioned
+     * ROWS frame, and the ring of a NON-partitioned lag()/lead(). Both are sized at
+     * construction from a constant in the query text - the frame literal ({@code |rowsLo|},
+     * {@code |rowsHi|} or the frame width, depending on the shape) or the lag/lead
+     * offset - so neither grows with the data. Their PARTITIONED counterparts stay
+     * bound, because there one ring exists per partition.
+     * Charging them would put a hard floor of one
+     * {@code cairo.sql.window.store.page.size} under every such query, because
+     * MemoryCARWImpl allocates a whole page up front: a five-row frame needing forty
+     * bytes, or a default lag() needing eight, would each charge a megabyte at the
+     * shipped default, and queries that ran fine would start throwing. Under
+     * {@code PARTITION BY ... ROWS} the total instead scales with partition
+     * cardinality, which is why those stay bound.
+     * <p>
+     * The exclusion buys accounting sanity, not a hard bound: the buffer size is an
+     * int cast of an unbounded long literal, so a single
+     * {@code ROWS BETWEEN 500000000 PRECEDING} still allocates gigabytes outside the
+     * per-query limit. That is the coverage limitation this rule has always carried;
+     * {@code cairo.sql.window.store.max.pages} is the knob that bounds it.
+     * <p>
+     * An implementation that IS bound must leave its ring buffer UNALLOCATED at
+     * construction and let reopen() perform the first allocation, matching the
+     * lazy-map pattern in BasePartitionedWindowFunction's constructor. A buffer
+     * filled in the constructor allocates at newInstance() time, before any cursor
+     * binds a tracker, so the malloc lands on the global counter while reset() later
+     * frees it against the bound per-query tracker - driving that counter negative.
+     * Direct callers (e.g. unit tests) must reopen() before use.
      */
     default void setMemoryTracker(@Nullable MemoryTracker tracker) {
+    }
+
+    /**
+     * Called exactly once by the SQL compiler for a checkpoint-capable function
+     * in a live-view SELECT. Implementations must retain these immutable values;
+     * the default fails closed so an eligible function cannot silently fall back
+     * to positional/object identity.
+     */
+    default void setCheckpointCompilerMetadata(
+            LiveViewCheckpointFunctionIdentity identity,
+            LiveViewCheckpointDependency dependency
+    ) {
+        throw new UnsupportedOperationException(
+                "checkpoint compiler metadata not supported by " + getClass().getName()
+        );
+    }
+
+    /**
+     * The words this function's checkpoint ring spends on its scalar continuation state:
+     * 1 (the default), 2 for a 128-bit decimal accumulator, or 4 for a 256-bit one. It is
+     * independent of {@link #checkpointRingValueKind()} - a {@code decimal(20,4)}
+     * {@code avg} holds a 64-bit value per row and a 256-bit running sum, while a
+     * {@code decimal(38,4)} {@code first_value} holds a 128-bit value per row and no scalar
+     * at all. The arity of the
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointRingStateSink#putScalarState(long, long)}
+     * overload the function calls must agree with this. Read only for a
+     * {@link #supportsCheckpointRingState() ring-shaped} function.
+     */
+    default int checkpointRingScalarWords() {
+        return 1;
+    }
+
+    /**
+     * The value kind this function's checkpoint ring stores per row, one of the
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader} {@code VALUE_KIND_*}
+     * constants. A DOUBLE ring stores exact IEEE-754 bits (raw or ALP-compressed) in one word;
+     * a LONG/DATE/TIMESTAMP ring and a narrow DECIMAL ring (physical width 8, 16, 32 or 64 bits)
+     * store the 64-bit payload raw or FoR-compressed, which an integer value keeps out of a
+     * double so a NaN bit pattern is never canonicalized; a DECIMAL128 ring stores two such
+     * words per row and a DECIMAL256 ring four, most significant first. The {@code DEQUE_*} kinds carry the same
+     * payload but tag the value pages as a {@code max}/{@code min} monotonic-deque root's frame
+     * ring, keeping it distinct from a value-ring root. {@code VALUE_KIND_NONE} stores no value
+     * at all: {@code count}'s per-row state is the designated timestamp itself, so its chunk is
+     * the timestamp page alone. Read only for a
+     * {@link #supportsCheckpointRingState() ring-shaped} function.
+     */
+    default int checkpointRingValueKind() {
+        return io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE;
+    }
+
+    /**
+     * The negated ROWS look-behind a warm-up must replay to reconstruct this function's state,
+     * when that extent is a fixed row count of the function's own rather than the declared
+     * frame's low bound. {@code lag(x, K)} reads the row {@code K} back and ignores its frame
+     * entirely, so its state extent is {@code -K} however the frame is written - in particular
+     * it can reach further back than the frame does, which the frame's own low bound never
+     * describes. Returns {@link Long#MIN_VALUE} to defer to the frame, which is what every
+     * function but {@code lag} does.
+     * <p>
+     * The compiler reads this only for ROWS framing. A RANGE frame's repair works in timestamp
+     * width, which a fixed row count cannot express, so a function carrying this override
+     * declines a RANGE frame rather than localize against an extent in the wrong units.
+     */
+    default long checkpointRowsStateExtentOverride() {
+        return Long.MIN_VALUE;
+    }
+
+    /**
+     * @return the checkpoint state layout version this build writes. The compiler folds it into
+     * the function's state codec identity, and the checkpoint timeline records it in the function
+     * root. Bump on any state-layout change: the bump changes the identity, so a root written under
+     * the old layout no longer resolves to this function and the timeline rejects it wholesale
+     * instead of decoding foreign bytes.
+     */
+    default int checkpointStateFormatVersion() {
+        return 0;
+    }
+
+    /**
+     * Serialises ONE partition's accumulator state into {@code sink} for later
+     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue)}. The live-view
+     * snapshot framework owns iteration and the key-shape header:
+     * it has already written this partition's key, so the function writes only its
+     * own value bytes from {@code value} (the partition's {@link MapValue}; for
+     * scalar no-map functions {@code value} is {@code null} and the function reads
+     * its single field directly).
+     * <p>
+     * The default throws — only window functions that {@link #supportsCheckpointState()}
+     * override.
+     */
+    default void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+        throw new UnsupportedOperationException(
+                "freezeCheckpointState not implemented for " + getClass().getName()
+        );
+    }
+
+    /**
+     * Streams ONE partition's frame ring into {@code sink} so the checkpoint seal can
+     * share the chunk pages the previous boundary already wrote instead of encoding the
+     * whole frame again. The function writes its exact aggregate continuation state and
+     * then every live ring row in designated-timestamp order; the seal decides which of
+     * those rows are new. For scalar no-map functions {@code value} is {@code null}.
+     * <p>
+     * The default throws — only window functions that {@link #supportsCheckpointRingState()}
+     * override.
+     */
+    default void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+        throw new UnsupportedOperationException(
+                "freezeCheckpointRingState not implemented for " + getClass().getName()
+        );
+    }
+
+    /**
+     * Rehydrates ONE partition's frame ring previously written by
+     * {@link #freezeCheckpointRingState(LiveViewCheckpointRingStateSink, MapValue)}. The
+     * live-view checkpoint framework owns iteration and has already read the partition key
+     * and called {@code createValue()}, passing the fresh {@code value} here; for scalar
+     * no-map functions {@code value} is {@code null}. The function sizes its ring from
+     * {@link LiveViewCheckpointRingStateSource#getRowCount()} and fills it from
+     * {@link LiveViewCheckpointRingStateSource#forEachRow}.
+     * <p>
+     * The default throws — only window functions that {@link #supportsCheckpointRingState()}
+     * override.
+     */
+    default void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+        throw new UnsupportedOperationException(
+                "restoreCheckpointRingState not implemented for " + getClass().getName()
+        );
+    }
+
+    /**
+     * Reports whether this function persists its per-partition state as a ring of
+     * timestamp-ordered rows plus an exact aggregate tail — the shape
+     * {@link #freezeCheckpointRingState(LiveViewCheckpointRingStateSink, MapValue)} and
+     * {@link #restoreCheckpointRingState(LiveViewCheckpointRingStateSource, MapValue)}
+     * carry. The checkpoint seal routes such a function through the persistent chunk
+     * layer, so adjacent roots reference the same pages for the rows they share; every
+     * other function writes one complete state image per root through
+     * {@link #freezeCheckpointState(LiveViewStatePageWriter, MapValue)}.
+     * <p>
+     * Only a bounded RANGE frame answers true today. The chunk layer keys sharing on the
+     * designated timestamp: the seal splits a partition's streamed ring at the previous
+     * boundary's maximum timestamp, treats every row at or below it as a page the previous
+     * root already wrote, and encodes only the rows above it. A RANGE frame expires rows by
+     * timestamp, so its survivors are exactly a timestamp suffix of the previous ring and the
+     * split reproduces them. A ROWS frame keeps a fixed count of rows regardless of timestamp,
+     * and QuestDB admits many rows at one designated timestamp, so a boundary can drop and add
+     * rows that all sit at the split timestamp; the timestamp split cannot tell those survivors
+     * from the new rows and would carry stale pages forward. Sharing a ROWS ring therefore needs
+     * a separate positional chunk model, and since a ROWS frame's live state is already bounded
+     * by its declared row count, the ROWS value and aggregate families keep the whole-state image
+     * instead - they leave this false and override only the whole-state pair above.
+     * <p>
+     * The running-aggregate families leave it false for a different reason: they hold no ring
+     * to share. {@code ema}/{@code vwema}, {@code stddev}/{@code variance}, the bivariate
+     * stats, {@code ksum}, {@code count} over an unbounded frame, {@code row_number} and
+     * {@code rank} each carry a fixed handful of accumulator words per partition however long
+     * the view has run, so one complete image per root is already the smallest thing a root
+     * can write - a chunk reference costs more metadata than the image it would replace, and
+     * an accumulator has no rows to expire and therefore no suffix to hold in common with the
+     * previous root. {@code lag} does keep a ring, but a positional one of the last
+     * {@code offset} values carrying no timestamp at all, so the ROWS reasoning above covers
+     * it and its own declared offset bounds the image.
+     * <p>
+     * Implies {@link #supportsCheckpointState()}: the ring shape is an alternative
+     * encoding of checkpoint state, not an alternative to having any.
+     */
+    default boolean supportsCheckpointRingState() {
+        return false;
+    }
+
+    /**
+     * Reports whether {@link #freezeCheckpointState(LiveViewStatePageWriter, MapValue)} /
+     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue)} are implemented.
+     * The live view refresh worker ANDs this across every window function in the compiled SELECT
+     * at first refresh; the LV's per-instance {@code snapshotCapability} flag is the result.
+     * Default {@code false} keeps unmigrated functions out of the checkpoint pipeline without
+     * a try/catch — the cheaper probe.
+     */
+    default boolean supportsCheckpointState() {
+        return false;
     }
 
     enum Pass1ScanDirection {
