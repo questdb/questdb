@@ -26,7 +26,7 @@ package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
-import io.questdb.std.Os;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -36,8 +36,9 @@ import java.time.temporal.ChronoUnit;
  * Pinned-client coverage for RENAME TABLE racing active QWP ingestion.
  * The server-side unit tests freeze the rename window at the cache level;
  * these tests pin the CLIENT-VISIBLE contract: post-rename rows never land
- * silently in the renamed table, and a salvage-modified ack stream is
- * accepted by the real client.
+ * silently in the renamed table (they either fail loudly or land in a fresh
+ * auto-created table under the old name, never in the rename's destination),
+ * and a salvage-modified ack stream is accepted by the real client.
  * <p>
  * Step 1 discovery: the client-side switch that keeps rows buffered
  * server-side across frames is {@link QwpWebSocketSender#setDeferCommit(boolean)}
@@ -81,12 +82,32 @@ public class QwpSenderRenameE2ETest extends AbstractQwpWebSocketTest {
                 // the I/O thread transmits asynchronously and a deferred frame
                 // is never acked (see
                 // QwpSenderE2ETest#testDeferredFramesNotAckedUntilCommit), so
-                // there is no ack-based signal to await here. Give the I/O
-                // thread time to actually deliver the frame and have the
-                // server append v=1 to the writer cached under "sal_ws"
-                // before renaming out from under it -- the same grace-window
-                // idiom that test uses for the same reason.
-                Os.sleep(500);
+                // there is no ack-based signal to await v=1's delivery. Poll
+                // for the auto-created "sal_ws" registry entry instead of a
+                // bare sleep: getTableTokenIfExists returns null while the
+                // name is locked mid-create, so once it is non-null the
+                // frame's synchronous server-side processing (create, then
+                // append) has fully run.
+                //
+                // Then pin the buffered premise the salvage below depends
+                // on: v=1 reached the writer (table exists) but stayed
+                // UNCOMMITTED (count 0) because deferCommit(true) held it
+                // back. If a future change made setDeferCommit stop
+                // buffering, sal_ws would already show v=1 here -- RENAME
+                // would just carry the already-committed row forward as
+                // ordinary rename semantics, the salvage branch would never
+                // run, and the assertions at the end of this test would
+                // still pass by accident. This assertion is what makes that
+                // regression fail loudly, right here.
+                TestUtils.assertEventually(() -> {
+                    Assert.assertNotNull("sal_ws must be auto-created once v=1's deferred frame reaches the server",
+                            engine.getTableTokenIfExists("sal_ws"));
+                    assertQuery("SELECT count() FROM sal_ws")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n0\n");
+                }, 10);
 
                 execute("RENAME TABLE sal_ws TO sal_ws_old");
                 execute("CREATE TABLE sal_ws (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
@@ -119,10 +140,30 @@ public class QwpSenderRenameE2ETest extends AbstractQwpWebSocketTest {
     public void testRenameMidConnectionDoesNotMisrouteRows() throws Exception {
         // C1 e2e: rows sent for the OLD name after RENAME must not appear in
         // the renamed table. The server's dir-name guard keeps the cached
-        // writer on the old token, the commit fails with
-        // TableReferenceOutOfDateException, and the client surfaces the
-        // failure instead of receiving an OK for misrouted rows.
+        // writer on the old token, and the commit fails with
+        // TableReferenceOutOfDateException (see the server log line "cached
+        // query plan cannot be used because table schema has changed
+        // [table=trades]", that exception's exact message prefix). This is a
+        // pure rename with the old name left free (nothing recreates
+        // "trades"), so the QWP layer maps the failure to a RETRIABLE
+        // strike.
+        //
+        // Observed, pinned client-visible contract -- NOT the naive
+        // assumption that a NACK must surface as a thrown exception:
+        // the store-and-forward sender reconnects and replays the frame
+        // transparently, so neither flush() nor close() throws. The replay
+        // lands on a brand-new connection with its own fresh QwpTudCache,
+        // which has never seen "trades"; its lookup finds the name free
+        // (trades_archive now owns the old directory) and auto-creates a
+        // NEW "trades" table, so v=2 lands there. What must never happen,
+        // and is the actual load-bearing invariant, is v=2 landing in
+        // trades_archive. Both assertions below are pinned so a future
+        // change to either half of this contract -- a NACK that starts
+        // throwing, or a reconnect that misroutes into trades_archive --
+        // fails this test loudly instead of silently.
         runInContext((port) -> {
+            boolean threwOnFlush = false;
+            boolean threwOnClose = false;
             try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table("trades").longColumn("v", 1).at(1_000_000_000_000L, ChronoUnit.MICROS);
                 // drain() flushes and blocks until the server acks the row:
@@ -139,16 +180,25 @@ public class QwpSenderRenameE2ETest extends AbstractQwpWebSocketTest {
                 try {
                     sender.table("trades").longColumn("v", 2).at(1_000_000_001_000L, ChronoUnit.MICROS);
                     sender.flush();
-                    // Depending on the client's NACK classification the
-                    // failure may surface on this flush or on close; both are
-                    // acceptable. What is NOT acceptable is a silent OK with
-                    // the row landing in trades_archive -- the assertion below.
-                } catch (LineSenderException expected) {
+                } catch (LineSenderException onFlush) {
+                    threwOnFlush = true;
                 }
-            } catch (LineSenderException expectedOnClose) {
+            } catch (LineSenderException onClose) {
+                threwOnClose = true;
             }
+            Assert.assertFalse("flush() must not throw for this retriable, transparently-replayed NACK",
+                    threwOnFlush);
+            Assert.assertFalse("close() must not throw for this retriable, transparently-replayed NACK",
+                    threwOnClose);
 
             drainWalQueue();
+            // The replay's fresh QwpTudCache auto-creates "trades" again
+            // (the old name was left free by the rename) and lands v=2
+            // there, never in trades_archive.
+            assertQuery("SELECT v FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n2\n");
             assertQuery("SELECT v FROM trades_archive")
                     .noLeakCheck()
                     .expectSize()
