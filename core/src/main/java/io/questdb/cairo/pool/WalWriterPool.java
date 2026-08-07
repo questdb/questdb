@@ -113,15 +113,23 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         @Override
         public void close() {
             if (isOpen()) {
+                boolean isCleanedUp = false;
                 try {
                     cleanupBeforeClose();
+                    isCleanedUp = true;
                 } finally {
-                    // rollback0() marks the writer distressed before rethrowing,
-                    // so a failed cleanup lands in the expel branch below --
-                    // never back in the pool -- while the exception propagates.
+                    // Route to the pool only when cleanup fully completed and the
+                    // writer isn't distressed -- anything else (cleanup threw, or
+                    // rollback0() marked it distressed before rethrowing) lands in
+                    // the expel branch below: full close, entry released, exception
+                    // still propagates. Checking isCleanedUp, not just isDistressed(),
+                    // matters because not every cleanupBeforeClose() failure sets
+                    // distressed -- e.g. a columnar-write cancel failure leaves the
+                    // writer half-cancelled but not distressed, and returning that to
+                    // the pool would hand the next acquirer a poisoned writer.
                     final AbstractMultiTenantPool<WalWriterTenant> pool = this.pool;
                     if (pool != null && entry != null) {
-                        if (!isDistressed()) {
+                        if (isCleanedUp && !isDistressed()) {
                             if (!pool.returnToPool(this)) {
                                 super.close();
                             }

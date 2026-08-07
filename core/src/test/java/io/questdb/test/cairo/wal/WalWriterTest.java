@@ -52,6 +52,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.ColumnarRowAppender;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
@@ -5037,6 +5038,70 @@ public class WalWriterTest extends AbstractCairoTest {
                 // We should receive table is dropped error
                 Assert.assertTrue(e.isTableDropped());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped");
+            }
+        });
+    }
+
+    @Test
+    public void testTenantCloseRunsPoolBookkeepingWhenColumnarCancelFails() throws Exception {
+        // M2 follow-up: cleanupBeforeClose() also cancels a pending columnar
+        // write, via WalColumnarRowAppender.cancelColumnarWrite() ->
+        // WalWriter.cancelColumnarWrite(startRowId) -> setAppendPosition() --
+        // the same IO-performing rollback call as
+        // testTenantCloseRunsPoolBookkeepingWhenRollbackFails(), but reached
+        // with no try/catch anywhere on that path and no distressed marking on
+        // failure. Routing close() purely on isDistressed() (as rollback0()'s
+        // guarantee alone would suggest) would therefore hand this half-
+        // cancelled, still-open writer back to the pool via returnToPool() --
+        // a poisoned instance handed to the next acquirer, worse than the
+        // plain stranding covered above. The fix instead tracks whether
+        // cleanupBeforeClose() completed at all (isCleanedUp), independent of
+        // the distressed flag.
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, 16384);
+        AtomicBoolean armed = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (armed.compareAndSet(true, false)) {
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tenant_close_columnar (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken token = engine.verifyTableName("tenant_close_columnar");
+
+            WalWriter w = engine.getWalWriter(token);
+            ColumnarRowAppender appender = w.getColumnarRowAppender();
+            int rowCount = 2_200;
+            appender.beginColumnarWrite(rowCount);
+            // cancelColumnarWrite() rolls back every column's append pointer
+            // regardless of what was written, so writing only the designated-
+            // timestamp column -- and pushing it across a page boundary, same
+            // mechanism as the row-oriented test above -- is enough to force
+            // the ff.mmap() remap on cancel.
+            w.putServerAssignedTimestampColumnar(rowCount, 1_000_000L);
+
+            armed.set(true);
+            try {
+                w.close();
+                Assert.fail("close must propagate the columnar cancel failure");
+            } catch (CairoException expected) {
+            } finally {
+                armed.set(false);
+            }
+
+            // The pool must not hand back a half-cancelled writer still marked
+            // as being in columnar-write mode: the entry was expelled and the
+            // writer fully closed, so a fresh acquire gets a brand-new,
+            // functioning instance rather than the poisoned one.
+            try (WalWriter w2 = engine.getWalWriter(token)) {
+                Assert.assertNotSame(w, w2);
+                TableWriter.Row row = w2.newRow(2_000_000L);
+                row.putInt(1, 1);
+                row.append();
+                w2.commit();
             }
         });
     }
