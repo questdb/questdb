@@ -5057,7 +5057,7 @@ public class WalWriterTest extends AbstractCairoTest {
         // plain stranding covered above. The fix instead tracks whether
         // cleanupBeforeClose() completed at all (isCleanedUp), independent of
         // the distressed flag.
-        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, 16384);
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, 16_384);
         AtomicBoolean armed = new AtomicBoolean(false);
         ff = new TestFilesFacadeImpl() {
             @Override
@@ -5127,7 +5127,7 @@ public class WalWriterTest extends AbstractCairoTest {
         // column across a page boundary, so its rollback must remap page 0 via
         // ff.mmap() -- confirmed empirically by instrumenting every FilesFacade
         // method the WAL writer path could plausibly touch during close().
-        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, 16384);
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, 16_384);
         AtomicBoolean armed = new AtomicBoolean(false);
         ff = new TestFilesFacadeImpl() {
             @Override

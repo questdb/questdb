@@ -549,7 +549,19 @@ public class QwpTudCache implements QuietCloseable {
         for (int i = 0, n = keys.size(); i < n; i++) {
             Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
             WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-            Misc.free(tud);
+            try {
+                Misc.free(tud);
+            } catch (Throwable th) {
+                // Closing a discarded writer rolls back its buffered rows --
+                // real file IO that can fail on ENOSPC/EIO. Swallowing keeps
+                // this loop freeing the remaining entries and lets close()
+                // (the only caller) go on to clear the map and free ddlMem,
+                // path and symbolCachePool; an escaping exception here would
+                // abort that finally in QwpUdpReceiver.close() too, leaking
+                // walAppender and the native recv buffer.
+                LOG.error().$("could not close discarded writer [table=").$(tableName)
+                        .$(", e=").$safe(th.getMessage()).I$();
+            }
         }
         tableUpdateDetails.clear();
         cachedTableCount = 0;
@@ -557,7 +569,8 @@ public class QwpTudCache implements QuietCloseable {
 
     /**
      * Registers the callback invoked after a successful salvage commit in
-     * {@link #evictStaleTud}. See {@link #committedTxnConsumer}.
+     * {@link #salvageBufferedRows}, called from both {@link #evictStaleTud}
+     * and {@link #applyPendingStructureChanges}. See {@link #committedTxnConsumer}.
      */
     public void setCommittedTxnConsumer(CommittedTxnConsumer consumer) {
         this.committedTxnConsumer = consumer;
@@ -669,7 +682,12 @@ public class QwpTudCache implements QuietCloseable {
             // same physical table -- then throw: the caller evicts the entry
             // and refuses the frame, and the client's retry lands after the
             // registry has caught up. Rebuilding within this lookup instead
-            // would re-acquire a writer that rebinds the same way.
+            // would re-acquire a writer that rebinds the same way. On the WS
+            // deferred-ack path the salvaged rows' frames were never acked
+            // before this throw, so the client's replay re-delivers them into
+            // whatever the old name resolves to after the rename -- duplicate
+            // delivery across tables, consistent with commitAll's
+            // partial-commit replay posture.
             salvageBufferedRows(tud, walWriter);
             throw CairoException.nonCritical()
                     .put("table is being renamed, cannot ingest [table=")
@@ -832,7 +850,7 @@ public class QwpTudCache implements QuietCloseable {
             tud.updateTableToken(walWriter.getTableToken());
             tud.commit(false);
         } catch (Throwable th) {
-            LOG.error().$("could not salvage buffered rows of a renamed table [table=")
+            LOG.error().$("could not salvage-commit buffered rows of a renamed table [table=")
                     .$safe(walWriter.getTableToken().getTableName())
                     .$(", e=").$safe(th.getMessage()).I$();
             return false;

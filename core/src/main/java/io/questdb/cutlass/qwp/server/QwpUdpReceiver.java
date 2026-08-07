@@ -425,9 +425,13 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                 } catch (CairoException e) {
                     // The table could not be acquired -- almost always because
                     // it was DROPped concurrently and its stale cached writer
-                    // (possibly still holding buffered rows) was evicted. There
-                    // is no ack on the UDP path, so drop the whole datagram and
-                    // heal on the next one. Counted separately from parse errors.
+                    // (possibly still holding buffered rows) was evicted. It
+                    // now also covers a concurrent RENAME: the rename-window
+                    // refusal from applyPendingStructureChanges, and a stale
+                    // entry whose buffered rows could not be salvaged, both
+                    // surface here the same way. There is no ack on the UDP
+                    // path, so drop the whole datagram and heal on the next
+                    // one. Counted separately from parse errors.
                     droppedStaleTableCount++;
                     LOG.error().$("dropping datagram, table update details unavailable: ")
                             .$(e.getFlyweightMessage()).$();

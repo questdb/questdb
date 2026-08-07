@@ -1755,6 +1755,50 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResetSurvivesEvictionCloseFailure() throws Exception {
+        // Companion to testCommitAllBestEffortSurvivesEvictionCloseFailure,
+        // but for reset() (the loop close()/the constructor's failure path
+        // funnel through). Before the fix, reset() freed each remaining TUD
+        // with no per-entry try/catch: one entry's close() failure aborted
+        // the loop mid-way, skipping the table map clear and, back in
+        // close(), the ddlMem/path/symbolCachePool frees that follow it --
+        // and propagating out of QwpUdpReceiver.close()'s finally would have
+        // also skipped Misc.free(walAppender) and Unsafe.free(buf): the exact
+        // leak M2 set out to close.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE reset_evict_1 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE reset_evict_2 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            QwpTudCache cache = new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY);
+
+            WalTableUpdateDetails tud1 = cache.getTableUpdateDetails(
+                    AllowAllSecurityContext.INSTANCE, new Utf8String("reset_evict_1"), null, null, 2
+            );
+            Assert.assertNotNull(tud1);
+            WalTableUpdateDetails tud2 = cache.getTableUpdateDetails(
+                    AllowAllSecurityContext.INSTANCE, new Utf8String("reset_evict_2"), null, null, 2
+            );
+            Assert.assertNotNull(tud2);
+            Assert.assertEquals(2, getCacheSize(cache));
+
+            // Only one of the two writers fails to close; reset() (invoked by
+            // close() below) must still free the other and finish clearing
+            // the map despite the failure.
+            replaceWriterWithFailingClose(tud1);
+
+            // No try/catch here on purpose: a propagating exception fails
+            // this test outright, which is exactly the pre-fix behavior this
+            // test guards against.
+            cache.close();
+
+            Assert.assertEquals(0, cache.size());
+        });
+    }
+
+    @Test
     public void testCommitAllInvokesConsumerWithDirName() throws Exception {
         // Regression test for the C1 bug: the consumer must receive the on-disk
         // directory name (e.g. "dir_vs_name~<tableId>"), not the client-facing
