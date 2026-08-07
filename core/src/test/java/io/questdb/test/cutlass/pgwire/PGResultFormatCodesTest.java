@@ -333,44 +333,47 @@ public class PGResultFormatCodesTest extends BasePGTest {
 
     @Test
     public void testCachedLongArrayResultsAreRejectedWithActionableError() throws Exception {
-        final IntList inParameterTypes = new IntList();
-        final LongList outParameterTypes = new LongList();
+        assertMemoryLeak(() -> {
+            final IntList inParameterTypes = new IntList();
+            final LongList outParameterTypes = new LongList();
 
-        final TypesAndSelect extendedPlan = new TypesAndSelect(
-                new EmptyTableRecordCursorFactory(newLongArrayMetadata()),
-                CompiledQuery.SELECT,
-                "SELECT",
-                inParameterTypes,
-                outParameterTypes
-        );
-        try (PGPipelineEntry entry = new PGPipelineEntry(engine)) {
-            try {
-                entry.ofCachedSelect("cached_long_array", extendedPlan);
-                Assert.fail("expected cached LONG-array result rejection");
-            } catch (PGMessageProcessingException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "array result sets are not supported");
-                TestUtils.assertContains(e.getFlyweightMessage(), "LONG");
+            final TypesAndSelect extendedPlan = new TypesAndSelect(
+                    new EmptyTableRecordCursorFactory(newLongArrayMetadata()),
+                    CompiledQuery.SELECT,
+                    "SELECT",
+                    inParameterTypes,
+                    outParameterTypes
+            );
+            try (PGPipelineEntry entry = new PGPipelineEntry(engine)) {
+                try {
+                    entry.ofCachedSelect("cached_long_array", extendedPlan);
+                    Assert.fail("expected cached LONG-array result rejection");
+                } catch (PGMessageProcessingException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "array result sets are not supported");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "LONG");
+                }
             }
-        }
+            Assert.assertNull("ofCachedSelect must close a rejected cached plan", extendedPlan.getFactory());
 
-        final TypesAndSelect simplePlan = new TypesAndSelect(
-                new EmptyTableRecordCursorFactory(newLongArrayMetadata()),
-                CompiledQuery.SELECT,
-                "SELECT",
-                inParameterTypes,
-                outParameterTypes
-        );
-        try (PGPipelineEntry entry = new PGPipelineEntry(engine)) {
-            try {
-                entry.ofSimpleCachedSelect("cached_long_array", sqlExecutionContext, simplePlan);
-                Assert.fail("expected cached LONG-array result rejection");
-            } catch (PGMessageProcessingException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "array result sets are not supported");
-                TestUtils.assertContains(e.getFlyweightMessage(), "LONG");
-            } finally {
-                simplePlan.close();
+            final TypesAndSelect simplePlan = new TypesAndSelect(
+                    new EmptyTableRecordCursorFactory(newLongArrayMetadata()),
+                    CompiledQuery.SELECT,
+                    "SELECT",
+                    inParameterTypes,
+                    outParameterTypes
+            );
+            try (PGPipelineEntry entry = new PGPipelineEntry(engine)) {
+                try {
+                    entry.ofSimpleCachedSelect("cached_long_array", sqlExecutionContext, simplePlan);
+                    Assert.fail("expected cached LONG-array result rejection");
+                } catch (PGMessageProcessingException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "array result sets are not supported");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "LONG");
+                } finally {
+                    simplePlan.close();
+                }
             }
-        }
+        });
     }
 
     @Test
