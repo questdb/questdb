@@ -2535,6 +2535,43 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStaleTokenAloneEvictsInCommitWalTables() throws Exception {
+        // M7b: in every other eviction test the commit runs first and its
+        // dropped/error detection short-circuits the staleness check. Here the
+        // commit interval has NOT elapsed, so commitIfIntervalElapsed() returns
+        // before committing anything -- isTableTokenStale must carry the
+        // eviction by itself.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE stale_only (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY,
+                    Long.MAX_VALUE / 4, 500_000)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("stale_only"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                Assert.assertEquals(1, cache.size());
+
+                execute("DROP TABLE stale_only");
+
+                // Wall clock 0: far below the entry's nextCommitTime, so the
+                // interval commit is skipped -- no CommitFailedException, no
+                // writerInError. Only the staleness check can evict.
+                cache.commitWalTables(0);
+                Assert.assertEquals(
+                        "isTableTokenStale must evict without a commit having run",
+                        0, cache.size()
+                );
+            }
+        });
+    }
+
+    @Test
     public void testReadOnlyRefusalEvictsCachedTableFromUdpLoop() throws Exception {
         // M3 (decided): a role-derived read-only refusal EVICTS the cached entry,
         // discarding its buffered rows. This is deliberate, not an oversight:
