@@ -309,7 +309,6 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.DECIMAL256, PG_NUMERIC); // NUMERIC
 
         TYPE_ARR_OIDS.extendAndSet(ColumnType.DOUBLE, PG_ARR_FLOAT8); // FLOAT8[]
-        TYPE_ARR_OIDS.extendAndSet(ColumnType.LONG, PG_ARR_INT8); // INT8[]
         TYPE_ARR_OIDS.extendAndSet(ColumnType.VARCHAR, PG_ARR_VARCHAR); // VARCHAR[]
 
         PG_TYPE_OIDS.add(PG_VARCHAR);

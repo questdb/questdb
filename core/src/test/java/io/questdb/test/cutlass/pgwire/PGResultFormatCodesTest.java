@@ -24,10 +24,26 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.pgwire.PGMessageProcessingException;
+import io.questdb.cutlass.pgwire.PGPipelineEntry;
+import io.questdb.cutlass.pgwire.TypesAndSelect;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.AbstractEmptyCatalogueFunctionFactory;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.DataInputStream;
@@ -41,6 +57,9 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -52,12 +71,37 @@ import java.util.regex.Pattern;
  */
 public class PGResultFormatCodesTest extends BasePGTest {
 
+    private static final int DATA_ROW_HEADER_SIZE = Byte.BYTES + Integer.BYTES + Short.BYTES;
     private static final short FORMAT_BINARY = 1;
     private static final short FORMAT_TEXT = 0;
     private static final int MAX_MESSAGE_LEN = 1 << 20;
+    private static final int PG_OID_INT8_ARRAY = 1016;
+    private static final int PG_OID_VARCHAR = 1043;
     private static final int PG_OID_VARCHAR_ARRAY = 1015;
     private static final int PROTOCOL_VERSION_3_0 = 196_608;
     private static final int SOCKET_TIMEOUT_MS = 10_000;
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // LONG arrays cannot be constructed through checked SQL paths. Register an empty test
+        // cursor with unchecked LONG-array metadata so pgwire's result-type rejection is exercised
+        // before any cursor or ArrayView access can mask it.
+        AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
+            @Override
+            protected Iterable<FunctionFactory> getFunctionFactories() {
+                final ArrayList<FunctionFactory> factories = new ArrayList<>();
+                super.getFunctionFactories().forEach(factories::add);
+
+                factories.add(new AbstractEmptyCatalogueFunctionFactory(
+                        "test_long_array_result()",
+                        newLongArrayMetadata()
+                ) {
+                });
+                return factories;
+            }
+        };
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Before
     public void setUp() {
@@ -142,10 +186,38 @@ public class PGResultFormatCodesTest extends BasePGTest {
     @Test
     public void testBinaryStridedDoubleArrayDeclaresCorrectRowLength() throws Exception {
         assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
-            execute("""
-                    CREATE TABLE strided AS (
-                      SELECT rnd_double_array(2, 0, 0, 10, 10) AS a
-                      FROM long_sequence(2))""");
+            final StringBuilder arrayLiteral = new StringBuilder("ARRAY[");
+            for (int row = 0; row < 10; row++) {
+                if (row > 0) {
+                    arrayLiteral.append(',');
+                }
+                arrayLiteral.append('[');
+                for (int col = 0; col < 10; col++) {
+                    if (col > 0) {
+                        arrayLiteral.append(',');
+                    }
+                    final int flatIndex = 10 * row + col;
+                    if (flatIndex % 5 == 0) {
+                        arrayLiteral.append("NULL");
+                    } else {
+                        arrayLiteral.append(flatIndex).append(".0");
+                    }
+                }
+                arrayLiteral.append(']');
+            }
+            arrayLiteral.append(']');
+            execute("CREATE TABLE strided AS (SELECT " + arrayLiteral
+                    + " AS a FROM long_sequence(2))");
+
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT array_count(a[3:,3:]) FROM strided");
+                 ResultSet rs = stmt.executeQuery()) {
+                Assert.assertTrue(rs.next());
+                Assert.assertEquals(56, rs.getInt(1));
+                Assert.assertTrue(rs.next());
+                Assert.assertEquals(56, rs.getInt(1));
+                Assert.assertFalse(rs.next());
+            }
 
             try (RawPGClient client = new RawPGClient(port)) {
                 ObjList<ObjList<String>> rows = client.query(
@@ -161,8 +233,152 @@ public class PGResultFormatCodesTest extends BasePGTest {
     }
 
     @Test
+    public void testBinaryStridedEmptyArrayDeclaresCorrectRowLength() throws Exception {
+        // Slicing to an empty first dimension resets the view to vanilla. Transposing it then makes
+        // the (2,2,0) view non-vanilla, which must still short-circuit null counting: recursing into
+        // a zero-cardinality strided array would divide by a zero child cardinality.
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            execute("""
+                    CREATE TABLE empty3d AS (
+                      SELECT rnd_double_array(3, 0, 0, 2, 2, 2) AS a
+                      FROM long_sequence(2))""");
+
+            final String empty = "transpose(a[1:1])";
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT dim_length(" + empty + ", 1), "
+                            + "dim_length(" + empty + ", 2), "
+                            + "dim_length(" + empty + ", 3) FROM empty3d");
+                 ResultSet rs = stmt.executeQuery()) {
+                Assert.assertTrue(rs.next());
+                Assert.assertEquals(2, rs.getInt(1));
+                Assert.assertEquals(2, rs.getInt(2));
+                Assert.assertEquals(0, rs.getInt(3));
+            }
+
+            try (RawPGClient client = new RawPGClient(port)) {
+                ObjList<ObjList<String>> rows = client.query(
+                        "SELECT " + empty + " FROM empty3d",
+                        formats(1, FORMAT_BINARY)
+                );
+                Assert.assertEquals(2, rows.size());
+                for (int i = 0; i < rows.size(); i++) {
+                    Assert.assertEquals(1, rows.getQuick(i).size());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCachedLongArrayResultsAreRejectedWithActionableError() throws Exception {
+        final IntList inParameterTypes = new IntList();
+        final LongList outParameterTypes = new LongList();
+
+        final TypesAndSelect extendedPlan = new TypesAndSelect(
+                new EmptyTableRecordCursorFactory(newLongArrayMetadata()),
+                CompiledQuery.SELECT,
+                "SELECT",
+                inParameterTypes,
+                outParameterTypes
+        );
+        try (PGPipelineEntry entry = new PGPipelineEntry(engine)) {
+            try {
+                entry.ofCachedSelect("cached_long_array", extendedPlan);
+                Assert.fail("expected cached LONG-array result rejection");
+            } catch (PGMessageProcessingException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "array result sets are not supported");
+                TestUtils.assertContains(e.getFlyweightMessage(), "LONG");
+            }
+        }
+
+        final TypesAndSelect simplePlan = new TypesAndSelect(
+                new EmptyTableRecordCursorFactory(newLongArrayMetadata()),
+                CompiledQuery.SELECT,
+                "SELECT",
+                inParameterTypes,
+                outParameterTypes
+        );
+        try (PGPipelineEntry entry = new PGPipelineEntry(engine)) {
+            try {
+                entry.ofSimpleCachedSelect("cached_long_array", sqlExecutionContext, simplePlan);
+                Assert.fail("expected cached LONG-array result rejection");
+            } catch (PGMessageProcessingException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "array result sets are not supported");
+                TestUtils.assertContains(e.getFlyweightMessage(), "LONG");
+            } finally {
+                simplePlan.close();
+            }
+        }
+    }
+
+    @Test
+    public void testLongArrayParametersAreRejectedWithActionableError() throws Exception {
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            try (RawPGClient client = new RawPGClient(port)) {
+                try {
+                    client.queryParam("SELECT $1 AS arr", PG_OID_INT8_ARRAY, "{1,2}", FORMAT_TEXT);
+                    Assert.fail("expected a rejection");
+                } catch (AssertionError e) {
+                    TestUtils.assertContains(e.getMessage(), "array bind variables are not supported");
+                    TestUtils.assertContains(e.getMessage(), "LONG");
+                }
+            }
+
+            try (RawPGClient client = new RawPGClient(port)) {
+                try {
+                    client.queryBinaryLongArrayParam("SELECT $1 AS arr", new long[]{1, 2}, FORMAT_TEXT);
+                    Assert.fail("expected a rejection");
+                } catch (AssertionError e) {
+                    TestUtils.assertContains(e.getMessage(), "array bind variables are not supported");
+                    TestUtils.assertContains(e.getMessage(), "LONG");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLongArrayResultsAreRejectedWithActionableError() throws Exception {
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            try (RecordCursorFactory factory = select("SELECT * FROM test_long_array_result()")) {
+                Assert.assertEquals(
+                        ColumnType.encodeArrayType(ColumnType.LONG, 1, false),
+                        factory.getMetadata().getColumnType(0)
+                );
+            }
+            try (RawPGClient client = new RawPGClient(port)) {
+                assertLongArrayResultRejected(client, FORMAT_TEXT);
+                assertClientCanQueryAfterError(client);
+                assertLongArrayResultRejected(client, FORMAT_BINARY);
+                assertClientCanQueryAfterError(client);
+            }
+        });
+
+        assertWithPgServer(Mode.SIMPLE, false, -1, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                try {
+                    statement.executeQuery("SELECT * FROM test_long_array_result()");
+                    Assert.fail("expected LONG-array result rejection");
+                } catch (SQLException e) {
+                    final String message = e.getMessage();
+                    final String rejection = "array result sets are not supported";
+                    TestUtils.assertContains(message, rejection);
+                    TestUtils.assertContains(message, "LONG");
+                    Assert.assertEquals(
+                            "simple-query error text must not be duplicated",
+                            message.indexOf(rejection),
+                            message.lastIndexOf(rejection)
+                    );
+                }
+                try (ResultSet resultSet = statement.executeQuery("SELECT 1")) {
+                    Assert.assertTrue(resultSet.next());
+                    Assert.assertEquals(1, resultSet.getInt(1));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testBinaryVarcharArrayIsRejectedWithActionableError() throws Exception {
-        // outColBinArr() only encodes fixed-width DOUBLE and LONG elements. A varchar array reaches
+        // outColBinArr() only encodes DOUBLE elements. A varchar array reaches
         // a projection through a bind variable, and asking for it in binary used to trip an
         // unconditional AssertionError inside countNotNull() - a critical log line and an opaque
         // "Unsupported array element type: 26" for what is a plain limitation.
@@ -312,8 +528,8 @@ public class PGResultFormatCodesTest extends BasePGTest {
         // A text array cannot be split across send buffers (outColTxtArr() renders atomically via
         // NoopArrayWriteState), so a row that does not fit on its own must fail with an explicit
         // error naming the size to configure. Two things are under test:
-        //   1. estimateColumnTxtSize() has an ARRAY arm at all - without one estimateRecordSize()
-        //      hits "assert false" and the client gets an internal error instead of this message;
+        //   1. estimateColumnTxtSize() has an ARRAY arm, so a text array whose text and binary
+        //      sizes differ still produces a useful required-size estimate;
         //   2. the size it names really is an upper bound. The array below has shape (2,1,1) with
         //      max-width double literals, which is the case a flat per-element brace allowance
         //      under-counts: arrayToText() emits one brace pair per shape-tree node (5 here), not
@@ -321,7 +537,7 @@ public class PGResultFormatCodesTest extends BasePGTest {
         assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
             execute("""
                     CREATE TABLE big AS (
-                      SELECT rnd_str(4000, 4000, 0) AS pad,
+                      SELECT rnd_str(4000, 4000, 0)::varchar AS pad,
                              ARRAY[[[-1.2345678901234567E-308]], [[-1.2345678901234567E-308]]] AS a1
                       FROM long_sequence(1))""");
 
@@ -335,8 +551,10 @@ public class PGResultFormatCodesTest extends BasePGTest {
                 padLen = rs.getInt(1);
                 arrLen = rs.getInt(2);
             }
-            // estimateRecordSize() sums a 4-byte length prefix plus the value for each column
-            final int trueRowSize = (Integer.BYTES + padLen) + (Integer.BYTES + arrLen);
+            // estimateRecordSize() includes the DataRow envelope and each column's length prefix
+            final int trueRowSize = DATA_ROW_HEADER_SIZE
+                    + (Integer.BYTES + padLen)
+                    + (Integer.BYTES + arrLen);
 
             try (RawPGClient client = new RawPGClient(port)) {
                 try {
@@ -367,7 +585,7 @@ public class PGResultFormatCodesTest extends BasePGTest {
         assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
             execute("""
                     CREATE TABLE oversized AS (
-                      SELECT rnd_str(4000, 4000, 0) AS pad,
+                      SELECT rnd_str(4000, 4000, 0)::varchar AS pad,
                              rnd_double_array(1, 0, 0, 0) AS empty
                       FROM long_sequence(1))""");
 
@@ -407,6 +625,37 @@ public class PGResultFormatCodesTest extends BasePGTest {
                             "requiredSize=" + m.group(1) + " must cover the " + literal.length()
                                     + "-byte array literal",
                             Long.parseLong(m.group(1)) >= Integer.BYTES + literal.length()
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOversizedStridedVarcharArrayReportsSufficientRequiredSize() throws Exception {
+        // Binary varchar-array binds use a non-vanilla view even for canonical one-dimensional input.
+        // Its elements have no fixed width, so the overflow estimate must follow the strides and
+        // measure the value instead of falling back to the fixed-width numeric allowance.
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            final String value = "a".repeat(4_000);
+            final int renderedArrayLength = value.length() + 2; // {value}
+            final long trueRowSize = DATA_ROW_HEADER_SIZE + Integer.BYTES + renderedArrayLength;
+
+            try (RawPGClient client = new RawPGClient(port)) {
+                try {
+                    client.queryBinaryVarcharArrayParam(
+                            "SELECT $1 AS arr", new String[]{value}, FORMAT_TEXT
+                    );
+                    Assert.fail("expected a send-buffer error");
+                } catch (AssertionError e) {
+                    final String message = e.getMessage();
+                    TestUtils.assertContains(message, "not enough space in send buffer");
+                    final Matcher m = Pattern.compile("requiredSize=(\\d+)").matcher(message);
+                    Assert.assertTrue("no requiredSize in: " + message, m.find());
+                    final long requiredSize = Long.parseLong(m.group(1));
+                    Assert.assertTrue(
+                            "requiredSize=" + requiredSize + " must cover the row's " + trueRowSize + " bytes",
+                            requiredSize >= trueRowSize
                     );
                 }
             }
@@ -504,13 +753,14 @@ public class PGResultFormatCodesTest extends BasePGTest {
     }
 
     @Test
-    public void testTextIntervalDecimalAndStringArrayReportSufficientRequiredSize() throws Exception {
-        // These three reach estimateColumnTxtSize()/calculateColumnBinSize() in text format but had
-        // no arm in either, so they hit "assert false" and surfaced as "unsupported type: 39"
-        // instead of the send-buffer message. Asserting the message alone would not pin the sizes
-        // they now report, so compare requiredSize against what the row actually renders to.
+    public void testTextIntervalDecimalAndStringArrayOverBufferBehavior() throws Exception {
+        // INTERVAL previously lacked a text-size estimate, while ARRAY_STRING lacked a binary-size
+        // arm. DECIMAL pins the existing precision-aware text estimate alongside those new paths.
+        // Asserting the error message alone would not pin the sizes, so compare requiredSize against
+        // what each row actually renders to.
         assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
-            execute("CREATE TABLE wide AS (SELECT rnd_str(4000, 4000, 0) AS pad FROM long_sequence(1))");
+            execute("CREATE TABLE wide AS "
+                    + "(SELECT rnd_str(4000, 4000, 0)::varchar AS pad FROM long_sequence(1))");
 
             final int intervalLen = renderedByteLength(connection,
                     "SELECT interval('2020-01-01', '2021-01-01') FROM long_sequence(1)");
@@ -524,9 +774,13 @@ public class PGResultFormatCodesTest extends BasePGTest {
                         "SELECT pad, interval('2020-01-01', '2021-01-01') AS i FROM wide", 4000, intervalLen);
                 assertRequiredSizeCoversRow(client,
                         "SELECT pad, 1.5::decimal(10, 2) AS d FROM wide", 4000, decimalLen);
-                // ARRAY_STRING is sized by calculateColumnBinSize()'s STRING fall-through
-                assertRequiredSizeCoversRow(client,
-                        "SELECT pad, current_schemas(true) AS s FROM wide", 4000, schemasLen);
+                // ARRAY_STRING is sized exactly by calculateColumnBinSize()'s STRING fall-through,
+                // so it resumes behind VARCHAR instead of taking the oversized-row error path.
+                final ObjList<ObjList<String>> rows = client.query(
+                        "SELECT pad, current_schemas(true) AS s FROM wide", formats(2, FORMAT_TEXT));
+                Assert.assertEquals(1, rows.size());
+                Assert.assertEquals(4000, rows.getQuick(0).getQuick(0).length());
+                Assert.assertEquals(schemasLen, rows.getQuick(0).getQuick(1).length());
             }
         });
     }
@@ -542,8 +796,10 @@ public class PGResultFormatCodesTest extends BasePGTest {
     private static void assertRequiredSizeCoversRow(
             RawPGClient client, String selectSql, int padLen, int valueLen
     ) throws IOException {
-        // estimateRecordSize() sums a 4-byte length prefix plus the value for each column
-        final int trueRowSize = (Integer.BYTES + padLen) + (Integer.BYTES + valueLen);
+        // estimateRecordSize() includes the DataRow envelope and each column's length prefix
+        final int trueRowSize = DATA_ROW_HEADER_SIZE
+                + (Integer.BYTES + padLen)
+                + (Integer.BYTES + valueLen);
         try {
             client.query(selectSql, formats(2, FORMAT_TEXT));
             Assert.fail("expected a send-buffer error for: " + selectSql);
@@ -586,12 +842,38 @@ public class PGResultFormatCodesTest extends BasePGTest {
         }
     }
 
+    private static void assertClientCanQueryAfterError(RawPGClient client) throws IOException {
+        final ObjList<ObjList<String>> rows = client.query("SELECT 1", formats(1, FORMAT_TEXT));
+        Assert.assertEquals(1, rows.size());
+        Assert.assertEquals(1, rows.getQuick(0).size());
+        Assert.assertEquals("1", rows.getQuick(0).getQuick(0));
+    }
+
+    private static void assertLongArrayResultRejected(RawPGClient client, short resultFormat) throws IOException {
+        try {
+            client.query("SELECT * FROM test_long_array_result()", formats(1, resultFormat));
+            Assert.fail("expected LONG-array result rejection");
+        } catch (AssertionError e) {
+            TestUtils.assertContains(e.getMessage(), "array result sets are not supported");
+            TestUtils.assertContains(e.getMessage(), "LONG");
+        }
+    }
+
     private static short[] formats(int count, short code) {
         short[] codes = new short[count];
         for (int i = 0; i < count; i++) {
             codes[i] = code;
         }
         return codes;
+    }
+
+    private static GenericRecordMetadata newLongArrayMetadata() {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata(
+                "a",
+                ColumnType.encodeArrayType(ColumnType.LONG, 1, false)
+        ));
+        return metadata;
     }
 
     /**
@@ -657,6 +939,100 @@ public class PGResultFormatCodesTest extends BasePGTest {
             bindBody.putShort((short) 1);         // one parameter
             bindBody.putInt(paramBytes.length);
             bindBody.put(paramBytes);
+            bindBody.putShort((short) 1);         // one result format code
+            bindBody.putShort(resultFormat);
+            send('B', bindBody);
+
+            execute();
+            sync();
+            return readToReadyForQuery();
+        }
+
+        public ObjList<ObjList<String>> queryBinaryLongArrayParam(
+                String sql, long[] values, short resultFormat
+        ) throws IOException {
+            byte[] sqlBytes = cString(sql);
+            ByteBuffer parseBody = ByteBuffer.allocate(sqlBytes.length + 16);
+            parseBody.put((byte) 0);              // unnamed statement
+            parseBody.put(sqlBytes);
+            parseBody.putShort((short) 1);        // one parameter type OID
+            parseBody.putInt(PG_OID_INT8_ARRAY);
+            send('P', parseBody);
+
+            ByteBuffer array = ByteBuffer.allocate(5 * Integer.BYTES + values.length * 3 * Integer.BYTES);
+            array.putInt(1);                      // dimensions
+            array.putInt(0);                      // has nulls
+            array.putInt(20);                     // int8 element OID
+            array.putInt(values.length);
+            array.putInt(1);                      // lower bound
+            for (int i = 0; i < values.length; i++) {
+                array.putInt(Long.BYTES);
+                array.putLong(values[i]);
+            }
+            array.flip();
+
+            ByteBuffer bindBody = ByteBuffer.allocate(array.remaining() + 32);
+            bindBody.put((byte) 0);               // unnamed portal
+            bindBody.put((byte) 0);               // unnamed statement
+            bindBody.putShort((short) 1);         // one parameter format code
+            bindBody.putShort(FORMAT_BINARY);
+            bindBody.putShort((short) 1);         // one parameter
+            bindBody.putInt(array.remaining());
+            bindBody.put(array);
+            bindBody.putShort((short) 1);         // one result format code
+            bindBody.putShort(resultFormat);
+            send('B', bindBody);
+
+            execute();
+            sync();
+            return readToReadyForQuery();
+        }
+
+        public ObjList<ObjList<String>> queryBinaryVarcharArrayParam(
+                String sql, String[] values, short resultFormat
+        ) throws IOException {
+            byte[] sqlBytes = cString(sql);
+            ByteBuffer parseBody = ByteBuffer.allocate(sqlBytes.length + 16);
+            parseBody.put((byte) 0);              // unnamed statement
+            parseBody.put(sqlBytes);
+            parseBody.putShort((short) 1);        // one parameter type OID
+            parseBody.putInt(PG_OID_VARCHAR_ARRAY);
+            send('P', parseBody);
+
+            final byte[][] encoded = new byte[values.length][];
+            int arraySize = 5 * Integer.BYTES;
+            for (int i = 0; i < values.length; i++) {
+                if (values[i] != null) {
+                    encoded[i] = values[i].getBytes(StandardCharsets.UTF_8);
+                    arraySize += encoded[i].length;
+                }
+                arraySize += Integer.BYTES;
+            }
+
+            ByteBuffer array = ByteBuffer.allocate(arraySize);
+            array.putInt(1);                      // dimensions
+            array.putInt(0);                      // has nulls (the server validates each element)
+            array.putInt(PG_OID_VARCHAR);
+            array.putInt(values.length);
+            array.putInt(1);                      // lower bound
+            for (int i = 0; i < encoded.length; i++) {
+                if (encoded[i] == null) {
+                    array.putInt(-1);
+                } else {
+                    array.putInt(encoded[i].length);
+                    array.put(encoded[i]);
+                }
+            }
+            array.flip();
+
+            ByteBuffer bindBody = ByteBuffer.allocate(array.remaining() + 32);
+            bindBody.put((byte) 0);               // unnamed portal
+            bindBody.put((byte) 0);               // unnamed statement
+            bindBody.putShort((short) 1);         // one parameter format code
+            bindBody.putShort(FORMAT_BINARY);
+            bindBody.putShort((short) 1);         // one parameter
+            bindBody.putInt(array.remaining());
+            bindBody.put(array);
             bindBody.putShort((short) 1);         // one result format code
             bindBody.putShort(resultFormat);
             send('B', bindBody);

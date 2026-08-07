@@ -71,17 +71,17 @@ public final class PGUtils {
     private PGUtils() {
     }
 
-    public static int calculateArrayColBinSizeIncludingHeader(ArrayView array, int notNullCount) {
+    public static long calculateArrayColBinSizeIncludingHeader(ArrayView array, int notNullCount) {
         int nullCount = array.getCardinality() - notNullCount;
         return calculateArrayHeaderSize(array) + calculateArrayResumeColBinSize(notNullCount, nullCount);
     }
 
     // does NOT include array header size!
-    public static int calculateArrayResumeColBinSize(int notNullCount, int nullCount) {
-        return notNullCount *
+    public static long calculateArrayResumeColBinSize(int notNullCount, int nullCount) {
+        return (long) notNullCount *
                 (Integer.BYTES // element size
                         + Long.BYTES) + // element value
-                nullCount *
+                (long) nullCount *
                         Integer.BYTES; // element size, zero for NULL value
     }
 
@@ -90,7 +90,7 @@ public final class PGUtils {
      *
      * @throws PGMessageProcessingException if the binary value exceeds maxBlobSize
      */
-    public static int calculateColumnBinSize(
+    public static long calculateColumnBinSize(
             PGPipelineEntry pipelineEntry,
             SqlExecutionContext sqlExecutionContext,
             Record record,
@@ -209,7 +209,7 @@ public final class PGUtils {
                 } else {
                     long blobSize = sequence.length();
                     if (blobSize < maxBlobSize) {
-                        return Integer.BYTES + (int) blobSize;
+                        return Integer.BYTES + blobSize;
                     } else {
                         throw PGMessageProcessingException.instance(pipelineEntry)
                                 .put("blob is too large [blobSize=").put(blobSize)
@@ -224,9 +224,9 @@ public final class PGUtils {
                     return Integer.BYTES; // size field (will be -1 for NULL)
                 }
                 final short elemType = ColumnType.decodeArrayElementType(columnType);
-                if (elemType != ColumnType.DOUBLE && elemType != ColumnType.LONG) {
-                    // outColBinArr() only encodes fixed-width DOUBLE and LONG elements, and the
-                    // fixed-size arithmetic below assumes them too. Report "cannot size" so
+                if (elemType != ColumnType.DOUBLE) {
+                    // outColBinArr() only encodes DOUBLE elements, and the fixed-size arithmetic
+                    // below assumes them too. Report "cannot size" so
                     // calculateRecordTailSize() rewinds the row instead of patching a wrong length,
                     // and let outColBinArr() reject the request with a message the client can act on.
                     return -1;
@@ -237,7 +237,7 @@ public final class PGUtils {
                 int notNullCount = PGUtils.countNotNull(array, actualResumePoint);
 
                 // -1 = array header was not written yet -> we have to include it in our calculation
-                int size = resumePoint == -1 ? calculateArrayHeaderSize(array) : 0;
+                long size = resumePoint == -1 ? calculateArrayHeaderSize(array) : 0;
 
                 // add remaining elements
                 size += calculateArrayResumeColBinSize(notNullCount, remainingElements - notNullCount);
@@ -268,15 +268,12 @@ public final class PGUtils {
         }
 
         if (array.isVanilla()) {
-            return switch (array.getElemType()) {
-                case ColumnType.DOUBLE -> array.flatView().countDouble(
-                        array.getFlatViewOffset() + skip,
-                        array.getFlatViewLength() - skip);
-                case ColumnType.LONG -> array.flatView().countLong(
-                        array.getFlatViewOffset() + skip,
-                        array.getFlatViewLength() - skip);
-                default -> throw new AssertionError("Unsupported array element type: " + array.getElemType());
-            };
+            if (array.getElemType() != ColumnType.DOUBLE) {
+                throw new AssertionError("Unsupported array element type: " + array.getElemType());
+            }
+            return array.flatView().countDouble(
+                    array.getFlatViewOffset() + skip,
+                    array.getFlatViewLength() - skip);
         } else {
             return countNotNullRecursive(array, 0, 0, skip, cardinality);
         }
@@ -382,21 +379,42 @@ public final class PGUtils {
         }
         final int cardinality = array.getCardinality();
         final long elements;
-        if (array.getElemType() == ColumnType.VARCHAR && array.isVanilla()) {
+        if (array.getElemType() == ColumnType.VARCHAR) {
             // a varchar element has no width bound, so measure the elements we are going to write.
-            // getVarchar() applies flatViewOffset itself, so a flat index is right for a vanilla
-            // array; a strided one falls back to the numeric budget below, which is advisory only
-            long size = 0;
-            for (int i = 0; i < cardinality; i++) {
-                final Utf8Sequence value = array.getVarchar(i);
-                size += value == null ? NULL_LITERAL_TEXT_LEN : value.size();
+            if (array.isVanilla()) {
+                long size = 0;
+                for (int i = 0; i < cardinality; i++) {
+                    final Utf8Sequence value = array.getVarchar(i);
+                    size += value == null ? NULL_LITERAL_TEXT_LEN : value.size();
+                }
+                elements = size;
+            } else {
+                elements = varcharArrayTxtSize(array, 0, 0);
             }
-            elements = size;
         } else {
-            // DOUBLE is the widest numeric literal; LONG and the "NULL" literal are shorter still
+            // DOUBLE is the supported numeric element type; the "NULL" literal is shorter
             elements = (long) cardinality * MAX_DOUBLE_TEXT_LEN;
         }
         return 2 * nodes + (cardinality - 1L) + elements;
+    }
+
+    private static long varcharArrayTxtSize(ArrayView array, int dim, int flatIndex) {
+        long size = 0;
+        final int count = array.getDimLen(dim);
+        final int stride = array.getStride(dim);
+        if (dim < array.getDimCount() - 1) {
+            for (int i = 0; i < count; i++) {
+                size += varcharArrayTxtSize(array, dim + 1, flatIndex);
+                flatIndex += stride;
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                final Utf8Sequence value = array.getVarchar(flatIndex);
+                size += value == null ? NULL_LITERAL_TEXT_LEN : value.size();
+                flatIndex += stride;
+            }
+        }
+        return size;
     }
 
     /**
@@ -735,19 +753,13 @@ public final class PGUtils {
         final int stride = array.getStride(dim);
         final boolean atDeepestDim = dim == array.getDimCount() - 1;
         if (atDeepestDim) {
-            short elemType = array.getElemType();
+            if (array.getElemType() != ColumnType.DOUBLE) {
+                throw new AssertionError("Unsupported array element type: " + array.getElemType());
+            }
             flatIndex += skip * stride;
             for (int i = skip; i < dimLen; i++) {
-                switch (elemType) {
-                    case ColumnType.DOUBLE:
-                        if (Numbers.isFinite(array.getDouble(flatIndex))) {
-                            count++;
-                        }
-                        break;
-                    case ColumnType.LONG:
-                        if (array.getLong(flatIndex) != Numbers.LONG_NULL) {
-                            count++;
-                        }
+                if (Numbers.isFinite(array.getDouble(flatIndex))) {
+                    count++;
                 }
                 flatIndex += stride;
             }

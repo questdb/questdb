@@ -973,7 +973,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.outParameterTypeDescriptionTypes.addAll(tai.getPgOutParameterTypes());
     }
 
-    public void ofCachedSelect(CharSequence utf16SqlText, TypesAndSelect tas) {
+    public void ofCachedSelect(CharSequence utf16SqlText, TypesAndSelect tas) throws PGMessageProcessingException {
+        try {
+            rejectLongArrayResults(tas.getFactory().getMetadata());
+        } catch (PGMessageProcessingException e) {
+            tas.close();
+            throw e;
+        }
         this.sqlText = utf16SqlText;
         this.factory = tas.getFactory();
         this.sqlTag = tas.getSqlTag();
@@ -989,7 +995,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.empty = true;
     }
 
-    public void ofSimpleCachedSelect(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, TypesAndSelect tas) throws SqlException {
+    public void ofSimpleCachedSelect(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, TypesAndSelect tas)
+            throws PGMessageProcessingException, SqlException {
+        rejectLongArrayResults(tas.getFactory().getMetadata());
         setStateDesc(SYNC_DESC_ROW_DESCRIPTION); // send out the row description message
         this.empty = sqlText == null || sqlText.isEmpty();
         this.sqlText = sqlText;
@@ -1029,6 +1037,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             try {
                 setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
                 copyPgResultSetColumnTypesAndNames();
+            } catch (PGMessageProcessingException e) {
+                throw e;
             } catch (Throwable e) {
                 throw kaput().put(e);
             }
@@ -1211,7 +1221,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // all other columns will be sent in full (-1 means header not sent = full size)
             final int effectiveResumeOffset = (i == outResendColumnIndex) ? outResendResumePoint : -1;
 
-            final int columnValueSize = calculateColumnBinSize(
+            final long columnValueSize = calculateColumnBinSize(
                     this,
                     sqlExecutionContext,
                     record,
@@ -1352,8 +1362,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.INT, false), 0);
                 break;
             case X_PG_ARR_INT8:
-                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.LONG, false), 0);
-                break;
+                throw SqlException.position(0)
+                        .put("array bind variables are not supported for element type LONG");
             case X_PG_ARR_FLOAT4:
                 bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.FLOAT, false), 0);
                 break;
@@ -1853,9 +1863,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return;
         }
         short elemType = array.getElemType();
-        if (elemType != ColumnType.DOUBLE && elemType != ColumnType.LONG) {
-            // Only fixed-width DOUBLE and LONG elements have a binary encoding here, and the size
-            // arithmetic below assumes them. Reject before writing a byte: the element loop would
+        if (elemType != ColumnType.DOUBLE) {
+            // Only DOUBLE elements have a binary encoding here, and the size arithmetic below
+            // assumes them. Reject before writing a byte: the element loop would
             // otherwise emit nothing per element while the header declared a length for them.
             throw kaput().put("binary result format is not supported for arrays with element type ")
                     .put(ColumnType.nameOf(elemType))
@@ -1865,11 +1875,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             int nDims = array.getDimCount();
             int componentTypeOid = getTypeOid(elemType);
             int notNullCount = PGUtils.countNotNull(array, 0);
+            final long columnSize = PGUtils.calculateArrayColBinSizeIncludingHeader(array, notNullCount);
+            final long valueSize = columnSize - Integer.BYTES;
+            if (valueSize > Integer.MAX_VALUE) {
+                throw kaput().put("binary array exceeds PGWire size limit [size=")
+                        .put(valueSize).put(", max=").put(Integer.MAX_VALUE)
+                        .put(", column=").put(columnIndex).put(']');
+            }
 
             // The size field indicates the size of what follows, excluding its own size,
             // that's why we subtract Integer.BYTES from it. The same method is used to calculate
             // the full size of the message, and in that case this field must be included.
-            utf8Sink.putNetworkInt(PGUtils.calculateArrayColBinSizeIncludingHeader(array, notNullCount) - Integer.BYTES);
+            utf8Sink.putNetworkInt((int) valueSize);
             utf8Sink.putNetworkInt(nDims);
             utf8Sink.putIntDirect(notNullCount < array.getCardinality() ? 1 : 0); // "has nulls" flag
             utf8Sink.putNetworkInt(componentTypeOid);
@@ -1883,29 +1900,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         try {
             if (array.isVanilla()) {
                 int len = array.getFlatViewLength();
-                // Note that we rely on a HotSpot optimization: Loop-invariant code motion.
-                // It moves the switch outside the loop.
                 for (int i = outResendResumePoint; i < len; i++) {
-                    switch (elemType) {
-                        case ColumnType.LONG:
-                            utf8Sink.putNetworkInt(Long.BYTES);
-                            utf8Sink.putNetworkLong(array.getLong(i));
-                            break;
-                        case ColumnType.DOUBLE:
-                            double val = array.getDouble(i);
-                            if (Numbers.isFinite(val)) {
-                                utf8Sink.putNetworkInt(Double.BYTES);
-                                utf8Sink.putNetworkDouble(val);
-                            } else {
-                                utf8Sink.setNullValue();
-                            }
-                            break;
+                    double val = array.getDouble(i);
+                    if (Numbers.isFinite(val)) {
+                        utf8Sink.putNetworkInt(Double.BYTES);
+                        utf8Sink.putNetworkDouble(val);
+                    } else {
+                        utf8Sink.setNullValue();
                     }
                     utf8Sink.bookmark();
                     outResendResumePoint = i + 1;
                 }
             } else {
-                outColBinArrRecursive(utf8Sink, array, elemType, 0, 0, 0);
+                outColBinArrRecursive(utf8Sink, array, 0, 0, 0);
             }
             outResendResumePoint = -1;
         } catch (NoSpaceLeftInResponseBufferException e) {
@@ -1915,39 +1922,24 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private int outColBinArrRecursive(
-            PGResponseSink utf8Sink, ArrayView array, short elemType, int dim, int flatIndex, int outFlatIndex
+            PGResponseSink utf8Sink, ArrayView array, int dim, int flatIndex, int outFlatIndex
     ) {
         final int count = array.getDimLen(dim);
         final int stride = array.getStride(dim);
         if (dim < array.getDimCount() - 1) {
             for (int i = 0; i < count; i++) {
-                outFlatIndex = outColBinArrRecursive(utf8Sink, array, elemType, dim + 1, flatIndex, outFlatIndex);
+                outFlatIndex = outColBinArrRecursive(utf8Sink, array, dim + 1, flatIndex, outFlatIndex);
                 flatIndex += stride;
             }
         } else {
             for (int i = 0; i < count; i++) {
                 if (outFlatIndex == outResendResumePoint) {
-                    switch (elemType) {
-                        case ColumnType.LONG: {
-                            long val = array.getLong(flatIndex);
-                            if (val != Numbers.LONG_NULL) {
-                                utf8Sink.putNetworkInt(Double.BYTES);
-                                utf8Sink.putNetworkDouble(val);
-                            } else {
-                                utf8Sink.setNullValue();
-                            }
-                            break;
-                        }
-                        case ColumnType.DOUBLE: {
-                            double val = array.getDouble(flatIndex);
-                            if (Numbers.isFinite(val)) {
-                                utf8Sink.putNetworkInt(Double.BYTES);
-                                utf8Sink.putNetworkDouble(val);
-                            } else {
-                                utf8Sink.setNullValue();
-                            }
-                            break;
-                        }
+                    double val = array.getDouble(flatIndex);
+                    if (Numbers.isFinite(val)) {
+                        utf8Sink.putNetworkInt(Double.BYTES);
+                        utf8Sink.putNetworkDouble(val);
+                    } else {
+                        utf8Sink.setNullValue();
                     }
                     utf8Sink.bookmark();
                     outResendResumePoint++;
@@ -2115,7 +2107,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
+    private void outColTxtArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType)
+            throws PGMessageProcessingException {
+        rejectLongArrayResult(columnType, columnIndex);
         ArrayView arrayView = record.getArray(columnIndex, columnType);
 
         // zero dimension array indicates NULL
@@ -2917,6 +2911,21 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.resetToBookmark(messageLengthAddress - Byte.BYTES);
     }
 
+    private void rejectLongArrayResult(int columnType, int columnIndex) throws PGMessageProcessingException {
+        if (ColumnType.isArray(columnType)
+                && ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG) {
+            throw kaput()
+                    .put("array result sets are not supported for element type LONG [column=")
+                    .put(columnIndex).put(']');
+        }
+    }
+
+    private void rejectLongArrayResults(RecordMetadata metadata) throws PGMessageProcessingException {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            rejectLongArrayResult(metadata.getColumnType(i), i);
+        }
+    }
+
     private void setBindVariableAsArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, PGMessageProcessingException {
         if (valueSize < 3 * Integer.BYTES) {
             throw kaput().put("malformed array header [valueSize=").put(valueSize).put(']');
@@ -3264,7 +3273,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             SqlExecutionContext sqlExecutionContext,
             WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
             CompiledQuery cq
-    ) {
+    ) throws PGMessageProcessingException {
         sqlExecutionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
         this.sqlType = cq.getType();
         selectIsCacheable = true;
@@ -3371,6 +3380,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // DDL
                 sqlTag = TAG_OK;
                 break;
+        }
+        if (factory != null) {
+            rejectLongArrayResults(factory.getMetadata());
         }
         sqlTextHasSecret = sqlExecutionContext.containsSecret();
         stateParseExecuted = cq.executedAtParseTime();
@@ -3581,6 +3593,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             setUuidBindVariable(i, lo, valueSize, bindVariableService);
                             break;
                         case X_PG_ARR_INT8:
+                            throw kaput().put("array bind variables are not supported for element type LONG");
                         case X_PG_ARR_FLOAT8:
                             setBindVariableAsArray(i, lo, valueSize, msgLimit, bindVariableService);
                             break;
