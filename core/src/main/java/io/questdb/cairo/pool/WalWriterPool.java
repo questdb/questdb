@@ -113,23 +113,29 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         @Override
         public void close() {
             if (isOpen()) {
-                cleanupBeforeClose();
-                final AbstractMultiTenantPool<WalWriterTenant> pool = this.pool;
-                if (pool != null && entry != null) {
-                    if (!isDistressed()) {
-                        if (pool.returnToPool(this)) {
-                            return;
+                try {
+                    cleanupBeforeClose();
+                } finally {
+                    // rollback0() marks the writer distressed before rethrowing,
+                    // so a failed cleanup lands in the expel branch below --
+                    // never back in the pool -- while the exception propagates.
+                    final AbstractMultiTenantPool<WalWriterTenant> pool = this.pool;
+                    if (pool != null && entry != null) {
+                        if (!isDistressed()) {
+                            if (!pool.returnToPool(this)) {
+                                super.close();
+                            }
+                        } else {
+                            try {
+                                super.close();
+                            } finally {
+                                pool.expelFromPool(this);
+                            }
                         }
                     } else {
-                        try {
-                            super.close();
-                        } finally {
-                            pool.expelFromPool(this);
-                        }
-                        return;
+                        super.close();
                     }
                 }
-                super.close();
             }
         }
 
