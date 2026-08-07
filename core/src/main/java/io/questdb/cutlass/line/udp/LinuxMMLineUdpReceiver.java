@@ -67,28 +67,16 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
     }
 
     @Override
-    public synchronized void close() {
-        try {
-            super.close();
-        } finally {
-            freeMessageVector();
+    public void close() {
+        super.close();
+        if (msgVec != 0) {
+            nf.freeMsgHeaders(msgVec);
+            msgVec = 0;
         }
-    }
-
-    @Override
-    public synchronized boolean closeBy(long deadlineNanos) {
-        if (!super.closeBy(deadlineNanos)) {
-            return false;
-        }
-        freeMessageVector();
-        return true;
     }
 
     @Override
     protected boolean runSerially() {
-        if (checkClosed()) {
-            return false;
-        }
         if (!acceptOpen.get()) {
             // Mirror the worker-path acceptOpen gate (AbstractLineProtoUdpReceiver.run)
             // so the own-thread driver also quiesces after switchRole publishes
@@ -99,14 +87,8 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
         boolean ran = false;
         int count;
         while ((count = nf.recvmmsgRaw(fd, msgVec, msgCount)) > 0) {
-            if (checkClosed()) {
-                return ran;
-            }
             long p = msgVec;
             for (int i = 0; i < count; i++) {
-                if (checkClosed()) {
-                    return ran;
-                }
                 long buf = nf.getMMsgBuf(p);
                 lexer.parse(buf, buf + nf.getMMsgBufLen(p));
                 lexer.parseLast();
@@ -116,9 +98,6 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
             totalCount += count;
 
             if (totalCount > commitRate) {
-                if (checkClosed()) {
-                    return ran;
-                }
                 totalCount = 0;
                 parser.commitAll();
             }
@@ -129,18 +108,7 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
 
             ran = true;
         }
-        if (checkClosed()) {
-            return ran;
-        }
         parser.commitAll();
         return ran;
-    }
-
-    private void freeMessageVector() {
-        final long messageVector = msgVec;
-        msgVec = 0;
-        if (messageVector != 0) {
-            nf.freeMsgHeaders(messageVector);
-        }
     }
 }

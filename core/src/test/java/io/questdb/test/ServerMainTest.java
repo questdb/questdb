@@ -1327,7 +1327,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.tcp.enabled\tQDB_LINE_TCP_ENABLED\ttrue\tconf\tfalse\tfalse\n" +
                                     "line.tcp.io.halt.on.error\tQDB_LINE_TCP_IO_HALT_ON_ERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.io.worker.affinity\tQDB_LINE_TCP_IO_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
-                                    "line.tcp.io.worker.fiber.enabled\tQDB_LINE_TCP_IO_WORKER_FIBER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.io.worker.sleep.threshold\tQDB_LINE_TCP_IO_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.io.worker.nap.threshold\tQDB_LINE_TCP_IO_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.io.worker.yield.threshold\tQDB_LINE_TCP_IO_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
@@ -1356,7 +1355,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.tcp.writer.queue.capacity\tQDB_LINE_TCP_WRITER_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.affinity\tQDB_LINE_TCP_WRITER_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.count\tQDB_LINE_TCP_WRITER_WORKER_COUNT\t0\tdefault\tfalse\tfalse\n" +
-                                    "line.tcp.writer.worker.fiber.enabled\tQDB_LINE_TCP_WRITER_WORKER_FIBER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.sleep.threshold\tQDB_LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.nap.threshold\tQDB_LINE_TCP_WRITER_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.yield.threshold\tQDB_LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +

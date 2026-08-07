@@ -1499,34 +1499,6 @@ public class ServerMain implements Closeable {
             }
             CairoException.rethrowCleanupFailure(stopFailure);
         }
-
-        @Override
-        public void stop(long deadlineNanos) {
-            Throwable stopFailure = null;
-            if (lineUdpReceiver != null) {
-                try {
-                    if (lineUdpReceiver.closeBy(deadlineNanos)) {
-                        lineUdpReceiver = null;
-                    } else {
-                        stopFailure = new IllegalStateException("line UDP receiver did not halt");
-                    }
-                } catch (Throwable th) {
-                    stopFailure = th;
-                }
-            }
-            if (lineTcpReceiver != null) {
-                try {
-                    lineTcpReceiver = Misc.free(lineTcpReceiver);
-                } catch (Throwable th) {
-                    if (stopFailure == null) {
-                        stopFailure = th;
-                    } else if (stopFailure != th) {
-                        stopFailure.addSuppressed(th);
-                    }
-                }
-            }
-            CairoException.rethrowCleanupFailure(stopFailure);
-        }
     }
 
     /**
@@ -1970,16 +1942,6 @@ public class ServerMain implements Closeable {
         @Override
         public void stop() {
             receiver = Misc.free(receiver);
-        }
-
-        @Override
-        public void stop(long deadlineNanos) {
-            if (receiver != null) {
-                if (!receiver.closeBy(deadlineNanos)) {
-                    throw new IllegalStateException("QWP UDP receiver did not halt");
-                }
-                receiver = null;
-            }
         }
     }
 

@@ -55,21 +55,12 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
     }
 
     @Override
-    public synchronized void close() {
-        try {
-            super.close();
-        } finally {
-            freeMessageVector();
+    public void close() {
+        super.close();
+        if (msgVec != 0) {
+            nf.freeMsgHeaders(msgVec);
+            msgVec = 0;
         }
-    }
-
-    @Override
-    public synchronized boolean closeBy(long deadlineNanos) {
-        if (!super.closeBy(deadlineNanos)) {
-            return false;
-        }
-        freeMessageVector();
-        return true;
     }
 
     @Override
@@ -87,18 +78,12 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
         boolean ran = false;
         int count;
         while ((count = nf.recvmmsgRaw(fd, msgVec, msgCount)) > 0) {
-            if (checkClosed()) {
-                return ran;
-            }
             ran = true;
             if (!acceptOpen.get()) {
                 return true;
             }
             long p = msgVec;
             for (int i = 0; i < count; i++) {
-                if (checkClosed()) {
-                    return ran;
-                }
                 int datagramState = processDatagram(nf.getMMsgBuf(p), (int) nf.getMMsgBufLen(p));
                 if ((datagramState & DATAGRAM_DROPPED) == 0) {
                     processedCount++;
@@ -113,16 +98,10 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
             }
 
             if (totalCount >= maxUncommittedDatagrams) {
-                if (checkClosed()) {
-                    return true;
-                }
                 totalCount = 0;
                 forceCommitAll();
                 return true;
             }
-        }
-        if (checkClosed()) {
-            return ran;
         }
         if (nextCommitTime != Long.MAX_VALUE) {
             long wallClockMillis = millisecondClock.getTicks();
@@ -132,13 +111,5 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
             }
         }
         return ran;
-    }
-
-    private void freeMessageVector() {
-        final long messageVector = msgVec;
-        msgVec = 0;
-        if (messageVector != 0) {
-            nf.freeMsgHeaders(messageVector);
-        }
     }
 }

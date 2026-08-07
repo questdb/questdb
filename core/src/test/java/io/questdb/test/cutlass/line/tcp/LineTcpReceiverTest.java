@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
@@ -55,7 +54,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
@@ -521,64 +519,44 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testFiberWriterIngestsNonWalRows() throws Exception {
+    public void testFiberHostWriterPoolIngestsWithoutMountingFibers() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
-                    CREATE TABLE fiber_ilp (
+                    CREATE TABLE fiber_host_ilp (
                         value LONG,
                         ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
             minIdleMsBeforeWriterRelease = 25;
-            final WorkerPool ioPool = new TestWorkerPool("fiber-ilp-io", 1, engine.getMetrics());
-            final WorkerPool writerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int getFiberMaxLiveCount() {
-                    return 2;
-                }
-
-                @Override
-                public int getFiberRetainedCount() {
-                    return 1;
-                }
-
-                @Override
-                public Metrics getMetrics() {
-                    return engine.getMetrics();
-                }
-
-                @Override
-                public String getPoolName() {
-                    return "fiber-ilp-writer";
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 1;
-                }
-
-                @Override
-                public WorkerPoolMode getWorkerPoolMode() {
-                    return WorkerPoolMode.FIBER_HOST;
-                }
-            });
+            final WorkerPool ioPool = new TestWorkerPool(
+                    "fiber-host-ilp-io",
+                    1,
+                    engine.getMetrics(),
+                    WorkerPoolMode.LEGACY
+            );
+            final WorkerPool writerPool = new TestWorkerPool(
+                    "fiber-host-ilp-writer",
+                    1,
+                    engine.getMetrics(),
+                    WorkerPoolMode.FIBER_HOST
+            );
             final LineTcpReceiver receiver = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool);
             try {
                 writerPool.start(LOG);
                 ioPool.start(LOG);
-                send("fiber_ilp", WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket("""
-                        fiber_ilp value=42i 1000000000
-                        fiber_ilp value=43i 2000000000
+                send("fiber_host_ilp", WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket("""
+                        fiber_host_ilp value=42i 1000000000
+                        fiber_host_ilp value=43i 2000000000
                         """));
-                assertQuery("SELECT value, ts FROM fiber_ilp")
+                assertQuery("SELECT value, ts FROM fiber_host_ilp")
                         .expectSize()
                         .timestamp("ts")
                         .returns("""
-                                value	ts
-                                42	1970-01-01T00:00:01.000000Z
-                                43	1970-01-01T00:00:02.000000Z
+                                value\tts
+                                42\t1970-01-01T00:00:01.000000Z
+                                43\t1970-01-01T00:00:02.000000Z
                                 """);
-                Assert.assertTrue(writerPool.getFiberRuntime().getMountCount() > 0);
+                Assert.assertEquals(0L, writerPool.getFiberRuntime().getMountCount());
             } finally {
                 ioPool.halt();
                 writerPool.halt();

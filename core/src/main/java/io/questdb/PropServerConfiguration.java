@@ -342,9 +342,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
     private final String lineTcpAuthDB;
     private final boolean lineTcpEnabled;
-    private final PropLineTcpIOWorkerPoolConfiguration lineTcpIOWorkerPoolConfiguration = new PropLineTcpIOWorkerPoolConfiguration();
+    private final WorkerPoolConfiguration lineTcpIOWorkerPoolConfiguration = new PropLineTcpIOWorkerPoolConfiguration();
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
-    private final PropLineTcpWriterWorkerPoolConfiguration lineTcpWriterWorkerPoolConfiguration = new PropLineTcpWriterWorkerPoolConfiguration();
+    private final WorkerPoolConfiguration lineTcpWriterWorkerPoolConfiguration = new PropLineTcpWriterWorkerPoolConfiguration();
     private final int lineUdpCommitMode;
     private final int lineUdpCommitRate;
     private final boolean lineUdpEnabled;
@@ -729,7 +729,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpIOWorkerCount;
     private long lineTcpIOWorkerNapThreshold;
     private boolean lineTcpIOWorkerPoolHaltOnError;
-    private WorkerPoolMode lineTcpIOWorkerPoolMode = WorkerPoolMode.LEGACY;
     private long lineTcpIOWorkerSleepThreshold;
     private long lineTcpIOWorkerYieldThreshold;
     private long lineTcpMaintenanceInterval;
@@ -751,7 +750,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpWriterWorkerCount;
     private long lineTcpWriterWorkerNapThreshold;
     private boolean lineTcpWriterWorkerPoolHaltOnError;
-    private WorkerPoolMode lineTcpWriterWorkerPoolMode = WorkerPoolMode.LEGACY;
     private long lineTcpWriterWorkerSleepThreshold;
     private long lineTcpWriterWorkerYieldThreshold;
     private int lineUdpBindIPV4Address;
@@ -2153,12 +2151,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_WRITER_HALT_ON_ERROR, false);
                 this.lineTcpWriterWorkerYieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD, 10);
                 this.lineTcpWriterWorkerNapThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_NAP_THRESHOLD, 7_000);
-                this.lineTcpWriterWorkerPoolMode = readWorkerPoolMode(
-                        properties,
-                        env,
-                        PropertyKey.LINE_TCP_WRITER_WORKER_FIBER_ENABLED,
-                        false
-                );
                 this.lineTcpWriterWorkerSleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD, 10_000);
                 this.symbolCacheWaitBeforeReload = getMicros(properties, env, PropertyKey.LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD, 500_000);
                 this.lineTcpIOWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_IO_WORKER_COUNT, 0); // Use shared IO pool by default
@@ -2166,12 +2158,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpIOWorkerPoolHaltOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_IO_HALT_ON_ERROR, false);
                 this.lineTcpIOWorkerYieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_YIELD_THRESHOLD, 10);
                 this.lineTcpIOWorkerNapThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_NAP_THRESHOLD, 7_000);
-                this.lineTcpIOWorkerPoolMode = readWorkerPoolMode(
-                        properties,
-                        env,
-                        PropertyKey.LINE_TCP_IO_WORKER_FIBER_ENABLED,
-                        false
-                );
                 this.lineTcpIOWorkerSleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_SLEEP_THRESHOLD, 10_000);
                 this.lineTcpMaintenanceInterval = getMillis(properties, env, PropertyKey.LINE_TCP_MAINTENANCE_JOB_INTERVAL, 1000);
                 this.lineTcpCommitIntervalFraction = getDouble(properties, env, PropertyKey.LINE_TCP_COMMIT_INTERVAL_FRACTION, "0.5");
@@ -2318,13 +2304,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                     (pgEnabled && pgWorkerCount < 1 && pgFiberEnabled)
                             || (httpServerEnabled && httpWorkerCount < 1 && httpFiberEnabled);
             final boolean isSharedWriteFiberHost = !isReadOnlyInstance
-                    && ((lineTcpEnabled
-                    && lineTcpWriterWorkerCount < 1
-                    && lineTcpWriterWorkerPoolMode == WorkerPoolMode.FIBER_HOST)
-                    || (walSupported
+                    && walSupported
                     && walApplyEnabled
                     && walApplyWorkerCount < 1
-                    && walApplyWorkerPoolMode == WorkerPoolMode.FIBER_HOST));
+                    && walApplyWorkerPoolMode == WorkerPoolMode.FIBER_HOST;
             sharedWorkerPoolNetworkConfiguration.workerPoolMode = readWorkerPoolMode(
                     properties,
                     env,
@@ -2722,8 +2705,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 mountBudget,
                 retainedCount
         );
-        configureFiberPool(lineTcpIOWorkerPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
-        configureFiberPool(lineTcpWriterWorkerPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
         configureFiberPool(matViewRefreshPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
         configureFiberPool(pgConfiguration, maxLiveCount, mountBudget, retainedCount);
         configureFiberPool(sharedWorkerPoolNetworkConfiguration, maxLiveCount, mountBudget, retainedCount);
@@ -6533,7 +6514,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropLineTcpIOWorkerPoolConfiguration extends PropFiberWorkerPoolConfiguration {
+    private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration {
 
         @Override
         public Metrics getMetrics() {
@@ -6563,11 +6544,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWorkerCount() {
             return lineTcpIOWorkerCount;
-        }
-
-        @Override
-        public WorkerPoolMode getWorkerPoolMode() {
-            return lineTcpIOWorkerPoolMode;
         }
 
         @Override
@@ -6848,7 +6824,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropLineTcpWriterWorkerPoolConfiguration extends PropFiberWorkerPoolConfiguration {
+    private class PropLineTcpWriterWorkerPoolConfiguration implements WorkerPoolConfiguration {
         @Override
         public Metrics getMetrics() {
             return metrics;
@@ -6877,11 +6853,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWorkerCount() {
             return lineTcpWriterWorkerCount;
-        }
-
-        @Override
-        public WorkerPoolMode getWorkerPoolMode() {
-            return lineTcpWriterWorkerPoolMode;
         }
 
         @Override

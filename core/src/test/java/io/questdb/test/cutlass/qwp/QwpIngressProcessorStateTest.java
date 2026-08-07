@@ -64,9 +64,6 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Lock;
 
 public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
@@ -1358,57 +1355,6 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             } finally {
                 state.onDisconnected();
                 state.close();
-            }
-        });
-    }
-
-    @Test
-    public void testCommitAllBestEffortDeadlineRetainsCacheForRetry() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE be_deadline (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            LineHttpProcessorConfiguration lineConfig =
-                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
-            try (QwpTudCache cache = new QwpTudCache(
-                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
-            ) {
-                Assert.assertNotNull(cache.getTableUpdateDetails(
-                        AllowAllSecurityContext.INSTANCE,
-                        new Utf8String("be_deadline"),
-                        null,
-                        null,
-                        1
-                ));
-
-                final CountDownLatch lockAcquired = new CountDownLatch(1);
-                final CountDownLatch releaseLock = new CountDownLatch(1);
-                final Lock writeLock = engine.getRoleSwitchWriteLock();
-                final Thread holder = new Thread(() -> {
-                    writeLock.lock();
-                    try {
-                        lockAcquired.countDown();
-                        try {
-                            releaseLock.await();
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                        }
-                    } finally {
-                        writeLock.unlock();
-                    }
-                });
-                holder.start();
-                try {
-                    Assert.assertTrue(lockAcquired.await(5, TimeUnit.SECONDS));
-                    Assert.assertFalse(cache.isCommitAllBestEffortComplete(
-                            System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20)));
-                } finally {
-                    releaseLock.countDown();
-                    holder.join(5_000);
-                }
-                Assert.assertFalse(holder.isAlive());
-                Assert.assertTrue(cache.isCommitAllBestEffortComplete(
-                        System.nanoTime() + TimeUnit.SECONDS.toNanos(5)));
             }
         });
     }

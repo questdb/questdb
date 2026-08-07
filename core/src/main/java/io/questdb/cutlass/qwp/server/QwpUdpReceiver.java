@@ -26,7 +26,6 @@ package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
@@ -77,12 +76,6 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     private final SOCountDownLatch halted = new SOCountDownLatch(1);
     private final QwpMessageCursor messageCursor;
     private final QwpMessageHeader messageHeader;
-    private boolean isBufferFreed;
-    private boolean isCommitAttempted;
-    private boolean isSocketClosed;
-    private boolean isStartAttempted;
-    private boolean isTudCacheFreed;
-    private boolean isWalAppenderFreed;
     protected final MillisecondClock millisecondClock;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final SOCountDownLatch started = new SOCountDownLatch(1);
@@ -198,14 +191,40 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     }
 
     @Override
-    public synchronized void close() {
-        if (!isCloseComplete(0, false)) {
-            throw new IllegalStateException("QWP UDP receiver did not halt");
-        }
-    }
+    public void close() {
+        if (fd > -1) {
+            boolean wasRunning = running.compareAndSet(true, false);
+            closed = true;
 
-    public synchronized boolean closeBy(long deadlineNanos) {
-        return isCloseComplete(deadlineNanos, true);
+            // Close socket to unblock any blocking recvRaw() call
+            if (nf.close(fd) != 0) {
+                LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+            } else {
+                LOG.info().$("closed [fd=").$(fd).$(']').$();
+            }
+
+            if (wasRunning) {
+                started.await();
+                halted.await();
+            }
+
+            // Ensure no in-flight runSerially() before freeing resources.
+            // After setting closed=true and closing the fd, recvRaw() returns
+            // promptly and runSerially() exits. We spin-call run() until
+            // runSerially() executes under the SynchronizedJob lock with
+            // closed=true, confirming no concurrent access to shared resources.
+            while (!closedAcknowledged) {
+                this.run();
+                Os.pause();
+            }
+
+            fd = -1;
+
+            tudCache.commitAllBestEffort();
+            Misc.free(tudCache);
+            Misc.free(walAppender);
+            Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);
+        }
     }
 
     public long getDroppedBadMagicCount() {
@@ -268,9 +287,6 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         boolean ran = false;
         int count;
         while ((count = nf.recvRaw(fd, buf, bufLen)) > 0) {
-            if (checkClosed()) {
-                return ran;
-            }
             ran = true;
             if (!acceptOpen.get()) {
                 return true;
@@ -286,16 +302,10 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                 totalCount++;
             }
             if (totalCount >= maxUncommittedDatagrams) {
-                if (checkClosed()) {
-                    return true;
-                }
                 totalCount = 0;
                 forceCommitAll();
                 return true;
             }
-        }
-        if (checkClosed()) {
-            return ran;
         }
         if (nextCommitTime != Long.MAX_VALUE) {
             long wallClockMillis = millisecondClock.getTicks();
@@ -307,42 +317,39 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         return ran;
     }
 
-    public synchronized void start() {
-        if (configuration.isOwnThread() && fd > -1 && !isSocketClosed && !isStartAttempted) {
-            isStartAttempted = true;
-            running.set(true);
-            final Thread thread;
-            try {
-                thread = createThread(() -> {
-                    started.countDown();
-                    try {
-                        if (configuration.ownThreadAffinity() != -1) {
-                            Os.setCurrentThreadAffinity(configuration.ownThreadAffinity());
-                        }
-                        logStarted();
-                        while (running.get()) {
-                            runSerially();
-                        }
-                        LOG.info().$("shutdown").$();
-                    } finally {
-                        Path.clearThreadLocals();
-                        halted.countDown();
+    public void start() {
+        if (configuration.isOwnThread() && running.compareAndSet(false, true)) {
+            Thread thread = new Thread(() -> {
+                started.countDown();
+                try {
+                    if (configuration.ownThreadAffinity() != -1) {
+                        Os.setCurrentThreadAffinity(configuration.ownThreadAffinity());
                     }
-                });
-                thread.setName("qwp-udp-receiver");
-            } catch (Throwable th) {
-                resetFailedStart();
-                throw th;
-            }
-            try {
-                thread.start();
-            } catch (Throwable th) {
-                if (thread.getState() == Thread.State.NEW) {
-                    resetFailedStart();
+                    logStarted();
+                    while (running.get()) {
+                        runSerially();
+                    }
+                    LOG.info().$("shutdown").$();
+                } finally {
+                    Path.clearThreadLocals();
+                    halted.countDown();
                 }
-                throw th;
-            }
+            });
+            thread.setName("qwp-udp-receiver");
+            thread.start();
         }
+    }
+
+    private void logStarted() {
+        LOG.info()
+                .$("receiving on ")
+                .$ip(configuration.getBindIPv4Address())
+                .$(':')
+                .$(configuration.getPort())
+                .$(" [fd=").$(fd)
+                .$(", commitInterval=").$(commitInterval)
+                .$(", maxUncommittedDatagrams=").$(maxUncommittedDatagrams)
+                .I$();
     }
 
     protected boolean checkClosed() {
@@ -351,22 +358,6 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             return true;
         }
         return false;
-    }
-
-    protected Thread createThread(Runnable runnable) {
-        return new Thread(runnable);
-    }
-
-    protected void forceCommitAll() {
-        tudCache.commitAllBestEffort();
-        nextCommitTime = millisecondClock.getTicks() + commitInterval;
-    }
-
-    protected void noteCommitDeadline(WalTableUpdateDetails tud) {
-        long tableNextCommitTime = tud.getNextCommitTime();
-        if (tableNextCommitTime < nextCommitTime) {
-            nextCommitTime = tableNextCommitTime;
-        }
     }
 
     protected int processDatagram(long address, int length) {
@@ -427,131 +418,16 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         return datagramState;
     }
 
-    private boolean isCloseComplete(long deadlineNanos, boolean isBounded) {
-        if (fd > -1) {
-            running.set(false);
-            closed = true;
-            if (isStartAttempted) {
-                if (isBounded) {
-                    if (!started.await(Math.max(0, deadlineNanos - System.nanoTime()))
-                            || !halted.await(Math.max(0, deadlineNanos - System.nanoTime()))) {
-                        return false;
-                    }
-                } else {
-                    started.await();
-                    halted.await();
-                }
-            }
+    protected void forceCommitAll() {
+        tudCache.commitAllBestEffort();
+        nextCommitTime = millisecondClock.getTicks() + commitInterval;
+    }
 
-            while (!closedAcknowledged) {
-                this.run();
-                if (closedAcknowledged) {
-                    break;
-                }
-                if (isBounded && deadlineNanos - System.nanoTime() <= 0) {
-                    return false;
-                }
-                Os.pause();
-            }
-
-            if (!isSocketClosed) {
-                if (nf.close(fd) != 0) {
-                    try {
-                        LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-                    } catch (Throwable ignore) {
-                    }
-                } else {
-                    isSocketClosed = true;
-                }
-            }
-
-            if (isBounded && deadlineNanos - System.nanoTime() <= 0) {
-                return false;
-            }
-
-            Throwable cleanupFailure = null;
-            if (!isCommitAttempted) {
-                try {
-                    if (isBounded && !tudCache.isCommitAllBestEffortComplete(deadlineNanos)) {
-                        return false;
-                    }
-                    if (!isBounded) {
-                        tudCache.commitAllBestEffortWithRoleSwitchLock();
-                    }
-                    isCommitAttempted = true;
-                } catch (Throwable th) {
-                    isCommitAttempted = true;
-                    cleanupFailure = th;
-                }
-            }
-            if (!isTudCacheFreed) {
-                try {
-                    Misc.free(tudCache);
-                    isTudCacheFreed = true;
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-            if (!isWalAppenderFreed) {
-                try {
-                    Misc.free(walAppender);
-                    isWalAppenderFreed = true;
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-            if (!isBufferFreed) {
-                try {
-                    Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);
-                    isBufferFreed = true;
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-            if (isSocketClosed && isBufferFreed && isTudCacheFreed && isWalAppenderFreed) {
-                final long closedFd = fd;
-                fd = -1;
-                try {
-                    LOG.info().$("closed [fd=").$(closedFd).$(']').$();
-                } catch (Throwable ignore) {
-                }
-            }
-            CairoException.rethrowCleanupFailure(cleanupFailure);
-            if (!isSocketClosed) {
-                return false;
-            }
+    protected void noteCommitDeadline(WalTableUpdateDetails tud) {
+        long tableNextCommitTime = tud.getNextCommitTime();
+        if (tableNextCommitTime < nextCommitTime) {
+            nextCommitTime = tableNextCommitTime;
         }
-        return true;
-    }
-
-    private void logStarted() {
-        LOG.info()
-                .$("receiving on ")
-                .$ip(configuration.getBindIPv4Address())
-                .$(':')
-                .$(configuration.getPort())
-                .$(" [fd=").$(fd)
-                .$(", commitInterval=").$(commitInterval)
-                .$(", maxUncommittedDatagrams=").$(maxUncommittedDatagrams)
-                .I$();
-    }
-
-    private void resetFailedStart() {
-        running.set(false);
-        started.countDown();
-        halted.countDown();
     }
 
     private record CustomHttpProcessorConfiguration(

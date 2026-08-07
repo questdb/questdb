@@ -53,7 +53,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 
 import java.io.Closeable;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 
 import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
@@ -89,8 +88,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final LineUdpReceiverConfiguration udpConfiguration;
     private final boolean useLegacyStringDefault;
     private final CharSequenceObjHashMap<CacheEntry> writerCache = new CharSequenceObjHashMap<>();
-    private boolean isDdlMemFreed;
-    private boolean isPathFreed;
     // state
     // cache entry index is always a negative value
     private int cacheEntryIndex = Integer.MIN_VALUE;
@@ -134,44 +131,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     @Override
     public void close() {
-        Throwable cleanupFailure = null;
-        if (!isPathFreed) {
-            try {
-                Misc.free(path);
-                isPathFreed = true;
-            } catch (Throwable th) {
-                cleanupFailure = th;
-            }
-        }
-        if (!isDdlMemFreed) {
-            try {
-                Misc.free(ddlMem);
-                isDdlMemFreed = true;
-            } catch (Throwable th) {
-                if (cleanupFailure == null) {
-                    cleanupFailure = th;
-                } else if (cleanupFailure != th) {
-                    cleanupFailure.addSuppressed(th);
-                }
-            }
-        }
+        Misc.free(path);
+        Misc.free(ddlMem);
         for (int i = 0, n = writerCache.size(); i < n; i++) {
-            final CacheEntry entry = writerCache.valueQuick(i);
-            final TableWriter cachedWriter = entry.writer;
-            entry.writer = null;
-            if (cachedWriter != null) {
-                try {
-                    Misc.free(cachedWriter);
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
+            Misc.free(writerCache.valueQuick(i).writer);
         }
-        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public void commitAll() {
@@ -202,31 +166,19 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         final Lock lock = engine.getRoleSwitchReadLock();
         lock.lock();
         try {
-            commitAllLocked();
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    public boolean isCommitAllComplete(long deadlineNanos) {
-        if (!hasPendingCommit()) {
-            return true;
-        }
-        if (engine.isReadOnlyMode()) {
-            releaseWriterCache();
-            return true;
-        }
-        final Lock lock = engine.getRoleSwitchReadLock();
-        if (!isLockAcquiredBy(lock, deadlineNanos)) {
-            return false;
-        }
-        try {
-            if (deadlineNanos - System.nanoTime() <= 0) {
-                return false;
+            if (engine.isReadOnlyMode()) {
+                releaseWriterCache();
+                return;
             }
-            commitAllLocked();
-            return true;
+            if (writer != null) {
+                writer.commit();
+            }
+            for (int i = 0, n = commitList.size(); i < n; i++) {
+                //noinspection resource
+                commitList.valueQuick(i).commit();
+            }
         } finally {
+            commitList.clear();
             lock.unlock();
         }
     }
@@ -349,24 +301,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         columnValues.clear();
     }
 
-    private void commitAllLocked() {
-        try {
-            if (engine.isReadOnlyMode()) {
-                releaseWriterCache();
-                return;
-            }
-            if (writer != null) {
-                writer.commit();
-            }
-            for (int i = 0, n = commitList.size(); i < n; i++) {
-                //noinspection resource
-                commitList.valueQuick(i).commit();
-            }
-        } finally {
-            commitList.clear();
-        }
-    }
-
     private TableWriter.Row createNewRow(CharSequenceCache cache, int columnCount) {
         final int valueCount = columnValues.size();
         if (columnCount == valueCount) {
@@ -448,33 +382,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             default:
                 switchModeToSkipLine();
                 break;
-        }
-    }
-
-    private boolean hasPendingCommit() {
-        return writer != null || commitList.size() > 0 || writerCache.size() > 0;
-    }
-
-    private boolean isLockAcquiredBy(Lock lock, long deadlineNanos) {
-        boolean isInterrupted = false;
-        try {
-            while (true) {
-                final long remainingNanos = deadlineNanos - System.nanoTime();
-                if (remainingNanos <= 0) {
-                    return false;
-                }
-                try {
-                    if (lock.tryLock(remainingNanos, TimeUnit.NANOSECONDS)) {
-                        return true;
-                    }
-                } catch (InterruptedException e) {
-                    isInterrupted = true;
-                }
-            }
-        } finally {
-            if (isInterrupted) {
-                Thread.currentThread().interrupt();
-            }
         }
     }
 

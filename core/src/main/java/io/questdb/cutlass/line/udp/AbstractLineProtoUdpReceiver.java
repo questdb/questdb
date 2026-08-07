@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -40,6 +39,7 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob implements Closeable {
@@ -50,15 +50,8 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     protected final LineUdpParserImpl parser;
     private final LineUdpReceiverConfiguration configuration;
     private final SOCountDownLatch halted = new SOCountDownLatch(1);
-    private boolean isCommitAttempted;
-    private boolean isLexerFreed;
-    private boolean isParserFreed;
-    private boolean isSocketClosed;
-    private boolean isStartAttempted;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final SOCountDownLatch started = new SOCountDownLatch(1);
-    private volatile boolean closed;
-    private volatile boolean closedAcknowledged;
     protected int commitRate;
     protected long fd;
     protected long totalCount = 0;
@@ -116,74 +109,59 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
 
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        if (closed) {
-            return super.run(workerContext);
-        }
         if (!acceptOpen.get()) {
             return false;
         }
         return super.run(workerContext);
     }
 
-    protected final boolean checkClosed() {
-        if (closed) {
-            closedAcknowledged = true;
-            return true;
-        }
-        return false;
-    }
-
     @Override
-    public synchronized void close() {
-        if (!isCloseComplete(0, false)) {
-            throw new IllegalStateException("line UDP receiver did not halt");
-        }
-    }
-
-    public synchronized boolean closeBy(long deadlineNanos) {
-        return isCloseComplete(deadlineNanos, true);
-    }
-
-    public synchronized void start() {
-        if (configuration.ownThread() && fd > -1 && !isSocketClosed && !isStartAttempted) {
-            isStartAttempted = true;
-            running.set(true);
-            final Thread thread;
-            try {
-                thread = createThread(() -> {
-                    started.countDown();
-                    try {
-                        if (configuration.ownThreadAffinity() != -1) {
-                            Os.setCurrentThreadAffinity(configuration.ownThreadAffinity());
-                        }
-                        logStarted(configuration);
-                        while (running.get()) {
-                            runSerially();
-                        }
-                        LOG.info().$("shutdown").$();
-                    } finally {
-                        Path.clearThreadLocals();
-                        halted.countDown();
-                    }
-                });
-                thread.setName("line-udp-receiver");
-            } catch (Throwable th) {
-                resetFailedStart();
-                throw th;
-            }
-            try {
-                thread.start();
-            } catch (Throwable th) {
-                if (thread.getState() == Thread.State.NEW) {
-                    resetFailedStart();
+    public void close() {
+        if (fd > -1) {
+            if (running.compareAndSet(true, false)) {
+                // Bound started.await() so a ctor-on-throw close() does not deadlock if
+                // start() flipped the running CAS but the spawned thread never reached
+                // started.countDown() (e.g. OOM in new Thread(...) or Thread.start()). An
+                // unbounded await would block close() forever in that path; a finite
+                // timeout lets close() proceed to fd cleanup and rethrow the original ctor
+                // exception. 5s is long enough that healthy shutdowns never hit the timeout.
+                if (!started.await(TimeUnit.SECONDS.toNanos(5))) {
+                    LOG.error().$("timed out waiting for receiver thread to start; bailing out of started.await() to avoid close() deadlock").$();
+                } else {
+                    halted.await();
                 }
-                throw th;
             }
+            if (nf.close(fd) != 0) {
+                LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+            } else {
+                LOG.info().$("closed [fd=").$(fd).$(']').$();
+            }
+            if (parser != null) {
+                parser.commitAll();
+                parser.close();
+            }
+            Misc.free(lexer);
+            LOG.info().$("closed [fd=").$(fd).$(']').$();
+            fd = -1;
         }
     }
 
-    protected Thread createThread(Runnable runnable) {
-        return new Thread(runnable);
+    public void start() {
+        if (configuration.ownThread() && running.compareAndSet(false, true)) {
+            new Thread(() -> {
+                started.countDown();
+                if (configuration.ownThreadAffinity() != -1) {
+                    Os.setCurrentThreadAffinity(configuration.ownThreadAffinity());
+                }
+                logStarted(configuration);
+                while (running.get()) {
+                    runSerially();
+                }
+                LOG.info().$("shutdown").$();
+                Path.clearThreadLocals();
+                halted.countDown();
+            }).start();
+        }
     }
 
     private void bind(LineUdpReceiverConfiguration configuration) {
@@ -199,101 +177,6 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
         } else {
             throw NetworkError.instance(nf.errno()).couldNotBindSocket("udp-line-server", configuration.getBindIPv4Address(), configuration.getPort());
         }
-    }
-
-    private boolean isCloseComplete(long deadlineNanos, boolean isBounded) {
-        if (fd > -1) {
-            running.set(false);
-            closed = true;
-            if (isStartAttempted) {
-                if (isBounded) {
-                    if (!started.await(Math.max(0, deadlineNanos - System.nanoTime()))
-                            || !halted.await(Math.max(0, deadlineNanos - System.nanoTime()))) {
-                        return false;
-                    }
-                } else {
-                    started.await();
-                    halted.await();
-                }
-            }
-            if (!isStartAttempted) {
-                while (!closedAcknowledged) {
-                    run();
-                    if (closedAcknowledged) {
-                        break;
-                    }
-                    if (isBounded && deadlineNanos - System.nanoTime() <= 0) {
-                        return false;
-                    }
-                    Os.pause();
-                }
-            }
-            if (!isSocketClosed) {
-                if (nf.close(fd) != 0) {
-                    try {
-                        LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-                    } catch (Throwable ignore) {
-                    }
-                } else {
-                    isSocketClosed = true;
-                }
-            }
-            if (isBounded && deadlineNanos - System.nanoTime() <= 0) {
-                return false;
-            }
-            Throwable cleanupFailure = null;
-            if (!isCommitAttempted && parser != null) {
-                try {
-                    if (isBounded && !parser.isCommitAllComplete(deadlineNanos)) {
-                        return false;
-                    }
-                    if (!isBounded) {
-                        parser.commitAll();
-                    }
-                    isCommitAttempted = true;
-                } catch (Throwable th) {
-                    isCommitAttempted = true;
-                    cleanupFailure = th;
-                }
-            }
-            if (!isParserFreed) {
-                try {
-                    Misc.free(parser);
-                    isParserFreed = true;
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-            if (!isLexerFreed) {
-                try {
-                    Misc.free(lexer);
-                    isLexerFreed = true;
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-            if (isSocketClosed && isParserFreed && isLexerFreed) {
-                final long closedFd = fd;
-                fd = -1;
-                try {
-                    LOG.info().$("closed [fd=").$(closedFd).$(']').$();
-                } catch (Throwable ignore) {
-                }
-            }
-            CairoException.rethrowCleanupFailure(cleanupFailure);
-            if (!isSocketClosed) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private void logStarted(LineUdpReceiverConfiguration configuration) {
@@ -318,11 +201,5 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                     .$(", commitRate=").$(commitRate)
                     .I$();
         }
-    }
-
-    private void resetFailedStart() {
-        running.set(false);
-        started.countDown();
-        halted.countDown();
     }
 }

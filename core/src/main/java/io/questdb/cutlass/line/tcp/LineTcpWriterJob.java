@@ -40,13 +40,11 @@ import java.io.Closeable;
 
 class LineTcpWriterJob implements Job, Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpWriterJob.class);
-    private static final long MAINTENANCE_INTERVAL_MILLIS = 1;
     private final ObjList<TableUpdateDetails> assignedTables;
     private final long commitInterval;
     private final Metrics metrics;
     private final MillisecondClock millisecondClock;
     private long nextCommitTime;
-    private long nextMaintenanceTime;
     private final RingQueue<LineTcpMeasurementEvent> queue;
     private final LineTcpMeasurementScheduler scheduler;
     private final Sequence sequence;
@@ -68,7 +66,6 @@ class LineTcpWriterJob implements Job, Closeable {
         this.millisecondClock = millisecondClock;
         this.commitInterval = commitInterval;
         this.nextCommitTime = millisecondClock.getTicks();
-        this.nextMaintenanceTime = nextCommitTime;
         this.scheduler = scheduler;
         this.metrics = metrics;
         this.assignedTables = assignedTables;
@@ -90,23 +87,14 @@ class LineTcpWriterJob implements Job, Closeable {
                 SuspensionScope.Mode.BLOCKING
         );
         try {
-            return runSerial();
+            final boolean isBusy = drainQueue();
+            if (!isBusy) {
+                commitTables();
+                tickWriters();
+            }
+            return isBusy;
         } finally {
             SuspensionScope.restore(previousMode);
-        }
-    }
-
-    boolean hasWork() {
-        return hasNotification()
-                || (assignedTables.size() > 0 && millisecondClock.getTicks() >= nextMaintenanceTime);
-    }
-
-    void runFiber() {
-        try {
-            runSerial();
-        } catch (RuntimeException | Error th) {
-            metrics.healthMetrics().incrementUnhandledErrors();
-            throw th;
         }
     }
 
@@ -193,24 +181,6 @@ class LineTcpWriterJob implements Job, Closeable {
             } finally {
                 sequence.done(cursor);
             }
-        }
-    }
-
-    private boolean hasNotification() {
-        final long next = sequence.current() + 1;
-        return sequence.getBarrier().availableIndex(next) >= next;
-    }
-
-    private boolean runSerial() {
-        final boolean isBusy = drainQueue();
-        try {
-            if (!isBusy) {
-                commitTables();
-                tickWriters();
-            }
-            return isBusy;
-        } finally {
-            nextMaintenanceTime = millisecondClock.getTicks() + MAINTENANCE_INTERVAL_MILLIS;
         }
     }
 

@@ -2691,18 +2691,6 @@ public class PropServerConfigurationTest {
 
         assertWorkerPoolFiberConfiguration(configuration.getHttpMinServerConfiguration(), 37, 11, 5);
         assertWorkerPoolFiberConfiguration(configuration.getHttpServerConfiguration(), 37, 11, 5);
-        assertWorkerPoolFiberConfiguration(
-                configuration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration(),
-                37,
-                11,
-                5
-        );
-        assertWorkerPoolFiberConfiguration(
-                configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration(),
-                37,
-                11,
-                5
-        );
         assertWorkerPoolFiberConfiguration(configuration.getMatViewRefreshPoolConfiguration(), 37, 11, 5);
         assertWorkerPoolFiberConfiguration(configuration.getPGWireConfiguration(), 37, 11, 5);
         assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolNetworkConfiguration(), 37, 11, 5);
@@ -2769,14 +2757,6 @@ public class PropServerConfigurationTest {
                 PropServerConfiguration::getHttpMinServerConfiguration
         );
         assertWorkerPoolModeProperty(
-                PropertyKey.LINE_TCP_IO_WORKER_FIBER_ENABLED,
-                configuration -> configuration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration()
-        );
-        assertWorkerPoolModeProperty(
-                PropertyKey.LINE_TCP_WRITER_WORKER_FIBER_ENABLED,
-                configuration -> configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration()
-        );
-        assertWorkerPoolModeProperty(
                 PropertyKey.SHARED_NETWORK_WORKER_FIBER_ENABLED,
                 PropServerConfiguration::getSharedWorkerPoolNetworkConfiguration
         );
@@ -2835,33 +2815,14 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testWritePoolFiberHostFollowsSharedJobModes() throws Exception {
+    public void testWritePoolFiberHostFollowsWalApplyMode() throws Exception {
         final Properties properties = new Properties();
         Assert.assertEquals(
                 WorkerPoolMode.LEGACY,
                 newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
         );
 
-        properties.setProperty(PropertyKey.LINE_TCP_WRITER_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
-        Assert.assertEquals(
-                WorkerPoolMode.FIBER_HOST,
-                newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
-        );
-
-        properties.setProperty(PropertyKey.LINE_TCP_WRITER_WORKER_COUNT.getPropertyPath(), "1");
-        Assert.assertEquals(
-                WorkerPoolMode.LEGACY,
-                newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
-        );
-
-        properties.clear();
-        properties.setProperty(PropertyKey.LINE_TCP_ENABLED.getPropertyPath(), "false");
         properties.setProperty(PropertyKey.WAL_APPLY_WORKER_COUNT.getPropertyPath(), "0");
-        Assert.assertEquals(
-                WorkerPoolMode.LEGACY,
-                newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
-        );
-
         properties.setProperty(PropertyKey.WAL_APPLY_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
         Assert.assertEquals(
                 WorkerPoolMode.FIBER_HOST,
@@ -2882,7 +2843,7 @@ public class PropServerConfigurationTest {
 
         properties.clear();
         properties.setProperty(PropertyKey.READ_ONLY_INSTANCE.getPropertyPath(), "true");
-        properties.setProperty(PropertyKey.LINE_TCP_WRITER_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.WAL_APPLY_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
         Assert.assertEquals(
                 WorkerPoolMode.LEGACY,
                 newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()

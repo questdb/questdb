@@ -41,7 +41,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.Job;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -178,11 +177,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         clock,
                         commitInterval, this, engine.getMetrics(), assignedTables[i]
                 );
-                final Job writerJob = sharedPoolWrite.isFiberHost()
-                        ? new LineTcpFiberWriterJob(sharedPoolWrite.getFiberRuntime(), lineTcpWriterJob)
-                        : lineTcpWriterJob;
-                sharedPoolWrite.assign(i, writerJob);
-                sharedPoolWrite.freeOnExit(writerJob);
+                sharedPoolWrite.assign(i, lineTcpWriterJob);
+                sharedPoolWrite.freeOnExit(lineTcpWriterJob);
             }
             this.tableStructureAdapter = new TableStructureAdapter(
                     cairoConfiguration,
