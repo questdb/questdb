@@ -964,8 +964,7 @@ public class CheckpointTest extends AbstractCairoTest {
             try (TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)) {
                 final Field futuresField = TableSnapshotRestore.class.getDeclaredField("futures");
                 futuresField.setAccessible(true);
-                @SuppressWarnings("unchecked")
-                final ObjList<Future<?>> futures = (ObjList<Future<?>>) futuresField.get(restoreAgent);
+                @SuppressWarnings("unchecked") final ObjList<Future<?>> futures = (ObjList<Future<?>>) futuresField.get(restoreAgent);
                 futures.add(task);
 
                 try {
