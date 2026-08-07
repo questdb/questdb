@@ -893,6 +893,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * This covers the tables the model names. The other way into node-local state is a cursor
      * function, which names nothing in the model; {@link #generateUpdate} rejects those.
      * <p>
+     * This runs while the execution model is compiled, ahead of code generation. Column-level
+     * authorization is applied as the update factory is generated, so on a WAL table this rejection
+     * reaches the caller before any permission check can deny the statement: a user lacking SELECT
+     * on the referenced columns sees the shape error rather than an access-denied one. The non-WAL
+     * path does not reach here and still reports the permission failure first.
+     * <p>
      * Called only off the WAL apply path. A statement of this shape sequenced by an older build has
      * to keep applying after an upgrade; refusing it there would suspend every table still holding
      * one, which is a worse outcome than the divergence this prevents.
