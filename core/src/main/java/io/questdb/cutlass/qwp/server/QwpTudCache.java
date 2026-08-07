@@ -80,10 +80,14 @@ public class QwpTudCache implements QuietCloseable {
     private final Telemetry<TelemetryTask> telemetry;
     private volatile int cachedTableCount;
     // Optional callback mirroring commitAll(consumer)'s: invoked after a
-    // successful salvage commit in evictStaleTud, the one commit path that
-    // does not flow through commitAll/commitIfMaxUncommittedRowsReached. Set
-    // by QwpIngressProcessorState so its durable-ack bookkeeping sees the
+    // successful salvage commit (see salvageBufferedRows), which bypasses
+    // commitAll/commitIfMaxUncommittedRowsReached. Set by
+    // QwpIngressProcessorState so its durable-ack bookkeeping sees the
     // salvaged txn; UDP receivers leave it null (no ack channel to update).
+    // NOTE: salvage is not the only commit path without a consumer hook --
+    // QwpWalAppender's internal threshold commit (appendToWalColumnar ->
+    // tud.commitIfMaxUncommittedRowsCountReached()) also advances lastSeqTxn
+    // without notifying anyone; see the tracking issue referenced there.
     private CommittedTxnConsumer committedTxnConsumer;
     private MemoryMARW ddlMem;
     private boolean isDistressed = false;
