@@ -76,6 +76,7 @@ public abstract class FiberTask {
         if (incarnation(current) != expectedIncarnation) {
             return false;
         }
+
         final int state = state(current);
         return state != STATE_DONE && state != STATE_CANCELLED;
     }
@@ -329,6 +330,10 @@ public abstract class FiberTask {
         return cancellationSignalGeneration;
     }
 
+    protected long getCancellationSignalGeneration(FiberCancellationSignal cancellationSignal) {
+        return cancellationSignal.getGeneration();
+    }
+
     final void markCancelledFromOwned() {
         while (true) {
             final long current = scheduleState;
@@ -363,10 +368,6 @@ public abstract class FiberTask {
 
     final void notifyError(Throwable th) {
         onError(th);
-    }
-
-    protected long getCancellationSignalGeneration(FiberCancellationSignal cancellationSignal) {
-        return cancellationSignal.getGeneration();
     }
 
     protected void onAbandoned() {
@@ -422,6 +423,8 @@ public abstract class FiberTask {
         }
     }
 
+    protected abstract boolean runStep();
+
     final void updateCancellationBinding(
             @Nullable FiberCancellationSignal cancellationSignal,
             long cancellationSignalGeneration
@@ -434,6 +437,4 @@ public abstract class FiberTask {
         this.cancellationSignal = cancellationSignal;
         this.cancellationSignalGeneration = cancellationSignalGeneration;
     }
-
-    protected abstract boolean runStep();
 }
