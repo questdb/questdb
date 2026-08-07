@@ -32,6 +32,14 @@ import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.Nullable;
 
 public class WalTableUpdateDetails extends TableUpdateDetails {
+    // Highest seqTxn already handed to the ingress committed-txn consumer (the QWP
+    // ack / durable-upload watermarks). Compared against getLastSeqTxn() so a commit
+    // made ANYWHERE -- including QwpWalAppender's force-commit at the
+    // max-uncommitted-rows cap, which happens outside QwpTudCache entirely -- is still
+    // reported exactly once. Long.MIN_VALUE matches the writer's "no txn yet" sentinel.
+    // Never reused across connections: QwpTudCache.reset()/clear() frees every TUD.
+    private long lastReportedSeqTxn = Long.MIN_VALUE;
+
     public WalTableUpdateDetails(
             CairoEngine engine,
             @Nullable SecurityContext securityContext,
@@ -46,8 +54,16 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
         super(engine, securityContext, writer, -1, defaultColumnTypes, tableNameUtf8, symbolCachePool, commitInterval, commitOnClose, maxUncommittedRows);
     }
 
+    public long getLastReportedSeqTxn() {
+        return lastReportedSeqTxn;
+    }
+
     @Override
     public ThreadLocalDetails getThreadLocalDetails(int workerId) {
         return super.getThreadLocalDetails(0);
+    }
+
+    public void setLastReportedSeqTxn(long seqTxn) {
+        this.lastReportedSeqTxn = seqTxn;
     }
 }

@@ -1523,6 +1523,78 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitAllReportsTxnCommittedInsideAppend() throws Exception {
+        // QwpWalAppender.appendToWalColumnar force-commits through
+        // commitIfMaxUncommittedRowsCountReached() once a table crosses
+        // qwp.max.uncommitted.rows. That commit advances the sequencer txn AND
+        // drains the writer, so the group-closing commitAll() finds an empty
+        // writer. It must still report the txn: the ack and durable-upload
+        // watermarks only ever learn about committed work through this consumer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE append_commit (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            // maxUncommittedRows=2 mirrors QwpIngressProcessorState, which passes
+            // qwp.max.uncommitted.rows. WAL writers report no metadata service, so
+            // this cache-level value - not the table's WITH clause - drives the
+            // force commit.
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY, -1, 2)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("append_commit"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                // Stand in for the appender: write past the cap, then run the same
+                // force commit the appender runs after endColumnarWrite().
+                for (int i = 0; i < 4; i++) {
+                    tud.getWriter().newRow(i).append();
+                }
+                tud.commitIfMaxUncommittedRowsCountReached();
+
+                long committedSeqTxn = tud.getLastSeqTxn();
+                Assert.assertTrue("the force commit must advance the txn", committedSeqTxn > 0);
+                Assert.assertTrue("the force commit must drain the writer", tud.isFirstRow());
+
+                long[] reported = new long[]{Long.MIN_VALUE};
+                int[] calls = new int[]{0};
+                try {
+                    cache.commitAll((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+
+                Assert.assertEquals("commitAll must report the txn exactly once", 1, calls[0]);
+                Assert.assertEquals(committedSeqTxn, reported[0]);
+
+                // Reporting is exactly-once: a second pass over unchanged state
+                // must not re-issue the txn.
+                calls[0] = 0;
+                try {
+                    cache.commitAll((_, _, _) -> calls[0]++);
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals("an already-reported txn must not repeat", 0, calls[0]);
+            }
+        });
+    }
+
+    @Test
     public void testCommitAllRemovesDroppedTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE commit_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
