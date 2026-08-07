@@ -84,7 +84,6 @@ public class TableUpdateDetails implements Closeable {
     // Set only for WAL tables, i.e. when writerThreadId == -1.
     private final SecurityContext ownSecurityContext;
     private final Utf8String tableNameUtf8;
-    private TableToken tableToken;
     private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final long writerTickRowsCountMod;
@@ -99,6 +98,7 @@ public class TableUpdateDetails implements Closeable {
     private MetadataService metadataService;
     private int networkIOOwnerCount = 0;
     private long nextCommitTime;
+    private TableToken tableToken;
     private volatile boolean writerInError;
     private int writerThreadId;
 

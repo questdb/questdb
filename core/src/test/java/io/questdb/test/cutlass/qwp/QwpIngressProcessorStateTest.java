@@ -51,6 +51,7 @@ import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -3070,12 +3071,22 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE win_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
+            ObjList<String> committedTableNames = new ObjList<>();
+            ObjList<String> committedDirNames = new ObjList<>();
+            LongList committedSeqTxns = new LongList();
+
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
             DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
             try (QwpTudCache cache = new QwpTudCache(
                     engine, true, true, defaultColumnTypes, PartitionBy.DAY)
             ) {
+                cache.setCommittedTxnConsumer((tableName, tableDirName, seqTxn) -> {
+                    committedTableNames.add(tableName);
+                    committedDirNames.add(tableDirName);
+                    committedSeqTxns.add(seqTxn);
+                });
+
                 WalTableUpdateDetails tud = cache.getTableUpdateDetails(
                         AllowAllSecurityContext.INSTANCE, new Utf8String("win_src"), null, null, 1
                 );
@@ -3106,6 +3117,72 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 // txn past the rename.
                 Assert.assertEquals(
                         renameTxn + 1,
+                        engine.getTableSequencerAPI().getTxnTracker(token).getSeqTxn()
+                );
+
+                // The salvage commit bypasses commitAll/commitIfMaxUncommittedRowsReached,
+                // so it must notify committedTxnConsumer itself -- exactly once, keyed
+                // under the RENAMED table's identity, with the salvaged txn.
+                Assert.assertEquals(1, committedTableNames.size());
+                Assert.assertEquals("win_dst", committedTableNames.get(0));
+                Assert.assertEquals(renameTxn + 1, committedSeqTxns.get(0));
+            }
+        });
+    }
+
+    @Test
+    public void testLookupDuringRenameWindowWithNoBufferedRowsStillRefuses() throws Exception {
+        // C1 corollary: the same frozen-window race, but with NO buffered rows --
+        // the normal inter-batch state on the WS path, which commits after every
+        // batch. There is nothing to salvage, so salvageBufferedRows must no-op
+        // (no rebind, no commit, no committedTxnConsumer notification) instead of
+        // re-notifying the consumer with the seqTxn of an earlier, already-acked
+        // commit under the renamed table's identity -- a phantom per-table
+        // watermark that would make durable-ack gating wait on a table the client
+        // never wrote to. The lookup must still refuse and evict.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE win_empty_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            ObjList<String> committedTableNames = new ObjList<>();
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                cache.setCommittedTxnConsumer((tableName, tableDirName, seqTxn) -> committedTableNames.add(tableName));
+
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("win_empty_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                Assert.assertTrue(tud.isFirstRow());
+
+                // Freeze the C1 race window: sequencer knows the rename, the name
+                // registry does not.
+                TableToken token = engine.verifyTableName("win_empty_src");
+                long renameTxn;
+                try (WalWriter w = engine.getWalWriter(token)) {
+                    renameTxn = w.renameTable("win_empty_src", "win_empty_dst", AllowAllSecurityContext.INSTANCE);
+                }
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("win_empty_src"), null, null, 1
+                    );
+                    Assert.fail("lookup during the rename window must refuse, not adopt the rebound writer");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "is being renamed");
+                }
+                Assert.assertEquals(0, cache.size());
+
+                Assert.assertEquals("consumer must not fire when there was nothing to salvage", 0, committedTableNames.size());
+
+                // No salvage commit happened: the sequencer sits exactly where the
+                // rename left it.
+                Assert.assertEquals(
+                        renameTxn,
                         engine.getTableSequencerAPI().getTxnTracker(token).getSeqTxn()
                 );
             }

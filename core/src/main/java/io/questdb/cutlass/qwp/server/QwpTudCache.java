@@ -755,11 +755,24 @@ public class QwpTudCache implements QuietCloseable {
      * {@link #committedTxnConsumer} because this commit bypasses
      * commitAll/commitIfMaxUncommittedRowsReached, so durable-ack bookkeeping
      * would otherwise never learn about the txn.
+     * <p>
+     * No-ops (returns false, no rebind, no commit, no notify) when the entry
+     * has no buffered rows: the normal inter-batch state on the WS path, which
+     * commits after every batch. Without this guard, {@code tud.commit(false)}
+     * short-circuits on zero uncommitted rows without advancing the sequencer,
+     * yet the caller would still notify {@link #committedTxnConsumer} with the
+     * seqTxn of an earlier, already-acked commit -- keyed under the RENAMED
+     * table's name instead. That plants a phantom per-table watermark and
+     * makes durable-ack gating wait on a table the client never wrote to.
      *
-     * @return true when the rows were committed; false when the commit failed
-     * (the caller frees the entry, rolling the rows back)
+     * @return true when the rows were committed; false when there was nothing
+     * to salvage, or the commit failed (the caller frees the entry, rolling
+     * back whatever remains uncommitted)
      */
     private boolean salvageBufferedRows(WalTableUpdateDetails tud, WalWriter walWriter) {
+        if (tud.isFirstRow()) {
+            return false;
+        }
         try {
             tud.updateTableToken(walWriter.getTableToken());
             tud.commit(false);
