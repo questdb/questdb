@@ -35,6 +35,23 @@ public interface SymbolTable {
     int VALUE_NOT_FOUND = -2;
 
     /**
+     * Returns true when a consumer that wants a row's symbol should read the row's integer key
+     * and resolve it through this table, rather than read the row's text directly. A static
+     * dictionary answers true: resolving a key is a lookup that never touches the text. A dynamic
+     * symbol function answers false by default, because it would have to hash the row's text to
+     * produce a key at all, so the key buys the consumer nothing.
+     * <p>
+     * This is a hint, and a consumer fixes it once per cursor rather than per row. A table that
+     * translates other dictionaries answers for the shape it expects to serve as a whole: an
+     * all-SYMBOL UNION answers true because it serves table dictionaries by key without touching
+     * their text, even though a leg that has to intern its own text pays for the key it hands
+     * back. Read it as "prefer the key path here", not as a per-row guarantee.
+     */
+    default boolean supportsKeyValueAccess() {
+        return false;
+    }
+
+    /**
      * Look up "B" instance of CharSequence for symbol key. "B" instance allows
      * calling code to have two simultaneous symbol CharSequence instances in case
      * they have to be compared by their text value.

@@ -180,6 +180,22 @@ public class RndSymbolZipfFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean shouldMemoize() {
+            // Every accessor draws a fresh value, so getInt() and getSymbol() on one row disagree.
+            // A consumer that reads both - an all-symbol UNION resolves the re-symbolised key
+            // against the row's own text - would otherwise see two different values for one row.
+            return true;
+        }
+
+        @Override
+        public boolean supportsKeyValueAccess() {
+            // The dictionary is a fixed list built once per cursor, so getInt() returns an index
+            // and valueOf() resolves it without touching text. A key consumer (QWP egress) should
+            // therefore take the key path and encode each distinct value once, not once per row.
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_symbol_zipf(").val((Sinkable) symbols).val(',').val(alpha).val(')');
         }

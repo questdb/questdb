@@ -609,6 +609,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @TestOnly
+    public void setUnionSymbolProjectionTestHook(@Nullable SqlCodeGenerator.UnionSymbolProjectionTestHook hook) {
+        codeGenerator.setUnionSymbolProjectionTestHook(hook);
+    }
+
+    @TestOnly
     @Override
     public ExpressionNode testParseExpression(CharSequence expression, IQueryModel model) throws SqlException {
         clear();

@@ -112,6 +112,7 @@ import io.questdb.griffin.engine.functions.cast.CastShortToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastShortToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastTimestampToStrFunctionFactory;
@@ -334,6 +335,7 @@ import io.questdb.griffin.engine.union.IntersectRecordCursorFactory;
 import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
+import io.questdb.griffin.engine.union.UnionSymbolCastRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
@@ -538,6 +540,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private IQueryModel lastSeenOrderByModel;
+    @Nullable
+    private UnionSymbolProjectionTestHook unionSymbolProjectionTestHook;
 
     public SqlCodeGenerator(
             CairoConfiguration configuration,
@@ -695,6 +699,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Override
     public void close() {
+        // Bound the test hook by this generator's lifetime: clear() runs on every compile, so it
+        // cannot own the reset, but a hook must never outlive the compiler that installed it.
+        unionSymbolProjectionTestHook = null;
         Misc.free(jitIRMem);
     }
 
@@ -811,6 +818,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     public RecordComparatorCompiler getRecordComparatorCompiler() {
         return recordComparatorCompiler;
+    }
+
+    @TestOnly
+    public void setUnionSymbolProjectionTestHook(@Nullable UnionSymbolProjectionTestHook hook) {
+        this.unionSymbolProjectionTestHook = hook;
     }
 
     public IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
@@ -1727,6 +1739,50 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return false;
+    }
+
+    private boolean checkIfSetCastIsRequired(
+            RecordMetadata metadataA,
+            RecordMetadata metadataB,
+            boolean symbolDisallowed,
+            IntList symbolUnionColumns,
+            boolean isSeedRequired
+    ) {
+        int columnCount = metadataA.getColumnCount();
+        assert columnCount == metadataB.getColumnCount();
+        assert !isSeedRequired || symbolUnionColumns.size() == 0;
+
+        boolean castIsRequired = false;
+        int candidateIndex = 0;
+        final int candidateCount = symbolUnionColumns.size();
+        int nextCandidate = !isSeedRequired && candidateCount > 0 ? symbolUnionColumns.getQuick(0) : -1;
+        int retainedCandidateCount = 0;
+        // This compatibility pass already has to read every column in a UNION segment. Seed the
+        // sorted SYMBOL candidate list here, then compact it in place on later legs so tracking
+        // adds no second metadata traversal and no work proportional to eliminated candidates.
+        for (int i = 0; i < columnCount; i++) {
+            int typeA = metadataA.getColumnType(i);
+            int typeB = metadataB.getColumnType(i);
+            if (typeA != typeB || (typeA == SYMBOL && symbolDisallowed)) {
+                castIsRequired = true;
+            }
+            if (isSeedRequired) {
+                if (isSymbol(typeA) && isSymbol(typeB)) {
+                    symbolUnionColumns.add(i);
+                }
+            } else if (i == nextCandidate) {
+                if (isSymbol(typeB)) {
+                    symbolUnionColumns.setQuick(retainedCandidateCount++, i);
+                }
+                nextCandidate = ++candidateIndex < candidateCount
+                        ? symbolUnionColumns.getQuick(candidateIndex)
+                        : -1;
+            }
+        }
+        if (!isSeedRequired) {
+            symbolUnionColumns.setPos(retainedCandidateCount);
+        }
+        return castIsRequired;
     }
 
     @Nullable
@@ -5059,7 +5115,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
 
         if (model.getUnionModel().getUnionModel() != null) {
-            return generateSetFactory(model.getUnionModel(), unionAllFactory, executionContext);
+            return generateSetFactory(model.getUnionModel(), unionAllFactory, executionContext, null);
         }
         return unionAllFactory;
     }
@@ -7827,7 +7883,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateQuery(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         RecordCursorFactory factory = generateQuery0(model, executionContext, processJoins);
         if (model.getUnionModel() != null) {
-            return generateSetFactory(model, factory, executionContext);
+            return generateSetFactory(model, factory, executionContext, null);
         }
         return factory;
     }
@@ -10467,16 +10523,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Parent factory will perform one of SET operations on its arguments, such as UNION, UNION ALL,
      * INTERSECT or EXCEPT
      *
-     * @param model            incoming model is expected to have a chain of models via its QueryModel.getUnionModel() function
-     * @param factoryA         is compiled first argument
-     * @param executionContext execution context for authorization and parallel execution purposes
+     * @param model              incoming model is expected to have a chain of models via its QueryModel.getUnionModel() function
+     * @param factoryA           is compiled first argument
+     * @param executionContext   execution context for authorization and parallel execution purposes
+     * @param symbolUnionColumns tracks columns that are SYMBOL on every branch seen so far in a UNION [ALL]
+     *                           segment; null at the head of a segment (the compatibility pass seeds it
+     *                           from the first branch). A pending segment is re-symbolised before an EXCEPT /
+     *                           INTERSECT so the next operation observes the same metadata as a parenthesised union.
      * @return factory that performs a SET operation
      * @throws SqlException when query contains syntax errors
      */
     private RecordCursorFactory generateSetFactory(
             IQueryModel model,
             RecordCursorFactory factoryA,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            @Nullable IntList symbolUnionColumns
     ) throws SqlException {
         RecordCursorFactory factoryB = null;
         ObjList<Function> castFunctionsA = null;
@@ -10484,14 +10545,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
 
+            final int setOperationType = model.getSetOperationType();
+            if (symbolUnionColumns != null
+                    && setOperationType != IQueryModel.SET_OPERATION_UNION
+                    && setOperationType != IQueryModel.SET_OPERATION_UNION_ALL) {
+                // The running UNION is internally STRING-typed. Finalise it before a different set
+                // operation so flat and explicitly parenthesised forms expose identical metadata.
+                final RecordCursorFactory pendingUnionFactory = factoryA;
+                factoryA = null;
+                factoryA = maybeResymboliseUnion(pendingUnionFactory, symbolUnionColumns);
+            }
+
             final RecordMetadata metadataA = factoryA.getMetadata();
             final RecordMetadata metadataB = factoryB.getMetadata();
             final int positionA = model.getModelPosition();
             final int positionB = model.getUnionModel().getModelPosition();
 
-            switch (model.getSetOperationType()) {
+            switch (setOperationType) {
                 case IQueryModel.SET_OPERATION_UNION: {
-                    final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
+                    final boolean isSeedRequired = symbolUnionColumns == null;
+                    final IntList nextSymbolUnionColumns = isSeedRequired ? new IntList(0) : symbolUnionColumns;
+                    final boolean castIsRequired = checkIfSetCastIsRequired(
+                            metadataA,
+                            metadataB,
+                            true,
+                            nextSymbolUnionColumns,
+                            isSeedRequired
+                    );
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
@@ -10506,11 +10586,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctionsA,
                             castFunctionsB,
                             unionMetadata,
-                            SET_UNION_CONSTRUCTOR
+                            SET_UNION_CONSTRUCTOR,
+                            nextSymbolUnionColumns
                     );
                 }
                 case IQueryModel.SET_OPERATION_UNION_ALL: {
-                    final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
+                    final boolean isSeedRequired = symbolUnionColumns == null;
+                    final IntList nextSymbolUnionColumns = isSeedRequired ? new IntList(0) : symbolUnionColumns;
+                    final boolean castIsRequired = checkIfSetCastIsRequired(
+                            metadataA,
+                            metadataB,
+                            true,
+                            nextSymbolUnionColumns,
+                            isSeedRequired
+                    );
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
@@ -10524,7 +10613,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factoryB,
                             castFunctionsA,
                             castFunctionsB,
-                            unionMetadata
+                            unionMetadata,
+                            nextSymbolUnionColumns
                     );
                 }
                 case IQueryModel.SET_OPERATION_EXCEPT: {
@@ -10543,7 +10633,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctionsA,
                             castFunctionsB,
                             unionMetadata,
-                            SET_EXCEPT_CONSTRUCTOR
+                            SET_EXCEPT_CONSTRUCTOR,
+                            null // EXCEPT keeps side-A symbols as-is; never re-symbolise
                     );
                 }
                 case IQueryModel.SET_OPERATION_EXCEPT_ALL: {
@@ -10581,7 +10672,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctionsA,
                             castFunctionsB,
                             unionMetadata,
-                            SET_INTERSECT_CONSTRUCTOR
+                            SET_INTERSECT_CONSTRUCTOR,
+                            null // INTERSECT keeps side-A symbols as-is; never re-symbolise
                     );
                 }
                 case IQueryModel.SET_OPERATION_INTERSECT_ALL: {
@@ -11439,7 +11531,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory factoryB,
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
-            RecordMetadata unionMetadata
+            RecordMetadata unionMetadata,
+            @Nullable IntList symbolUnionColumns
     ) throws SqlException {
         final RecordCursorFactory unionFactory = new UnionAllRecordCursorFactory(
                 unionMetadata,
@@ -11450,9 +11543,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
 
         if (model.getUnionModel().getUnionModel() != null) {
-            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext);
+            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext, symbolUnionColumns);
         }
-        return unionFactory;
+        return maybeResymboliseUnion(unionFactory, symbolUnionColumns);
     }
 
     private RecordCursorFactory generateUnionFactory(
@@ -11463,7 +11556,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
             RecordMetadata unionMetadata,
-            SetRecordCursorFactoryConstructor constructor
+            SetRecordCursorFactoryConstructor constructor,
+            @Nullable IntList symbolUnionColumns
     ) throws SqlException {
         writeSymbolAsString.clear();
         valueTypes.clear();
@@ -11501,9 +11595,131 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
 
         if (model.getUnionModel().getUnionModel() != null) {
-            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext);
+            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext, symbolUnionColumns);
         }
-        return unionFactory;
+        return maybeResymboliseUnion(unionFactory, symbolUnionColumns);
+    }
+
+    // Casts back to SYMBOL every union result column that was SYMBOL on all branches (tracked in
+    // symbolUnionColumns) and that the chain downcast to STRING (see getUnionCastType). The cast
+    // sits outside the union, so it builds one dictionary over the merged stream instead of trying
+    // to reconcile the per-branch dictionaries the wire cannot merge. It reuses only the column
+    // resolution of generateSelectVirtualWithSubQuery - functions resolve references through
+    // priorityMetadata, base column i mapping to i + reservedSlots - and deliberately skips that
+    // method's model-driven work (timestamp propagation, memoization, constant folding, update
+    // typing), because a union result carries no model, no designated timestamp and no update target.
+    // Columns that are not re-symbolised pass through unchanged; maybeResymboliseUnion returns the
+    // union factory as-is when there is nothing to re-symbolise.
+    private RecordCursorFactory maybeResymboliseUnion(
+            RecordCursorFactory unionFactory,
+            @Nullable IntList symbolUnionColumns
+    ) throws SqlException {
+        if (symbolUnionColumns == null || symbolUnionColumns.size() == 0) {
+            return unionFactory;
+        }
+        final RecordMetadata baseMetadata = unionFactory.getMetadata();
+        final int columnCount = baseMetadata.getColumnCount();
+        // Own unionFactory from here on: the guard assert and the metadata/list allocations below can
+        // all throw (an OutOfMemoryError, say), and for a distinct UNION unionFactory already holds a
+        // native OrderedMap, so the catch must free it on every failure path, not just a build-loop throw.
+        ObjList<Function> functions = null;
+        try {
+            if (unionSymbolProjectionTestHook != null) {
+                unionSymbolProjectionTestHook.onProjectionConstruction();
+            }
+            // The re-symbolising CastStrToSymbol function builds its dictionary lazily and is not
+            // thread-safe (Func.isThreadSafe() == false). That is safe only because a union base is
+            // serial: it supports neither page frames, filter stealing nor time frames, so no parallel
+            // operator (async filter, parallel GROUP BY) ever clones or snapshots this projection.
+            // Enforce the invariant unconditionally rather than with an assert: -ea strips asserts in
+            // production, and a future page-frame-capable union must fail loudly here instead of shipping
+            // a stale, empty dictionary snapshot to a worker.
+            if (unionFactory.supportsPageFrameCursor()
+                    || unionFactory.supportsFilterStealing()
+                    || unionFactory.supportsTimeFrameCursor()) {
+                throw CairoException.critical(0).put("union symbol projection requires a serial base cursor");
+            }
+            final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
+            final IntList columnToFunctionIndex = new IntList(columnCount);
+            functions = new ObjList<>();
+            int symbolColumnIndex = 0;
+            int nextSymbolColumn = symbolUnionColumns.getQuick(0);
+            for (int i = 0; i < columnCount; i++) {
+                final String columnName = baseMetadata.getColumnName(i);
+                final boolean isSymbolCastRequired = i == nextSymbolColumn;
+                if (isSymbolCastRequired) {
+                    assert tagOf(baseMetadata.getColumnType(i)) == STRING;
+                    nextSymbolColumn = ++symbolColumnIndex < symbolUnionColumns.size()
+                            ? symbolUnionColumns.getQuick(symbolColumnIndex)
+                            : -1;
+                    // Register baseColumn before wrapping it: the hook and wrapper construction can
+                    // throw, and the catch can only free objects already owned by this list. Once the
+                    // symbol function is built it owns baseColumn, so replace the slot to avoid a
+                    // double close. Only symbol columns enter this list; all other getters delegate
+                    // directly to the union record in UnionSymbolCastRecordCursorFactory.
+                    final int functionIndex = functions.size();
+                    Function baseColumn = new StrColumn(i);
+                    functions.add(baseColumn);
+                    if (unionSymbolProjectionTestHook != null) {
+                        baseColumn = unionSymbolProjectionTestHook.wrapFunction(
+                                baseColumn,
+                                UnionSymbolProjectionTestHook.BASE_COLUMN
+                        );
+                        functions.setQuick(functionIndex, baseColumn);
+                        unionSymbolProjectionTestHook.onFunctionRegistered(UnionSymbolProjectionTestHook.BASE_COLUMN);
+                    }
+                    Function function = new CastStrToSymbolFunctionFactory.Func(baseColumn);
+                    functions.setQuick(functionIndex, function);
+                    if (unionSymbolProjectionTestHook != null) {
+                        function = unionSymbolProjectionTestHook.wrapFunction(
+                                function,
+                                UnionSymbolProjectionTestHook.SYMBOL_FUNCTION
+                        );
+                        functions.setQuick(functionIndex, function);
+                    }
+                    if (unionSymbolProjectionTestHook != null) {
+                        unionSymbolProjectionTestHook.onFunctionRegistered(UnionSymbolProjectionTestHook.SYMBOL_FUNCTION);
+                    }
+                    // A cast-to-symbol builds its dictionary lazily, so its symbol table is not static.
+                    virtualMetadata.add(new TableColumnMetadata(
+                            columnName,
+                            SYMBOL,
+                            IndexType.NONE,
+                            0,
+                            false,
+                            function.getMetadata()
+                    ));
+                    columnToFunctionIndex.add(functionIndex);
+                } else {
+                    virtualMetadata.add(baseMetadata.getColumnMetadata(i));
+                    columnToFunctionIndex.add(-1);
+                }
+            }
+            virtualMetadata.setTimestampIndex(baseMetadata.getTimestampIndex());
+            return new UnionSymbolCastRecordCursorFactory(
+                    virtualMetadata,
+                    unionFactory,
+                    columnToFunctionIndex,
+                    functions
+            );
+        } catch (Throwable e) {
+            Misc.freeObjList(functions);
+            Misc.free(unionFactory);
+            throw e;
+        }
+    }
+
+    @TestOnly
+    public interface UnionSymbolProjectionTestHook {
+        int BASE_COLUMN = 0;
+        int SYMBOL_FUNCTION = 1;
+        int PROJECTION = 2;
+
+        void onFunctionRegistered(int functionKind) throws SqlException;
+
+        void onProjectionConstruction() throws SqlException;
+
+        Function wrapFunction(Function function, int functionKind);
     }
 
     private RecordCursorFactory generateUnnest(
