@@ -47,12 +47,21 @@ public class SOCountDownLatch implements CountDownLatchSPI {
 
     public void await() {
         this.waiter = Thread.currentThread();
-        while (getCount() > 0) {
-            // Don't use LockSupport.park() here.
-            // Once in a while there can be a delay between check of this.count > -count
-            // and parking and unparkWaiter() will be called before park().
-            // Limit the parking time by using Os.park() instead of LockSupport.park()
-            Os.park();
+        boolean isInterrupted = false;
+        try {
+            while (getCount() > 0) {
+                // Don't use LockSupport.park() here.
+                // Once in a while there can be a delay between check of this.count > -count
+                // and parking and unparkWaiter() will be called before park().
+                // Limit the parking time by using Os.park() instead of LockSupport.park()
+                Os.park();
+                // Consume interrupts so the next park can block; restore the flag on exit.
+                isInterrupted |= Thread.interrupted();
+            }
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -61,20 +70,27 @@ public class SOCountDownLatch implements CountDownLatchSPI {
         if (getCount() == 0) {
             return true;
         }
+        if (nanos <= 0) {
+            return getCount() == 0;
+        }
 
-        while (true) {
-            long start = System.nanoTime();
-            LockSupport.parkNanos(nanos);
-            long elapsed = System.nanoTime() - start;
-
-            if (elapsed < nanos) {
+        final long deadline = System.nanoTime() + nanos;
+        boolean isInterrupted = false;
+        long remainingNanos = nanos;
+        try {
+            while (remainingNanos > 0) {
+                LockSupport.parkNanos(remainingNanos);
+                // Consume interrupts so the next park can block; restore the flag on exit.
+                isInterrupted |= Thread.interrupted();
                 if (getCount() == 0) {
                     return true;
-                } else {
-                    nanos -= elapsed;
                 }
-            } else {
-                return getCount() == 0;
+                remainingNanos = deadline - System.nanoTime();
+            }
+            return getCount() == 0;
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
             }
         }
     }

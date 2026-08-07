@@ -58,18 +58,27 @@ public final class SimpleWaitingLock {
         Thread currentThread = Thread.currentThread();
         Thread expectedOwner = null;
         long deadline = System.nanoTime() + unit.toNanos(timeout); // this might overflow, but that's OK. we subtract current nanoTime and that makes it positive again
-        for (long remainingNanos = deadline - System.nanoTime(); remainingNanos > 0; remainingNanos = deadline - System.nanoTime()) {
-            if (ownerOrWaiter.compareAndSet(expectedOwner, currentThread)) {
-                if (expectedOwner == null) {
-                    // there was no owner before -> we acquired the lock and we are the new owner. yay!
-                    return true;
+        boolean isInterrupted = false;
+        try {
+            for (long remainingNanos = deadline - System.nanoTime(); remainingNanos > 0; remainingNanos = deadline - System.nanoTime()) {
+                if (ownerOrWaiter.compareAndSet(expectedOwner, currentThread)) {
+                    if (expectedOwner == null) {
+                        // there was no owner before -> we acquired the lock and we are the new owner. yay!
+                        return true;
+                    }
+                    // CAS succeeded, but there was an owner before -> we are a waiter
+                    LockSupport.parkNanos(remainingNanos);
+                    // Consume interrupts so the next park can block; restore the flag on exit.
+                    isInterrupted |= Thread.interrupted();
                 }
-                // CAS succeeded, but there was an owner before -> we are a waiter
-                LockSupport.parkNanos(remainingNanos);
+                expectedOwner = ownerOrWaiter.get();
             }
-            expectedOwner = ownerOrWaiter.get();
+            return false;
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
-        return false;
     }
 
     /**

@@ -218,9 +218,10 @@ public class TableSnapshotRestore implements QuietCloseable {
             LOG.info().$("awaiting ").$(futures.size()).$(" parallel tasks to complete").I$();
         }
 
+        boolean isInterrupted = Thread.interrupted();
+        boolean isWaitInterrupted = false;
         boolean failed = false;
         String firstErrorMessage = null;
-        boolean interrupted = false;
         for (int i = 0, n = futures.size(); i < n; i++) {
             try {
                 futures.getQuick(i).get();
@@ -229,7 +230,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                 // on the shared readers. get() cleared the interrupt status, so
                 // retry (the abort flag bounds the wait) and restore it after.
                 abortParallelTasks.set(true);
-                interrupted = true;
+                isInterrupted = true;
+                isWaitInterrupted = true;
                 //noinspection AssignmentToForLoopParameter
                 i--;
             } catch (Throwable e) {
@@ -252,9 +254,9 @@ public class TableSnapshotRestore implements QuietCloseable {
         // (enterprise restore continues after quarantining a failed table).
         abortParallelTasks.set(false);
 
-        if (interrupted) {
+        if (isInterrupted) {
             Thread.currentThread().interrupt();
-            if (!failed) {
+            if (isWaitInterrupted && !failed) {
                 LOG.error().$("parallel task await interrupted").I$();
                 throw CairoException.critical(0).put("parallel task interrupted");
             }

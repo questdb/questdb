@@ -69,7 +69,8 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
                     }
                     record.$("\n\n");
                 } catch (Throwable th) {
-                    record.$("error dumping threads: ").$(th);
+                    System.err.println("error dumping threads");
+                    th.printStackTrace(System.err);
                 } finally {
                     record.$();
                 }
