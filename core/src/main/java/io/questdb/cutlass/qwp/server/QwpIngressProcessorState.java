@@ -287,6 +287,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     -1,
                     configuration.getQwpMaxUncommittedRows()
             );
+            // Salvage commits in evictStaleTud bypass commitAll(consumer), so
+            // the cache needs its own hook into recordCommittedTable to keep
+            // durable-ack bookkeeping in sync with a salvaged txn.
+            this.tudCache.setCommittedTxnConsumer(committedTxnConsumer);
 
             this.bufferSize = initBufferSize;
             this.bufferAddress = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
