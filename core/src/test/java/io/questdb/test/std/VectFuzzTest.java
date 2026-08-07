@@ -298,7 +298,7 @@ public class VectFuzzTest {
                 // Squash keys from longs to ints
                 for (int k = 0; k < keyCount; k++) {
                     DirectLongList keyList = keys.get(k);
-                    for (int i = 0; i < indexLen / 2 + 1; i++) {
+                    for (int i = 0; i < (indexLen + 1) / 2; i++) {
                         int high = 2 * i + 1 < indexLen ? (int) getIndexChecked(keyList, 2L * i + 1) : 0;
                         int low = 2 * i < indexLen ? (int) getIndexChecked(keyList, 2L * i) : 0;
                         keyList.set(i, Numbers.encodeLowHighInts(low, high));
