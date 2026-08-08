@@ -236,39 +236,44 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     private IOContextResult handleAuthentication(NetworkIOJob netIoJob) {
+        final int result;
         try {
-            int result = authenticator.handleIO();
-            switch (result) {
-                case SocketAuthenticator.NEEDS_WRITE:
-                    return IOContextResult.NEEDS_WRITE;
-                case SocketAuthenticator.OK:
-                    assert authenticator.isAuthenticated();
-                    assert securityContext == DenyAllSecurityContext.INSTANCE;
-                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                            authenticator, SecurityContextFactory.ILP
-                    );
-                    try {
-                        securityContext.checkEntityEnabled();
-                    } catch (CairoException e) {
-                        LOG.error().$('[').$(getFd()).$("] ").$safe(e.getFlyweightMessage()).$();
-                        return IOContextResult.NEEDS_DISCONNECT;
-                    }
-
-                    recvBuffer.setBufPos(authenticator.getRecvBufPos());
-                    resetParser(authenticator.getRecvBufPseudoStart());
-                    return parseMeasurements(netIoJob);
-                case SocketAuthenticator.NEEDS_READ:
-                    return IOContextResult.NEEDS_READ;
-                case SocketAuthenticator.NEEDS_DISCONNECT:
-                    return IOContextResult.NEEDS_DISCONNECT;
-                case SocketAuthenticator.QUEUE_FULL:
-                    return IOContextResult.QUEUE_FULL;
-                default:
-                    LOG.error().$("unexpected authenticator result [result=").$(result).I$();
-                    return IOContextResult.NEEDS_DISCONNECT;
-            }
+            result = authenticator.handleIO();
         } catch (AuthenticatorException e) {
             return IOContextResult.NEEDS_DISCONNECT;
+        } catch (CairoException e) {
+            // Malformed input from the client must not be logged as a critical error.
+            LOG.error().$('[').$(getFd()).$("] authentication failed [error=").$safe(e.getFlyweightMessage()).I$();
+            return IOContextResult.NEEDS_DISCONNECT;
+        }
+        switch (result) {
+            case SocketAuthenticator.NEEDS_WRITE:
+                return IOContextResult.NEEDS_WRITE;
+            case SocketAuthenticator.OK:
+                assert authenticator.isAuthenticated();
+                assert securityContext == DenyAllSecurityContext.INSTANCE;
+                securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                        authenticator, SecurityContextFactory.ILP
+                );
+                try {
+                    securityContext.checkEntityEnabled();
+                } catch (CairoException e) {
+                    LOG.error().$('[').$(getFd()).$("] ").$safe(e.getFlyweightMessage()).$();
+                    return IOContextResult.NEEDS_DISCONNECT;
+                }
+
+                recvBuffer.setBufPos(authenticator.getRecvBufPos());
+                resetParser(authenticator.getRecvBufPseudoStart());
+                return parseMeasurements(netIoJob);
+            case SocketAuthenticator.NEEDS_READ:
+                return IOContextResult.NEEDS_READ;
+            case SocketAuthenticator.NEEDS_DISCONNECT:
+                return IOContextResult.NEEDS_DISCONNECT;
+            case SocketAuthenticator.QUEUE_FULL:
+                return IOContextResult.QUEUE_FULL;
+            default:
+                LOG.error().$("unexpected authenticator result [result=").$(result).I$();
+                return IOContextResult.NEEDS_DISCONNECT;
         }
     }
 
