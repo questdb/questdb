@@ -348,7 +348,12 @@ public class LineTcpMeasurementEvent implements Closeable {
                 final String colNameUtf16 = localDetails.getColNameUtf16();
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameUtf16, maxColumnNameLength)) {
                     securityContext.authorizeAlterTableAddColumn(tud.getTableToken());
-                    offset = buffer.addColumnName(offset, colNameUtf16, securityContext.getPrincipal());
+                    // Serialize the owner-grant principal, NOT getPrincipal(): the column is added later on
+                    // the writer thread, where the originating context is gone and only this string survives.
+                    // getAutoCreateOwner() is null for the identity-less ILP line-ACL bypass, so DdlListener
+                    // does not grant ownership of an auto-created column to a real ACL user that happens to
+                    // share the bypass's default principal name (see SecurityContext.getAutoCreateOwner).
+                    offset = buffer.addColumnName(offset, colNameUtf16, securityContext.getAutoCreateOwner());
                     colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entity);
                 } else if (!autoCreateNewColumns) {
                     throw newColumnsNotAllowed(colNameUtf16, tableUpdateDetails.getTableNameUtf16());

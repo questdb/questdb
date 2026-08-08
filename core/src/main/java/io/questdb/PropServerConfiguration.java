@@ -142,9 +142,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
     public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
+    // public so a downstream configuration can detect the secret-file channel a sensitive key may arrive
+    // through without re-deriving the suffixes from string literals
+    public static final String SECRET_FILE_ENV_VAR_SUFFIX = "_FILE";
+    public static final String SECRET_FILE_PROPERTY_SUFFIX = ".file";
     public static final String TMP_DIRECTORY = "tmp";
-    static final String SECRET_FILE_ENV_VAR_SUFFIX = "_FILE";
-    static final String SECRET_FILE_PROPERTY_SUFFIX = ".file";
     private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2,3]";
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
