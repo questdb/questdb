@@ -35,6 +35,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.Signature;
@@ -47,6 +49,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
 
     private final Rnd rnd = new Rnd();
     private int maxSendBytes = 1024;
+    private Charset recvCharset = StandardCharsets.UTF_8;
     private byte[] sentBytes;
 
     @Before
@@ -59,9 +62,15 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
         disconnected = true;
         maxRecvBufferSize.set(1024);
         maxSendBytes = 1024;
+        recvCharset = StandardCharsets.UTF_8;
         floatDefaultColumnType = ColumnType.DOUBLE;
         integerDefaultColumnType = ColumnType.LONG;
         lineTcpConfiguration = createReceiverConfiguration(true, new LineTcpNetworkFacade() {
+            @Override
+            byte[] getBytes(String recvBuffer) {
+                return recvBuffer.getBytes(recvCharset);
+            }
+
             @Override
             public int sendRaw(long fd, long buffer, int bufferLen) {
                 Assert.assertEquals(FD, fd);
@@ -380,6 +389,22 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             boolean authSequenceCompleted = authenticate(token.toString(), AUTH_PRIVATE_KEY1);
             Assert.assertFalse(authSequenceCompleted);
             Assert.assertTrue(disconnected);
+        });
+    }
+
+    @Test
+    public void testKeyIdIsNotValidUtf8() throws Exception {
+        // a client that speaks a different (binary) protocol on the ILP port must be
+        // disconnected as if the authentication failed, without an unhandled error
+        runInAuthContext(() -> {
+            recvCharset = StandardCharsets.ISO_8859_1;
+            recvBuffer = new String(
+                    new byte[]{'@', 0, 13, 0, 1, (byte) 0xC0, (byte) 0xA8, '8', 1, '\n'},
+                    StandardCharsets.ISO_8859_1
+            );
+            handleContextIO0();
+            Assert.assertTrue(disconnected);
+            Assert.assertNull(sentBytes);
         });
     }
 
