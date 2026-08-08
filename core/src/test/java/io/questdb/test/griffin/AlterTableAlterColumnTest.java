@@ -441,12 +441,12 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
     @Test
     public void testExpectTableKeyword() throws Exception {
-        assertFailure("alter x", 6, "'table' or 'materialized' or 'view' expected");
+        assertFailure("alter x", 6, "'table' or 'materialized' or 'live' or 'view' expected");
     }
 
     @Test
     public void testExpectTableKeyword2() throws Exception {
-        assertFailure("alter", 5, "'table' or 'materialized' or 'view' expected");
+        assertFailure("alter", 5, "'table' or 'materialized' or 'live' or 'view' expected");
     }
 
     @Test
@@ -465,7 +465,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParquetEncodingConfigRoundTrip() throws Exception {
+    public void testParquetEncodingConfigRoundTrip() {
         int packed = TableUtils.packParquetConfig(
                 ParquetEncoding.ENCODING_DELTA_BINARY_PACKED,
                 ParquetCompression.COMPRESSION_ZSTD + 1,
@@ -516,16 +516,14 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
                     execute("ALTER TABLE test_quoted ALTER COLUMN \"MY_COL\" TYPE TIMESTAMP_NS");
 
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("SELECT * FROM test_quoted")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
                                     MY_COL\tts
                                     1970-01-01T00:00:00.123456789Z\t2021-01-01T00:00:00.000000Z
-                                    """,
-                            "SELECT * FROM test_quoted",
-                            "ts",
-                            true,
-                            true
-                    );
+                                    """);
                 }
         );
     }
@@ -658,27 +656,31 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
             execute("ALTER TABLE y ALTER COLUMN a SET PARQUET(DELTA_BINARY_PACKED, ZSTD(3))");
 
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'y' (\s
                             \ta INT PARQUET(delta_binary_packed, zstd(3)),
                             \tb DOUBLE,
                             \tt TIMESTAMP
                             ) timestamp(t) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE y");
+                            """);
 
             execute("ALTER TABLE y ALTER COLUMN a SET PARQUET(default)");
 
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'y' (\s
                             \ta INT,
                             \tb DOUBLE,
                             \tt TIMESTAMP
                             ) timestamp(t) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE y");
+                            """);
         });
     }
 

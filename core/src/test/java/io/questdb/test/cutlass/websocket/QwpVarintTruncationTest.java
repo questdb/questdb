@@ -61,7 +61,7 @@ public class QwpVarintTruncationTest extends AbstractWebSocketTest {
             long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
-                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
+                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION);
                 Unsafe.putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
                 Unsafe.putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
                 Unsafe.putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
@@ -72,7 +72,7 @@ public class QwpVarintTruncationTest extends AbstractWebSocketTest {
 
                 QwpMessageCursor cursor = new QwpMessageCursor();
                 ObjList<String> connectionDict = new ObjList<>();
-                cursor.of(address, totalSize, null, connectionDict);
+                cursor.of(address, totalSize, connectionDict);
                 Assert.fail("Expected QwpParseException for deltaCount exceeding int range");
             } catch (QwpParseException e) {
                 Assert.assertTrue(e.getMessage().contains("int range"));
@@ -96,7 +96,7 @@ public class QwpVarintTruncationTest extends AbstractWebSocketTest {
             long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
-                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
+                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION);
                 Unsafe.putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
                 Unsafe.putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
                 Unsafe.putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
@@ -107,7 +107,7 @@ public class QwpVarintTruncationTest extends AbstractWebSocketTest {
 
                 QwpMessageCursor cursor = new QwpMessageCursor();
                 ObjList<String> connectionDict = new ObjList<>();
-                cursor.of(address, totalSize, null, connectionDict);
+                cursor.of(address, totalSize, connectionDict);
                 Assert.fail("Expected QwpParseException for deltaStartId exceeding int range");
             } catch (QwpParseException e) {
                 Assert.assertTrue(e.getMessage().contains("int range"));

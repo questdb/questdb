@@ -129,6 +129,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public LongList getIntervals() {
+        return partitionFrameCursor != null ? partitionFrameCursor.getIntervals() : null;
+    }
+
+    @Override
     public long getRemainingRowsInInterval() {
         return remainingRowsInInterval;
     }
@@ -141,6 +146,16 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     @Override
     public TableReader getTableReader() {
         return reader;
+    }
+
+    @Override
+    public boolean hasActivePushdownFilter() {
+        return pushdownFilterConditions != null && pushdownFilterConditions.size() > 0;
+    }
+
+    @Override
+    public boolean hasIntervalFilter() {
+        return partitionFrameCursor != null && partitionFrameCursor.hasIntervalFilter();
     }
 
     @Override
@@ -468,7 +483,10 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     reenterParquetDecoder.metadata(),
                     pushdownFilterConditions,
                     filterList,
-                    filterValues
+                    filterValues,
+                    // native-table partitions: resolve the Parquet column by stable id so a
+                    // renamed column maps correctly despite the frozen Parquet name.
+                    true
             )) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
             }

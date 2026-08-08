@@ -125,6 +125,18 @@ public final class PostingIndexChainPicker {
             if (entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE > mappedLimit) {
                 return RESULT_HEADER_UNREADABLE;
             }
+            // Peek the entry's declared LEN before invoking read(), so the
+            // full-entry bound check happens BEFORE any cover-footer or
+            // gen-dir read. The post-read variant of this check used to fire
+            // too late: a corrupted or truncated entry whose footer landed
+            // past the mmap would already have SIGSEGV'd inside read().
+            // Compare against (mappedLimit - entryOffset) so a stomped
+            // peekedLen near Long.MAX_VALUE cannot overflow the addition
+            // and silently pass the bound check.
+            long peekedLen = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN);
+            if (peekedLen <= 0 || peekedLen > mappedLimit - entryOffset) {
+                return RESULT_HEADER_UNREADABLE;
+            }
             // Hard cap on iterations to defend against a corrupted prev
             // pointer that loops back on itself.
             if (visited++ > entryCount) {
@@ -132,10 +144,10 @@ public final class PostingIndexChainPicker {
             }
 
             PostingIndexChainEntry.read(keyMem, entryOffset, coverCount, into);
-            // The full entry (header + gen-dir payload + cover end-offset
-            // footer) must fit inside the mapped region too. snapshotMetadata
-            // reads gen-dir entries at offsets up to entryOffset + into.len.
-            if (into.len <= 0 || entryOffset + into.len > mappedLimit) {
+            // Sanity: the entry's own len must match what we peeked. read()
+            // re-reads LEN, so a torn or racing write could in principle
+            // surface a different value here. If so, treat as unreadable.
+            if (into.len != peekedLen) {
                 return RESULT_HEADER_UNREADABLE;
             }
             if (into.txnAtSeal <= pinnedTableTxn) {

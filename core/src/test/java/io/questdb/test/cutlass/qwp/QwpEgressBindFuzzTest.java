@@ -30,7 +30,6 @@ import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -46,7 +45,7 @@ import org.junit.Test;
  * type; this class stresses the encoder with arbitrary random inputs and
  * catches bit-level encoding bugs that might slip past hand-picked cases.
  */
-public class QwpEgressBindFuzzTest extends AbstractBootstrapTest {
+public class QwpEgressBindFuzzTest extends AbstractQwpBootstrapTest {
 
     private static final int ITERATIONS_PER_TEST = 25;
     private static final Log LOG = LogFactory.getLog(QwpEgressBindFuzzTest.class);
@@ -68,7 +67,7 @@ public class QwpEgressBindFuzzTest extends AbstractBootstrapTest {
         // random comparison would flap on things unrelated to the encoder.
         // FLOAT bit-level encoding is pinned by QwpEgressBindRoundTripTest.
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignored = startWithEnvVariables()) {
+            try (TestServerMain ignored = startFragmented()) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
                     for (int idx = 0; idx < ITERATIONS_PER_TEST; idx++) {
@@ -110,7 +109,7 @@ public class QwpEgressBindFuzzTest extends AbstractBootstrapTest {
     @Test
     public void testFuzzIntegralBindsProjection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignored = startWithEnvVariables()) {
+            try (TestServerMain ignored = startFragmented()) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
                     for (int idx = 0; idx < ITERATIONS_PER_TEST; idx++) {
@@ -171,7 +170,7 @@ public class QwpEgressBindFuzzTest extends AbstractBootstrapTest {
         // Stresses the same-SQL-different-binds path that the factory cache
         // is meant to accelerate. Random integer values, 50 iterations.
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain server = startWithEnvVariables()) {
+            try (TestServerMain server = startFragmented()) {
                 server.execute("CREATE TABLE t(id LONG, v LONG, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 StringBuilder insert = new StringBuilder("INSERT INTO t VALUES ");
                 int rows = 100;
@@ -215,7 +214,7 @@ public class QwpEgressBindFuzzTest extends AbstractBootstrapTest {
     @Test
     public void testFuzzUuidBinds() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignored = startWithEnvVariables()) {
+            try (TestServerMain ignored = startFragmented()) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
                     for (int idx = 0; idx < ITERATIONS_PER_TEST; idx++) {
@@ -288,4 +287,5 @@ public class QwpEgressBindFuzzTest extends AbstractBootstrapTest {
                 }
         }
     }
+
 }

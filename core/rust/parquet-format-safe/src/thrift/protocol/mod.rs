@@ -211,7 +211,14 @@ pub trait TInputProtocol: Sized {
 
     fn read_list<P: ReadThrift>(&mut self) -> crate::thrift::Result<Vec<P>> {
         let list_ident = self.read_list_begin()?;
-        let mut val: Vec<P> = Vec::with_capacity(list_ident.size as usize);
+        // Reserve fallibly: list_ident.size is a file-controlled thrift list count,
+        // and the protocol byte budget charges only size_of::<usize>() per element
+        // while each P (e.g. RowGroup, ColumnChunk) is far larger, so an infallible
+        // Vec::with_capacity here aborts the process over JNI on allocation failure.
+        // Mirrors read_bytes/read_string; the loop pushes exactly list_ident.size
+        // elements, staying within this reservation, so they never reallocate.
+        let mut val: Vec<P> = Vec::new();
+        val.try_reserve(list_ident.size as usize)?;
         for _ in 0..list_ident.size {
             val.push(P::read_from_in_protocol(self)?);
         }

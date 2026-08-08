@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
@@ -102,6 +103,19 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     StaticSymbolTable getSymbolTable(int columnIndex);
 
     /**
+     * Returns true when the cursor drops whole parquet row groups up front using pushed-down filter
+     * conditions, so its iteration is not a 1:1 pass over the physical partition rows.
+     * <p>
+     * The metadata-only skip fast path in {@code skipRows()} counts physical partition/row-group row
+     * counts; when pushdown pruning is active those counts overstate the rows the cursor actually
+     * yields (a fully non-matching row group contributes zero output rows but non-zero physical rows),
+     * so callers must fall back to a row-by-row skip. Defaults to false for cursors without pushdown.
+     */
+    default boolean hasActivePushdownFilter() {
+        return false;
+    }
+
+    /**
      * Returns true if the cursor belongs to an external parquet file, false in case of table partition files.
      */
     boolean isExternal();
@@ -147,17 +161,18 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     }
 
     /**
-     * Enables or disables streaming mode for the cursor.
-     * When streaming mode is enabled, underlying resources (e.g., partitions) are opened
-     * with hints to release page cache after reading. This is useful for large sequential
-     * scans like Parquet export to avoid page cache exhaustion under memory pressure.
+     * Sets the scan profile of the underlying reader (kernel page-cache
+     * hints, partition retention on pool return). See
+     * {@link io.questdb.cairo.ReaderScanProfile} for the meaning of each
+     * value.
      * <p>
-     * Default implementation is a no-op. Subclasses backed by TableReader should override
-     * this method to delegate to the TableReader's streaming mode setting.
+     * Default implementation is a no-op for cursors that are not backed by a
+     * {@link io.questdb.cairo.TableReader}; backed cursors delegate to
+     * {@link io.questdb.cairo.TableReader#setScanProfile}.
      *
-     * @param enabled true to enable streaming mode, false to disable
+     * @param profile the profile to adopt (non-null)
      */
-    default void setStreamingMode(boolean enabled) {
+    default void setScanProfile(ReaderScanProfile profile) {
         // no-op by default
     }
 

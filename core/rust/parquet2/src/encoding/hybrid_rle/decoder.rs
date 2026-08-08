@@ -57,6 +57,16 @@ impl<'a> Iterator for Decoder<'a> {
             let run_length = indicator as usize >> 1;
             // repeated-value := value that is repeated, using a fixed-width of round-up-to-next-byte(bit-width)
             let rle_bytes = ceil8(self.num_bits);
+            // A foreign or corrupt page can declare an RLE run whose fixed-width
+            // value spills past the remaining buffer. split_at would panic and
+            // abort the JVM across the JNI boundary; surface a clean error
+            // instead (the bitpacked branch above guards the same overflow with
+            // a min()).
+            if rle_bytes > self.values.len() {
+                return Some(Err(Error::oos(
+                    "RLE run value width exceeds the available buffer",
+                )));
+            }
             let (result, remaining) = self.values.split_at(rle_bytes);
             self.values = remaining;
             Some(Ok(HybridEncoded::Rle(result, run_length)))
@@ -140,5 +150,23 @@ mod tests {
         } else {
             panic!()
         };
+    }
+
+    #[test]
+    fn rle_run_value_exceeds_buffer_errors() {
+        // A foreign/corrupt page declares an RLE run (indicator LSB 0) whose
+        // fixed-width repeated value is ceil8(num_bits) bytes wide, but fewer
+        // bytes follow. split_at would panic and abort the JVM across the JNI
+        // boundary; the decoder must surface a clean error instead. Here
+        // num_bits = 9 -> rle_bytes = 2, but only 1 value byte follows the
+        // indicator (0x02 => run_length 1, LSB 0 => RLE).
+        let bit_width = 9usize;
+        let values = [0x02u8, 0x00];
+        let mut decoder = Decoder::new(&values, bit_width);
+        let run = decoder.next().expect("a run is produced");
+        assert!(
+            run.is_err(),
+            "RLE run past the buffer must error, not panic"
+        );
     }
 }

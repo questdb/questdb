@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Files;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -39,12 +38,21 @@ import org.jetbrains.annotations.Nullable;
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
 
     public static final int ERRNO_ACCESS_DENIED_WIN = 5;
+    // MoveFileW reports this when it refuses an existing destination, where POSIX
+    // rename would have replaced it. A destination that is merely delete-pending
+    // reports ERRNO_ACCESS_DENIED_WIN instead, which is indistinguishable from a
+    // real permission failure and so is not treated as a collision.
+    public static final int ERRNO_ALREADY_EXISTS_WIN = 183;
     public static final int ERRNO_EACCES_LINUX = 13;
     public static final int ERRNO_EACCES_MACOS = 13;
     public static final int ERRNO_EPERM_LINUX = 1;
     public static final int ERRNO_EPERM_MACOS = 1;
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
     public static final int ERRNO_FILE_DOES_NOT_EXIST_WIN = 3;
+    // Not reachable from MoveFileW today - CreateFile and CopyFile raise it - but
+    // cheap to accept alongside ERRNO_ALREADY_EXISTS_WIN, and no POSIX rename can
+    // produce either value.
+    public static final int ERRNO_FILE_EXISTS_WIN = 80;
     // psync_cvcontinue sets two bits in the error code to indicate whether the wait timed out (0x100) or there were no waiters (0x200).
     // Error #316 (0x13C) is the timed out bit bitwise OR'd with ETIMEDOUT (60).
     public static final int ERRNO_FILE_READ_TIMEOUT_MACOS = 316;
@@ -57,20 +65,54 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int VIEW_DOES_NOT_EXIST = TABLE_DOES_NOT_EXIST - 1;
     public static final int MAT_VIEW_DOES_NOT_EXIST = VIEW_DOES_NOT_EXIST - 1;
     public static final int TXN_BLOCK_APPLY_FAILED = MAT_VIEW_DOES_NOT_EXIST - 1;
+    public static final int METADATA_VERSION_MISMATCH = TXN_BLOCK_APPLY_FAILED - 1;
+    public static final int FILE_TOO_SMALL = METADATA_VERSION_MISMATCH - 1;
+    public static final int SEQUENCER_METADATA_OPEN_FAILED = FILE_TOO_SMALL - 1;
+    private static final int TABLE_SUSPENDED = SEQUENCER_METADATA_OPEN_FAILED - 1;
+    // PARTITION_SNAPSHOT_STALE (-113) and PARTITION_SNAPSHOT_ID_MISSING (-114) cross
+    // the JNI boundary: the enterprise cold-storage decoder throws them from Rust,
+    // which hardcodes the literals in qdb-ent/src/cold_storage/jni/decoder.rs and
+    // cannot see this chain. Append new codes below rather than inserting them
+    // above, so these two keep their values; ColdErrnoContractTest pins them.
+    public static final int PARTITION_SNAPSHOT_STALE = TABLE_SUSPENDED - 1;
+    public static final int PARTITION_SNAPSHOT_ID_MISSING = PARTITION_SNAPSHOT_STALE - 1;
+    // The on-disk _lv / _lv.s carry a format version newer than this build
+    // supports. The catalogue load path catches this and surfaces the view as
+    // version_unsupported rather than hiding it; distinct from structural
+    // corruption so the two map to different operator-visible outcomes.
+    public static final int LV_FILE_VERSION_UNSUPPORTED = PARTITION_SNAPSHOT_ID_MISSING - 1;
+    // A live-view versioned checkpoint timeline artifact failed structural
+    // validation: a torn/foreign _timeline superblock slot, or a metadata page
+    // whose framing, bounds, or per-page checksum did not hold. Timeline state is
+    // derived and rebuildable, so this is a recovery-quality signal rather than a
+    // compatibility break: a bad superblock slot falls back to the other slot, and
+    // a bad metadata page invalidates only that one root version and schedules its
+    // reconstruction. Distinct from LV_FILE_VERSION_UNSUPPORTED, which covers
+    // required state and does surface to the operator.
+    public static final int LV_CHECKPOINT_TIMELINE_INVALID = LV_FILE_VERSION_UNSUPPORTED - 1;
     public static final int NON_CRITICAL = -1;
+    // Single source of truth for the write-refusal message a read-only node emits. Both a static
+    // read-only OSS instance and an enterprise node acting as a read-only replica reach this
+    // message, so the wording stays in one place to keep every emitter consistent and to make a
+    // future role-neutral reword a one-line change. The wording is retained as-is because the
+    // string is asserted across roughly twenty OSS/enterprise/e2e test files; centralizing the
+    // literal first lets any later reword land without scattering the change.
+    public static final String READ_ONLY_ACCESS_MESSAGE = "replica access is read-only";
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
+    private static final int FLAG_AUTHORIZATION_ERROR = 1;
+    private static final int FLAG_CACHEABLE = 1 << 1;
+    private static final int FLAG_CANCELLATION = 1 << 2; // query was explicitly cancelled by the user
+    private static final int FLAG_HOUSEKEEPING = 1 << 3;
+    private static final int FLAG_INTERRUPTION = 1 << 4; // query timed out
+    private static final int FLAG_OUT_OF_MEMORY = 1 << 5;
+    private static final int FLAG_PREFERENCES_OUT_OF_DATE_ERROR = 1 << 6;
+    private static final int FLAG_READ_ONLY_ACCESS_REFUSAL = 1 << 7;
+    private static final int FLAG_SCHEMA_MISMATCH = 1 << 8;
     protected final StringSink message = new StringSink();
     protected final StringSink nativeBacktrace = new StringSink();
     protected int errno;
-    private boolean authorizationError = false;
-    private boolean cacheable;
-    private boolean cancellation; // when query is explicitly cancelled by user
-    private boolean housekeeping;
-    private boolean interruption; // used when a query times out
+    private int flags;
     private int messagePosition;
-    private boolean outOfMemory;
-    private boolean preferencesOutOfDateError = false;
 
     public static CairoException authorization() {
         return nonCritical().setAuthorizationError();
@@ -119,6 +161,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return instance(Os.errno());
     }
 
+    public static CairoException fileTooSmall(long size, long required) {
+        return critical(FILE_TOO_SMALL).put("File is too small, size=").put(size).put(", required=").put(required);
+    }
+
     public static CairoException invalidMetadataRecoverable(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
         return critical(METADATA_VALIDATION_RECOVERABLE).put(msg).put(" [column=").put(columnName).put(']');
     }
@@ -129,6 +175,14 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static CairoException matViewDoesNotExist(CharSequence matViewName) {
         return critical(MAT_VIEW_DOES_NOT_EXIST).put("materialized view does not exist [view=").put(matViewName).put(']');
+    }
+
+    public static CairoException metadataVersionMismatch(Utf8Sequence metaPath, int expectedVersion, int actualVersion) {
+        return critical(METADATA_VERSION_MISMATCH)
+                .put("metadata version does not match runtime version [path=").put(metaPath)
+                .put(", expectedVersion=").put(expectedVersion)
+                .put(", actualVersion=").put(actualVersion)
+                .put(']');
     }
 
     public static CairoException nonCritical() {
@@ -172,6 +226,75 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return nonCritical().put("timeout, query aborted").setInterruption(true);
     }
 
+    /**
+     * A write refused BECAUSE the node is read-only -- statically
+     * ({@code readonly=true} in the server configuration) or dynamically (the
+     * role-derived read-only of an enterprise replica, including a demote in
+     * flight). Carries the authorization flag, the canonical
+     * {@link #READ_ONLY_ACCESS_MESSAGE} and the read-only-refusal marker
+     * ({@link #isReadOnlyAccessRefusal()}) in lockstep, so the refusal's CAUSE
+     * travels with the exception.
+     * <p>
+     * Protocol layers that must tell a transient role-demote refusal apart from
+     * a genuine ACL denial (e.g. the QWP NACK classification) key on the marker.
+     * They must NOT re-read live engine state at catch time -- that races with a
+     * demote revert (the drain-timeout PRIMARY restore can land between the
+     * throw and the catch; nothing fences the propagation) -- and must NOT match
+     * the message text, which is brittle. Every "node is read-only" refusal site
+     * uses this factory so the marker is correct by construction; sites must not
+     * hand-roll {@code authorization().put(READ_ONLY_ACCESS_MESSAGE)}.
+     */
+    public static CairoException readOnlyAccess() {
+        return authorization().setReadOnlyAccessRefusal().put(READ_ONLY_ACCESS_MESSAGE);
+    }
+
+    /**
+     * Rethrows a failure after a best-effort Cairo/SQL resource cleanup has attempted every
+     * close. Unchecked failures retain their identity. The checked branch handles defensive
+     * cases such as a sneaky checked exception escaping a Closeable implementation.
+     */
+    public static void rethrowCleanupFailure(@Nullable Throwable failure) {
+        switch (failure) {
+            case null -> {
+                return;
+            }
+            case RuntimeException runtimeException -> throw runtimeException;
+            case Error error -> throw error;
+            default -> {
+                final CairoException exception = nonCritical().put("resource cleanup failed");
+                exception.initCause(failure);
+                throw exception;
+            }
+        }
+    }
+
+    /**
+     * A non-critical error raised BECAUSE the frame's own content is
+     * fundamentally incompatible with what it names: the wire value's type,
+     * shape or precision does not fit the target column (an unsupported type
+     * coercion, a geohash precision mismatch), or the named target is not a
+     * writable table at all (a view, materialized view or live view, or a
+     * non-WAL table on a WAL-only ingestion path). The
+     * refusal is DETERMINISTIC under byte-identical replay -- the same bytes
+     * produce the same rejection every time -- so protocol layers that must
+     * tell a permanent data error apart from a transient write refusal (the
+     * QWP NACK classification) key on {@link #isSchemaMismatch()} to reject
+     * it terminally instead of retrying. Every such site uses this factory so
+     * the marker is correct by construction; callers must not re-derive the
+     * distinction from message text.
+     */
+    public static CairoException schemaMismatch() {
+        return nonCritical().setSchemaMismatch();
+    }
+
+    public static CairoException sequencerMetadataOpenFailed(TableToken tableToken, int causeErrno, CharSequence causeMessage) {
+        return critical(SEQUENCER_METADATA_OPEN_FAILED)
+                .put("could not open sequencer metadata [table=").put(tableToken)
+                .put(", errno=").put(causeErrno)
+                .put(", error=").put(causeMessage)
+                .put(']');
+    }
+
     public static CairoException tableDoesNotExist(CharSequence tableName) {
         return critical(TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
     }
@@ -179,6 +302,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static CairoException tableDropped(TableToken tableToken) {
         return critical(TABLE_DROPPED)
                 .put("table is dropped [dirName=").put(tableToken.getDirName())
+                .put(", tableName=").put(tableToken.getTableName())
+                .put(']');
+    }
+
+    public static CairoException tableSuspended(TableToken tableToken) {
+        return critical(TABLE_SUSPENDED)
+                .put("table is suspended [dirName=").put(tableToken.getDirName())
                 .put(", tableName=").put(tableToken.getTableName())
                 .put(']');
     }
@@ -231,7 +361,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public boolean isAuthorizationError() {
-        return authorizationError;
+        return (flags & FLAG_AUTHORIZATION_ERROR) != 0;
     }
 
     public boolean isBlockApplyError() {
@@ -239,11 +369,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public boolean isCacheable() {
-        return cacheable;
+        return (flags & FLAG_CACHEABLE) != 0;
     }
 
     public boolean isCancellation() {
-        return cancellation;
+        return (flags & FLAG_CANCELLATION) != 0;
     }
 
     public boolean isCritical() {
@@ -251,6 +381,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 && errno != PARTITION_MANIPULATION_RECOVERABLE
                 && errno != METADATA_VALIDATION_RECOVERABLE
                 && errno != TABLE_DROPPED
+                && errno != TABLE_SUSPENDED
                 && errno != MAT_VIEW_DOES_NOT_EXIST
                 && errno != VIEW_DOES_NOT_EXIST
                 && errno != TABLE_DOES_NOT_EXIST;
@@ -260,24 +391,57 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return Files.isErrnoFileCannotRead(errno);
     }
 
+    public boolean isFileTooSmall() {
+        return errno == FILE_TOO_SMALL;
+    }
+
     public boolean isHousekeeping() {
-        return housekeeping;
+        return (flags & FLAG_HOUSEKEEPING) != 0;
     }
 
     public boolean isInterruption() {
-        return interruption;
+        return (flags & FLAG_INTERRUPTION) != 0;
     }
 
     public boolean isMetadataValidation() {
-        return errno == METADATA_VALIDATION || errno == METADATA_VALIDATION_RECOVERABLE;
+        return errno == METADATA_VALIDATION
+                || errno == METADATA_VALIDATION_RECOVERABLE
+                || errno == METADATA_VERSION_MISMATCH;
+    }
+
+    public boolean isMetadataVersionMismatch() {
+        return errno == METADATA_VERSION_MISMATCH;
     }
 
     public boolean isOutOfMemory() {
-        return outOfMemory;
+        return (flags & FLAG_OUT_OF_MEMORY) != 0;
     }
 
     public boolean isPreferencesOutOfDateError() {
-        return preferencesOutOfDateError;
+        return (flags & FLAG_PREFERENCES_OUT_OF_DATE_ERROR) != 0;
+    }
+
+    /**
+     * Whether this refusal was raised BECAUSE the node is read-only (set only by
+     * {@link #readOnlyAccess()}). Implies {@link #isAuthorizationError()}. False
+     * for genuine ACL denials.
+     */
+    public boolean isReadOnlyAccessRefusal() {
+        return (flags & FLAG_READ_ONLY_ACCESS_REFUSAL) != 0;
+    }
+
+    /**
+     * Whether this refusal is a deterministic wire-value/column-type mismatch,
+     * or names a target that is not a writable table (set only by
+     * {@link #schemaMismatch()}). Implies the error is non-critical and
+     * permanent -- replay of the same bytes cannot succeed.
+     */
+    public boolean isSchemaMismatch() {
+        return (flags & FLAG_SCHEMA_MISMATCH) != 0;
+    }
+
+    public boolean isSequencerMetadataOpenFailed() {
+        return errno == SEQUENCER_METADATA_OPEN_FAILED;
     }
 
     public boolean isTableDoesNotExist() {
@@ -286,6 +450,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isTableDropped() {
         return errno == TABLE_DROPPED;
+    }
+
+    public boolean isTableSuspended() {
+        return errno == TABLE_SUSPENDED;
     }
 
     // logged and skipped by WAL applying code
@@ -339,26 +507,26 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public CairoException setCacheable(boolean cacheable) {
-        this.cacheable = cacheable;
+        setFlag(FLAG_CACHEABLE, cacheable);
         return this;
     }
 
     public CairoException setCancellation(boolean cancellation) {
-        this.cancellation = cancellation;
+        setFlag(FLAG_CANCELLATION, cancellation);
         return this;
     }
 
     public void setHousekeeping(boolean housekeeping) {
-        this.housekeeping = housekeeping;
+        setFlag(FLAG_HOUSEKEEPING, housekeeping);
     }
 
     public CairoException setInterruption(boolean interruption) {
-        this.interruption = interruption;
+        setFlag(FLAG_INTERRUPTION, interruption);
         return this;
     }
 
     public CairoException setOutOfMemory(boolean outOfMemory) {
-        this.outOfMemory = outOfMemory;
+        setFlag(FLAG_OUT_OF_MEMORY, outOfMemory);
         return this;
     }
 
@@ -382,9 +550,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     private static CairoException instance(int errno) {
-        CairoException ex = tlException.get();
-        // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new CairoException()) != null;
+        // With continuations there is a possibility that multiple
+        // threads use the same instance with thread local / carrier local.
+        // Abolish ThreadLocal exception idea
+        CairoException ex = new CairoException();
         ex.clear(errno);
         return ex;
     }
@@ -406,12 +575,30 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     private CairoException setAuthorizationError() {
-        this.authorizationError = true;
+        this.flags |= FLAG_AUTHORIZATION_ERROR;
         return this;
     }
 
+    private void setFlag(int flag, boolean value) {
+        if (value) {
+            this.flags |= flag;
+        } else {
+            this.flags &= ~flag;
+        }
+    }
+
     private CairoException setPreferencesOutOfDateError() {
-        this.preferencesOutOfDateError = true;
+        this.flags |= FLAG_PREFERENCES_OUT_OF_DATE_ERROR;
+        return this;
+    }
+
+    private CairoException setReadOnlyAccessRefusal() {
+        this.flags |= FLAG_READ_ONLY_ACCESS_REFUSAL;
+        return this;
+    }
+
+    private CairoException setSchemaMismatch() {
+        this.flags |= FLAG_SCHEMA_MISMATCH;
         return this;
     }
 
@@ -419,11 +606,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         message.clear();
         nativeBacktrace.clear();
         this.errno = errno;
-        cacheable = false;
-        interruption = false;
-        authorizationError = false;
+        // clear() fully resets state so the instance starts from a clean slate. The base
+        // CairoException.instance() allocates a fresh object every call, so for it these resets
+        // are belt-and-suspenders. They are load-bearing for subclasses that still recycle a pooled
+        // flyweight through this method (e.g. LineProtocolException via ThreadLocal): without a full
+        // reset a stale flag would leak onto the next exception built on the same flyweight.
+        flags = 0;
         messagePosition = 0;
-        outOfMemory = false;
-        housekeeping = false;
     }
 }

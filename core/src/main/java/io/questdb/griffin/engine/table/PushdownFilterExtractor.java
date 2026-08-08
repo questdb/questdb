@@ -24,16 +24,22 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 
@@ -110,11 +116,41 @@ public class PushdownFilterExtractor implements Mutable {
                     }
 
                     Function f = functionParser.parseFunction(node, metadata, executionContext);
-                    condition.addValueFunction(f);
                     if (!f.isConstantOrRuntimeConstant()) {
+                        condition.addValueFunction(f);
                         allConstant = false;
                         break;
                     }
+                    // Pushdown reads the literal's raw value via getDecimal<N>(null)
+                    // dispatched on the column's storage tag, then compares the bytes
+                    // against parquet row group min/max statistics. For that to be
+                    // correct the literal must share the column's storage tag and
+                    // scale. Rescale the constant to match when possible; abandon
+                    // the condition when rescale would lose precision, overflow the
+                    // column's storage range, or when the value is only a runtime
+                    // constant (bind variable) whose raw bytes aren't known at
+                    // compile time - reading it through DecimalUtil.load would call
+                    // getDecimal<N>(null) on an unbound NamedParameterLinkFunction
+                    // and trip its assertion.
+                    final int colType = condition.getColumnType();
+                    if (ColumnType.isDecimal(colType) && ColumnType.isDecimal(f.getType())) {
+                        final int fType = f.getType();
+                        final boolean tagAndScaleMatch = ColumnType.tagOf(colType) == ColumnType.tagOf(fType)
+                                && ColumnType.getDecimalScale(colType) == ColumnType.getDecimalScale(fType);
+                        Function rescaled = null;
+                        if (tagAndScaleMatch) {
+                            rescaled = f;
+                        } else if (f.isConstant()) {
+                            rescaled = rescaleDecimalForPushdown(f, colType, executionContext);
+                        }
+                        if (rescaled == null) {
+                            condition.addValueFunction(f);
+                            allConstant = false;
+                            break;
+                        }
+                        f = rescaled;
+                    }
+                    condition.addValueFunction(f);
                 }
                 if (allConstant) {
                     if (result == null) {
@@ -172,12 +208,110 @@ public class PushdownFilterExtractor implements Mutable {
         return node.type == ExpressionNode.CONSTANT && SqlKeywords.isNullKeyword(node.token);
     }
 
+    /**
+     * Reports whether a null predicate over this column type may drive row group pruning.
+     * <p>
+     * Pruning is exact only where the parquet null bit and the SQL NULL denote the same rows.
+     * The parquet writer marks column-top rows - rows that predate the ADD COLUMN - with
+     * definition level 0, and decides every other row's null bit through its {@code Nullable}
+     * impl in {@code core/rust/qdbr/src/parquet_write/mod.rs}. Two type groups break the
+     * correspondence, in opposite directions:
+     * <ul>
+     * <li>BOOLEAN, BYTE and SHORT carry no null sentinel, so {@code EqBooleanFunctionFactory},
+     * {@code EqByteFunctionFactory} and {@code EqShortFunctionFactory} fold a null constant to
+     * {@code BooleanConstant.FALSE} and every stored row is non-null - a column-top row reads
+     * back as 0/false, a legitimate value. A row group built entirely from column-top rows
+     * reports {@code null_count == num_values}, which {@link ParquetRowGroupFilter} would
+     * discard for IS NOT NULL even though every one of its rows matches. Neither direction may
+     * consult the file's null bit.</li>
+     * <li>CHAR, FLOAT and DOUBLE call more values NULL than the writer marks null, so parquet
+     * nulls are a strict subset of SQL NULLs. IS NOT NULL still prunes exactly - a row group
+     * with {@code null_count == num_values} holds only NULLs, so no row matches - but IS NULL
+     * does not: {@code null_count == 0} no longer implies the group holds no NULL. CHAR's null
+     * is {@code Numbers.CHAR_NULL} while the writer's {@code Nullable} impl for {@code u16}
+     * reports every stored value non-null; {@code Numbers.isNull(double)} masks
+     * {@code EXP_BIT_MASK} and {@code isNull(float)} tests {@code isInfinite}, so both count
+     * +/-Infinity as NULL, while the writer's impls for {@code f32}/{@code f64} test only
+     * {@code is_nan()} and {@code simd.rs} compares strictly greater than the infinity bits.
+     * A stored CHAR_NULL or infinity therefore reaches the file as a non-null value, and a row
+     * group of them reports {@code null_count == 0} while every row matches IS NULL.</li>
+     * </ul>
+     * Every other type's null detection - a {@code Nullable} impl for the fixed-size types, a
+     * length or key check for the variable-size ones, which do not implement that trait -
+     * recognises the same values SQL does, so both directions stay exact. That includes IPv4,
+     * whose in-band 0 the writer does map to a parquet null.
+     * <p>
+     * This gates on the column's <em>metadata</em> type; soundness also needs the file's stored
+     * type to agree, which {@link ParquetRowGroupFilter} enforces separately by dropping any
+     * condition whose parquet column type differs, before it reaches the null-op branch.
+     */
+    private static boolean isNullOpPushable(int columnType, int opType) {
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT -> false;
+            case ColumnType.CHAR, ColumnType.FLOAT, ColumnType.DOUBLE -> opType == OP_IS_NOT_NULL;
+            default -> true;
+        };
+    }
+
+    /**
+     * Rebuilds a constant DECIMAL function so its storage tag and scale match the
+     * column's, which is what {@link ParquetRowGroupFilter#prepareFilterList} relies
+     * on when it dispatches {@code getDecimal<N>} based on the column tag and pushes
+     * the raw bytes against parquet row group statistics. Returns {@code null} when
+     * the constant cannot be expressed at the column's scale (lossy scale-down) or
+     * does not fit in the column's storage size, signalling the caller to skip
+     * pushdown for the condition. Returns the input unchanged when scale and tag
+     * already match. On a successful rebuild the original function is closed and
+     * the new constant takes its place.
+     */
+    private static Function rescaleDecimalForPushdown(
+            Function f,
+            int colType,
+            SqlExecutionContext executionContext
+    ) {
+        final int colTag = ColumnType.tagOf(colType);
+        final int litTag = ColumnType.tagOf(f.getType());
+        final int colScale = ColumnType.getDecimalScale(colType);
+        final int litScale = ColumnType.getDecimalScale(f.getType());
+        if (colTag == litTag && colScale == litScale) {
+            return f;
+        }
+
+        final int colPrecision = ColumnType.getDecimalPrecision(colType);
+        final Decimal256 d256 = executionContext.getDecimal256();
+        final Decimal128 d128 = executionContext.getDecimal128();
+        DecimalUtil.load(d256, d128, f, null);
+
+        if (d256.isNull()) {
+            f.close();
+            return DecimalUtil.createNullDecimalConstant(colPrecision, colScale);
+        }
+
+        try {
+            d256.rescale(colScale);
+        } catch (NumericException e) {
+            return null;
+        }
+
+        final int colStorageSizePow2 = Decimals.getStorageSizePow2(colPrecision);
+        if (!d256.fitsInStorageSizePow2(colStorageSizePow2)) {
+            return null;
+        }
+
+        f.close();
+        return DecimalUtil.createDecimalConstant(d256, colPrecision, colScale);
+    }
+
     private void traverse(ArrayDeque<ExpressionNode> stack, ArrayDeque<ExpressionNode> stack2, ExpressionNode node, RecordMetadata metadata) {
         stack.clear();
 
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                if (SqlKeywords.isAndKeyword(node.token)) {
+                if (node.token == null) {
+                    // tokenless node (e.g. subquery); not extractable, skip it -
+                    // extraction is best-effort and fewer conditions is always safe
+                    node = null;
+                } else if (SqlKeywords.isAndKeyword(node.token)) {
                     if (node.rhs != null) {
                         stack.push(node.rhs);
                     }
@@ -229,7 +363,7 @@ public class PushdownFilterExtractor implements Mutable {
         ExpressionNode hiNode = node.args.getQuick(0);
 
         int columnType = metadata.getColumnType(columnIndex);
-        PushdownFilterCondition cond = new PushdownFilterCondition(colNode.token, columnType, OP_BETWEEN);
+        PushdownFilterCondition cond = new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_BETWEEN);
         cond.addValue(loNode);
         cond.addValue(hiNode);
         conditions.add(cond);
@@ -260,7 +394,7 @@ public class PushdownFilterExtractor implements Mutable {
         }
 
         int columnType = metadata.getColumnType(columnIndex);
-        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, columnType, effectiveOp);
+        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, effectiveOp);
         condition.addValue(valueNode);
         conditions.add(condition);
     }
@@ -290,11 +424,13 @@ public class PushdownFilterExtractor implements Mutable {
         int columnType = metadata.getColumnType(columnIndex);
 
         if (isNullConstant(valueNode)) {
-            conditions.add(new PushdownFilterCondition(colNode.token, columnType, OP_IS_NULL));
+            if (isNullOpPushable(columnType, OP_IS_NULL)) {
+                conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NULL));
+            }
             return;
         }
 
-        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, columnType);
+        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType);
         condition.addValue(valueNode);
         conditions.add(condition);
     }
@@ -323,6 +459,7 @@ public class PushdownFilterExtractor implements Mutable {
         int columnType = metadata.getColumnType(columnIndex);
         PushdownFilterCondition condition = new PushdownFilterCondition(
                 colNode.token,
+                metadata.getWriterIndex(columnIndex),
                 columnType
         );
 
@@ -363,7 +500,10 @@ public class PushdownFilterExtractor implements Mutable {
         }
 
         int columnType = metadata.getColumnType(columnIndex);
-        conditions.add(new PushdownFilterCondition(colNode.token, columnType, OP_IS_NOT_NULL));
+        if (!isNullOpPushable(columnType, OP_IS_NOT_NULL)) {
+            return;
+        }
+        conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NOT_NULL));
     }
 
     private void tryExtractOrEqualities(ArrayDeque<ExpressionNode> orStack, ExpressionNode node, RecordMetadata metadata) {
@@ -377,6 +517,10 @@ public class PushdownFilterExtractor implements Mutable {
         while (cur != null || !orStack.isEmpty()) {
             if (cur == null) {
                 cur = orStack.poll();
+            }
+            if (cur.token == null) {
+                // tokenless OR operand (e.g. subquery); the whole OR chain is not extractable
+                return;
             }
             if (SqlKeywords.isOrKeyword(cur.token)) {
                 if (cur.lhs == null || cur.rhs == null) {
@@ -420,7 +564,7 @@ public class PushdownFilterExtractor implements Mutable {
         }
 
         if (orValues.size() > 0) {
-            PushdownFilterCondition condition = new PushdownFilterCondition(columnName, columnType);
+            PushdownFilterCondition condition = new PushdownFilterCondition(columnName, metadata.getWriterIndex(resolvedColumnIndex), columnType);
             condition.addValues(orValues);
             conditions.add(condition);
         }
@@ -430,16 +574,22 @@ public class PushdownFilterExtractor implements Mutable {
     public static class PushdownFilterCondition implements QuietCloseable {
         private final CharSequence columnName;
         private final int columnType;
+        // Stable writer index (column id) of the filtered column. The Parquet file stores
+        // this id per column, so native-table row-group pruning resolves the Parquet column
+        // by id rather than by name -- a rename leaves the frozen Parquet name stale, which
+        // would otherwise resolve to the wrong column (or a name collision) and skip rows.
+        private final int columnWriterIndex;
         private final int operationType;
         private final ObjList<Function> valueFunctions = new ObjList<>();
         private final ObjList<ExpressionNode> values = new ObjList<>();
 
-        public PushdownFilterCondition(CharSequence columnName, int columnType) {
-            this(columnName, columnType, OP_EQ);
+        public PushdownFilterCondition(CharSequence columnName, int columnWriterIndex, int columnType) {
+            this(columnName, columnWriterIndex, columnType, OP_EQ);
         }
 
-        public PushdownFilterCondition(CharSequence columnName, int columnType, int operationType) {
+        public PushdownFilterCondition(CharSequence columnName, int columnWriterIndex, int columnType, int operationType) {
             this.columnName = Chars.toString(columnName);
+            this.columnWriterIndex = columnWriterIndex;
             this.columnType = columnType;
             this.operationType = operationType;
         }
@@ -467,6 +617,10 @@ public class PushdownFilterExtractor implements Mutable {
 
         public int getColumnType() {
             return columnType;
+        }
+
+        public int getColumnWriterIndex() {
+            return columnWriterIndex;
         }
 
         public int getOperationType() {

@@ -30,32 +30,58 @@ import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class SubIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testGetLongPropagatesNullAsLongNull() throws Exception {
+        // Cross-type LONG = (INT - INT) compares c6.getLong() with the
+        // subtract result widened to long. When either operand is INT_NULL
+        // the result must widen to LONG_NULL, not the int value INT_NULL
+        // (-2_147_483_648) accidentally widened to a regular long. Java
+        // filter previously returned INT_NULL from SubIntFunc.getLong(),
+        // which silently widened to long -2_147_483_648 and matched any
+        // c6 column row holding that exact value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c4 INT, c6 LONG)");
+            execute("INSERT INTO x VALUES " +
+                    "(NULL, NULL), " +
+                    "(NULL, -2147483648), " +
+                    "(5, 562940)");
+            assertQuery("SELECT * FROM x WHERE c6 = (562945 - c4)")
+                    .noLeakCheck()
+                    .returns("c4\tc6\nnull\tnull\n5\t562940\n");
+        });
+    }
+
     @Test
     public void testLeftNan() throws Exception {
-        assertQuery("column\n" +
-                "null\n", "SELECT null - 5");
+        assertQuery("SELECT null - 5")
+                .expectSize()
+                .returns("""
+                        column
+                        null
+                        """);
     }
 
     @Test
     public void testNegative() throws Exception {
-        assertQuery("column\n-7\n", "SELECT -3-4");
-        assertQuery("column\n-7\n", "SELECT -3- 4");
-        assertQuery("column\n-7\n", "SELECT -3 -4");
+        assertQuery("SELECT -3-4").expectSize().returns("column\n-7\n");
+        assertQuery("SELECT -3- 4").expectSize().returns("column\n-7\n");
+        assertQuery("SELECT -3 -4").expectSize().returns("column\n-7\n");
     }
 
     @Test
     public void testRightNan() throws Exception {
-        assertQuery("column\nnull\n", "SELECT 123 - null");
+        assertQuery("SELECT 123 - null").expectSize().returns("column\nnull\n");
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery("column\n2\n", "SELECT 10 - 8");
+        assertQuery("SELECT 10 - 8").expectSize().returns("column\n2\n");
     }
 
     @Test
     public void testUnderflow() throws Exception {
-        assertQuery("column\n-2147483650\n", "SELECT -2147483648 - 2");
+        assertQuery("SELECT -2147483648 - 2").expectSize().returns("column\n-2147483650\n");
     }
 
     @Override

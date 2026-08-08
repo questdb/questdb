@@ -66,9 +66,8 @@ public final class QwpEgressFrameWriter {
 
     /**
      * Writes the body of a {@code CACHE_RESET} frame: msg_kind + reset_mask.
-     * {@code resetMask} is the bitwise OR of
-     * {@link QwpEgressMsgKind#RESET_MASK_DICT} and
-     * {@link QwpEgressMsgKind#RESET_MASK_SCHEMAS}.
+     * {@code resetMask} currently carries only
+     * {@link QwpEgressMsgKind#RESET_MASK_DICT}.
      *
      * @return address just past the body
      */
@@ -148,15 +147,22 @@ public final class QwpEgressFrameWriter {
     }
 
     /**
-     * Writes a SERVER_INFO frame body at {@code bodyAddr}. Both {@code clusterId}
-     * and {@code nodeId} are written as u16-length-prefixed UTF-8. Each string
-     * is truncated at 65535 UTF-8 bytes (the wire cap) and further truncated at
-     * {@code bodyCapBytes} minus the fixed fields so the body always fits the
-     * caller's buffer. A null {@code CharSequence} is encoded as a zero-length
-     * string, matching the wire contract in {@link QwpEgressMsgKind#SERVER_INFO}.
+     * Writes a SERVER_INFO frame body at {@code bodyAddr}. {@code clusterId},
+     * {@code nodeId}, and the optional {@code zoneId} are each written as
+     * u16-length-prefixed UTF-8. Each string is truncated at 65535 UTF-8 bytes
+     * (the wire cap) and further truncated at {@code bodyCapBytes} minus the
+     * fixed fields so the body always fits the caller's buffer. A null
+     * {@code clusterId} or {@code nodeId} is encoded as a zero-length string.
+     * <p>
+     * The {@code zoneId} field is gated by the {@link QwpEgressMsgKind#CAP_ZONE}
+     * bit in {@code capabilities}: when the bit is set, a u16+utf8 trailer is
+     * appended (zero-length if {@code zoneId} is null); when the bit is unset,
+     * the trailer is omitted entirely so a client built against the zone-less
+     * layout sees the byte layout it expects.
      *
      * @return address just past the body, or -1 if {@code bodyCapBytes} is too
-     * small to hold the fixed fields (1+1+8+4+8+2+2 = 26 bytes)
+     * small to hold the fixed fields (1+1+8+4+8+2+2 = 26 bytes), or 28 bytes
+     * when {@code CAP_ZONE} is set
      */
     public static long writeServerInfo(
             long bodyAddr,
@@ -166,9 +172,11 @@ public final class QwpEgressFrameWriter {
             int capabilities,
             long serverWallNs,
             CharSequence clusterId,
-            CharSequence nodeId
+            CharSequence nodeId,
+            CharSequence zoneId
     ) {
-        final int fixedBytes = 1 + 1 + 8 + 4 + 8 + 2 + 2;
+        final boolean hasZone = (capabilities & QwpEgressMsgKind.CAP_ZONE) != 0;
+        final int fixedBytes = 1 + 1 + 8 + 4 + 8 + 2 + 2 + (hasZone ? 2 : 0);
         if (bodyCapBytes < fixedBytes) {
             return -1;
         }
@@ -189,7 +197,17 @@ public final class QwpEgressFrameWriter {
         int nodeBudget = Math.min(0xFFFF, Math.max(0, remaining));
         int nodeWritten = writeUtf8Truncated(nodeStart, nodeId, nodeBudget);
         Unsafe.putShort(nodeLenAddr, (short) nodeWritten);
-        return nodeStart + nodeWritten;
+        long bodyEnd = nodeStart + nodeWritten;
+        if (hasZone) {
+            long zoneLenAddr = bodyEnd;
+            long zoneStart = zoneLenAddr + 2;
+            remaining -= nodeWritten;
+            int zoneBudget = Math.min(0xFFFF, Math.max(0, remaining));
+            int zoneWritten = writeUtf8Truncated(zoneStart, zoneId, zoneBudget);
+            Unsafe.putShort(zoneLenAddr, (short) zoneWritten);
+            bodyEnd = zoneStart + zoneWritten;
+        }
+        return bodyEnd;
     }
 
     /**

@@ -183,14 +183,17 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (null)");
             execute("INSERT INTO tab VALUES (null)");
-            assertQueryNoLeakCheck("arr\nnull\n", "SELECT array_elem_avg(arr) arr FROM tab", null, false, true);
+            assertQuery("SELECT array_elem_avg(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\nnull\n");
         });
     }
 
     @Test
     public void testAvgKeyedDifferentNanPatternsPerGroup() throws Exception {
         assertKeyedGroupBy(
-                "grp\tarr\n1\t[2.0,4.0]\n2\t[null,4.0]\n",
                 new String[][]{
                         {"1", "ARRAY[1.0, null]", "ARRAY[3.0, 4.0]"},
                         {"2", "ARRAY[null, 2.0]", "ARRAY[null, 6.0]"}
@@ -231,8 +234,10 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
             execute("INSERT INTO tab VALUES (1, ARRAY[10.0, 20.0])");
             execute("INSERT INTO tab VALUES (1, ARRAY[30.0, 40.0])");
             execute("INSERT INTO tab VALUES (2, ARRAY[100.0, 200.0])");
-            assertQueryNoLeakCheck("grp\tarr\n1\t[20.0,30.0]\n2\t[100.0,200.0]\n",
-                    "SELECT grp, array_elem_avg(arr) arr FROM tab ORDER BY grp", null, true, true);
+            assertQuery("SELECT grp, array_elem_avg(arr) arr FROM tab ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("grp\tarr\n1\t[20.0,30.0]\n2\t[100.0,200.0]\n");
         });
     }
 
@@ -242,7 +247,11 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (ARRAY[3.0, null, 6.0])");
             execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0, 2.0])");
-            assertQueryNoLeakCheck("arr\n[2.0,2.0,4.0]\n", "SELECT array_elem_avg(arr) arr FROM tab", null, false, true);
+            assertQuery("SELECT array_elem_avg(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[2.0,2.0,4.0]\n");
         });
     }
 
@@ -252,7 +261,11 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0])");
             execute("INSERT INTO tab VALUES (ARRAY[3.0, 4.0])");
-            assertQueryNoLeakCheck("arr\n[2.0,3.0]\n", "SELECT array_elem_avg(arr) arr FROM tab", null, false, true);
+            assertQuery("SELECT array_elem_avg(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[2.0,3.0]\n");
         });
     }
 
@@ -262,7 +275,11 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (null)");
             execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0])");
-            assertQueryNoLeakCheck("arr\n[1.0,2.0]\n", "SELECT array_elem_avg(arr) arr FROM tab", null, false, true);
+            assertQuery("SELECT array_elem_avg(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[1.0,2.0]\n");
         });
     }
 
@@ -273,8 +290,11 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
             execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00', ARRAY[1.0, 2.0])");
             execute("INSERT INTO tab VALUES ('2024-01-01T00:30:00', ARRAY[3.0, 4.0])");
             execute("INSERT INTO tab VALUES ('2024-01-01T01:00:00', ARRAY[10.0, 20.0])");
-            assertQueryNoLeakCheck("ts\tarr\n2024-01-01T00:00:00.000000Z\t[2.0,3.0]\n2024-01-01T01:00:00.000000Z\t[10.0,20.0]\n",
-                    "SELECT ts, array_elem_avg(arr) arr FROM tab SAMPLE BY 1h", "ts", true, true);
+            assertQuery("SELECT ts, array_elem_avg(arr) arr FROM tab SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tarr\n2024-01-01T00:00:00.000000Z\t[2.0,3.0]\n2024-01-01T01:00:00.000000Z\t[10.0,20.0]\n");
         });
     }
 
@@ -283,7 +303,11 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0])");
-            assertQueryNoLeakCheck("arr\n[1.0,2.0]\n", "SELECT array_elem_avg(arr) arr FROM tab", null, false, true);
+            assertQuery("SELECT array_elem_avg(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[1.0,2.0]\n");
         });
     }
 
@@ -293,11 +317,11 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[][])");
             execute("INSERT INTO tab VALUES (ARRAY[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])");
             execute("INSERT INTO tab VALUES (ARRAY[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]])");
-            assertQueryNoLeakCheck(
-                    "arr\n[[5.5,21.5,5.0],[11.0,27.0,6.0],[30.0,60.0,null]]\n",
-                    "SELECT array_elem_avg(transpose(arr)) arr FROM tab",
-                    null, false, true
-            );
+            assertQuery("SELECT array_elem_avg(transpose(arr)) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[[5.5,21.5,5.0],[11.0,27.0,6.0],[30.0,60.0,null]]\n");
         });
     }
 
@@ -307,11 +331,11 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[][])");
             execute("INSERT INTO tab VALUES (ARRAY[[1.0, 2.0], [3.0, 4.0]])");
             execute("INSERT INTO tab VALUES (ARRAY[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]])");
-            assertQueryNoLeakCheck(
-                    "arr\n[[5.5,21.5],[11.0,27.0],[30.0,60.0]]\n",
-                    "SELECT array_elem_avg(transpose(arr)) arr FROM tab",
-                    null, false, true
-            );
+            assertQuery("SELECT array_elem_avg(transpose(arr)) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[[5.5,21.5],[11.0,27.0],[30.0,60.0]]\n");
         });
     }
 
@@ -331,8 +355,11 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
             execute("INSERT INTO tab VALUES (ARRAY[-1e15, -1e15])");
             // sum = 1000.0, count = 1002, avg = 1000/1002
             double expected = 1000.0 / 1002.0;
-            assertQueryNoLeakCheck("arr\n[" + expected + "," + expected + "]\n",
-                    "SELECT array_elem_avg(arr) arr FROM tab", null, false, true);
+            assertQuery("SELECT array_elem_avg(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[" + expected + "," + expected + "]\n");
         });
     }
 
@@ -349,11 +376,11 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[][])");
             execute("INSERT INTO tab VALUES (ARRAY[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]])");
             execute("INSERT INTO tab VALUES (ARRAY[[1.0, 2.0, 3.0], [null, 5.0, 6.0]])");
-            assertQueryNoLeakCheck(
-                    "arr\n[[5.5],[40.0]]\n",
-                    "SELECT array_elem_avg(arr[1:3, 1:2]) arr FROM tab",
-                    null, false, true
-            );
+            assertQuery("SELECT array_elem_avg(arr[1:3, 1:2]) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[[5.5],[40.0]]\n");
         });
     }
 
@@ -363,7 +390,11 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0])");
             execute("INSERT INTO tab VALUES (ARRAY[3.0, 4.0, 5.0])");
-            assertQueryNoLeakCheck("arr\n[2.0,3.0,5.0]\n", "SELECT array_elem_avg(arr) arr FROM tab", null, false, true);
+            assertQuery("SELECT array_elem_avg(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[2.0,3.0,5.0]\n");
         });
     }
 

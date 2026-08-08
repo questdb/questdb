@@ -49,7 +49,8 @@ public final class IndexFactory {
             long columnTop,
             RecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
-            long partitionTimestamp
+            long partitionTimestamp,
+            long pinnedTableTxn
     ) {
         return switch (indexType) {
             case IndexType.BITMAP -> direction == IndexReader.DIR_FORWARD
@@ -57,8 +58,8 @@ public final class IndexFactory {
                     : new BitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
             case IndexType.POSTING, IndexType.POSTING_DELTA, IndexType.POSTING_EF ->
                     direction == IndexReader.DIR_FORWARD
-                            ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp)
-                            : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+                            ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, pinnedTableTxn)
+                            : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, pinnedTableTxn);
             default -> throw unsupportedIndexType(indexType);
         };
     }

@@ -55,6 +55,11 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
+    public void close() {
+        Misc.free(cursor);
+    }
+
+    @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         Misc.freeObjListAndClear(cursors);
         for (int i = 0, n = cursorFactoriesIdx[0]; i < n; i++) {

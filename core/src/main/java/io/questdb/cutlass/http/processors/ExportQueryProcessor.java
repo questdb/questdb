@@ -33,6 +33,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -195,7 +196,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     final int order = state.recordCursorFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
                     state.descending = order == ORDER_DESC;
                     if (isParquet) {
-                        state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending);
+                        state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending, sqlExecutionContext);
                     }
                     for (int retries = 0; runQuery; retries++) {
                         try {
@@ -239,7 +240,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                 state.recordCursorFactory = cc.getRecordCursorFactory();
                             }
                             if (isParquet) {
-                                state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending);
+                                state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending, sqlExecutionContext);
                             }
                         }
                     }
@@ -249,7 +250,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         // when unwrapped instanceof VirtualRecordCursorFactory.
                         RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
                         VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
-                        state.pageFrameCursor.setStreamingMode(true);
+                        state.pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                         state.materializer.setUpPageFrameBacked(vf, state.pageFrameCursor, sqlExecutionContext);
                     } else if (isParquet && state.parquetExportMode == ParquetExportMode.CURSOR_BASED) {
                         RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
@@ -708,6 +709,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.getExportModel().getBloomFilterFpp(),
                         sqlExecutionContext.getBindVariableService()
                 );
+                state.task.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 exporter.of(state.task);
                 exporter.setExportMode(exportMode);
                 switch (exportMode) {

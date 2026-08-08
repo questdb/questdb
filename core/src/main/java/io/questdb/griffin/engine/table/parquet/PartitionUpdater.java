@@ -67,6 +67,21 @@ public class PartitionUpdater implements QuietCloseable {
         destroy();
     }
 
+    /**
+     * Publishes the new {@code _pm} snapshot. In sync modes, an in-place
+     * incremental update first fsyncs its appended footer while the old header
+     * remains authoritative, patches the header (the MVCC commit signal), then
+     * fsyncs the header before the matching {@code _txn} commit. Full creates and
+     * rewrites target a non-authoritative file and need only the final fsync.
+     * NOSYNC skips both barriers. The caller MUST invoke this after
+     * {@link #updateFileMetadata()} and the index build, and before the matching
+     * {@code _txn} commit.
+     */
+    public void commitParquetMeta(boolean sync) {
+        assert ptr != 0;
+        commitParquetMeta(ptr, sync);
+    }
+
     public void copyRowGroup(int rowGroupIndex) {
         assert ptr != 0;
         copyRowGroup(ptr, rowGroupIndex);
@@ -96,6 +111,15 @@ public class PartitionUpdater implements QuietCloseable {
         return getResultUnusedBytes(ptr);
     }
 
+    /**
+     * Binds this updater to the source/target fds and sizes for an in-place
+     * {@code _pm} update. Three easily-confused sizes: {@code parquetMetaFileSize}
+     * is the parse anchor (the committed head from {@code _txn}, not the raw
+     * header a rolled-back update may leave ahead); {@code appendBase} is the
+     * header offset where new footer bytes land (equals the anchor outside the
+     * crash window); {@code existingParquetFileSize} is the {@code data.parquet}
+     * size, with {@code <= 0} selecting the full-create path.
+     */
     public void of(
             @Transient LPSZ srcPath,
             int readerFd,
@@ -111,8 +135,10 @@ public class PartitionUpdater implements QuietCloseable {
             double bloomFilterFpp,
             double minCompressionRatio,
             int parquetMetaFd,
-            long parquetFileSize,
-            long existingParquetMetaFileSize
+            long parquetMetaFileSize,
+            long appendBase,
+            long existingParquetFileSize,
+            long seqTxn
     ) {
         final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         destroy();
@@ -133,9 +159,39 @@ public class PartitionUpdater implements QuietCloseable {
                 bloomFilterFpp,
                 minCompressionRatio,
                 parquetMetaFd,
-                parquetFileSize,
-                existingParquetMetaFileSize
+                parquetMetaFileSize,
+                appendBase,
+                existingParquetFileSize,
+                seqTxn
         );
+    }
+
+    /**
+     * Rewrites the columns in {@code descriptor} and raw-copies every other
+     * target-schema column chunk from the source row group. Call
+     * {@link #setTargetSchema(PartitionDescriptor)} before this method.
+     */
+    public void rewriteRowGroupColumns(int rowGroupIndex, PartitionDescriptor descriptor) {
+        final int columnCount = descriptor.getColumnCount();
+        final long rowCount = descriptor.getPartitionRowCount();
+        try {
+            assert ptr != 0;
+            rewriteRowGroupColumns(
+                    ptr,
+                    descriptor.tableName.size(),
+                    descriptor.tableName.ptr(),
+                    rowGroupIndex,
+                    columnCount,
+                    descriptor.getColumnNamesPtr(),
+                    descriptor.getColumnNamesLen(),
+                    descriptor.getColumnDataPtr(),
+                    descriptor.getColumnDataLen(),
+                    descriptor.getTimestampIndex(),
+                    rowCount
+            );
+        } finally {
+            descriptor.clear();
+        }
     }
 
     /**
@@ -160,19 +216,6 @@ public class PartitionUpdater implements QuietCloseable {
                 descriptor.getColumnDataLen(),
                 descriptor.getTimestampIndex()
         );
-    }
-
-    /**
-     * Flushes pending writes for the {@code _pm} sidecar to durable storage.
-     * The caller MUST invoke this after {@link #updateFileMetadata()} and
-     * before the matching {@code _txn} commit when {@code commitMode} is
-     * {@code SYNC} or {@code ASYNC}; otherwise a power loss can leave the
-     * partition referenced by {@code _txn} while {@code _pm} is still only
-     * in the page cache, making the partition unreadable.
-     */
-    public void syncParquetMeta() {
-        assert ptr != 0;
-        syncParquetMeta(ptr);
     }
 
     // call to this method will update file metadata
@@ -207,6 +250,8 @@ public class PartitionUpdater implements QuietCloseable {
         }
     }
 
+    private static native void commitParquetMeta(long impl, boolean sync) throws CairoException;
+
     private static native void copyRowGroup(
             long impl,
             int rowGroupIndex
@@ -236,8 +281,10 @@ public class PartitionUpdater implements QuietCloseable {
             double bloomFilterFpp,
             double minCompressionRatio,
             int parquetMetaFd,
-            long parquetFileSize,
-            long existingParquetMetaFileSize
+            long parquetMetaFileSize,
+            long appendBase,
+            long existingParquetFileSize,
+            long seqTxn
     ) throws CairoException;
 
     private static native void destroy(long impl);
@@ -245,20 +292,6 @@ public class PartitionUpdater implements QuietCloseable {
     private static native long getResultParquetMetaFileSize(long impl);
 
     private static native long getResultUnusedBytes(long impl);
-
-    private static native void setTargetSchema(
-            long impl,
-            long tableNamePtr,
-            int tableNameLen,
-            int colCount,
-            long colNamesPtr,
-            int colNamesLen,
-            long colDataPtr,
-            long colDataLen,
-            int timestampIndex
-    ) throws CairoException;
-
-    private static native void syncParquetMeta(long impl) throws CairoException;
 
     private static native void insertRowGroup(
             long impl,
@@ -272,6 +305,32 @@ public class PartitionUpdater implements QuietCloseable {
             long columnDataSize,
             int timestampIndex,
             long rowCount
+    ) throws CairoException;
+
+    private static native void rewriteRowGroupColumns(
+            long impl,
+            int tableNameLen,
+            long tableNamePtr,
+            int rowGroupIndex,
+            int columnCount,
+            long columnNamesPtr,
+            int columnNamesSize,
+            long columnDataPtr,
+            long columnDataSize,
+            int timestampIndex,
+            long rowCount
+    ) throws CairoException;
+
+    private static native void setTargetSchema(
+            long impl,
+            long tableNamePtr,
+            int tableNameLen,
+            int colCount,
+            long colNamesPtr,
+            int colNamesLen,
+            long colDataPtr,
+            long colDataLen,
+            int timestampIndex
     ) throws CairoException;
 
     // throws CairoException on error, returns file size

@@ -89,6 +89,10 @@ public class ExpressionParser {
     private final SqlParser sqlParser;
     private final WindowExprTreeBuilder windowExprTreeBuilder = new WindowExprTreeBuilder();
     private final ObjectPool<WindowExpression> windowExpressionPool;
+    // Gates the live-view-only ANCHOR clause. Off by default so a normal query
+    // rejects ANCHOR instead of parsing and silently dropping it; SqlParser turns
+    // it on for a CREATE LIVE VIEW body and for a live-view re-compile.
+    private boolean anchorAllowed = false;
     private boolean stopOnTopINOperator = false;
 
     ExpressionParser(
@@ -144,6 +148,10 @@ public class ExpressionParser {
         // however, '/dd' does not exist, tok is just the potential geohash chars constant, with leading '#'
         final int len = tok.length();
         return len <= 1 || tok.charAt(1) != '#';
+    }
+
+    public void setAnchorAllowed(boolean anchorAllowed) {
+        this.anchorAllowed = anchorAllowed;
     }
 
     public void setStopOnTopINOperator(boolean stopOnTop) {
@@ -561,10 +569,13 @@ public class ExpressionParser {
             parseExpr(lexer, windowExprTreeBuilder, sqlParserCallback, decls);
             return windowExprTreeBuilder.getResult();
         } finally {
-            // Restore stack bottoms
-            opStack.setBottom(savedOpStackBottom);
-            paramCountStack.setBottom(savedParamCountStackBottom);
-            argStackDepthStack.setBottom(savedArgStackDepthStackBottom);
+            // Restore stack bottoms. On an error unwind the inner parseExpr's catch already cleared
+            // these stacks (bottom=0), so a saved bottom raised by an enclosing lambda frame can
+            // exceed the emptied stack; clamp to avoid a masking IllegalStateException that would hide
+            // the real positioned error. No-op on the happy path (sizeRaw() >= the saved bottom).
+            opStack.setBottom(Math.min(savedOpStackBottom, opStack.sizeRaw()));
+            paramCountStack.setBottom(Math.min(savedParamCountStackBottom, paramCountStack.sizeRaw()));
+            argStackDepthStack.setBottom(Math.min(savedArgStackDepthStackBottom, argStackDepthStack.sizeRaw()));
         }
     }
 
@@ -1106,7 +1117,15 @@ public class ExpressionParser {
                             } else {
                                 // attach dot to existing literal or constant
                                 ExpressionNode en = opStack.peek();
-                                ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
+                                if (en != null && en.token instanceof GenericLexer.FloatingSequence floatingToken) {
+                                    floatingToken.setHi(lastPos + 1);
+                                } else {
+                                    // The dot has no literal to glue to. This happens for a dangling
+                                    // member access right after a value-producing construct such as
+                                    // 'case ... end.col', whose result sits on the operand stack
+                                    // rather than as a gluable token on the op stack.
+                                    throw SqlException.$(lastPos, "'.' is unexpected here");
+                                }
                             }
                         }
                         if (prevBranch == BRANCH_DOT || prevBranch == BRANCH_DOT_DEREFERENCE) {
@@ -1617,7 +1636,13 @@ public class ExpressionParser {
 
                         if (prevBranch != BRANCH_LITERAL && SqlKeywords.isSelectKeyword(tok)) {
                             thisBranch = BRANCH_LAMBDA;
-                            if (betweenCount > 0) {
+                            // A scalar subquery is a valid BETWEEN bound, e.g.
+                            // `ts BETWEEN (select ...) AND (select ...)`. It is always parenthesised,
+                            // so it lives at a deeper scope than the BETWEEN itself; only a bare
+                            // SELECT directly in the operand position (same scope) is rejected. The
+                            // AND separator is matched at betweenStartScopeDepth (see the 'a'/'A'
+                            // branch), so a subquery's own AND at a deeper scope is not miscounted.
+                            if (betweenCount > 0 && scopeStack.size() == betweenStartScopeDepth) {
                                 throw SqlException.$(lastPos, "constant expected");
                             }
                             argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback, decls);
@@ -1904,6 +1929,14 @@ public class ExpressionParser {
                                             argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                         }
 
+                                        // The final branch's value is already accounted for in paramCount and is
+                                        // re-added below, so clear the local depth the flush loop left behind. This
+                                        // keeps argStackDepth in step with the listener's operand stack: a CASE
+                                        // expression yields exactly one value. An inflated depth here would let a
+                                        // trailing binary operator (e.g. 'case ... end &') pass the arity guard with a
+                                        // missing operand.
+                                        argStackDepth = 0;
+
                                         // 'when/else' have been clearing argStackDepth to ensure expressions between
                                         // 'when' and 'when' do not pick up arguments outside of scope now we need to
                                         // restore stack depth before 'case' entry
@@ -2010,10 +2043,17 @@ public class ExpressionParser {
                                 cse.put(en.token).put(GenericLexer.unquoteIfNoDots(tok));
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
-                            } else {
+                            } else if (en.token instanceof GenericLexer.FloatingSequence) {
                                 final GenericLexer.FloatingSequence fsA = (GenericLexer.FloatingSequence) en.token;
                                 // vanilla 'a.b', just concat tokens efficiently
                                 fsA.setHi(lexer.getTokenHi());
+                            } else {
+                                // 'en' is not a valid qualifier for a dotted name. This happens for
+                                // malformed input such as "tables()/.env", where the top of the stack
+                                // is a pending operator ('/') rather than an identifier. Reject it
+                                // cleanly instead of letting the cast above fail with an internal
+                                // ClassCastException (which would surface as a 500/critical error).
+                                throw SqlException.$(lastPos, "'.' is unexpected here");
                             }
                         } else if (prevBranch == BRANCH_DOT_DEREFERENCE) {
                             argStackDepth++;
@@ -2194,7 +2234,10 @@ public class ExpressionParser {
             paramCountStack.clear();
             throw e;
         } finally {
-            scopeStack.setBottom(savedScopeStackBottom);
+            // The SqlException catch already cleared scopeStack (bottom=0); a nested frame's
+            // savedScopeStackBottom can then exceed the emptied stack, so clamp to avoid a masking
+            // IllegalStateException. No-op on the happy path (sizeRaw() >= savedScopeStackBottom).
+            scopeStack.setBottom(Math.min(savedScopeStackBottom, scopeStack.sizeRaw()));
             argStackDepthStack.popAll();
             paramCountStack.popAll();
         }
@@ -2325,8 +2368,8 @@ public class ExpressionParser {
             } while (tok.charAt(0) == ',');
         }
 
-        // Handle ROWS/RANGE/GROUPS/CUMULATIVE frame specification
-        if (!Chars.equals(tok, ')')) {
+        // Handle ROWS/RANGE/GROUPS/CUMULATIVE frame specification (or ANCHOR if no frame)
+        if (!Chars.equals(tok, ')') && !SqlKeywords.isAnchorKeyword(tok)) {
             int framingMode = -1;
             int frameModePos = lexer.lastTokenPosition();
 
@@ -2366,9 +2409,78 @@ public class ExpressionParser {
             }
         }
 
+        // Live-view ANCHOR clause. Slots after the frame clause and before
+        // the closing ')'. Two forms:
+        //   ANCHOR EXPRESSION <expr>
+        //   ANCHOR DAILY '<HH:MM>' ['<tz>']
+        // CREATE LIVE VIEW validation enforces "ANCHOR + bounded frame is rejected",
+        // not here — the parser only captures the syntax.
+        if (tok != null && SqlKeywords.isAnchorKeyword(tok)) {
+            int anchorPos = lexer.lastTokenPosition();
+            if (!anchorAllowed) {
+                // Only a live view acts on the clause: nothing outside the live-view
+                // code generator reads WindowExpression's anchor, so accepting it in a
+                // normal query would parse it and silently drop it.
+                throw SqlException.$(anchorPos, "ANCHOR is only supported in a live view query");
+            }
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'expression' or 'daily' expected after 'anchor'");
+            }
+            if (SqlKeywords.isExpressionKeyword(tok)) {
+                ExpressionNode expr = parseWindowExpr(lexer, sqlParserCallback, decls);
+                if (expr == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expression expected after 'anchor expression'");
+                }
+                windowCol.setAnchorExpression(expr, anchorPos);
+                tok = SqlUtil.fetchNext(lexer);
+            } else if (SqlKeywords.isDailyKeyword(tok)) {
+                CharSequence timeTok = SqlUtil.fetchNext(lexer);
+                if (timeTok == null || !Chars.isQuoted(timeTok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "quoted 'HH:MM' expected after 'daily'");
+                }
+                int timeUsPos = lexer.lastTokenPosition();
+                CharSequence timeStr = GenericLexer.unquote(timeTok);
+                long timeUs = parseDailyTimeOfDayUs(timeStr, timeUsPos);
+                tok = SqlUtil.fetchNext(lexer);
+                CharSequence tz = null;
+                if (tok != null && Chars.isQuoted(tok)) {
+                    CharacterStoreEntry tzEntry = characterStore.newEntry();
+                    tzEntry.put(GenericLexer.unquote(tok));
+                    tz = tzEntry.toImmutable();
+                    tok = SqlUtil.fetchNext(lexer);
+                }
+                windowCol.setAnchorDaily(timeUs, tz, anchorPos);
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'expression' or 'daily' expected after 'anchor'");
+            }
+        }
+
         if (tok == null || tok.charAt(0) != ')') {
             throw SqlException.$(lexer.lastTokenPosition(), "')' expected to close window specification");
         }
+    }
+
+    /**
+     * Parses an HH:MM time-of-day literal into microseconds since midnight.
+     */
+    private static long parseDailyTimeOfDayUs(CharSequence tok, int position) throws SqlException {
+        int len = tok.length();
+        if (len != 5 || tok.charAt(2) != ':') {
+            throw SqlException.$(position, "ANCHOR DAILY expects 'HH:MM' (e.g. '00:00')");
+        }
+        int hours;
+        int minutes;
+        try {
+            hours = io.questdb.std.Numbers.parseInt(tok, 0, 2);
+            minutes = io.questdb.std.Numbers.parseInt(tok, 3, 5);
+        } catch (io.questdb.std.NumericException e) {
+            throw SqlException.$(position, "ANCHOR DAILY expects 'HH:MM' (e.g. '00:00')");
+        }
+        if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+            throw SqlException.$(position, "ANCHOR DAILY 'HH:MM' out of range");
+        }
+        return ((long) hours * 60L + minutes) * 60L * 1_000_000L;
     }
 
     private enum Scope {

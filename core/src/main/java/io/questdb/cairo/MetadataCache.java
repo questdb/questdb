@@ -50,6 +50,7 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Comparator;
 
@@ -58,6 +59,20 @@ import java.util.Comparator;
  */
 public class MetadataCache implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MetadataCache.class);
+    // Upper bound on the number of consecutive zero-progress catalogue reconcile passes
+    // (a pass that still finds a table missing yet hydrates none of the missing tables)
+    // before {@link #hydrateAllTables()} stops retrying and latches {@code cacheComplete}
+    // anyway. Without this cap a table whose {@code _meta} cannot be read (corrupt, or
+    // transiently unavailable at startup) would be re-read - and logged as CRITICAL - on
+    // every single catalogue query, since a failed hydration never lands in the cache and
+    // so always looks "missing". The cap trades the (already master-equivalent) hiding of
+    // a genuinely unhydratable table for bounded work and log output, while still giving
+    // transient failures several passes to self-heal: any pass that hydrates at least one
+    // missing table resets the budget, so a post-restart storm making incremental
+    // progress (e.g. a PG-introspection burst racing the startup hydrator) cannot exhaust
+    // it in a single concurrent burst. A writer touching the table still re-hydrates it,
+    // and clearCache() resets the counter so a fresh epoch reconciles again.
+    private static final int MAX_INCOMPLETE_RECONCILE_PASSES = 8;
     private static final Comparator<CairoColumn> comparator = Comparator.comparingInt(CairoColumn::getPosition);
     private final MetadataCacheReaderImpl cacheReader = new MetadataCacheReaderImpl();
     private final MetadataCacheWriterImpl cacheWriter = new MetadataCacheWriterImpl();
@@ -65,7 +80,27 @@ public class MetadataCache implements QuietCloseable {
     private final SimpleReadWriteLock rwLock = new SimpleReadWriteLock();
     private final CharSequenceObjHashMap<CairoTable> tableMap = new CharSequenceObjHashMap<>();
     private ColumnVersionReader columnVersionReader;
+    // Counts consecutive catalogue reconcile passes that made no progress - i.e. that
+    // still found a table missing AND hydrated none of the previously-missing tables. A
+    // pass that hydrates at least one missing table resets it (the cache is self-healing),
+    // so it counts only genuinely-stuck rounds rather than every concurrent invocation.
+    // Bounded by MAX_INCOMPLETE_RECONCILE_PASSES; reset by clearCache(). Only mutated
+    // under the write lock (by the give-up logic in hydrateAllTables() and by
+    // clearCache()), so it stays in step with cacheComplete and a concurrent clear cannot
+    // race the budgeted latch.
+    private int incompleteReconcilePasses;
     private MemoryCMR metaMem = Vm.getCMRInstance();
+    // True once the cache is known to hold every registered (non-view) table. Set by
+    // the startup hydrator only when it actually hydrated every table, and by any
+    // catalogue reconcile that observes the cache as already complete (or that gives
+    // up after MAX_INCOMPLETE_RECONCILE_PASSES); from then on writers keep the cache
+    // in sync incrementally, so hydrateAllTables() short-circuits. Reset by
+    // clearCache() so a wiped cache is reconciled afresh.
+    private volatile boolean cacheComplete;
+    // Bumped by clearCache() on every wipe. hydrateAllTables() snapshots it before
+    // scanning, and assessReconcileGiveUp() refuses to spend the give-up budget when it
+    // moved - a concurrent clear, not an unreadable _meta, made that pass look stuck.
+    private volatile long clearEpoch;
     private TxReader txReader;
     private long version;
 
@@ -96,12 +131,27 @@ public class MetadataCache implements QuietCloseable {
             for (int i = 0, n = tableTokens.size(); i < n; i++) {
                 // acquire a write lock for each table
                 try (MetadataCacheWriter ignore = writeLock()) {
-                    hydrateTableStartup(tableTokens.getQuick(i), false);
+                    hydrateTableStartup(tableTokens.getQuick(i), false, true);
                 }
             }
 
+            // Verify completeness and publish the flag under a single read lock. The
+            // check-and-set is then mutually exclusive with clearCache() (write lock),
+            // so a concurrent clear cannot slip between observing completeness and
+            // latching the flag and leave an emptied cache marked complete.
+            //
+            // We latch only if every registered table is actually present: a per-table
+            // hydration can fail silently (hydrateTableStartup swallows it with
+            // throwError=false and evicts the table), and a swallowed failure must leave
+            // the flag unset so the catalogue reconcile (hydrateAllTables) keeps retrying
+            // - self-healing transient failures - until it succeeds or exhausts its
+            // retry budget. This mirrors the contract honoured by hydrateAllTables()'s
+            // second pass, which likewise never latches a flag it cannot back up. The
+            // flag is also left unset on an abnormal abort below (e.g. getTableTokens()/
+            // lock failure).
             try (MetadataCacheReader metadataRO = readLock()) {
                 LOG.info().$("metadata hydration completed [tables=").$(metadataRO.getTableCount()).I$();
+                latchCacheCompleteIfWarmed(tableTokens);
             }
         } catch (CairoException e) {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
@@ -109,6 +159,283 @@ public class MetadataCache implements QuietCloseable {
         } finally {
             Path.clearThreadLocals();
         }
+    }
+
+    /**
+     * Ensures that every table currently registered with the engine is present
+     * in the cache, hydrating on demand any tables that the background startup
+     * hydrator ({@link #onStartupAsyncHydrator()}) has not processed yet.
+     * <p>
+     * Catalogue queries such as {@code tables()} and {@code all_tables()} read a
+     * {@link MetadataCacheReader#snapshot snapshot} of the cache, which only
+     * contains tables that have already been hydrated. Without this
+     * reconciliation those queries would race the async startup hydrator and
+     * could return an incomplete catalogue immediately after a restart. Calling
+     * this first observes the complete set of tables whenever every table can be
+     * hydrated. A table whose {@code _meta} cannot be read (corrupt, or transiently
+     * unavailable) cannot be hydrated and is omitted - the same outcome as on a
+     * release without this reconcile - until a writer next touches it or the process
+     * restarts; see {@link #MAX_INCOMPLETE_RECONCILE_PASSES}.
+     * <p>
+     * The reconcile is only needed until the cache is known to be complete. Once
+     * {@link #onStartupAsyncHydrator()} hydrates every table, a reconcile pass observes
+     * the cache already holding every registered table, or the reconcile gives up after
+     * {@link #MAX_INCOMPLETE_RECONCILE_PASSES} passes still find a table missing, writers
+     * keep the cache in sync incrementally, so this method short-circuits on a single
+     * volatile read and adds no per-query overhead (no allocation, no lock). This
+     * matters for embedded engines, which never run the startup hydrator: without it
+     * every catalogue query would reconcile forever. {@link MetadataCacheWriter#clearCache()}
+     * resets the state so a wiped cache is reconciled afresh.
+     */
+    public void hydrateAllTables() {
+        // Fast path: once the cache is known complete it is kept current by writers,
+        // so no reconcile (or allocation/lock) is needed.
+        if (cacheComplete) {
+            return;
+        }
+        // Snapshot the clear epoch before scanning: if clearCache() bumps it before we
+        // reach the give-up path below, a concurrent wipe (not an unhydratable table) is
+        // what made this pass look stuck, so it must not spend the give-up budget.
+        final long startEpoch = clearEpoch;
+        final ObjHashSet<TableToken> tableTokensSet = new ObjHashSet<>();
+        engine.getTableTokens(tableTokensSet, false);
+        final ObjList<TableToken> tableTokens = tableTokensSet.getList();
+
+        // First pass: under a single read lock, collect tables that exist in the
+        // registry but are missing from the cache.
+        ObjList<TableToken> missing = null;
+        try (MetadataCacheReader ignore = readLock()) {
+            for (int i = 0, n = tableTokens.size(); i < n; i++) {
+                final TableToken token = tableTokens.getQuick(i);
+                // views are never stored in the cache (they have no _meta file),
+                // skip them so we don't take a write lock on every invocation
+                if (token.isView()) {
+                    continue;
+                }
+                if (tableMap.get(token.getTableName()) == null) {
+                    if (missing == null) {
+                        missing = new ObjList<>();
+                    }
+                    missing.add(token);
+                }
+            }
+            if (missing == null) {
+                // Nothing missing: publish the flag while still under the read lock so
+                // the observation + latch are mutually exclusive with clearCache()
+                // (write lock); otherwise a concurrent clear could slip in after the
+                // scan and leave an emptied cache marked complete.
+                publishCacheComplete();
+            }
+        }
+
+        if (missing == null) {
+            // The cache already holds every registered table; the flag was latched
+            // inside the read lock above (mutually exclusive with clearCache()). From
+            // here writers keep it in sync incrementally, so future catalogue queries
+            // short-circuit on the fast path above. This is what spares embedded engines
+            // (which never run the startup hydrator) a per-query reconcile once warmed
+            // up; the flag is cleared by clearCache() so a wiped cache is reconciled
+            // again.
+            return;
+        }
+
+        // Second pass: hydrate the missing tables. Take the write lock per table
+        // (matching onStartupAsyncHydrator) so we do not stall ongoing work.
+        try {
+            for (int i = 0, n = missing.size(); i < n; i++) {
+                try (MetadataCacheWriter ignore = writeLock()) {
+                    hydrateTableStartup(missing.getQuick(i), false, true);
+                }
+            }
+        } finally {
+            // hydrateTableStartup() acquires a thread-local Path; release it so a caller
+            // running on a short-lived (non-pooled) thread does not leak the
+            // NATIVE_PATH_THREAD_LOCAL buffer when the thread terminates. Mirrors
+            // onStartupAsyncHydrator(). Only reached on the hydration slow path; once the
+            // cache is warm hydrateAllTables() short-circuits before allocating.
+            Path.clearThreadLocals();
+        }
+
+        // Confirm completeness immediately, reusing the token snapshot we already
+        // collected (no second getTableTokens() / ObjHashSet allocation): if every
+        // missing table was hydrated above, the cache now holds every registered table.
+        // Latch here - under the read lock, mutually exclusive with clearCache() (write
+        // lock), exactly like onStartupAsyncHydrator() - so the next catalogue query
+        // short-circuits on the fast path instead of repeating a full reconcile only to
+        // observe "nothing missing" and set the flag. A silently-failed hydration
+        // (throwError=false evicts the table) leaves a gap, so latchCacheCompleteIfWarmed()
+        // latches only when genuinely warm; otherwise we fall through to the bounded retry
+        // budget below.
+        try (MetadataCacheReader ignore = readLock()) {
+            latchCacheCompleteIfWarmed(tableTokens);
+        }
+        if (cacheComplete) {
+            return;
+        }
+
+        // We could not confirm completeness this pass (some tables were missing):
+        // fall through to the bounded give-up assessment.
+        assessReconcileGiveUp(missing, startEpoch);
+    }
+
+    /**
+     * Assesses the give-up budget after a {@link #hydrateAllTables()} pass that could
+     * not confirm completeness. A per-table hydration can fail silently
+     * (throwError=false), so normally the pass leaves {@link #cacheComplete} unset and
+     * the next reconcile re-scans - that is how a transient failure self-heals. But a
+     * table whose {@code _meta} is genuinely unreadable would otherwise be re-read (and
+     * logged CRITICAL) on every catalogue query forever. Bound that: after
+     * {@link #MAX_INCOMPLETE_RECONCILE_PASSES} consecutive genuinely-stuck passes, give
+     * up and latch the flag, leaving the unhydratable table(s) to be picked up by a
+     * writer (hydrateTable/registerName) or the next clearCache() epoch.
+     * <p>
+     * Only genuinely-stuck rounds spend the budget:
+     * <ul>
+     * <li>a pass that hydrated at least one previously-missing table resets the counter
+     * - the cache is self-healing, and the budget must be a function of sequential
+     * stuck rounds, not of the number of concurrent invocations (e.g. a post-restart
+     * introspection storm racing the startup hydrator);</li>
+     * <li>a pass whose reconcile overlapped a {@link MetadataCacheWriter#clearCache()}
+     * ({@code clearEpoch} moved past {@code startEpoch}) is ignored: the wipe - not an
+     * unreadable {@code _meta} - made the pass look stuck, and spending the budget
+     * could latch {@link #cacheComplete} over a merely-emptied, still-hydratable cache.
+     * The clear already reset the counter; a later clear-free reconcile latches
+     * correctly (all tables present) or gives up (a table is truly unreadable).</li>
+     * </ul>
+     * The progress check, budget bump and latch run under the write lock, mutually
+     * exclusive with clearCache() (which resets both the counter and the flag under
+     * the same lock); otherwise a concurrent clear could slip between the budget check
+     * and the latch and leave an emptied cache marked complete.
+     * <p>
+     * Called while holding no lock. Protected so tests can subclass the cache and
+     * deterministically interleave concurrent operations (e.g. a clearCache()) right
+     * before the assessment.
+     */
+    protected void assessReconcileGiveUp(ObjList<TableToken> missing, long startEpoch) {
+        final boolean gaveUp;
+        try (MetadataCacheWriter ignore = writeLock()) {
+            boolean progressed = false;
+            for (int i = 0, n = missing.size(); i < n; i++) {
+                if (tableMap.get(missing.getQuick(i).getTableName()) != null) {
+                    progressed = true;
+                    break;
+                }
+            }
+            if (progressed) {
+                // Self-healing round: do not spend the give-up budget; the next
+                // reconcile re-scans for whatever is still missing.
+                incompleteReconcilePasses = 0;
+                gaveUp = false;
+            } else if (clearEpoch != startEpoch) {
+                // A clearCache() overlapped this reconcile - not a genuinely stuck
+                // round, so do not spend the budget (see javadoc).
+                gaveUp = false;
+            } else {
+                gaveUp = ++incompleteReconcilePasses >= MAX_INCOMPLETE_RECONCILE_PASSES;
+                if (gaveUp) {
+                    publishCacheComplete();
+                }
+            }
+        }
+        if (gaveUp) {
+            LOG.error().$("catalogue reconcile giving up after repeated incomplete passes [passes=")
+                    .$(MAX_INCOMPLETE_RECONCILE_PASSES).$(", missing=").$(missing.size()).I$();
+        }
+    }
+
+    /**
+     * Ensures a single registered table is present in the cache, hydrating it on demand
+     * if it is missing. This is the point-lookup analogue of {@link #hydrateAllTables()}
+     * for callers that resolve a {@link TableToken} from the synchronously loaded table
+     * registry but then read the lazily hydrated cache - e.g. {@code SHOW COLUMNS},
+     * {@code SHOW CREATE TABLE}, {@code SHOW CREATE MATERIALIZED VIEW} and parquet
+     * partition-format probes. Without it those paths would report a registered table
+     * as non-existent (or skip parquet pruning) during the startup hydration window, or
+     * indefinitely for an embedded engine that never runs the startup hydrator and has
+     * not yet had its cache warmed by an enumerating catalogue query.
+     * <p>
+     * Best-effort: a per-table hydration failure is swallowed (mirrors
+     * {@link #hydrateAllTables()}), leaving the table absent so the caller reports it as
+     * missing rather than failing hard. Plain views are never cached (no {@code _meta}
+     * file) and are skipped. Once {@link #cacheComplete} is latched the cache is kept
+     * current by writers, so a still-absent table is genuinely gone (dropped) or was
+     * given up on as unhydratable; re-reading it on every point lookup would only add
+     * load and CRITICAL-log noise, so this short-circuits.
+     */
+    public void hydrateTableOnDemand(@Nullable TableToken token) {
+        if (token == null || token.isView()) {
+            return;
+        }
+        if (cacheComplete) {
+            return;
+        }
+        // Cheap check under the read lock first: skip the version-bumping write lock
+        // when the table is already cached (the common case once the cache is warm).
+        try (MetadataCacheReader ignore = readLock()) {
+            if (tableMap.get(token.getTableName()) != null) {
+                return;
+            }
+        }
+        try (MetadataCacheWriter ignore = writeLock()) {
+            // skipIfCached=true: another thread may have hydrated it between the two
+            // locks. throwError=false: swallow a per-table failure so the caller reports
+            // the table as missing rather than failing hard (mirrors hydrateAllTables()).
+            hydrateTableStartup(token, false, true);
+        } finally {
+            // hydrateTableStartup() acquires a thread-local Path; release it so a caller
+            // running on a short-lived (non-pooled) thread does not leak the
+            // NATIVE_PATH_THREAD_LOCAL buffer when the thread terminates. Mirrors
+            // onStartupAsyncHydrator(); only reached on the hydration slow path, since the
+            // cacheComplete / already-cached checks above short-circuit once warm.
+            Path.clearThreadLocals();
+        }
+    }
+
+    /**
+     * Latches {@link #cacheComplete} iff every registered (non-view) table is already
+     * present in the cache. The caller must hold the read or write lock: performing
+     * the scan and the publish under that lock keeps the check-and-set mutually
+     * exclusive with {@link MetadataCacheWriter#clearCache()} (write lock), so a
+     * concurrent clear cannot interleave between observing completeness and setting
+     * the flag and leave an emptied cache marked complete.
+     */
+    private void latchCacheCompleteIfWarmed(ObjList<TableToken> tableTokens) {
+        for (int i = 0, n = tableTokens.size(); i < n; i++) {
+            final TableToken token = tableTokens.getQuick(i);
+            // views are never stored in the cache (they have no _meta file)
+            if (token.isView()) {
+                continue;
+            }
+            if (tableMap.get(token.getTableName()) == null) {
+                return;
+            }
+        }
+        publishCacheComplete();
+    }
+
+    /**
+     * Whether the cache is currently latched as holding every registered (non-view)
+     * table. Exposed for tests that assert the latch is only ever published while the
+     * cache is actually complete; production code uses the volatile fast path inside
+     * {@link #hydrateAllTables()} instead.
+     */
+    @TestOnly
+    public boolean isCacheComplete() {
+        return cacheComplete;
+    }
+
+    /**
+     * Publishes the completeness latch - the single choke point for every
+     * {@link #cacheComplete} publish. Callers invoke it inside a lock scope that
+     * excludes {@link MetadataCacheWriter#clearCache()} (read lock for the reconcile
+     * latches, write lock for the give-up latch), so a concurrent clear cannot slip
+     * between observing completeness and setting the flag. Protected so tests can
+     * subclass the cache and interleave a clearCache() with the publish; an override
+     * runs inside the caller's lock scope, so a regression that moved a publish
+     * outside its lock is still exposed.
+     */
+    protected void publishCacheComplete() {
+        cacheComplete = true;
     }
 
     /**
@@ -120,6 +447,32 @@ public class MetadataCache implements QuietCloseable {
     public MetadataCacheReader readLock() {
         rwLock.readLock().lock();
         return cacheReader;
+    }
+
+    /**
+     * Refreshes {@code localCache} with a complete, current view of the cache and
+     * returns the new snapshot version. This is the catalogue read-path used by
+     * {@code tables()}, {@code all_tables()}, {@code information_schema.columns()}
+     * and {@code pg_catalog.pg_attribute}: it first reconciles the cache against
+     * the table registry via {@link #hydrateAllTables()} (so the snapshot is
+     * complete even mid startup hydration), then snapshots under the read lock.
+     * <p>
+     * Prefer this over taking {@link #readLock()} and calling
+     * {@link MetadataCacheReader#snapshot} directly; the reader-level variant
+     * skips the reconcile and exists for callers that already hold the read lock
+     * or deliberately want the raw, possibly-incomplete cache contents.
+     *
+     * @param localCache   the snapshot to be refreshed
+     * @param priorVersion the version of the snapshot
+     * @return the current version of the snapshot
+     */
+    public long snapshot(CharSequenceObjMap<CairoTable> localCache, long priorVersion) {
+        // Reconcile first (cheap no-op once startup hydration has completed), then
+        // snapshot under a single read lock.
+        hydrateAllTables();
+        try (MetadataCacheReader metadataRO = readLock()) {
+            return metadataRO.snapshot(localCache, priorVersion);
+        }
     }
 
     /**
@@ -147,7 +500,7 @@ public class MetadataCache implements QuietCloseable {
         return columnVersionReader = new ColumnVersionReader();
     }
 
-    private void hydrateTableStartup(@NotNull TableToken token, boolean throwError) {
+    private void hydrateTableStartup(@NotNull TableToken token, boolean throwError, boolean skipIfCached) {
         if (engine.isTableDropped(token)) {
             // Table writer can still process some transactions when DROP table has already
             // been executed, essentially updating dropped table. We should ignore such updates.
@@ -157,6 +510,18 @@ public class MetadataCache implements QuietCloseable {
         if (token.isView()) {
             // views do not have _meta file
             // view metadata will be added to the cache when the view is compiled
+            return;
+        }
+
+        // Exactly-once hydration per clearCache() epoch. The startup hydrator and
+        // the catalogue reconcile (hydrateAllTables) only need to ensure a table is
+        // present; both run under the write lock. If another pass already hydrated
+        // this table since the last clear, skip the redundant meta-file read. The
+        // write lock makes this check-and-hydrate atomic, so each table is read from
+        // disk exactly once between clears. The writer-driven refresh path
+        // (hydrateTable(TableToken)) passes skipIfCached=false and still re-reads to
+        // pick up newer on-disk metadata.
+        if (skipIfCached && tableMap.get(token.getTableName()) != null) {
             return;
         }
 
@@ -211,10 +576,12 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
+            table.setTableFormat(TableUtils.getTableFormat(metaMem));
             table.setSoftLinkFlag(isSoftLink);
 
             TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
-            boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(metaMem);
+            boolean isMetaFormatUpToDate = TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG);
+            boolean hasParquetEncodingConfig = TableUtils.hasParquetEncodingConfig(metaMem);
             // populate columns
             for (int i = 0, n = table.columnOrderList.size(); i < n; i += 3) {
                 int writerIndex = table.columnOrderList.get(i);
@@ -246,7 +613,9 @@ public class MetadataCache implements QuietCloseable {
                 column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
                 column.setSymbolTableStaticFlag(true);
                 column.setDedupKeyFlag(TableUtils.isColumnDedupKey(metaMem, writerIndex));
-                column.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(metaMem, writerIndex));
+                // Pre-9.3.4 _meta files can carry non-zero bytes at column-entry offset 20 from
+                // older layouts (e.g. Mig608 wrote a random column hash at 20-27); read 0 there.
+                column.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(metaMem, writerIndex) : 0);
                 column.setWriterIndex(writerIndex);
 
                 boolean isDesignated = writerIndex == timestampWriterIndex;
@@ -612,6 +981,14 @@ public class MetadataCache implements QuietCloseable {
         @Override
         public void clearCache() {
             tableMap.clear();
+            // The cache is no longer complete; force the next catalogue reconcile to
+            // re-hydrate from the registry (see hydrateAllTables()) and give it a fresh
+            // retry budget for any table that fails to hydrate.
+            incompleteReconcilePasses = 0;
+            cacheComplete = false;
+            // Advance the epoch so a reconcile that overlapped this clear does not count
+            // its (clear-induced) "no progress" toward the give-up budget.
+            clearEpoch++;
         }
 
         /**
@@ -679,6 +1056,7 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
+            table.setTableFormat(tableMetadata.getTableFormat());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 
@@ -697,8 +1075,14 @@ public class MetadataCache implements QuietCloseable {
 
                 column.setName(columnName);
                 column.setType(columnType);
-                int replacingIndex = columnMetadata.getReplacingIndex();
-                column.setPosition(replacingIndex > -1 ? replacingIndex : i);
+                // A type-converted column keeps its original catalogue position. Use the
+                // chain root (originalWriterIndex), not the immediate predecessor: after two
+                // or more conversions getReplacingIndex() points at the intermediate column,
+                // which would push the column to the end of the catalogue. getOriginalWriterIndex()
+                // is the precomputed chain head and equals the column's own writer index when
+                // it was never converted.
+                int originalWriterIndex = columnMetadata.getOriginalWriterIndex();
+                column.setPosition(originalWriterIndex > -1 ? originalWriterIndex : i);
                 column.setIndexType(columnMetadata.getIndexType());
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
                 // Translate from writer to dense after the column list is
@@ -752,7 +1136,7 @@ public class MetadataCache implements QuietCloseable {
 
         @Override
         public void hydrateTable(@NotNull TableToken token) {
-            hydrateTableStartup(token, true);
+            hydrateTableStartup(token, true, false);
         }
 
         @Override

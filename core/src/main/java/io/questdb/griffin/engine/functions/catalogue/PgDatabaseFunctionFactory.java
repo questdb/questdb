@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -155,7 +156,13 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
     private static class PgDatabaseRecordCursor implements RecordCursor {
 
         private static final PgDatabaseRecord RECORD = new PgDatabaseRecord();
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean hasNext = true;
+
+        public void of(SqlExecutionCircuitBreaker circuitBreaker) {
+            this.circuitBreaker = circuitBreaker;
+            toTop();
+        }
 
         @Override
         public void close() {
@@ -173,6 +180,7 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (hasNext) {
                 hasNext = false;
                 return true;
@@ -209,7 +217,7 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            cursor.toTop();
+            cursor.of(executionContext.getCircuitBreaker());
             return cursor;
         }
 

@@ -70,6 +70,23 @@ public interface WorkerPoolConfiguration {
         return true;
     }
 
+    /**
+     * If true, the pool runs in legacy mode: workers do NOT wrap their loop
+     * body in a {@link io.questdb.mp.continuation.WorkerContinuation} and
+     * {@code Job.cloneInstance()} is never invoked by the framework. Per-worker
+     * assignment via {@code WorkerPool.assign(int worker, Job job)} is only
+     * allowed on legacy pools, since the workerId carries identity meaning
+     * (used by the assigned Job's instance state).
+     * <p>
+     * Non-legacy (default) pools install continuations and require
+     * {@code Job.cloneInstance()} to provide per-cont-snapshot isolation;
+     * callers register Jobs via {@code WorkerPool.assign(Job job)} which
+     * clones once per worker.
+     */
+    default boolean isLegacy() {
+        return false;
+    }
+
     default int workerPoolPriority() {
         return Thread.NORM_PRIORITY;
     }

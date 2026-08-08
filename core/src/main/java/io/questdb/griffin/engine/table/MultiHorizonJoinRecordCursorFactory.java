@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
@@ -38,6 +39,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -72,13 +74,13 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * Single-threaded factory for keyed HORIZON JOIN with multiple slave tables.
  */
 public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final MultiHorizonJoinRecordCursor cursor;
-    private final JoinRecordMetadata horizonJoinMetadata;
-    private final ObjList<Function> keyFunctions;
-    private final RecordCursorFactory masterFactory;
+    private MultiHorizonJoinRecordCursor cursor;
+    private JoinRecordMetadata horizonJoinMetadata;
+    private ObjList<Function> keyFunctions;
+    private RecordCursorFactory masterFactory;
     private final long[] offsets;
-    private final ObjList<Function> recordFunctions;
-    private final ObjList<HorizonJoinSlaveState> slaveStates;
+    private ObjList<Function> recordFunctions;
+    private ObjList<HorizonJoinSlaveState> slaveStates;
 
     public MultiHorizonJoinRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -135,7 +137,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     columnIndexes
             );
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -150,13 +152,18 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         try {
             for (int i = 0; i < slaveStates.size(); i++) {
-                cursor.slaveCursors.setQuick(i, slaveStates.getQuick(i).getFactory().getTimeFrameCursor(executionContext));
+                TimeFrameCursor slaveCursor = slaveStates.getQuick(i).getFactory().getTimeFrameCursor(executionContext);
+                slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+                cursor.slaveCursors.setQuick(i, slaveCursor);
             }
             cursor.of(masterCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
             Misc.freeObjList(cursor.slaveCursors);
             Misc.free(masterCursor);
+            // of() reopens the maps and allocator under the per-query tracker before it can throw; close()
+            // frees them and resets isOpen. The slave slots are nulled above, so close() never double-frees.
+            Misc.free(cursor);
             throw th;
         }
     }
@@ -183,13 +190,27 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     protected void _close() {
-        Misc.free(cursor);
-        Misc.freeObjList(keyFunctions);
-        Misc.free(masterFactory);
-        Misc.freeObjList(slaveStates);
-        Misc.free(horizonJoinMetadata);
+        final MultiHorizonJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final JoinRecordMetadata horizonJoinMetadata = this.horizonJoinMetadata;
+        this.horizonJoinMetadata = null;
+        final ObjList<Function> keyFunctions = this.keyFunctions;
+        this.keyFunctions = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final ObjList<Function> recordFunctions = this.recordFunctions;
+        this.recordFunctions = null;
+        final ObjList<HorizonJoinSlaveState> slaveStates = this.slaveStates;
+        this.slaveStates = null;
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, cursor);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, keyFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, masterFactory);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, slaveStates);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, horizonJoinMetadata);
         // recordFunctions includes groupByFunctions (same object references)
-        Misc.freeObjList(recordFunctions);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, recordFunctions);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     private static class MultiHorizonJoinRecordCursor implements RecordCursor {
@@ -272,10 +293,10 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             this.timeFrameHelpers = new ObjList<>(slaveCount);
             this.isOpen = true;
             try {
-                this.groupByAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                this.groupByAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 GroupByUtils.setAllocator(groupByFunctions, groupByAllocator);
 
-                this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+                this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, false, false);
                 Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
                         configuration,
                         asm,
@@ -306,7 +327,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 for (int s = 0; s < slaveCount; s++) {
                     HorizonJoinSlaveState ss = slaveStates.getQuick(s);
                     if (ss.getAsOfJoinKeyTypes() != null) {
-                        asOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, ss.getAsOfJoinKeyTypes(), new SingleColumnType(ColumnType.LONG)));
+                        asOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, ss.getAsOfJoinKeyTypes(), new SingleColumnType(ColumnType.LONG), false, false));
                     } else {
                         asOfJoinMaps.add(null);
                     }
@@ -323,6 +344,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                             bwdScanSwitchFactor
                     ));
                 }
+                this.isOpen = false;
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -339,7 +361,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         public void close() {
             if (isOpen) {
                 masterCursor = Misc.free(masterCursor);
-                Misc.freeObjListAndKeepObjects(slaveCursors);
+                // freeObjList nulls the freed slots, so a reopen-breach re-close finds null instead of a stale freed cursor.
+                Misc.freeObjList(slaveCursors);
                 mapCursor = Misc.free(mapCursor);
                 Misc.free(dataMap);
                 Misc.clearObjList(groupByFunctions);
@@ -411,6 +434,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
          * for the detailed strategy description). Aggregates results into dataMap.
          */
         private void buildMap() {
+            // Consult the breaker before iterating, so an empty master still observes cancellation.
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             for (int s = 0; s < slaveCount; s++) {
                 timeFrameHelpers.getQuick(s).toTop();
                 if (slaveStates.getQuick(s).isKeyed() && asOfJoinMaps.getQuick(s) != null) {
@@ -436,7 +461,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     final long scaledHorizonTs = scaleTimestamp(horizonTs, ss.getMasterTsScale());
                     long asOfRowId = helper.findAsOfRow(scaledHorizonTs);
 
-                    long matchRowId = Long.MIN_VALUE;
+                    long matchRowId;
                     if (ss.isKeyed()) {
                         Record masterKeyRecord = masterRecord;
                         if (symbolTranslatingRecords.getQuick(s) != null) {
@@ -490,16 +515,18 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         void of(RecordCursor masterCursor, SqlExecutionContext executionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
+                groupByAllocator.setMemoryTracker(executionContext.getMemoryTracker());
                 groupByAllocator.reopen();
+                dataMap.setMemoryTracker(executionContext.getMemoryTracker());
                 dataMap.reopen();
                 for (int s = 0; s < slaveCount; s++) {
                     if (asOfJoinMaps.getQuick(s) != null) {
+                        asOfJoinMaps.getQuick(s).setMemoryTracker(executionContext.getMemoryTracker());
                         asOfJoinMaps.getQuick(s).reopen();
                     }
                 }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            this.masterCursor = masterCursor;
 
             // Initialize each slave's time frame helper and symbol translating record
             for (int s = 0; s < slaveCount; s++) {
@@ -523,6 +550,9 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                 groupByFunctions.getQuick(i).init(horizonJoinSymbolTableSource, executionContext);
             }
+
+            // Adopt master last so an init() throw above can't double-free it via the getCursor() catch.
+            this.masterCursor = masterCursor;
 
             isDataMapBuilt = false;
         }

@@ -124,6 +124,15 @@ public interface ColumnIndexer extends QuietCloseable {
 
     void refreshSourceAndIndex(long loRow, long hiRow);
 
+    /**
+     * Drop the read-side state set up for the most recent seal but keep
+     * the covering schema intact, so a subsequent commit() still publishes
+     * a chain entry with a correct cover footer. See
+     * {@link io.questdb.cairo.idx.PostingIndexWriter#releaseCoveredColumnReadMappings()}.
+     */
+    default void releaseCoveredColumnReadMappings() {
+    }
+
     void releaseIndexWriter();
 
     void resetColumnTop();
@@ -131,6 +140,9 @@ public interface ColumnIndexer extends QuietCloseable {
     void rollback(long maxRow);
 
     default void seal() {
+    }
+
+    default void setCoveredColumnAddrSizes(LongList dataSizes, LongList auxSizes) {
     }
 
     default void setCoveredColumnNameTxns(LongList txns) {

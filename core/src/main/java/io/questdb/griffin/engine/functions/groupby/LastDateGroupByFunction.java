@@ -68,7 +68,9 @@ public class LastDateGroupByFunction extends FirstDateGroupByFunction {
         // Zero page address means a column top; fall through to the record-based path.
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
-            for (long i = 0; i < rowCount; i++) {
+            // Backwards: last-wins keeps only the max-rowId value, so a forward scan rewrites the
+            // slot for every later row (O(N) writes); a backward walk writes each key once.
+            for (long i = rowCount - 1; i >= 0; i--) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long rowId = baseRowId + rowIndex;
@@ -79,6 +81,10 @@ public class LastDateGroupByFunction extends FirstDateGroupByFunction {
                 }
             }
         } else {
+            // Forward: this fallback reads the argument (arg.get*(record)) inside the guard, so it
+            // must visit rows in ascending rowId order to evaluate every row's argument, matching the
+            // row-by-row path and last_not_null. A backward walk would evaluate only each key's
+            // winning row and could swallow a throwing expression on a losing row.
             for (long i = 0; i < rowCount; i++) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);

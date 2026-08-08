@@ -58,6 +58,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  */
 class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
     private final MessageBus messageBus;
+    // Borrowed non-group-by views into recordFunctions; the factory owns and closes the functions.
+    private final ObjList<Function> nonGroupByFunctions;
     private final AtomicBooleanCircuitBreaker postAggregationCircuitBreaker;
     private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
@@ -85,10 +87,13 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
             ObjList<RecordCursorFactory> slaveFactories
     ) {
         try {
+            // True during construction so the catch below can close() a partially built
+            // cursor and free what was already allocated.
             this.isOpen = true;
             this.messageBus = messageBus;
             this.postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             this.recordFunctions = recordFunctions;
+            this.nonGroupByFunctions = GroupByUtils.extractNonGroupByFunctions(recordFunctions);
             this.slaveFactories = slaveFactories;
             this.slaveCount = slaveFactories.size();
             this.slaveFrameCursors = new ObjList<>(slaveCount);
@@ -102,6 +107,11 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
             for (int s = 0; s < slaveCount; s++) {
                 slaveTimeFrameStates.add(new ConcurrentTimeFrameState());
             }
+            // Construction succeeded: start closed so the first of() runs atom.reopen(),
+            // which opens the lazy (openOnInit=false) allocators and ASOF maps and binds the
+            // per-query tracker before any allocation. Skipping reopen() on the first cursor
+            // would leave the allocator's chunk index unallocated and the tracker unbound.
+            this.isOpen = false;
         } catch (Throwable th) {
             close();
             throw th;
@@ -125,7 +135,8 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                 }
             } finally {
                 mapCursor = Misc.free(mapCursor);
-                Misc.freeObjListAndKeepObjects(slaveFrameCursors);
+                // freeObjList nulls the freed slots, so a reopen-breach re-close finds null instead of a stale freed cursor.
+                Misc.freeObjList(slaveFrameCursors);
                 Misc.freeObjListAndKeepObjects(slaveTimeFrameStates);
                 isOpen = false;
             }
@@ -189,8 +200,10 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
     }
 
     private void buildMap() {
+        // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
 
         final AsyncMultiHorizonJoinAtom atom = frameSequence.getAtom();
@@ -240,7 +253,8 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                         cursor.isExternal(),
                         executionContext.getPageFrameMinRows(),
                         executionContext.getPageFrameMaxRows(),
-                        executionContext.getSharedQueryWorkerCount()
+                        executionContext.getSharedQueryWorkerCount(),
+                        executionContext.getMemoryTracker()
                 );
                 try {
                     atom.initSlaveTimeFrameCursors(
@@ -276,11 +290,12 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
 
     void of(UnorderedPageFrameSequence<AsyncMultiHorizonJoinAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncMultiHorizonJoinAtom atom = frameSequence.getAtom();
+        // Assign before reopen() so close() can drain a partially reopened atom on a breach.
+        this.frameSequence = frameSequence;
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
         }
-        this.frameSequence = frameSequence;
         this.executionContext = executionContext;
         this.circuitBreaker = executionContext.getCircuitBreaker();
 
@@ -296,7 +311,13 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                 slaveSources.setQuick(s, slaveFrameCursors.getQuick(s));
             }
             symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveSources);
-            Function.init(recordFunctions, symbolTableSource, executionContext, null);
+            // Skip the group by functions: the atom initializes them in initGroupByFunctions(),
+            // before any frame is dispatched, and donates the owner state to the per-worker
+            // clones. Re-initializing them here would re-run stateful initialization, such as a
+            // cursor comparison re-executing its scalar sub-query, and could diverge from the
+            // state the workers observe. The constructor pre-filters the non-group-by functions
+            // once, so cached re-executions skip the per-function classification scan.
+            Function.init(nonGroupByFunctions, symbolTableSource, executionContext, null);
         } catch (Throwable th) {
             Misc.freeObjList(slaveFrameCursors);
             throw th;

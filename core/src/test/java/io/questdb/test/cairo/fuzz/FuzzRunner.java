@@ -56,6 +56,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
@@ -67,6 +68,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.QueryAssertion;
+import io.questdb.test.fuzz.FuzzAddCoveringIndexOperation;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
@@ -87,15 +90,18 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 public class FuzzRunner {
     public final static int MAX_WAL_APPLY_TIME_PER_TABLE_CEIL = 250;
     protected static final Log LOG = LogFactory.getLog(AbstractFuzzTest.class);
+    private static final int MAX_COVERED_KEYS_CHECKED = 32;
     protected static final StringSink sink = new StringSink();
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
     protected int initialRowCount;
     protected int partitionCount;
+    private double addCoveringIndexProb;
     private double cancelRowsProb;
     private double colAddProb;
     private double colRemoveProb;
     private double colRenameProb;
     private double colTypeChangeProb;
+    private boolean createWalAsParquet;
     private double dataAddProb;
     private CairoEngine engine;
     private double equalTsRowsProb;
@@ -116,6 +122,7 @@ public class FuzzRunner {
     private long s0;
     private long s1;
     private double setParquetEncodingProb;
+    private double setTableFormatProb;
     private double setTtlProb;
     private SqlExecutionContext sqlExecutionContext;
     private int strLen;
@@ -136,7 +143,7 @@ public class FuzzRunner {
 
     public static void purgeAndReloadReaders(Rnd reloadRnd, TableReader rdr1, TableReader rdr2, O3PartitionPurgeJob purgeJob, double realoadThreashold) {
         if (reloadRnd.nextDouble() < realoadThreashold) {
-            purgeJob.run(0);
+            purgeJob.run();
             reloadReader(reloadRnd, rdr1, "1");
             reloadReader(reloadRnd, rdr2, "2");
         }
@@ -285,6 +292,14 @@ public class FuzzRunner {
                         } else {
                             writer.commit();
                         }
+                        for (int opIdx = 0; opIdx < size; opIdx++) {
+                            if (transaction.operationList.getQuick(opIdx) instanceof FuzzAddCoveringIndexOperation coveringOp) {
+                                Misc.free(writer);
+                                writer = null;
+                                coveringOp.executePostDrain(engine, tableName);
+                                writer = TestUtils.getWriter(engine, tableName);
+                            }
+                        }
                     }
                 } catch (CairoException | CairoError e) {
                     boolean housekeeping = (e instanceof CairoException) && ((CairoException) e).isHousekeeping();
@@ -396,6 +411,8 @@ public class FuzzRunner {
         TableToken tableToken = engine.verifyTableName(tableName);
         applyToWal(transactions, tableName, walWriterCount, applyRnd);
         drainWalQueue(applyRnd, tableName);
+        executeCoveringIndexOps(transactions, tableName);
+        drainWalQueue(applyRnd, tableName);
         Assert.assertFalse("Table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
     }
 
@@ -503,7 +520,8 @@ public class FuzzRunner {
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion(),
-                setParquetEncodingProb
+                setParquetEncodingProb,
+                addCoveringIndexProb, setTableFormatProb
         );
     }
 
@@ -546,6 +564,14 @@ public class FuzzRunner {
         } else {
             return (int) (20 * randomDriver);
         }
+    }
+
+    /**
+     * When true, fuzz-created WAL tables get FORMAT PARQUET in their CREATE TABLE
+     * statement so every partition is born parquet from the very first WAL apply.
+     */
+    public void setCreateWalAsParquet(boolean createWalAsParquet) {
+        this.createWalAsParquet = createWalAsParquet;
     }
 
     public void setFuzzCounts(
@@ -704,6 +730,56 @@ public class FuzzRunner {
             double queryProb,
             double setParquetEncodingProb
     ) {
+        setFuzzProbabilities(
+                cancelRowsProb,
+                notSetProb,
+                nullSetProb,
+                rollbackProb,
+                colAddProb,
+                colRemoveProb,
+                colRenameProb,
+                colTypeChangeProb,
+                dataAddProb,
+                equalTsRowsProb,
+                partitionDropProb,
+                partitionToParquetProb,
+                partitionToNativeProb,
+                truncateProb,
+                tableDropProb,
+                setTtlProb,
+                replaceInsertProb,
+                symbolAccessValidationProb,
+                queryProb,
+                setParquetEncodingProb,
+                0.0,
+                0.0
+        );
+    }
+
+    public void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
+            double truncateProb,
+            double tableDropProb,
+            double setTtlProb,
+            double replaceInsertProb,
+            double symbolAccessValidationProb,
+            double queryProb,
+            double setParquetEncodingProb,
+            double setTableFormatProb,
+            double addCoveringIndexProb
+    ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
         this.nullSetProb = nullSetProb;
@@ -724,6 +800,8 @@ public class FuzzRunner {
         this.symbolAccessValidationProb = symbolAccessValidationProb;
         this.queryProb = queryProb;
         this.setParquetEncodingProb = setParquetEncodingProb;
+        this.setTableFormatProb = setTableFormatProb;
+        this.addCoveringIndexProb = addCoveringIndexProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -760,32 +838,36 @@ public class FuzzRunner {
         ObjList<ObjList<FuzzTransaction>> tablesTransactions = new ObjList<>();
         tablesTransactions.add(transactions);
         applyManyWalParallel(tablesTransactions, applyRnd, tableName, false, true);
+        executeCoveringIndexOps(transactions, tableName);
+        drainWalQueue(applyRnd, tableName);
     }
 
-    private void assertMinMaxTimestamp(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String tableName) throws SqlException {
+    private void assertMinMaxTimestamp(SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
         try (TableReader reader = getReader(tableName)) {
             if (reader.getMinTimestamp() != Long.MAX_VALUE) {
-                TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
-                        "select ts from " + tableName + " order by ts limit 1",
-                        sink,
-                        "ts\n" +
-                                Micros.toUSecString(reader.getMinTimestamp())
-                                + "\n"
-                );
+                new QueryAssertion(engine, sqlExecutionContext, () -> {
+                }, "select ts from " + tableName + " order by ts limit 1")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(
+                                "ts\n" +
+                                        Micros.toUSecString(reader.getMinTimestamp())
+                                        + "\n"
+                        );
             }
 
             if (reader.getMaxTimestamp() != Long.MIN_VALUE) {
-                TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
-                        "select ts from " + tableName + " order by ts limit -1",
-                        sink,
-                        "ts\n" +
-                                Micros.toUSecString(reader.getMaxTimestamp())
-                                + "\n"
-                );
+                new QueryAssertion(engine, sqlExecutionContext, () -> {
+                }, "select ts from " + tableName + " order by ts limit -1")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(
+                                "ts\n" +
+                                        Micros.toUSecString(reader.getMaxTimestamp())
+                                        + "\n"
+                        );
             }
         }
     }
@@ -813,6 +895,102 @@ public class FuzzRunner {
         return excludedIntervals;
     }
 
+    private void assertCoveredCursors(
+            SqlCompiler compiler,
+            String tableName,
+            String symbolColumnName,
+            CharSequence projection,
+            String whereClause
+    ) throws SqlException {
+        final String covered = "select " + projection + " from " + tableName + whereClause;
+        final String uncovered = "select /*+ no_covering */ " + projection + " from " + tableName + whereClause;
+
+        final StringSink plan = new StringSink();
+        TestUtils.printSql(compiler, sqlExecutionContext, "explain " + covered, plan);
+
+        final String expectedPlan = "CoveringIndex on: " + symbolColumnName + " with:";
+        Assert.assertTrue(
+                "covering plan not chosen for " + covered + ", plan was:\n" + plan,
+                Chars.contains(plan, expectedPlan)
+        );
+        LOG.info().$("checking covered values: ").$safe(covered).I$();
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, uncovered, covered, LOG);
+    }
+
+    /**
+     * Reads the covered values back through the covering index and compares them
+     * against the same projection with covering disabled.
+     * <p>
+     * The scans in {@link #checkIndexRandomValueScan} cannot do this: they project
+     * {@code *}, so at least one projected column is not in the INCLUDE list,
+     * {@code buildCoveringIndexMapping} returns null
+     * (SqlCodeGenerator.java:915) and no covering cursor is ever constructed. That
+     * left the whole covering sidecar lifecycle - including parquet round-trips -
+     * unasserted by the fuzz suite. Projecting exactly the key column plus its
+     * covered columns is what forces the covering plan.
+     * <p>
+     * Every distinct key is checked, not the single random value
+     * {@link #checkIndexRandomValueScan} picks. That matters: a dropped sidecar
+     * only shows up in the rows of the partition that lost it, and with one random
+     * key the odds of sampling such a row are low enough that a deliberately
+     * reintroduced parquet-&gt;native covering bug survived four fuzz runs
+     * undetected. Keys are checked one at a time so that each comparison stays a
+     * single-key equality, which both plans resolve through the same index and
+     * therefore emit in the same order without needing an ORDER BY.
+     */
+    private void checkCoveredValueScan(
+            SqlCompiler compiler,
+            String tableName,
+            String symbolColumnName
+    ) throws SqlException {
+        final StringSink projection = new StringSink();
+        try (TableReader reader = getReader(tableName)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            final int keyIndex = metadata.getColumnIndexQuiet(symbolColumnName);
+            if (keyIndex < 0 || !metadata.isColumnIndexed(keyIndex)) {
+                return; // the column was dropped or un-indexed on this table
+            }
+            final IntList coveringIndices = metadata.getCoveringColumnIndices(keyIndex);
+            if (coveringIndices == null || coveringIndices.size() == 0) {
+                return; // not a COVERING index
+            }
+            projection.put('"').put(symbolColumnName).put('"');
+            for (int c = 0, cn = coveringIndices.size(); c < cn; c++) {
+                final int writerIndex = coveringIndices.getQuick(c);
+                if (writerIndex < 0) {
+                    continue; // covered column was dropped
+                }
+                for (int r = 0, rn = metadata.getColumnCount(); r < rn; r++) {
+                    if (metadata.getWriterIndex(r) == writerIndex) {
+                        projection.put(", \"").put(metadata.getColumnName(r)).put('"');
+                        break;
+                    }
+                }
+            }
+        }
+
+        sink.clear();
+        TestUtils.printSql(compiler, sqlExecutionContext, "select distinct \"" + symbolColumnName + "\" a from " + tableName + " order by 1", sink);
+        int checked = 0;
+        for (int lo = sink.indexOf("\n") + 1, hi; lo > 0 && lo < sink.length() && checked < MAX_COVERED_KEYS_CHECKED; lo = hi + 1) {
+            hi = sink.indexOf("\n", lo);
+            if (hi < 0) {
+                hi = sink.length();
+            }
+            final String value = sink.subSequence(lo, hi).toString();
+            if (value.indexOf('\'') >= 0) {
+                continue; // a quote would need escaping; skip this key
+            }
+            checked++;
+            assertCoveredCursors(compiler, tableName, symbolColumnName, projection,
+                    " where \"" + symbolColumnName + "\" = " + (value.isEmpty() ? "null" : "'" + value + "'"));
+        }
+        if (checked == MAX_COVERED_KEYS_CHECKED) {
+            LOG.info().$("covered value check capped at ").$(MAX_COVERED_KEYS_CHECKED)
+                    .$(" keys [table=").$safe(tableName).$(", column=").$safe(symbolColumnName).I$();
+        }
+    }
+
     private void checkIndexRandomValueScan(
             String expectedTableName,
             String actualTableName,
@@ -828,12 +1006,13 @@ public class FuzzRunner {
             String prefix = "a\n";
             String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
             String indexedWhereClause = " where \"" + symbolColumnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
-            LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
+            LOG.info().$("checking random index with filter: ").$safe(indexedWhereClause).I$();
             String limit = ""; // for debugging, e.g. " limit 100"
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + limit, actualTableName + indexedWhereClause + limit, LOG);
             // Now let's do backward order assertion
             String orderBy = " order by " + tsColumnName + " desc";
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + orderBy + limit, actualTableName + indexedWhereClause + orderBy + limit, LOG);
+            checkCoveredValueScan(compiler, actualTableName, symbolColumnName);
         }
     }
 
@@ -906,10 +1085,16 @@ public class FuzzRunner {
         }
 
         if (engine.getTableTokenIfExists(tableName) == null) {
+            String tail;
+            if (isWal) {
+                tail = createWalAsParquet ? "FORMAT PARQUET WAL" : "WAL";
+            } else {
+                tail = "BYPASS WAL";
+            }
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + tail,
                     sqlExecutionContext
             );
             // force few column tops
@@ -948,7 +1133,8 @@ public class FuzzRunner {
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY WAL",
+                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY "
+                            + (createWalAsParquet ? "FORMAT PARQUET WAL" : "WAL"),
                     sqlExecutionContext
             );
             // force few column tops
@@ -959,30 +1145,6 @@ public class FuzzRunner {
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
         engine.verifyTableName(tableName);
-    }
-
-    /**
-     * Picks an index type clause for fuzz table creation. Returns either
-     * an empty string (BITMAP — the default), or one of the POSTING
-     * variants. Uses {@link SharedRandom} so the choice tracks the existing
-     * fuzz seed.
-     */
-    private String randomIndexTypeClause() {
-        Rnd rnd = SharedRandom.RANDOM.get();
-        if (rnd == null) {
-            return "";
-        }
-        double pick = rnd.nextDouble();
-        if (pick < 0.5) {
-            return ""; // BITMAP (the default for the existing INDEX clause)
-        }
-        if (pick < 0.7) {
-            return "TYPE POSTING";
-        }
-        if (pick < 0.85) {
-            return "TYPE POSTING DELTA";
-        }
-        return "TYPE POSTING EF";
     }
 
     @NotNull
@@ -1022,6 +1184,7 @@ public class FuzzRunner {
             int opIndex;
 
             try {
+                String updatedTableName = tableName;
                 Rnd tempRnd = new Rnd();
                 while (errors.isEmpty() && (opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.isEmpty()) {
                     FuzzTransaction transaction = transactions.getQuick(opIndex);
@@ -1057,6 +1220,15 @@ public class FuzzRunner {
                     }
 
                     boolean increment = false;
+
+                    if (transaction.reopenTable) {
+                        TableToken updatedTableToken = engine.getTableTokenByDirName(walWriter.getTableToken().getDirName());
+                        if (updatedTableToken == null) {
+                            throw new IllegalStateException("table is missing after reopen [table=" + tableName + "]");
+                        }
+                        updatedTableName = updatedTableToken.getTableName();
+                    }
+
                     for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
                         FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
                         increment |= operation.apply(tempRnd, engine, walWriter, -1, null);
@@ -1064,11 +1236,10 @@ public class FuzzRunner {
 
                     if (transaction.reopenTable) {
                         synchronized (writers) {
-                            // Table is dropped, reload all writers
                             for (int ii = 0; ii < writers.size(); ii++) {
-                                if (writers.get(ii).getTableToken().getTableName().equals(tableName)) {
+                                if (writers.get(ii).getTableToken().getTableName().equals(updatedTableName)) {
                                     writers.get(ii).close();
-                                    writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+                                    writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(updatedTableName, "apply trans test"));
                                 }
                             }
                         }
@@ -1104,6 +1275,13 @@ public class FuzzRunner {
             } catch (Throwable e) {
                 e.printStackTrace(System.out);
                 errors.add(e);
+                // Unblock peers waiting on a barrier this worker was supposed to advance.
+                // Without this, peers spin in the Os.sleep loop above because their wait
+                // condition (waitBarrierVersion < target) stays true; the errors check
+                // inside the loop relies on Os.sleep returning, which under heavy load
+                // can be delayed indefinitely. Overshooting to MAX guarantees the wait
+                // condition flips so peers reach the errors.isEmpty() check and return.
+                waitBarrierVersion.set(Long.MAX_VALUE);
             } finally {
                 Path.clearThreadLocals();
             }
@@ -1117,9 +1295,20 @@ public class FuzzRunner {
              TableReader rdr2 = getReaderHandleTableDropped(tableName)
         ) {
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-            while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {
+            while (walApplyJob.run() || checkWalTransactionsJob.run()) {
                 forceReleaseTableWriter(applyRnd);
                 purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
+            }
+        }
+    }
+
+    private void executeCoveringIndexOps(ObjList<FuzzTransaction> transactions, String tableName) {
+        for (int i = 0, n = transactions.size(); i < n; i++) {
+            ObjList<FuzzTransactionOperation> ops = transactions.getQuick(i).operationList;
+            for (int j = 0, m = ops.size(); j < m; j++) {
+                if (ops.getQuick(j) instanceof FuzzAddCoveringIndexOperation coveringOp) {
+                    coveringOp.executePostDrain(engine, tableName);
+                }
             }
         }
     }
@@ -1160,6 +1349,30 @@ public class FuzzRunner {
         }
     }
 
+    /**
+     * Picks an index type clause for fuzz table creation. Returns either
+     * an empty string (BITMAP — the default), or one of the POSTING
+     * variants. Uses {@link SharedRandom} so the choice tracks the existing
+     * fuzz seed.
+     */
+    private String randomIndexTypeClause() {
+        Rnd rnd = SharedRandom.RANDOM.get();
+        if (rnd == null) {
+            return "";
+        }
+        double pick = rnd.nextDouble();
+        if (pick < 0.5) {
+            return ""; // BITMAP (the default for the existing INDEX clause)
+        }
+        if (pick < 0.7) {
+            return "TYPE POSTING";
+        }
+        if (pick < 0.85) {
+            return "TYPE POSTING DELTA";
+        }
+        return "TYPE POSTING EF";
+    }
+
     private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {
         try {
             ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
@@ -1168,7 +1381,7 @@ public class FuzzRunner {
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0)) {
                 while (done.get() == 0 && errors.isEmpty()) {
                     Unsafe.loadFence();
-                    while (job.run(0) || checkJob.run(0)) {
+                    while (job.run() || checkJob.run()) {
                         // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
                         // where it can be fully closed before continuing the WAL application Test TableWriter closures.
                         forceReleaseTableWriter(applyRnd);
@@ -1177,7 +1390,7 @@ public class FuzzRunner {
                     checkNoSuspendedTables(tableTokenBucket);
                     i++;
                 }
-                while (job.run(0) || checkJob.run(0)) {
+                while (job.run() || checkJob.run()) {
                     forceReleaseTableWriter(applyRnd);
                 }
                 i++;
@@ -1336,9 +1549,7 @@ public class FuzzRunner {
             applyNonWal(transactions, tableNameNoWal, rnd);
             long endNonWalMicro = System.nanoTime() / 1000;
             long nonWalTotal = endNonWalMicro - startMicro;
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameNoWal);
-            }
+            assertMinMaxTimestamp(sqlExecutionContext, tableNameNoWal);
 
             applyWal(transactions, tableNameWal, 1, rnd);
 
@@ -1346,7 +1557,7 @@ public class FuzzRunner {
             long walTotal = endWalMicro - endNonWalMicro;
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameWal);
+                assertMinMaxTimestamp(sqlExecutionContext, tableNameWal);
 
                 String limit = ""; // For debugging
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
@@ -1361,7 +1572,7 @@ public class FuzzRunner {
                 assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
                 LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
 
-                assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameWal2);
+                assertMinMaxTimestamp(sqlExecutionContext, tableNameWal2);
             }
 
             assertCounts(tableNameWal, timestampColumnName);
@@ -1433,8 +1644,8 @@ public class FuzzRunner {
                     String limit = ""; // For debugging
                     TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
                     assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
-                    assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameNoWal);
-                    assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameWal);
+                    assertMinMaxTimestamp(sqlExecutionContext, tableNameNoWal);
+                    assertMinMaxTimestamp(sqlExecutionContext, tableNameWal);
                 }
             }
         } finally {

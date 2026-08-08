@@ -39,6 +39,8 @@ public class QueryColumn implements Mutable, Sinkable {
     private ExpressionNode ast;
     private int columnType = -1;
     private boolean includeIntoWildcard = true;
+    private boolean isGenerated;
+    private boolean isLateralScalarCount;
 
     public QueryColumn() {
     }
@@ -49,6 +51,8 @@ public class QueryColumn implements Mutable, Sinkable {
         aliasPosition = 0;
         ast = null;
         includeIntoWildcard = true;
+        isGenerated = false;
+        isLateralScalarCount = false;
         columnType = -1;
     }
 
@@ -72,8 +76,16 @@ public class QueryColumn implements Mutable, Sinkable {
         return alias != null ? alias : ast.token;
     }
 
+    public boolean isGenerated() {
+        return isGenerated;
+    }
+
     public boolean isIncludeIntoWildcard() {
         return includeIntoWildcard;
+    }
+
+    public boolean isLateralScalarCount() {
+        return isLateralScalarCount;
     }
 
     public boolean isWindowExpression() {
@@ -104,8 +116,16 @@ public class QueryColumn implements Mutable, Sinkable {
         this.aliasPosition = aliasPosition;
     }
 
+    public void setGenerated(boolean isGenerated) {
+        this.isGenerated = isGenerated;
+    }
+
     public void setIncludeIntoWildcard(boolean includeIntoWildcard) {
         this.includeIntoWildcard = includeIntoWildcard;
+    }
+
+    public void setLateralScalarCount(boolean isLateralScalarCount) {
+        this.isLateralScalarCount = isLateralScalarCount;
     }
 
     @Override

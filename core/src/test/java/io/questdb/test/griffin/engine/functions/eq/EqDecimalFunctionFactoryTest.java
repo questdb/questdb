@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.eq;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
@@ -102,6 +103,51 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
         createFunctionAndAssert(
                 new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 0)),
                 new Decimal128Constant(0, 100, ColumnType.getDecimalType(20, 0)),
+                false
+        );
+    }
+
+    @Test
+    public void testEqDecimal128SlowPathBothNull() {
+        // Different scales force the slow path (Decimal128Func extends
+        // CompareDecimal128Function). Equality must keep its QuestDB-specific
+        // semantic that NULL = NULL is true, matching the UnscaledDecimal128Func
+        // fast path.
+        createFunctionAndAssert(
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 2)),
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 4)),
+                true
+        );
+    }
+
+    @Test
+    public void testEqDecimal128SlowPathNegatedBothNullIsFalse() {
+        // Negated `=` (i.e. `!=`) on the Decimal128 slow path must mirror the
+        // fast-path semantic: NULL = NULL is true, so NULL != NULL is false.
+        assertNegated(
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 2)),
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 4)),
+                false
+        );
+    }
+
+    @Test
+    public void testEqDecimal128SlowPathNegatedNullVsValueIsTrue() {
+        // `!=` of NULL and a non-null value is true on the slow path.
+        assertNegated(
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 2)),
+                new Decimal128Constant(0, 100, ColumnType.getDecimalType(20, 4)),
+                true
+        );
+    }
+
+    @Test
+    public void testEqDecimal128SlowPathNullVsValue() {
+        // Different scales force the slow path. NULL on one side compares unequal
+        // to a non-null value, matching the fast-path bit-equality semantic.
+        createFunctionAndAssert(
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 2)),
+                new Decimal128Constant(0, 100, ColumnType.getDecimalType(20, 4)),
                 false
         );
     }
@@ -341,6 +387,71 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
                         ColumnType.getDecimalType(40, 0)
                 ),
                 new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 0)),
+                false
+        );
+    }
+
+    @Test
+    public void testEqDecimal256SlowPathBothNull() {
+        // Different scales force the slow path (Decimal256Func). NULL = NULL is true.
+        createFunctionAndAssert(
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 2)
+                ),
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 4)
+                ),
+                true
+        );
+    }
+
+    @Test
+    public void testEqDecimal256SlowPathNegatedBothNullIsFalse() {
+        // Negated `=` (i.e. `!=`) on the Decimal256 slow path must mirror the
+        // fast-path semantic: NULL = NULL is true, so NULL != NULL is false.
+        assertNegated(
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 2)
+                ),
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 4)
+                ),
+                false
+        );
+    }
+
+    @Test
+    public void testEqDecimal256SlowPathNegatedNullVsValueIsTrue() {
+        // `!=` of NULL and a non-null value is true on the slow path.
+        assertNegated(
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 2)
+                ),
+                new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 4)),
+                true
+        );
+    }
+
+    @Test
+    public void testEqDecimal256SlowPathNullVsValue() {
+        // Different scales force the slow path; NULL = value must be false.
+        createFunctionAndAssert(
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 2)
+                ),
+                new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 4)),
                 false
         );
     }
@@ -595,6 +706,26 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEqDecimal64SlowPathBothNull() {
+        // Different scales force the slow path (Decimal64Func). NULL = NULL is true.
+        createFunctionAndAssert(
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 2)),
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 4)),
+                true
+        );
+    }
+
+    @Test
+    public void testEqDecimal64SlowPathNullVsValue() {
+        // Different scales force the slow path; NULL = value must be false.
+        createFunctionAndAssert(
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 2)),
+                new Decimal64Constant(100, ColumnType.getDecimalType(10, 4)),
+                false
+        );
+    }
+
+    @Test
     public void testEqDecimal64VsDecimal128() {
         createFunctionAndAssert(
                 new Decimal64Constant(100, ColumnType.getDecimalType(10, 2)),
@@ -826,6 +957,16 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
                     new Decimal128Constant(0, val + 1, ColumnType.getDecimalType(21, scale)),
                     false
             );
+        }
+    }
+
+    private void assertNegated(Function left, Function right, boolean expected) {
+        args.clear();
+        args.add(left);
+        args.add(right);
+        try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
+            ((NegatableBooleanFunction) func).setNegated();
+            Assert.assertEquals(expected, func.getBool(null));
         }
     }
 

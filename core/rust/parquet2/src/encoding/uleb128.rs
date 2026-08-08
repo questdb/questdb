@@ -8,7 +8,10 @@ pub fn decode(values: &[u8]) -> Result<(u64, usize), Error> {
     for byte in values {
         consumed += 1;
         if shift == 63 && *byte > 1 {
-            panic!()
+            // A varint wider than 64 bits is malformed. Return an error rather
+            // than panicking: this decodes foreign page headers, and a panic
+            // across the JNI boundary aborts the whole JVM.
+            return Err(Error::oos("ULEB128 value exceeds u64 range"));
         };
 
         result |= u64::from(byte & 0b01111111) << shift;
@@ -93,5 +96,15 @@ mod tests {
         let (value, len) = decode(&container).unwrap();
         assert_eq!(value, original);
         assert_eq!(len, encoded_len);
+    }
+
+    #[test]
+    fn decode_overflow_errors() {
+        // A 10-byte varint whose final byte is > 1 encodes a value wider than 64
+        // bits. It must return an error rather than panicking (a panic here
+        // aborts the JVM across JNI). u64::MAX (final byte == 1) still decodes,
+        // as covered by `max_value`.
+        let data = [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02];
+        assert!(decode(&data).is_err());
     }
 }

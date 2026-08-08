@@ -97,6 +97,118 @@ public class HttpHeaderParserTest {
     }
 
     @Test
+    public void testContentDispositionQuotedFilenameWithSemicolon() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"data\"; filename=\"a;b.csv\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                TestUtils.assertEquals("data", hp.getContentDispositionName());
+                TestUtils.assertEquals("a;b.csv", hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionQuotedFilenameWithEqualsAndSemicolon() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"data\"; filename=\"a=b;c.csv\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                TestUtils.assertEquals("data", hp.getContentDispositionName());
+                TestUtils.assertEquals("a=b;c.csv", hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionQuotedFilenameWithSemicolonAndEscapedQuote() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"data\"; filename=\"a\\\";b.csv\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                TestUtils.assertEquals("data", hp.getContentDispositionName());
+                TestUtils.assertEquals("a\\\";b.csv", hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionFilenameBeforeName() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; filename=\"x.csv\"; name=\"data\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                TestUtils.assertEquals("data", hp.getContentDispositionName());
+                TestUtils.assertEquals("x.csv", hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionQuotedNameWithSemicolonBeforeFilename() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"da;ta\"; filename=\"x.csv\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                TestUtils.assertEquals("da;ta", hp.getContentDispositionName());
+                TestUtils.assertEquals("x.csv", hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionUnknownParameterBeforeFilename() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"data\"; tag=xyz; filename=\"a;b.csv\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                TestUtils.assertEquals("data", hp.getContentDispositionName());
+                TestUtils.assertEquals("a;b.csv", hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionUnquotedQuoteDoesNotHideFollowingFilename() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=abc\"; filename=\"x.csv\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                TestUtils.assertEquals("abc\"", hp.getContentDispositionName());
+                TestUtils.assertEquals("x.csv", hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testContentDispositionDangling() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             String v = "Content-Disposition: form-data; name=\"hello\";\r\n" +
@@ -275,6 +387,19 @@ public class HttpHeaderParserTest {
             TestUtils.assertEquals("text/html", hp.getContentType());
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testContentTypeReuseClearsCharset() {
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            parse(hp, "Content-Type: text/html; charset=utf-8\r\n\r\n", false, false);
+            TestUtils.assertEquals("utf-8", hp.getCharset());
+
+            hp.clear();
+            parse(hp, "Content-Type: text/plain\r\n\r\n", false, false);
+            TestUtils.assertEquals("text/plain", hp.getContentType());
+            Assert.assertNull(hp.getCharset());
         }
     }
 
@@ -533,6 +658,27 @@ public class HttpHeaderParserTest {
 
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testCookiesReuseClearsMappedCookies() {
+        final Utf8String cookieName = new Utf8String("id");
+
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            parse(
+                    hp,
+                    "GET /ok HTTP/1.1\r\n" +
+                            "Set-Cookie: id=123; Path=/\r\n" +
+                            "\r\n",
+                    true,
+                    false
+            );
+            Assert.assertNotNull(hp.getCookie(cookieName));
+
+            hp.clear();
+            parse(hp, "GET /ok HTTP/1.1\r\n\r\n", true, false);
+            Assert.assertNull(hp.getCookie(cookieName));
         }
     }
 
@@ -1015,6 +1161,15 @@ public class HttpHeaderParserTest {
 
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void parse(HttpHeaderParser hp, String headers, boolean request, boolean protocol) {
+        long p = TestUtils.toMemory(headers);
+        try {
+            hp.parse(p, p + headers.length(), request, protocol);
+        } finally {
+            Unsafe.free(p, headers.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 

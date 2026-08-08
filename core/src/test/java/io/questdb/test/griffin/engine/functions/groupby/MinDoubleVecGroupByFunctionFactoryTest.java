@@ -34,69 +34,54 @@ public class MinDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
-        assertQuery("""
+        assertQuery("select round(avg(f),9) avg from tab")
+                .ddl("create table tab as (select rnd_double(2) f from long_sequence(131))")
+                .mutateWith("alter table tab add column b double")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg
                         0.511848387
-                        """,
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_double(2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b double",
-                """
+                        """, """
                         avg
                         0.511848387
-                        """,
-                false,
-                true,
-                false
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select round(avg(f),6) avg, min(b) min from tab")
+                .ddl("insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg\tmin
                         0.5008779999999999\t0.0032519916115479885
-                        """,
-                "select round(avg(f),6) avg, min(b) min from tab",
-                "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select min(f) from tab")
+                .ddl("create table tab as (select cast(null as double) f from long_sequence(33))")
+                .mutateWith("insert into tab select 22.009 from long_sequence(1)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         min
                         null
-                        """,
-                "select min(f) from tab",
-                "create table tab as (select cast(null as double) f from long_sequence(33))",
-                null,
-                "insert into tab select 22.009 from long_sequence(1)",
-                """
+                        """, """
                         min
                         22.009
-                        """,
-                false,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select min(f) from tab")
+                .ddl("create table tab as (select rnd_double(2) f from long_sequence(131))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         min
                         0.0011075361080621349
-                        """,
-                "select min(f) from tab",
-                "create table tab as (select rnd_double(2) f from long_sequence(131))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 }

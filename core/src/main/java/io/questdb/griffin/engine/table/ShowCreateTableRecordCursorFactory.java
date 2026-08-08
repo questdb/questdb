@@ -50,6 +50,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -58,7 +59,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
     private static final RecordMetadata METADATA;
     protected final TableToken tableToken;
     protected final int tokenPosition;
-    private final ShowCreateTableCursor cursor = new ShowCreateTableCursor();
+    private ShowCreateTableCursor cursor = new ShowCreateTableCursor();
 
     public ShowCreateTableRecordCursorFactory(TableToken tableToken, int tokenPosition) {
         super(METADATA);
@@ -85,6 +86,28 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             } else {
                 sink.put(alias);
             }
+        }
+    }
+
+    // Emits a stored view/mat-view body with surrounding whitespace removed. The body is always a
+    // complete SELECT, where leading/trailing whitespace is never significant, so this only normalizes
+    // the dump's indentation; a trailing string or identifier literal ends in a quote (> ' '), so no
+    // character inside a literal is ever stripped.
+    public static void putTrimmed(Utf8Sink sink, CharSequence text) {
+        int lo = 0;
+        int hi = text.length();
+        while (lo < hi && text.charAt(lo) <= ' ') {
+            lo++;
+        }
+        while (hi > lo && text.charAt(hi - 1) <= ' ') {
+            hi--;
+        }
+        sink.put(text, lo, hi);
+    }
+
+    public static void tableFormatToSink(int format, CharSink<?> sink) {
+        if (format == TableUtils.TABLE_FORMAT_PARQUET) {
+            sink.putAscii(" FORMAT PARQUET");
         }
     }
 
@@ -119,6 +142,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         return cursor.of(executionContext, tableToken, tokenPosition);
     }
 
@@ -135,8 +159,16 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
+        final ShowCreateTableCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public static class ShowCreateTableCursor implements NoRandomAccessRecordCursor {
@@ -177,6 +209,12 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         ) throws SqlException {
             this.tableToken = tableToken;
             this.executionContext = executionContext;
+            // The token is resolved from the synchronously loaded registry, but the
+            // metadata cache is hydrated lazily; hydrate this table on demand so we do
+            // not report a registered-but-not-yet-cached table as non-existent during
+            // the startup hydration window (or before any catalogue query has warmed an
+            // embedded engine).
+            executionContext.getCairoEngine().getMetadataCache().hydrateTableOnDemand(tableToken);
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
                 this.table = metadataRO.getTable(tableToken);
                 if (this.table == null) {
@@ -186,6 +224,9 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     throw TableReferenceOutOfDateException.of(this.tableToken);
                 }
             }
+            // SHOW CREATE TABLE rejects regular, materialized and live views during parsing
+            // (see SqlParserCallback.getTableToken); guard against any future caller that bypasses it.
+            assert !tableToken.isView() && !tableToken.isMatView() && !tableToken.isLiveView();
 
             toTop();
             return this;
@@ -219,6 +260,8 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 putPartitionBy();
                 // TTL n unit
                 ttlToSink(sink);
+                // FORMAT PARQUET (only emitted when not the default NATIVE)
+                tableFormatToSink(table.getTableFormat(), sink);
                 // (BYPASS) WAL
                 putWal();
             }

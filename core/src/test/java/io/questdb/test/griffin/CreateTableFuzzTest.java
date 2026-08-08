@@ -220,7 +220,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         });
     }
 
-    private static void createSourceTable() throws SqlException {
+    private static void createSourceTable() throws Exception {
         engine.execute("CREATE TABLE samba (ts TIMESTAMP, sym SYMBOL, str STRING)", sqlExecutionContext);
     }
 
@@ -297,7 +297,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         return ddl.append("tango (LIKE ").append(rndCase("samba")).append(')');
     }
 
-    private void messWithSourceTable() throws SqlException {
+    private void messWithSourceTable() throws Exception {
         switch (columnChaos) {
             case DROP_STR:
                 engine.execute("ALTER TABLE samba DROP COLUMN str");
@@ -391,7 +391,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private void validateCreatedTableAsSelect(boolean afterMessing) throws SqlException {
+    private void validateCreatedTableAsSelect(boolean afterMessing) throws Exception {
         if (afterMessing) {
             validateCreatedTableAsSelectAfterMessing();
         } else {
@@ -399,7 +399,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private void validateCreatedTableAsSelectAfterMessing() throws SqlException {
+    private void validateCreatedTableAsSelectAfterMessing() throws Exception {
         StringBuilder b = new StringBuilder(
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n");
         b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\t")
@@ -425,10 +425,13 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         if (addColumn && useSelectStar) {
             b.append("str_new\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n");
         }
-        assertSql(b, "show columns from tango");
+        assertQuery("show columns from tango")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns(b);
     }
 
-    private void validateCreatedTableAsSelectBeforeMessing() throws SqlException {
+    private void validateCreatedTableAsSelectBeforeMessing() throws Exception {
         StringBuilder b = new StringBuilder(
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n");
         b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\t")
@@ -441,19 +444,25 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                 .append(useCast).append("\t")
                 .append(useCastSymbolCapacity ? SYMBOL_CAPACITY : useCast ? defaultSymbolCapacity : 0)
                 .append("\t0\tfalse\tfalse\t\t\n");
-        assertSql(b, "show columns from tango");
+        assertQuery("show columns from tango")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns(b);
     }
 
-    private void validateCreatedTableDirect() throws SqlException {
+    private void validateCreatedTableDirect() throws Exception {
         StringBuilder b = new StringBuilder(
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n");
         b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\t")
                 .append(usePartitionBy).append('\t').append(useDedup).append("\t\t\n");
         b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n");
-        assertSql(b, "show columns from tango");
+        assertQuery("show columns from tango")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns(b);
     }
 
-    private void validateCreatedTableLike(boolean afterMessing) throws SqlException {
+    private void validateCreatedTableLike(boolean afterMessing) throws Exception {
         boolean beforeMessing = !afterMessing;
         StringBuilder b = new StringBuilder(
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n");
@@ -478,7 +487,10 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                 b.append("str_new\tSTRING\tfalse\t").append(defaultIndexCapacity).append("\tfalse\t0\t0\tfalse\tfalse\t\t\n");
             }
         }
-        assertSql(b, "show columns from tango");
+        assertQuery("show columns from tango")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns(b);
     }
 
     enum ColumnChaos {

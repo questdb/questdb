@@ -30,12 +30,15 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.CharSequenceObjSortedHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -45,7 +48,13 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
 import java.time.Instant;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -171,7 +180,10 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                     while (true) {
                         engine.execute("rename table foo to bah", sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from bah", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                        assertQuery("show columns from bah")
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -186,7 +198,10 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                     while (true) {
                         engine.execute("rename table bah to foo", sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from foo", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                        assertQuery("show columns from foo")
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -244,28 +259,27 @@ public class MetadataCacheTest extends AbstractCairoTest {
             if (fooToken == null) {
                 Assert.assertFalse(cacheString.contains("name=foo"));
                 Assert.assertTrue(cacheString.contains("name=bah"));
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables()")
+                        .noLeakCheck()
+                        .timestamp("")
+                        .noRandomAccess()
+                        .returns("""
                                 id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
                                 1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tT
-                                """,
-                        "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables()",
-                        ""
-                );
+                                """);
             }
             if (bahToken == null) {
                 Assert.assertFalse(cacheString.contains("name=bah"));
                 Assert.assertTrue(cacheString.contains("name=foo"));
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables()")
+                        .noLeakCheck()
+                        .timestamp("")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
                                 id	table_name	designatedTimestamp	partitionBy	maxUncommittedRows	o3MaxLag	walEnabled	directoryName	dedup	ttlValue	ttlUnit	matView	table_type
                                 1	foo	ts	DAY	1000	300000000	true	foo~1	false	0	HOUR	false	T
-                                """,
-                        "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables()",
-                        "",
-                        false,
-                        true
-                );
+                                """);
             }
         });
     }
@@ -281,8 +295,14 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                     while (true) {
                         engine.execute("rename table foo to bah", sqlExecutionContext);
-                        assertExceptionNoLeakCheck("show columns from foo", 18, "table does not exist", false, sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from bah", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                        assertQuery("show columns from foo")
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .fails(18, "table does not exist");
+                        assertQuery("show columns from bah")
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -297,8 +317,14 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                     while (true) {
                         engine.execute("rename table bah to foo", sqlExecutionContext);
-                        assertException("show columns from bah", 18, "table does not exist", sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from foo", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                        assertQuery("show columns from bah")
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .fails(18, "table does not exist");
+                        assertQuery("show columns from foo")
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -532,6 +558,34 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
                     \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, indexType=NONE, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, indexType=NONE, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=2]
+                    """);
+        });
+    }
+
+    @Test
+    public void testAlterTableColumnTypeChangedTwiceKeepsColumnOrder() throws Exception {
+        // After two ALTER COLUMN TYPE on the same column, the new column's replacingIndex
+        // points at its immediate predecessor (the intermediate column), not the chain
+        // root. hydrateTable() must derive the catalogue position from the chain root
+        // (getOriginalWriterIndex()), otherwise the twice-converted column jumps to the
+        // end of table_columns()/information_schema.columns while SELECT * (reader
+        // metadata) still keeps it in place.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (ts TIMESTAMP, foo VARCHAR, bah SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL;");
+            drainWalQueue();
+
+            execute("ALTER TABLE y ALTER COLUMN foo TYPE STRING");
+            drainWalQueue();
+
+            execute("ALTER TABLE y ALTER COLUMN foo TYPE INT");
+            drainWalQueue();
+
+            assertCairoMetadata("""
+                    MetadataCache [tableCount=1]
+                    \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=3]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, indexType=NONE, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=foo, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, indexType=NONE, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=4]
+                    \t\tCairoColumn [name=bah, position=2, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, indexType=NONE, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=2]
                     """);
         });
     }
@@ -823,7 +877,721 @@ public class MetadataCacheTest extends AbstractCairoTest {
             execute("DROP TABLE y");
             drainWalQueue();
 
-            assertException("table_columns('y')", 14, "table does not exist");
+            assertQuery("table_columns('y')")
+                    .noLeakCheck()
+                    .fails(14, "table does not exist");
+        });
+    }
+
+    @Test
+    public void testClearCacheReenablesReconcile() throws Exception {
+        // clearCache() wipes the cache and must reset the fast-path flag so the next
+        // catalogue reconcile rebuilds the full set. Guards the checkpoint/restore
+        // style window where the registry is ahead of a freshly-cleared cache.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // Warm the cache and flip it into the fast path.
+            engine.getMetadataCache().onStartupAsyncHydrator();
+
+            // Wipe the cache. clearCache() must clear the completeness flag too.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            // The reconcile must run again and rebuild the complete set.
+            engine.getMetadataCache().hydrateAllTables();
+            try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
+                Assert.assertEquals(2, ro.getTableCount());
+            }
+        });
+    }
+
+    @Test
+    public void testReconcileLatchesCompleteAfterHydratingMissingTables() throws Exception {
+        // When one hydrateAllTables() reconcile successfully hydrates
+        // every missing table, it must latch cacheComplete in that same pass (reusing the
+        // token snapshot it already collected), not leave the flag off and force the next
+        // catalogue query to run a second, redundant full reconcile (getTableTokens +
+        // allocation + scan) just to observe "nothing missing".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+
+            // Empty + unlatch: tables stay registered, cache is empty, cacheComplete=false.
+            try (MetadataCacheWriter w = cache.writeLock()) {
+                w.clearCache();
+            }
+            Assert.assertFalse(cache.isCacheComplete());
+
+            // A single reconcile hydrates both missing tables AND latches in the same
+            // pass. Pre-fix this latched only on a second reconcile, so the flag stayed
+            // off here.
+            cache.hydrateAllTables();
+            Assert.assertTrue(cache.isCacheComplete());
+            try (MetadataCacheReader ro = cache.readLock()) {
+                Assert.assertEquals(2, ro.getTableCount());
+            }
+        });
+    }
+
+    @Test
+    public void testHydrateAllTablesShortCircuitsWhenCacheComplete() throws Exception {
+        // hydrateAllTables() backs the tables()/all_tables() startup-race fix, but it
+        // must be a no-op once the cache is known complete: from then on writers keep
+        // the cache current, so a per-query reconcile would be pure overhead. This pins
+        // that fast-path contract.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // Complete the one-shot startup hydration: fills the cache and flips
+            // MetadataCache into its steady-state fast path.
+            engine.getMetadataCache().onStartupAsyncHydrator();
+
+            // Evict a single still-registered table directly from the cache (not via
+            // clearCache(), which would reset the fast-path flag). Because the cache was
+            // marked complete, hydrateAllTables() must short-circuit and leave the gap.
+            TableToken a = engine.getTableTokenIfExists("a");
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.dropTable(a);
+            }
+            engine.getMetadataCache().hydrateAllTables();
+            try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
+                Assert.assertEquals(1, ro.getTableCount());
+                Assert.assertNull(ro.getTable(a));
+            }
+        });
+    }
+
+    @Test
+    public void testStartupHydratorDoesNotLatchCompleteWhenATableFailsToHydrate() throws Exception {
+        // A table whose _meta cannot be read at startup (fd exhaustion, torn read during
+        // concurrent WAL apply, slow/NFS storage, mid-conversion) makes
+        // hydrateTableStartup() swallow the failure (throwError=false) and evict the
+        // table from the cache. onStartupAsyncHydrator() must NOT then latch
+        // cacheComplete: doing so would short-circuit every future catalogue reconcile
+        // and hide the table forever (until a writer touches it or the process
+        // restarts). Leaving the flag unset lets the reconcile self-heal once the
+        // _meta becomes readable again.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alpha (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE bravo (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE charlie (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            final File meta = metaFile("charlie");
+            final File hidden = new File(meta.getParentFile(), "_meta.hidden");
+
+            // Make charlie's _meta unreadable, then run the startup hydrator from an
+            // empty cache (mimics a fresh process whose hydrator races a transient fault).
+            java.nio.file.Files.move(meta.toPath(), hidden.toPath());
+            try {
+                try (MetadataCacheWriter w = cache.writeLock()) {
+                    w.clearCache();
+                }
+                cache.onStartupAsyncHydrator();
+
+                // alpha + bravo hydrated; charlie could not be read and is absent.
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    Assert.assertEquals(2, ro.getTableCount());
+                    Assert.assertNull(ro.getTable(engine.getTableTokenIfExists("charlie")));
+                }
+            } finally {
+                // _meta is readable again (the transient fault cleared).
+                java.nio.file.Files.move(hidden.toPath(), meta.toPath());
+            }
+
+            // Self-heal: because the startup hydrator did NOT latch cacheComplete, the
+            // reconcile still runs and now picks charlie up. With the pre-fix
+            // unconditional latch this short-circuited and charlie stayed hidden.
+            cache.hydrateAllTables();
+            try (MetadataCacheReader ro = cache.readLock()) {
+                Assert.assertEquals(3, ro.getTableCount());
+                Assert.assertNotNull(ro.getTable(engine.getTableTokenIfExists("charlie")));
+            }
+        });
+    }
+
+    @Test
+    public void testReconcileBudgetCountsOnlyZeroProgressRounds() throws Exception {
+        // The give-up budget must count consecutive reconcile rounds that make NO
+        // progress, not every reconcile that still finds something missing - otherwise a
+        // post-restart storm (>=MAX concurrent catalogue queries racing the startup
+        // hydrator) exhausts the 8-budget in one burst and latches cacheComplete with a
+        // transiently-unreadable table still absent. A reconcile that hydrates >=1
+        // previously-missing table is self-healing, so it resets the budget; only rounds
+        // that hydrate nothing spend it. Here we drive several progress rounds (tables
+        // becoming readable one round at a time, as a storm hydrates incrementally) and
+        // assert the budget is not consumed while progress continues - it is spent only by
+        // the genuinely-stuck table once progress stops.
+        final int maxIncompleteReconcilePasses = 8;
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alpha (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE bravo (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE gamma (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE stuck (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+
+            final File bravoMeta = metaFile("bravo");
+            final File bravoHidden = new File(bravoMeta.getParentFile(), "_meta.hidden");
+            final File gammaMeta = metaFile("gamma");
+            final File gammaHidden = new File(gammaMeta.getParentFile(), "_meta.hidden");
+            final File stuckMeta = metaFile("stuck");
+            final File stuckHidden = new File(stuckMeta.getParentFile(), "_meta.hidden");
+
+            // Hide bravo, gamma and stuck so only alpha can hydrate initially; reveal
+            // bravo/gamma one round at a time to mimic a storm making incremental progress.
+            java.nio.file.Files.move(bravoMeta.toPath(), bravoHidden.toPath());
+            java.nio.file.Files.move(gammaMeta.toPath(), gammaHidden.toPath());
+            java.nio.file.Files.move(stuckMeta.toPath(), stuckHidden.toPath());
+            try {
+                try (MetadataCacheWriter w = cache.writeLock()) {
+                    w.clearCache();
+                }
+
+                // Round 1: only alpha hydrates (progress) - bravo/gamma/stuck still hidden.
+                cache.hydrateAllTables();
+                Assert.assertFalse(cache.isCacheComplete());
+
+                // Round 2: reveal bravo, it hydrates (progress).
+                java.nio.file.Files.move(bravoHidden.toPath(), bravoMeta.toPath());
+                cache.hydrateAllTables();
+                Assert.assertFalse(cache.isCacheComplete());
+
+                // Round 3: reveal gamma, it hydrates (progress).
+                java.nio.file.Files.move(gammaHidden.toPath(), gammaMeta.toPath());
+                cache.hydrateAllTables();
+                Assert.assertFalse(cache.isCacheComplete());
+
+                // Three progress rounds happened, yet the budget is untouched: now only the
+                // permanently-stuck table is missing, so the next rounds are zero-progress.
+                // MAX_INCOMPLETE_RECONCILE_PASSES - 1 of them must NOT yet latch (proving the
+                // earlier progress rounds were not counted; pre-fix the budget would already
+                // be spent here).
+                for (int i = 0; i < maxIncompleteReconcilePasses - 1; i++) {
+                    cache.hydrateAllTables();
+                    Assert.assertFalse(
+                            "give-up budget exhausted too early - progress rounds were counted",
+                            cache.isCacheComplete());
+                }
+
+                // One more zero-progress round tips the budget over MAX and gives up.
+                cache.hydrateAllTables();
+                Assert.assertTrue(cache.isCacheComplete());
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    Assert.assertEquals(3, ro.getTableCount());
+                    Assert.assertNull(ro.getTable(engine.getTableTokenIfExists("stuck")));
+                }
+            } finally {
+                if (bravoHidden.exists()) {
+                    java.nio.file.Files.move(bravoHidden.toPath(), bravoMeta.toPath());
+                }
+                if (gammaHidden.exists()) {
+                    java.nio.file.Files.move(gammaHidden.toPath(), gammaMeta.toPath());
+                }
+                java.nio.file.Files.move(stuckHidden.toPath(), stuckMeta.toPath());
+            }
+        });
+    }
+
+    @Test
+    public void testReconcileGivesUpAfterRepeatedHydrationFailures() throws Exception {
+        // Mirror of MetadataCache.MAX_INCOMPLETE_RECONCILE_PASSES. A genuinely
+        // unhydratable table would otherwise be re-read (and logged CRITICAL) on every
+        // catalogue query forever, since a failed hydration never lands in the cache
+        // and so always looks "missing". After this many incomplete passes the
+        // reconcile must give up and latch cacheComplete, leaving the table for a
+        // writer or the next clearCache() epoch to pick up.
+        final int maxIncompleteReconcilePasses = 8;
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alpha (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE bravo (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE charlie (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            final File meta = metaFile("charlie");
+            final File hidden = new File(meta.getParentFile(), "_meta.hidden");
+
+            java.nio.file.Files.move(meta.toPath(), hidden.toPath());
+            try {
+                try (MetadataCacheWriter w = cache.writeLock()) {
+                    w.clearCache();
+                }
+
+                // First reconcile hydrates alpha+bravo (progress) and leaves charlie
+                // missing. A progress round does not spend the give-up budget, so do it
+                // up front; only the zero-progress rounds below count toward giving up.
+                cache.hydrateAllTables();
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    Assert.assertEquals(2, ro.getTableCount());
+                }
+                Assert.assertFalse(cache.isCacheComplete());
+
+                // Now only charlie is missing and unhydratable: each reconcile re-reads
+                // its (still missing) _meta and fails, making zero progress. After
+                // maxIncompleteReconcilePasses such rounds the flag latches.
+                for (int i = 0; i < maxIncompleteReconcilePasses; i++) {
+                    cache.hydrateAllTables();
+                    try (MetadataCacheReader ro = cache.readLock()) {
+                        Assert.assertEquals(2, ro.getTableCount());
+                    }
+                }
+            } finally {
+                java.nio.file.Files.move(hidden.toPath(), meta.toPath());
+            }
+
+            // The retry budget is spent and cacheComplete latched, so the reconcile now
+            // short-circuits: charlie stays hidden even though its _meta is readable.
+            // This caps the CRITICAL-spam / per-query disk I/O path for corrupt tables.
+            cache.hydrateAllTables();
+            try (MetadataCacheReader ro = cache.readLock()) {
+                Assert.assertEquals(2, ro.getTableCount());
+                Assert.assertNull(ro.getTable(engine.getTableTokenIfExists("charlie")));
+            }
+
+            // clearCache() resets the budget, so a fresh epoch reconciles charlie back in.
+            try (MetadataCacheWriter w = cache.writeLock()) {
+                w.clearCache();
+            }
+            cache.hydrateAllTables();
+            try (MetadataCacheReader ro = cache.readLock()) {
+                Assert.assertEquals(3, ro.getTableCount());
+                Assert.assertNotNull(ro.getTable(engine.getTableTokenIfExists("charlie")));
+            }
+        });
+    }
+
+    @Test
+    public void testCompletenessLatchIsMutuallyExclusiveWithClearCache() throws Exception {
+        // The completeness latch (cacheComplete=true) in hydrateAllTables() must be
+        // published under the read lock that observed the cache as complete, so it is
+        // mutually exclusive with clearCache() (write lock).
+        // We force the exact interleaving by overriding publishCacheComplete(): while
+        // the override runs (inside the publisher's lock scope), another thread tries
+        // to clearCache(). With the publish correctly inside the read lock, that
+        // clearCache() is blocked until we release, so the latch can never end up set
+        // on an emptied cache. Were the publish moved back outside the lock (the bug),
+        // the clearCache() would land between the scan and the publish and leave
+        // cacheComplete=true over an empty cache - which the post-condition below
+        // catches.
+        assertMemoryLeak(() -> {
+            final int tableCount = 3;
+            for (int i = 0; i < tableCount; i++) {
+                execute("CREATE TABLE t" + i + " (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            }
+            drainWalQueue();
+
+            final AtomicReference<Thread> clearer = new AtomicReference<>();
+            final AtomicReference<Throwable> clearError = new AtomicReference<>();
+            final AtomicBoolean fired = new AtomicBoolean(false);
+            // The override fires once, on the reconcile's missing==null publish. It
+            // kicks off a concurrent clearCache() and gives it ample time to run. In
+            // correct code that clearCache() is blocked on the write lock (the publish
+            // holds the read lock), so it cannot empty the cache before the flag is
+            // set. `fired` keeps the self-healing reconcile below from re-triggering
+            // the interleaving.
+            try (MetadataCache cache = new MetadataCache(engine) {
+                @Override
+                protected void publishCacheComplete() {
+                    if (fired.compareAndSet(false, true)) {
+                        final Thread b = new Thread(() -> {
+                            try (MetadataCacheWriter w = writeLock()) {
+                                w.clearCache();
+                            } catch (Throwable t) {
+                                clearError.compareAndSet(null, t);
+                            } finally {
+                                Path.clearThreadLocals();
+                            }
+                        }, "clearer");
+                        clearer.set(b);
+                        b.start();
+                        // Long enough that, were the publish NOT holding the read lock,
+                        // the clearer would certainly empty the cache before the flag
+                        // is set.
+                        Os.sleep(200);
+                    }
+                    super.publishCacheComplete();
+                }
+            }) {
+                // Start from a warm-but-unlatched state: a fresh instance is empty, and
+                // the point-lookup path (hydrateTableOnDemand never latches
+                // cacheComplete) warms it so the cache holds every table while the flag
+                // stays off. A full hydrateAllTables() reconcile cannot produce this
+                // state: once it hydrates every missing table it latches immediately
+                // (under the read lock).
+                for (int i = 0; i < tableCount; i++) {
+                    cache.hydrateTableOnDemand(engine.getTableTokenIfExists("t" + i));
+                }
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    Assert.assertEquals(tableCount, ro.getTableCount());
+                }
+                Assert.assertFalse(cache.isCacheComplete());
+
+                cache.hydrateAllTables();
+
+                final Thread b = clearer.get();
+                Assert.assertNotNull("override did not fire - publish path changed?", b);
+                b.join();
+                if (clearError.get() != null) {
+                    throw new RuntimeException(clearError.get());
+                }
+
+                // Invariant: cacheComplete must never be latched over an incomplete
+                // cache. Correct code ends here with the cache emptied by the clearer
+                // and the flag off (publish happened under the read lock while the
+                // cache was still full, then the clearer emptied + unlatched). The
+                // buggy code would end with cacheComplete=true over an empty cache.
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    if (cache.isCacheComplete()) {
+                        Assert.assertEquals(
+                                "cacheComplete latched on an incomplete cache",
+                                tableCount, ro.getTableCount());
+                    }
+                }
+
+                // And the cache still self-heals to the full set.
+                cache.hydrateAllTables();
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    Assert.assertEquals(tableCount, ro.getTableCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentReconcileAndClearCacheNeverMarksEmptyCacheComplete() throws Exception {
+        // The completeness latch (cacheComplete=true) in hydrateAllTables() /
+        // onStartupAsyncHydrator() must be published under a lock that excludes
+        // clearCache(). Set outside the lock, a clearCache() can
+        // interleave between observing the cache as complete and publishing the flag,
+        // leaving an emptied cache marked complete - catalogue queries then
+        // short-circuit forever with no self-healing. We hammer the reconcile path
+        // against concurrent clearCache() and assert the invariant "cacheComplete =>
+        // the cache holds every table" is never violated. The invariant is checked
+        // under the read lock, which excludes clearCache(), so the table set is stable
+        // for the duration of the check.
+        assertMemoryLeak(() -> {
+            final int tableCount = 4;
+            for (int i = 0; i < tableCount; i++) {
+                execute("CREATE TABLE t" + i + " (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            }
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            final AtomicBoolean stop = new AtomicBoolean(false);
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            // Heavily oversubscribe so the scheduler frequently preempts a reconciler in
+            // the narrow window between releasing the pass-1 read lock and publishing the
+            // latch - that preemption is what widens the race the buggy (unlocked) latch
+            // exposes to clearCache(). Bounded by wall-clock so the test stays fast.
+            final int reconcilerCount = Math.max(8, 2 * Runtime.getRuntime().availableProcessors());
+            final long deadline = System.nanoTime() + 1_000_000_000L;
+
+            // Reconcilers: drive the completeness-latch path from multiple threads.
+            final Runnable reconciler = () -> {
+                try {
+                    while (!stop.get() && error.get() == null && System.nanoTime() < deadline) {
+                        cache.hydrateAllTables();
+                    }
+                } catch (Throwable t) {
+                    error.compareAndSet(null, t);
+                } finally {
+                    // hydrateTableStartup() allocates a thread-local Path; release it so
+                    // the surrounding assertMemoryLeak() does not flag native memory.
+                    Path.clearThreadLocals();
+                }
+            };
+            // Checker: a latched cacheComplete must imply a full cache. Read the count
+            // and the flag under the read lock, which excludes clearCache(), so the
+            // table set cannot change mid-check; only a buggy unlocked latch can flip
+            // cacheComplete while we hold the lock over an emptied cache.
+            final Runnable checker = () -> {
+                try {
+                    while (!stop.get() && error.get() == null && System.nanoTime() < deadline) {
+                        try (MetadataCacheReader ro = cache.readLock()) {
+                            final int count = ro.getTableCount();
+                            if (cache.isCacheComplete() && count != tableCount) {
+                                throw new AssertionError(
+                                        "cacheComplete latched on an incomplete cache: tableCount="
+                                                + count + " expected=" + tableCount);
+                            }
+                        }
+                    }
+                } catch (Throwable t) {
+                    error.compareAndSet(null, t);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            };
+
+            final Thread[] reconcilers = new Thread[reconcilerCount];
+            for (int i = 0; i < reconcilerCount; i++) {
+                reconcilers[i] = new Thread(reconciler, "reconciler-" + i);
+                reconcilers[i].start();
+            }
+            final Thread chk = new Thread(checker, "checker");
+            chk.start();
+            try {
+                while (error.get() == null && System.nanoTime() < deadline) {
+                    try (MetadataCacheWriter w = cache.writeLock()) {
+                        w.clearCache();
+                    }
+                    // Brief yield so reconcilers can refill and reach the vulnerable
+                    // missing==null publish, and so the checker can observe a latched
+                    // flag before the next clear resets it.
+                    Os.pause();
+                }
+            } finally {
+                stop.set(true);
+            }
+            for (Thread t : reconcilers) {
+                t.join();
+            }
+            chk.join();
+
+            if (error.get() != null) {
+                throw new RuntimeException(error.get());
+            }
+
+            // With clears stopped, the cache must converge back to the full set: had a
+            // racing clear latched an empty-complete cache, this reconcile would
+            // short-circuit and leave it short.
+            cache.hydrateAllTables();
+            try (MetadataCacheReader ro = cache.readLock()) {
+                Assert.assertEquals(tableCount, ro.getTableCount());
+            }
+        });
+    }
+
+    @Test
+    public void testGiveUpBudgetIgnoresRoundsThatOverlapAClearCache() throws Exception {
+        // The give-up budget must ignore rounds whose "no progress" a concurrent
+        // clearCache() manufactured. All reconcilers hydrate `alpha`, then a single clear
+        // wipes it right before the give-up assessment: unguarded, all 8 spend the budget
+        // in one burst and latch cacheComplete over the emptied, still-hydratable cache.
+        // Only such a burst reproduces the bug - every clearCache() resets the counter, so
+        // sequential rounds never reach the threshold. `stuck` (unhydratable) keeps each
+        // pass incomplete so every reconciler reaches the give-up path.
+        final int maxIncompleteReconcilePasses = 8;
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alpha (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE stuck (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final int registeredTables = 2;
+            // One reconciler per give-up pass: their combined post-clear bumps reach the
+            // budget in a single burst (each bumps once, from the clear-reset zero).
+            final int reconcilers = maxIncompleteReconcilePasses;
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+
+            final File stuckMeta = metaFile("stuck");
+            final File stuckHidden = new File(stuckMeta.getParentFile(), "_meta.hidden");
+            java.nio.file.Files.move(stuckMeta.toPath(), stuckHidden.toPath());
+            // The subclass parks every reconciler right before the give-up assessment
+            // (holding no lock). Once all are parked, the barrier action runs ONE
+            // clearCache(): it resets the budget and wipes alpha, so every reconciler
+            // then sees "no progress". A fresh instance starts empty, so both tables are
+            // missing on every reconciler's first scan.
+            try (MetadataCache cache = new MetadataCache(engine) {
+                private final CyclicBarrier atGiveUp = new CyclicBarrier(reconcilers, () -> {
+                    try (MetadataCacheWriter w = writeLock()) {
+                        w.clearCache();
+                    }
+                });
+
+                @Override
+                protected void assessReconcileGiveUp(ObjList<TableToken> missing, long startEpoch) {
+                    try {
+                        atGiveUp.await(30, TimeUnit.SECONDS);
+                    } catch (InterruptedException | BrokenBarrierException | TimeoutException e) {
+                        error.compareAndSet(null, e);
+                        Thread.currentThread().interrupt();
+                    }
+                    super.assessReconcileGiveUp(missing, startEpoch);
+                }
+            }) {
+                try {
+                    final Thread[] threads = new Thread[reconcilers];
+                    for (int i = 0; i < reconcilers; i++) {
+                        threads[i] = new Thread(() -> {
+                            try {
+                                cache.hydrateAllTables();
+                            } catch (Throwable t) {
+                                error.compareAndSet(null, t);
+                            } finally {
+                                Path.clearThreadLocals();
+                            }
+                        }, "reconciler-" + i);
+                        threads[i].start();
+                    }
+                    for (Thread t : threads) {
+                        t.join();
+                    }
+                    if (error.get() != null) {
+                        throw new RuntimeException(error.get());
+                    }
+
+                    // Deterministic end state: every reconciler's epoch snapshot predates
+                    // the clear, so all of them skip the budget and nothing latches.
+                    // Unguarded, the 8 post-clear bumps exhaust the budget and latch
+                    // cacheComplete over the emptied cache.
+                    Assert.assertFalse(
+                            "give-up latched cacheComplete over a clear-wiped cache",
+                            cache.isCacheComplete());
+                } finally {
+                    java.nio.file.Files.move(stuckHidden.toPath(), stuckMeta.toPath());
+                }
+
+                // With stuck readable again and clears stopped, the cache self-heals to
+                // the full set and warm-latches - the guard does not suppress legitimate
+                // latching.
+                cache.hydrateAllTables();
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    Assert.assertEquals(registeredTables, ro.getTableCount());
+                }
+                Assert.assertTrue(cache.isCacheComplete());
+            }
+        });
+    }
+
+    @Test
+    public void testHydrateTableOnDemandPopulatesMissingTable() throws Exception {
+        // Point-lookup catalogue paths (SHOW COLUMNS / SHOW CREATE TABLE / parquet
+        // partition probes) resolve the token from the registry but read the lazily
+        // hydrated cache. hydrateTableOnDemand() is their single-table reconcile: it must
+        // populate a registered-but-uncached table, and no-op once the cache is marked
+        // complete (a still-missing table is then genuinely gone / given up on).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            final TableToken a = engine.getTableTokenIfExists("a");
+
+            // Empty cache (post-restart window): the table is registered but not cached.
+            try (MetadataCacheWriter w = cache.writeLock()) {
+                w.clearCache();
+            }
+            try (MetadataCacheReader ro = cache.readLock()) {
+                Assert.assertNull(ro.getTable(a));
+            }
+
+            // A null token is a no-op (no exception).
+            cache.hydrateTableOnDemand(null);
+
+            // On-demand hydrate brings just this table into the cache.
+            cache.hydrateTableOnDemand(a);
+            try (MetadataCacheReader ro = cache.readLock()) {
+                Assert.assertNotNull(ro.getTable(a));
+                Assert.assertEquals(1, ro.getTableCount());
+            }
+
+            // Once the cache is marked complete, a still-missing table is treated as gone:
+            // hydrateTableOnDemand must short-circuit (no re-read) rather than re-read and
+            // log on every point lookup. Evict via dropTable(), which does not reset the
+            // completeness flag.
+            cache.hydrateAllTables();
+            Assert.assertTrue(cache.isCacheComplete());
+            try (MetadataCacheWriter w = cache.writeLock()) {
+                w.dropTable(a);
+            }
+            cache.hydrateTableOnDemand(a);
+            try (MetadataCacheReader ro = cache.readLock()) {
+                Assert.assertNull(ro.getTable(a));
+            }
+        });
+    }
+
+    @Test
+    public void testShowColumnsBeforeStartupHydration() throws Exception {
+        // SHOW COLUMNS resolves the token from the registry but reads the
+        // lazily hydrated cache; in the startup window it used to throw "table does not
+        // exist" for a registered table. It must hydrate the table on demand.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT, b LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // Simulate the window: registry knows the table, metadata cache is empty.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            printSql("show columns from foo");
+            final String out = sink.toString();
+            TestUtils.assertContains(out, "ts\tTIMESTAMP");
+            TestUtils.assertContains(out, "a\tINT");
+            TestUtils.assertContains(out, "b\tLONG");
+        });
+    }
+
+    @Test
+    public void testSnapshotHydratesEachTableExactlyOncePerClearEpoch() throws Exception {
+        // The catalogue read path (MetadataCache.snapshot()) reconciles via
+        // hydrateAllTables(), which reads each table's _meta exactly once per
+        // clearCache() epoch: a table already present in the cache is never re-read.
+        // We prove this through CairoTable object identity - a re-hydration would
+        // replace the instance.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            final TableToken a = engine.getTableTokenIfExists("a");
+            final TableToken b = engine.getTableTokenIfExists("b");
+            final CharSequenceObjSortedHashMap<CairoTable> snap = new CharSequenceObjSortedHashMap<>();
+            long version = -1;
+
+            // Start from an empty cache to mimic the post-restart reconcile window.
+            try (MetadataCacheWriter w = cache.writeLock()) {
+                w.clearCache();
+            }
+
+            // First snapshot hydrates both tables from disk.
+            version = cache.snapshot(snap, version);
+            CairoTable a1, b1;
+            try (MetadataCacheReader ro = cache.readLock()) {
+                a1 = ro.getTable(a);
+                b1 = ro.getTable(b);
+            }
+            Assert.assertNotNull(a1);
+            Assert.assertNotNull(b1);
+
+            // Repeated snapshots within the same epoch must NOT re-read: the cached
+            // CairoTable instances stay identical.
+            for (int i = 0; i < 3; i++) {
+                version = cache.snapshot(snap, version);
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    Assert.assertSame(a1, ro.getTable(a));
+                    Assert.assertSame(b1, ro.getTable(b));
+                }
+            }
+
+            // A clearCache() opens a new epoch: the next snapshot re-reads from disk,
+            // producing fresh CairoTable instances.
+            try (MetadataCacheWriter w = cache.writeLock()) {
+                w.clearCache();
+            }
+            cache.snapshot(snap, version);
+            try (MetadataCacheReader ro = cache.readLock()) {
+                CairoTable a2 = ro.getTable(a);
+                CairoTable b2 = ro.getTable(b);
+                Assert.assertNotNull(a2);
+                Assert.assertNotNull(b2);
+                Assert.assertNotSame(a1, a2);
+                Assert.assertNotSame(b1, b2);
+            }
         });
     }
 
@@ -857,23 +1625,25 @@ public class MetadataCacheTest extends AbstractCairoTest {
     public void testMetadataUpdatedCorrectlyWhenRenamingTables() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, x int) timestamp(ts) partition by day wal;");
-            assertSql(
-                    """
+            assertQuery("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables()")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             id	table_name	designatedTimestamp	partitionBy	maxUncommittedRows	o3MaxLag	walEnabled	directoryName	dedup	ttlValue	ttlUnit	matView	table_type
                             1	foo	ts	DAY	1000	300000000	true	foo~1	false	0	HOUR	false	T
-                            """,
-                    "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables()"
-            );
+                            """);
 
             execute("rename table foo to bah");
             drainWalQueue();
-            assertSql(
-                    """
+            assertQuery("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables()")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             id	table_name	designatedTimestamp	partitionBy	maxUncommittedRows	o3MaxLag	walEnabled	directoryName	dedup	ttlValue	ttlUnit	matView	table_type
                             1	bah	ts	DAY	1000	300000000	true	foo~1	false	0	HOUR	false	T
-                            """,
-                    "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables()"
-            );
+                            """);
         });
     }
 
@@ -1071,6 +1841,15 @@ public class MetadataCacheTest extends AbstractCairoTest {
             Assert.assertEquals(timestampIndex, tsIndex);
             Assert.assertEquals("timestamp", table.getTimestampName());
         }
+    }
+
+    private File metaFile(String tableName) {
+        final TableToken token = engine.getTableTokenIfExists(tableName);
+        Assert.assertNotNull("table not found: " + tableName, token);
+        return new File(
+                new File(engine.getConfiguration().getDbRoot(), token.getDirName()),
+                TableUtils.META_FILE_NAME
+        );
     }
 
     private void createX() throws SqlException {

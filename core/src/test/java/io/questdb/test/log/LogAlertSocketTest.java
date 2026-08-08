@@ -560,6 +560,7 @@ public class LogAlertSocketTest {
 
     private static class MockLogRecord implements LogRecord {
         final StringSink sink = new StringSink();
+        private int[] ryuE10;
 
         @Override
         public void $() {
@@ -736,6 +737,14 @@ public class LogAlertSocketTest {
         public Utf8Sink putNonAscii(long lo, long hi) {
             sink.put(lo, hi);
             return this;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
 
         @Override

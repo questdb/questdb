@@ -27,6 +27,8 @@ use std::fmt::{Display, Formatter};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use qdb_core::memory_tracker::MemoryTracker;
+
 #[cfg(test)]
 use std::sync::Arc;
 
@@ -42,6 +44,15 @@ thread_local! {
 /// provided by the `AllocError` type.
 pub fn take_last_alloc_error() -> Option<AllocFailure> {
     ALLOC_ERROR.with(|error| error.borrow_mut().take())
+}
+
+/// Identifies which limit was breached when an allocation is rejected.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum AllocScope {
+    /// The global RSS memory limit, shared by every allocation.
+    Global,
+    /// The per-workload memory tracker bound to this allocator.
+    Query,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -60,10 +71,13 @@ pub enum AllocFailure {
         /// The memory tag that was used for the allocation request.
         memory_tag: i32,
 
-        /// The memory limit at the time of the breach.
+        /// Which scope tripped the breach: global or per-query.
+        scope: AllocScope,
+
+        /// The memory limit at the time of the breach (corresponds to `scope`).
         rss_mem_limit: usize,
 
-        /// The memory used at the time of the breach.
+        /// The memory used at the time of the breach (corresponds to `scope`).
         rss_mem_used: usize,
     },
 }
@@ -84,12 +98,19 @@ impl Display for AllocFailure {
             AllocFailure::MemoryLimitExceeded {
                 requested_size,
                 memory_tag,
+                scope,
                 rss_mem_limit,
                 rss_mem_used,
-            } => write!(
-                f,
-                "memory limit exceeded when allocating {requested_size} with tag {memory_tag} (rss used: {rss_mem_used}, rss limit: {rss_mem_limit})",
-            ),
+            } => {
+                let scope_label = match scope {
+                    AllocScope::Global => "global",
+                    AllocScope::Query => "query",
+                };
+                write!(
+                    f,
+                    "{scope_label} memory limit exceeded when allocating {requested_size} with tag {memory_tag} (used: {rss_mem_used}, limit: {rss_mem_limit})",
+                )
+            }
         }
     }
 }
@@ -125,7 +146,7 @@ impl Default for MemTracking {
 }
 
 impl MemTracking {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             rss_mem_used: AtomicUsize::new(0),
             rss_mem_limit: AtomicUsize::new(0),
@@ -144,8 +165,13 @@ impl MemTracking {
 #[cfg(not(test))]
 #[repr(C, packed)]
 pub struct QdbAllocator {
-    /// Global counters
+    /// Global counters.
     pub mem_tracking: *const MemTracking,
+
+    /// Per-workload counters. `null` when the allocator is not bound to a
+    /// per-query memory tracker (the OSS default for table-pool, log, and
+    /// other process-lifetime allocations).
+    pub memory_tracker: *const MemoryTracker,
 
     /// The total memory used for the specific memory tag.
     pub tagged_used: *const AtomicUsize,
@@ -158,6 +184,7 @@ pub struct QdbAllocator {
 #[derive(Clone)]
 pub struct QdbAllocator {
     mem_tracking: Arc<MemTracking>,
+    memory_tracker: Option<Arc<MemoryTracker>>,
     tagged_used: Arc<AtomicUsize>,
     memory_tag: i32,
 }
@@ -170,10 +197,16 @@ const MIN_ALLOC_ALIGNMENT: usize = std::mem::align_of::<u128>();
 impl QdbAllocator {
     pub fn new(
         mem_tracking: *const MemTracking,
+        memory_tracker: *const MemoryTracker,
         tagged_used: *const AtomicUsize,
         memory_tag: i32,
     ) -> Self {
-        Self { mem_tracking, tagged_used, memory_tag }
+        Self {
+            mem_tracking,
+            memory_tracker,
+            tagged_used,
+            memory_tag,
+        }
     }
 
     fn rss_mem_used(&self) -> &AtomicUsize {
@@ -182,6 +215,14 @@ impl QdbAllocator {
 
     fn rss_mem_limit(&self) -> &AtomicUsize {
         unsafe { &(*self.mem_tracking).rss_mem_limit }
+    }
+
+    fn memory_tracker(&self) -> Option<&MemoryTracker> {
+        if self.memory_tracker.is_null() {
+            None
+        } else {
+            Some(unsafe { &*self.memory_tracker })
+        }
     }
 
     fn malloc_count(&self) -> &AtomicUsize {
@@ -211,6 +252,10 @@ impl QdbAllocator {
         &self.mem_tracking.rss_mem_limit
     }
 
+    fn memory_tracker(&self) -> Option<&MemoryTracker> {
+        self.memory_tracker.as_deref()
+    }
+
     fn malloc_count(&self) -> &AtomicUsize {
         &self.mem_tracking.malloc_count
     }
@@ -229,13 +274,18 @@ impl QdbAllocator {
 }
 
 impl QdbAllocator {
-    fn aligned_layout(layout: Layout) -> Layout {
+    fn aligned_layout(layout: Layout) -> Result<Layout, AllocError> {
         let alignment = layout.align().max(MIN_ALLOC_ALIGNMENT);
+        // Raising the alignment lowers the size ceiling Layout permits, so a
+        // request within MIN_ALLOC_ALIGNMENT bytes of isize::MAX is rejected
+        // here. Report it as an allocation failure instead of panicking; a
+        // panic in JNI-called Rust aborts the JVM.
         Layout::from_size_align(layout.size(), alignment)
-            .expect("minimum allocator alignment must remain valid")
+            .map_err(|_| save_oom_err(AllocError, layout.size()))
     }
 
     fn check_alloc_limit(&self, requested_size: usize) -> Result<(), AllocError> {
+        // Global RSS limit first so its diagnostic wins when both are breached.
         let rss_mem_limit = self.rss_mem_limit().load(RSS_ORDERING);
         if rss_mem_limit > 0 {
             let rss_mem_used = self.rss_mem_used().load(RSS_ORDERING);
@@ -245,6 +295,7 @@ impl QdbAllocator {
                     *error.borrow_mut() = Some(AllocFailure::MemoryLimitExceeded {
                         memory_tag: self.memory_tag,
                         requested_size,
+                        scope: AllocScope::Global,
                         rss_mem_limit,
                         rss_mem_used,
                     });
@@ -252,33 +303,120 @@ impl QdbAllocator {
                 return Err(AllocError);
             }
         }
+        // Per-workload limit, only when a tracker is bound. Resolve the tracker once
+        // rather than null-checking it twice for its two counter words.
+        if let Some(tracker) = self.memory_tracker() {
+            let limit = tracker.limit();
+            if limit > 0 {
+                let used = tracker.used();
+                if used.saturating_add(requested_size) > limit {
+                    ALLOC_ERROR.with(|error| {
+                        *error.borrow_mut() = Some(AllocFailure::MemoryLimitExceeded {
+                            memory_tag: self.memory_tag,
+                            requested_size,
+                            scope: AllocScope::Query,
+                            rss_mem_limit: limit,
+                            rss_mem_used: used,
+                        });
+                    });
+                    return Err(AllocError);
+                }
+            }
+        }
         Ok(())
     }
 
-    fn track_allocate(&self, malloced_size: usize) {
+    /// Charges the requested `layout.size()`, not the slice length the allocator
+    /// returned. `deallocate` only ever sees `layout.size()` (the true length is
+    /// not recoverable at free time), so tracking the requested size on both
+    /// sides keeps the counters exactly balanced. An allocator that returns
+    /// excess capacity would otherwise drift `tracker_used` upward forever, and
+    /// a drifted counter makes every later `check_alloc_limit` spuriously fail.
+    /// `check_alloc_limit` already gates on the requested size, so this also
+    /// keeps the limit check and the counter consistent. With std `Global`, which
+    /// returns exactly `layout.size()`, the two are identical anyway.
+    fn track_allocate(&self, requested_size: usize) {
         self.tagged_used()
-            .fetch_add(malloced_size, COUNTER_ORDERING);
+            .fetch_add(requested_size, COUNTER_ORDERING);
         self.rss_mem_used()
-            .fetch_add(malloced_size, COUNTER_ORDERING);
+            .fetch_add(requested_size, COUNTER_ORDERING);
+        if let Some(tracker) = self.memory_tracker() {
+            tracker.charge_unchecked(requested_size);
+        }
         self.malloc_count().fetch_add(1, COUNTER_ORDERING);
     }
 
     fn track_grow(&self, delta: usize) {
         self.tagged_used().fetch_add(delta, COUNTER_ORDERING);
         self.rss_mem_used().fetch_add(delta, COUNTER_ORDERING);
+        if let Some(tracker) = self.memory_tracker() {
+            tracker.charge_unchecked(delta);
+        }
         self.realloc_count().fetch_add(1, COUNTER_ORDERING);
     }
 
     fn track_shrink(&self, delta: usize) {
         self.tagged_used().fetch_sub(delta, COUNTER_ORDERING);
         self.rss_mem_used().fetch_sub(delta, COUNTER_ORDERING);
+        if let Some(tracker) = self.memory_tracker() {
+            let prev = tracker.credit(delta);
+            debug_assert!(
+                prev >= delta,
+                "per-query memory underflow on shrink: used={prev}, delta={delta}"
+            );
+        }
         self.realloc_count().fetch_add(1, COUNTER_ORDERING);
     }
 
     fn track_deallocate(&self, freed_size: usize) {
         self.tagged_used().fetch_sub(freed_size, COUNTER_ORDERING);
         self.rss_mem_used().fetch_sub(freed_size, COUNTER_ORDERING);
+        if let Some(tracker) = self.memory_tracker() {
+            let prev = tracker.credit(freed_size);
+            debug_assert!(
+                prev >= freed_size,
+                "per-query memory underflow on deallocate: used={prev}, delta={freed_size}"
+            );
+        }
         self.free_count().fetch_add(1, COUNTER_ORDERING);
+    }
+
+    /// Charges `bytes` of externally-allocated native memory against the
+    /// per-query tracker after checking the configured limits. Returns an
+    /// error (recording the breach via `take_last_alloc_error`, exactly as a
+    /// rejected `allocate` does) when the per-query or global limit would be
+    /// crossed.
+    ///
+    /// Used for native memory QuestDB allocates outside this allocator yet
+    /// still wants the per-query limit to bound -- notably the Parquet
+    /// VarcharSlice decode `page_buffers`, whose payload bytes are backed by
+    /// the system allocator rather than an `AcVec`. Only the per-query counter
+    /// is adjusted; the RSS and tagged counters are deliberately left untouched
+    /// because the backing allocation is already invisible to them. Every
+    /// successful charge must be balanced by an equal `credit_tracked` once the
+    /// bytes are released, or the per-query counter drifts upward.
+    pub fn charge_tracked(&self, bytes: usize) -> Result<(), AllocError> {
+        if bytes == 0 {
+            return Ok(());
+        }
+        self.check_alloc_limit(bytes)?;
+        if let Some(tracker) = self.memory_tracker() {
+            tracker.charge_unchecked(bytes);
+        }
+        Ok(())
+    }
+
+    /// Releases `bytes` previously reserved with `charge_tracked`, clamping the
+    /// per-query counter at zero on the impossible underflow (see
+    /// [`MemoryTracker::credit`]). The RSS and tagged counters are left
+    /// untouched, mirroring `charge_tracked`.
+    pub fn credit_tracked(&self, bytes: usize) {
+        if bytes == 0 {
+            return;
+        }
+        if let Some(tracker) = self.memory_tracker() {
+            tracker.credit(bytes);
+        }
     }
 }
 
@@ -286,24 +424,29 @@ unsafe impl Allocator for QdbAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         self.check_alloc_limit(layout.size())?;
         let allocated = Global
-            .allocate(Self::aligned_layout(layout))
+            .allocate(Self::aligned_layout(layout)?)
             .map_err(|error| save_oom_err(error, layout.size()))?;
-        self.track_allocate(allocated.len());
+        self.track_allocate(layout.size());
         Ok(allocated)
     }
 
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         self.check_alloc_limit(layout.size())?;
         let allocated = Global
-            .allocate_zeroed(Self::aligned_layout(layout))
+            .allocate_zeroed(Self::aligned_layout(layout)?)
             .map_err(|error| save_oom_err(error, layout.size()))?;
-        self.track_allocate(allocated.len());
+        self.track_allocate(layout.size());
         Ok(allocated)
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        Global.deallocate(ptr, Self::aligned_layout(layout));
-        self.track_deallocate(layout.size());
+        // A live block was accepted by allocate(), so aligned_layout cannot fail
+        // here. Gate on Ok regardless so an impossible failure leaks the block
+        // rather than desyncing the counters or aborting the JVM.
+        if let Ok(aligned) = Self::aligned_layout(layout) {
+            Global.deallocate(ptr, aligned);
+            self.track_deallocate(layout.size());
+        }
     }
 
     unsafe fn grow(
@@ -318,12 +461,11 @@ unsafe impl Allocator for QdbAllocator {
         let allocated = Global
             .grow(
                 ptr,
-                Self::aligned_layout(old_layout),
-                Self::aligned_layout(new_layout),
+                Self::aligned_layout(old_layout)?,
+                Self::aligned_layout(new_layout)?,
             )
             .map_err(|error| save_oom_err(error, delta))?;
-        let true_delta = allocated.len() - old_layout.size();
-        self.track_grow(true_delta);
+        self.track_grow(delta);
         Ok(allocated)
     }
 
@@ -339,12 +481,11 @@ unsafe impl Allocator for QdbAllocator {
         let allocated = Global
             .grow_zeroed(
                 ptr,
-                Self::aligned_layout(old_layout),
-                Self::aligned_layout(new_layout),
+                Self::aligned_layout(old_layout)?,
+                Self::aligned_layout(new_layout)?,
             )
             .map_err(|error| save_oom_err(error, delta))?;
-        let true_delta = allocated.len() - old_layout.size();
-        self.track_grow(true_delta);
+        self.track_grow(delta);
         Ok(allocated)
     }
 
@@ -359,12 +500,11 @@ unsafe impl Allocator for QdbAllocator {
         let allocated = Global
             .shrink(
                 ptr,
-                Self::aligned_layout(old_layout),
-                Self::aligned_layout(new_layout),
+                Self::aligned_layout(old_layout)?,
+                Self::aligned_layout(new_layout)?,
             )
             .map_err(|error| save_oom_err(error, delta))?;
-        let true_delta = old_layout.size() - allocated.len();
-        self.track_shrink(true_delta);
+        self.track_shrink(delta);
         Ok(allocated)
     }
 }
@@ -374,6 +514,7 @@ pub type AcVec<T> = alloc_checked::vec::Vec<T, QdbAllocator>;
 #[cfg(test)]
 pub struct TestAllocatorState {
     mem_tracking: Arc<MemTracking>,
+    memory_tracker: Option<Arc<MemoryTracker>>,
     tagged_used: Arc<AtomicUsize>,
 }
 
@@ -398,12 +539,19 @@ impl TestAllocatorState {
 
         let tagged_used = Arc::new(AtomicUsize::new(0));
 
-        Self { mem_tracking, tagged_used }
+        Self { mem_tracking, memory_tracker: None, tagged_used }
+    }
+
+    /// Attaches a per-query memory tracker to subsequent `allocator()` calls.
+    pub fn with_memory_tracker(mut self) -> Self {
+        self.memory_tracker = Some(Arc::new(MemoryTracker::new()));
+        self
     }
 
     pub fn allocator(&self) -> QdbAllocator {
         QdbAllocator {
             mem_tracking: self.mem_tracking.clone(),
+            memory_tracker: self.memory_tracker.clone(),
             tagged_used: self.tagged_used.clone(),
             memory_tag: 65,
         }
@@ -421,6 +569,20 @@ impl TestAllocatorState {
         self.mem_tracking
             .rss_mem_limit
             .store(limit, Ordering::SeqCst);
+    }
+
+    pub fn tracker_used(&self) -> usize {
+        self.memory_tracker.as_ref().map(|t| t.used()).unwrap_or(0)
+    }
+
+    pub fn tracker_limit(&self) -> usize {
+        self.memory_tracker.as_ref().map(|t| t.limit()).unwrap_or(0)
+    }
+
+    pub fn set_tracker_limit(&self, limit: usize) {
+        if let Some(t) = self.memory_tracker.as_ref() {
+            t.set_limit(limit);
+        }
     }
 
     pub fn malloc_count(&self) -> usize {
@@ -442,7 +604,7 @@ impl TestAllocatorState {
 
 #[cfg(test)]
 mod tests {
-    use crate::allocator::{take_last_alloc_error, AllocFailure, TestAllocatorState};
+    use crate::allocator::{take_last_alloc_error, AllocFailure, AllocScope, TestAllocatorState};
     use rand::rngs::StdRng;
     use rand::{RngExt, SeedableRng};
     use std::alloc::Allocator;
@@ -487,6 +649,57 @@ mod tests {
     }
 
     #[test]
+    fn test_alloc_rejects_layout_that_overflows_min_alignment() {
+        // A layout valid at align 1 whose size, raised to the 16-byte minimum
+        // alignment, would exceed isize::MAX. aligned_layout must surface this
+        // as an allocation failure instead of panicking (which would abort the
+        // JVM under JNI). The request is rejected before any real allocation.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        take_last_alloc_error();
+
+        let layout = std::alloc::Layout::from_size_align(isize::MAX as usize, 1).unwrap();
+        let result = allocator.allocate(layout);
+        assert!(result.is_err());
+
+        let last_err = take_last_alloc_error().unwrap();
+        assert!(matches!(
+            last_err,
+            AllocFailure::OutOfMemory { requested_size } if requested_size == isize::MAX as usize
+        ));
+        assert_eq!(tas.malloc_count(), 0);
+        assert_eq!(tas.rss_mem_used(), 0);
+    }
+
+    #[test]
+    fn test_grow_rejects_layout_that_overflows_min_alignment() {
+        // The same overflow as the allocate case, but on the grow path: a
+        // failed grow must reject gracefully and leave the original block
+        // intact for the caller to keep using or free.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let layout = std::alloc::Layout::from_size_align(64, 1).unwrap();
+        let allocation = allocator.allocate(layout).unwrap();
+        let ptr = NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
+        assert_eq!(tas.tagged_used(), 64);
+        take_last_alloc_error();
+
+        let new_layout = std::alloc::Layout::from_size_align(isize::MAX as usize, 1).unwrap();
+        let result = unsafe { allocator.grow(ptr, layout, new_layout) };
+        assert!(result.is_err());
+        assert!(matches!(
+            take_last_alloc_error().unwrap(),
+            AllocFailure::OutOfMemory { .. }
+        ));
+
+        // The original block is untouched and still ours to free.
+        assert_eq!(tas.tagged_used(), 64);
+        unsafe { allocator.deallocate(ptr, layout) };
+        assert_eq!(tas.tagged_used(), 0);
+    }
+
+    #[test]
     fn test_alloc_with_limit() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -527,6 +740,7 @@ mod tests {
                 AllocFailure::MemoryLimitExceeded {
                     requested_size: 2048,
                     memory_tag: 65,
+                    scope: AllocScope::Global,
                     rss_mem_limit: 1024,
                     rss_mem_used: 0,
                 }
@@ -535,6 +749,194 @@ mod tests {
             assert_eq!(tas.realloc_count(), 0);
             assert_eq!(tas.free_count(), 1);
         }
+    }
+
+    #[test]
+    fn test_alloc_with_per_query_limit() {
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        let allocator = tas.allocator();
+
+        // No global RSS limit, only the per-query one.
+        tas.set_tracker_limit(1024);
+
+        assert_eq!(tas.tracker_limit(), 1024);
+        assert_eq!(tas.tracker_used(), 0);
+        assert_eq!(tas.rss_mem_used(), 0);
+
+        // 64 bytes: both counters update.
+        {
+            let layout = std::alloc::Layout::from_size_align(64, 16).unwrap();
+            let allocation = allocator.allocate(layout).unwrap();
+            assert_eq!(tas.tagged_used(), 64);
+            assert_eq!(tas.rss_mem_used(), 64);
+            assert_eq!(tas.tracker_used(), 64);
+
+            let allocation = NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
+            unsafe { allocator.deallocate(allocation, layout) };
+            assert_eq!(tas.tracker_used(), 0);
+            assert_eq!(tas.rss_mem_used(), 0);
+        }
+
+        // Over the per-query limit: discriminator must be `Query`.
+        {
+            let layout = std::alloc::Layout::from_size_align(2048, 16).unwrap();
+            let result = allocator.allocate(layout);
+            assert!(result.is_err());
+            let last_err = take_last_alloc_error().unwrap();
+            assert!(matches!(
+                last_err,
+                AllocFailure::MemoryLimitExceeded {
+                    requested_size: 2048,
+                    memory_tag: 65,
+                    scope: AllocScope::Query,
+                    rss_mem_limit: 1024,
+                    rss_mem_used: 0,
+                }
+            ));
+            // Counters are not advanced on a rejected allocation.
+            assert_eq!(tas.tracker_used(), 0);
+            assert_eq!(tas.rss_mem_used(), 0);
+        }
+    }
+
+    #[test]
+    fn test_alloc_with_both_limits_global_trips_first() {
+        // Both limits set; the global one trips before the per-query one,
+        // so the discriminator must say `Global`.
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        let allocator = tas.allocator();
+        tas.set_mem_rss_limit(512);
+        tas.set_tracker_limit(8192);
+
+        let layout = std::alloc::Layout::from_size_align(1024, 16).unwrap();
+        let result = allocator.allocate(layout);
+        assert!(result.is_err());
+        let last_err = take_last_alloc_error().unwrap();
+        assert!(matches!(
+            last_err,
+            AllocFailure::MemoryLimitExceeded { scope: AllocScope::Global, rss_mem_limit: 512, .. }
+        ));
+    }
+
+    #[test]
+    fn test_alloc_at_per_query_limit_succeeds() {
+        // Exactly at the limit boundary: must succeed.
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        let allocator = tas.allocator();
+        tas.set_tracker_limit(1024);
+
+        let layout = std::alloc::Layout::from_size_align(1024, 16).unwrap();
+        let allocation = allocator.allocate(layout).unwrap();
+        // The allocator may give slightly more than requested due to alignment;
+        // tracker_used reflects what we actually got back.
+        assert!(tas.tracker_used() >= 1024);
+
+        let allocation = NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
+        unsafe { allocator.deallocate(allocation, layout) };
+        assert_eq!(tas.tracker_used(), 0);
+    }
+
+    #[test]
+    fn test_grow_with_per_query_limit() {
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        let allocator = tas.allocator();
+        tas.set_tracker_limit(256);
+
+        // 64 bytes, fits.
+        let layout1 = std::alloc::Layout::from_size_align(64, 16).unwrap();
+        let allocation1 = allocator.allocate(layout1).unwrap();
+        let used_after_alloc = tas.tracker_used();
+        assert!((64..=128).contains(&used_after_alloc));
+
+        // Grow to 128 bytes, still fits.
+        let allocation1 = NonNull::new(allocation1.as_ptr() as *mut u8).unwrap();
+        let layout2 = std::alloc::Layout::from_size_align(128, 16).unwrap();
+        let allocation2 = unsafe { allocator.grow(allocation1, layout1, layout2).unwrap() };
+        let used_after_grow = tas.tracker_used();
+        assert!(used_after_grow >= 128);
+
+        // Shrink to 96 bytes, per-query counter decreases.
+        let allocation2 = NonNull::new(allocation2.as_ptr() as *mut u8).unwrap();
+        let layout3 = std::alloc::Layout::from_size_align(96, 16).unwrap();
+        let allocation3 = unsafe { allocator.shrink(allocation2, layout2, layout3).unwrap() };
+        assert!(tas.tracker_used() < used_after_grow);
+
+        // Try to grow well past the limit: must reject and leave the block intact.
+        let allocation3 = NonNull::new(allocation3.as_ptr() as *mut u8).unwrap();
+        let layout_huge = std::alloc::Layout::from_size_align(4096, 16).unwrap();
+        let used_before_breach = tas.tracker_used();
+        let rss_before_breach = tas.rss_mem_used();
+        let result = unsafe { allocator.grow(allocation3, layout3, layout_huge) };
+        assert!(result.is_err());
+        let last_err = take_last_alloc_error().unwrap();
+        assert!(matches!(
+            last_err,
+            AllocFailure::MemoryLimitExceeded { scope: AllocScope::Query, .. }
+        ));
+        // Counters unchanged on rejected grow.
+        assert_eq!(tas.tracker_used(), used_before_breach);
+        assert_eq!(tas.rss_mem_used(), rss_before_breach);
+
+        // Original allocation is still valid: the caller still owns it.
+        unsafe { allocator.deallocate(allocation3, layout3) };
+        assert_eq!(tas.tracker_used(), 0);
+        assert_eq!(tas.rss_mem_used(), 0);
+    }
+
+    #[test]
+    fn test_charge_tracked_only_touches_per_query_counter() {
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        let allocator = tas.allocator();
+        tas.set_tracker_limit(1024);
+
+        // A charge adjusts only the per-query counter; RSS and tagged counters
+        // stay put because the backing bytes are allocated outside this allocator.
+        allocator.charge_tracked(512).unwrap();
+        assert_eq!(tas.tracker_used(), 512);
+        assert_eq!(tas.rss_mem_used(), 0);
+        assert_eq!(tas.tagged_used(), 0);
+
+        // Crossing the limit is rejected and leaves the counter unchanged.
+        let result = allocator.charge_tracked(1024);
+        assert!(result.is_err());
+        assert!(matches!(
+            take_last_alloc_error().unwrap(),
+            AllocFailure::MemoryLimitExceeded { scope: AllocScope::Query, .. }
+        ));
+        assert_eq!(tas.tracker_used(), 512);
+
+        // A credit releases the charge symmetrically.
+        allocator.credit_tracked(512);
+        assert_eq!(tas.tracker_used(), 0);
+
+        // Zero-byte charge/credit are no-ops on every counter.
+        allocator.charge_tracked(0).unwrap();
+        allocator.credit_tracked(0);
+        assert_eq!(tas.tracker_used(), 0);
+        assert_eq!(tas.rss_mem_used(), 0);
+    }
+
+    #[test]
+    fn test_charge_tracked_without_tracker_checks_global_limit() {
+        // No per-query tracker bound: charge_tracked still honors the global RSS
+        // limit and degrades to a no-op on the (absent) per-query counter.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        tas.set_mem_rss_limit(1024);
+
+        // The global counter is not mutated, so the check compares the request
+        // against the bare limit; 2048 > 1024 is rejected.
+        let result = allocator.charge_tracked(2048);
+        assert!(result.is_err());
+        assert!(matches!(
+            take_last_alloc_error().unwrap(),
+            AllocFailure::MemoryLimitExceeded { scope: AllocScope::Global, .. }
+        ));
+
+        // Under the global limit: accepted, and no counter moves (no tracker).
+        allocator.charge_tracked(512).unwrap();
+        assert_eq!(tas.rss_mem_used(), 0);
+        allocator.credit_tracked(512);
     }
 
     #[test]
@@ -596,7 +998,10 @@ mod tests {
 
     #[test]
     fn test_parallel() {
-        let tas = TestAllocatorState::new();
+        // Attach a per-query tracker so the concurrent run also exercises the
+        // tracker_used counter (its fetch_add/fetch_sub on every alloc and free).
+        // The limit stays 0 (unlimited), so no allocation is rejected.
+        let tas = TestAllocatorState::new().with_memory_tracker();
         let allocator = tas.allocator();
 
         #[cfg(miri)]
@@ -755,6 +1160,7 @@ mod tests {
 
         assert_eq!(tas.rss_mem_used(), 0);
         assert_eq!(tas.tagged_used(), 0);
+        assert_eq!(tas.tracker_used(), 0);
         assert_eq!(tas.malloc_count(), total_allocs);
         assert_eq!(tas.realloc_count(), total_reallocs);
         assert_eq!(tas.free_count(), total_allocs);

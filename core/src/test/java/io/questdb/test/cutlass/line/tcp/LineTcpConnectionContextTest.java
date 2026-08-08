@@ -1853,10 +1853,9 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleIO();
             closeContext();
 
-            assertSql(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n",
-                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
-            );
+            assertQuery("select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()")
+                    .noLeakCheck()
+                    .returnsOnce("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n");
             execute("create table vbw(a int)");
         });
     }
@@ -2243,7 +2242,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                       "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\t" + emptyValue + "\n" +
                       "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400200Z\t" + tableValue + "\n";
             try (
-                    TableReader reader = newOffPoolReader(configuration, table);
+                    TableReader reader = engine.getReader(table);
                     TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
             ) {
                 assertCursorTwoPass(expected, cursor, reader.getMetadata());

@@ -356,12 +356,12 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                                     && TableUtils.exists(ff, path, configuration.getDbRoot(), dirNameSink) == TableUtils.TABLE_EXISTS
                     ) {
                         int tableId;
-                        boolean isWal;
+                        boolean isWalTable;
                         String tableName;
 
                         try {
                             tableId = readTableId(path, dirName, ff);
-                            isWal = tableId < 0;
+                            isWalTable = tableId < 0;
                             tableId = Math.abs(tableId);
                             tableName = TableUtils.readTableName(path.of(configuration.getDbRoot()).concat(dirNameSink), plimit, tableNameRoMemory, ff);
                         } catch (CairoException e) {
@@ -384,19 +384,28 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             boolean isProtected = tableFlagResolver.isProtected(tableName);
                             boolean isSystem = tableFlagResolver.isSystem(tableName);
                             boolean isPublic = tableFlagResolver.isPublic(tableName);
-                            boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
-                            boolean isView = isViewDefinitionFileExists(configuration, path, dirName);
+                            TableToken.Type type = isLiveViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.LIVE_VIEW
+                                    : isMatViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.MAT_VIEW
+                                      : isViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.VIEW
+                                        : TableToken.Type.TABLE;
+                            boolean isWal = isWalTable || type.isImplicitlyWal();
                             String dbLogName = configuration.getDbLogName();
-                            TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+                            TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
                             TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
 
                             if (existingTableToken != null) {
                                 // One of the tables can be in pending drop state.
                                 if (!resolveTableNameConflict(tableNameToTableTokenMap, dirNameToTableTokenMap, token, existingTableToken, ff, path, plimit)) {
+                                    // evaluate before acquiring the log ring slot: conflict resolution may have
+                                    // removed the mapping, and a throwing argument would leak the slot
+                                    TableToken conflictingToken = tableNameToTableTokenMap.get(tableName);
+                                    if (conflictingToken == null) {
+                                        conflictingToken = existingTableToken;
+                                    }
                                     LOG.critical().$("duplicate table name found, table will not be available [dirName=").$(dirNameSink)
                                             .$(", name=").$safe(tableName)
                                             .$(", existingTableDir=")
-                                            .$(tableNameToTableTokenMap.get(tableName).getDirNameUtf8())
+                                            .$(conflictingToken.getDirNameUtf8())
                                             .I$();
                                 }
                                 continue;
@@ -474,7 +483,21 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             currentOffset += Integer.BYTES;
 
             if (operation == OPERATION_REMOVE) {
-                TableToken token = tableNameToTableTokenMap.remove(tableName);
+                // Release the logical name only if it still resolves to THIS dropped dir. A table rebase
+                // (ALTER TABLE ... REBASE WAL) logs DROP(oldDir) before ADD(newDir) under the SAME logical
+                // name (rebaseWalTable0 calls dropTable then registerName). A clean full replay therefore
+                // sees DROP(oldDir) while the name still maps to oldDir and releases it correctly; but if a
+                // reload observes the name already repointed to a different live dir (records split across an
+                // incremental reload, or a recreate under the same name), an unconditional remove(tableName)
+                // here would clobber that live dir's mapping and leave the forward/reverse maps inconsistent
+                // (reloadFromRootDirectory then skips the dir because it is already in the reverse map, so
+                // the name is never restored).
+                TableToken token = tableNameToTableTokenMap.get(tableName);
+                if (token != null && Chars.equals(token.getDirName(), dirName)) {
+                    tableNameToTableTokenMap.remove(tableName);
+                } else {
+                    token = null;
+                }
                 if (!ff.exists(path.trimTo(plimit).concat(dirName).$())) {
                     // table already fully removed
                     tableToCompact++;
@@ -484,11 +507,10 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                         boolean isProtected = tableFlagResolver.isProtected(tableName);
                         boolean isSystem = tableFlagResolver.isSystem(tableName);
                         boolean isPublic = tableFlagResolver.isPublic(tableName);
-                        boolean isView = tableType == TABLE_TYPE_VIEW;
-                        boolean isMatView = tableType == TABLE_TYPE_MAT;
-                        boolean isWal = tableType == TABLE_TYPE_WAL || isView || isMatView;
+                        TableToken.Type type = tableTypeOf(tableType);
+                        boolean isWal = tableType == TABLE_TYPE_WAL || type.isImplicitlyWal();
                         String dbLogName = configuration.getDbLogName();
-                        token = new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+                        token = new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
                     }
                     dirNameToTableTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));
                 }
@@ -514,11 +536,10 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     boolean isProtected = tableFlagResolver.isProtected(tableName);
                     boolean isSystem = tableFlagResolver.isSystem(tableName);
                     boolean isPublic = tableFlagResolver.isPublic(tableName);
-                    boolean isView = tableType == TABLE_TYPE_VIEW;
-                    boolean isMatView = tableType == TableUtils.TABLE_TYPE_MAT;
-                    boolean isWal = tableType == TableUtils.TABLE_TYPE_WAL || isView || isMatView;
+                    TableToken.Type type = tableTypeOf(tableType);
+                    boolean isWal = tableType == TABLE_TYPE_WAL || type.isImplicitlyWal();
                     String dbLogName = configuration.getDbLogName();
-                    final TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+                    final TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
                     tableNameToTableTokenMap.put(tableName, token);
                     if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                         // This table is renamed, log system to real table name mapping

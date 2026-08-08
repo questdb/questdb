@@ -144,6 +144,11 @@ public class MetricsTest {
             delegate.addTarget(target);
         }
 
+        @Override
+        public void removeTarget(Target target) {
+            delegate.removeTarget(target);
+        }
+
         public Set<CharSequence> getLabelNames() {
             return labelNames;
         }

@@ -138,13 +138,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            arr
-                            [[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]
-                            """,
-                    "SELECT arr FROM qwp_udp_array_exec"
-            );
+            assertQuery("SELECT arr FROM qwp_udp_array_exec")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    arr
+                                    [[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]
+                                    """
+                    );
         });
     }
 
@@ -162,13 +163,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            arr
-                            [[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]
-                            """,
-                    "SELECT arr FROM qwp_udp_array_new_table"
-            );
+            assertQuery("SELECT arr FROM qwp_udp_array_new_table")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    arr
+                                    [[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]
+                                    """
+                    );
         });
     }
 
@@ -191,24 +193,25 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n20\n",
-                    "SELECT count() FROM auto_many_types"
-            );
-            assertSql(
-                    """
-                            host\tid\ttemp\tnote
-                            srv-0\t0\t20.0\trow-0
-                            """,
-                    "SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp LIMIT 1"
-            );
-            assertSql(
-                    """
-                            host\tid\ttemp\tnote
-                            srv-1\t19\t21.9\trow-19
-                            """,
-                    "SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp DESC LIMIT 1"
-            );
+            assertQuery("SELECT count() FROM auto_many_types")
+                    .noLeakCheck()
+                    .returnsOnce("count\n20\n");
+            assertQuery("SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp LIMIT 1")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    host\tid\ttemp\tnote
+                                    srv-0\t0\t20.0\trow-0
+                                    """
+                    );
+            assertQuery("SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp DESC LIMIT 1")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    host\tid\ttemp\tnote
+                                    srv-1\t19\t21.9\trow-19
+                                    """
+                    );
         });
     }
 
@@ -229,13 +232,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            count\tsum_id\tmin_id\tmax_id
-                            100\t4950\t0\t99
-                            """,
-                    "SELECT count(), sum(id) AS sum_id, min(id) AS min_id, max(id) AS max_id FROM auto_splits"
-            );
+            assertQuery("SELECT count(), sum(id) AS sum_id, min(id) AS min_id, max(id) AS max_id FROM auto_splits")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    count\tsum_id\tmin_id\tmax_id
+                                    100\t4950\t0\t99
+                                    """
+                    );
         });
     }
 
@@ -302,10 +306,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n50\n",
-                    "SELECT count() FROM auto_small"
-            );
+            assertQuery("SELECT count() FROM auto_small")
+                    .noLeakCheck()
+                    .returnsOnce("count\n50\n");
         });
     }
 
@@ -325,21 +328,20 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            min_val\tmax_val
-                            0.0\t122.5
-                            """,
-                    "SELECT min(value) AS min_val, max(value) AS max_val FROM auto_values"
-            );
-            assertSql(
-                    "value\n0.0\n",
-                    "SELECT value FROM auto_values ORDER BY timestamp LIMIT 1"
-            );
-            assertSql(
-                    "value\n122.5\n",
-                    "SELECT value FROM auto_values ORDER BY timestamp DESC LIMIT 1"
-            );
+            assertQuery("SELECT min(value) AS min_val, max(value) AS max_val FROM auto_values")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    min_val\tmax_val
+                                    0.0\t122.5
+                                    """
+                    );
+            assertQuery("SELECT value FROM auto_values ORDER BY timestamp LIMIT 1")
+                    .noLeakCheck()
+                    .returnsOnce("value\n0.0\n");
+            assertQuery("SELECT value FROM auto_values ORDER BY timestamp DESC LIMIT 1")
+                    .noLeakCheck()
+                    .returnsOnce("value\n122.5\n");
         });
     }
 
@@ -360,13 +362,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            count\tmin_id\tmax_id
-                            30\t0\t29
-                            """,
-                    "SELECT count(), min(id) AS min_id, max(id) AS max_id FROM auto_at_now"
-            );
+            assertQuery("SELECT count(), min(id) AS min_id, max(id) AS max_id FROM auto_at_now")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    count\tmin_id\tmax_id
+                                    30\t0\t29
+                                    """
+                    );
         });
     }
 
@@ -390,10 +393,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n50\n",
-                    "SELECT count() FROM auto_string"
-            );
+            assertQuery("SELECT count() FROM auto_string")
+                    .noLeakCheck()
+                    .returnsOnce("count\n50\n");
         });
     }
 
@@ -417,10 +419,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n50\n",
-                    "SELECT count() FROM auto_sym"
-            );
+            assertQuery("SELECT count() FROM auto_sym")
+                    .noLeakCheck()
+                    .returnsOnce("count\n50\n");
         });
     }
 
@@ -452,13 +453,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            count\tmax_id
-                            11\t10
-                            """,
-                    "SELECT count(), max(id) AS max_id FROM cancel_after_af"
-            );
+            assertQuery("SELECT count(), max(id) AS max_id FROM cancel_after_af")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    count\tmax_id
+                                    11\t10
+                                    """
+                    );
         });
     }
 
@@ -486,14 +488,15 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            id
-                            1
-                            3
-                            """,
-                    "SELECT id FROM cancel_between ORDER BY timestamp"
-            );
+            assertQuery("SELECT id FROM cancel_between ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    id
+                                    1
+                                    3
+                                    """
+                    );
         });
     }
 
@@ -518,13 +521,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            id\tnote
-                            1\tkeep me
-                            """,
-                    "SELECT id, note FROM cancel_partial ORDER BY timestamp"
-            );
+            assertQuery("SELECT id, note FROM cancel_partial ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    id\tnote
+                                    1\tkeep me
+                                    """
+                    );
         });
     }
 
@@ -545,10 +549,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "id\n1\n",
-                    "SELECT id FROM cancel_noop"
-            );
+            assertQuery("SELECT id FROM cancel_noop")
+                    .noLeakCheck()
+                    .returnsOnce("id\n1\n");
         });
     }
 
@@ -571,10 +574,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM close_flush"
-            );
+            assertQuery("SELECT count() FROM close_flush")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
         });
     }
 
@@ -608,12 +610,16 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                 }
                 Assert.assertTrue("receiver did not process the datagram", received);
                 drainWalQueue();
-                assertSql("count\n0\n", "SELECT count() FROM timer_commit");
+                assertQuery("SELECT count() FROM timer_commit")
+                        .noLeakCheck()
+                        .returnsOnce("count\n0\n");
 
                 TestUtils.assertEventually(() -> {
                     receiver.runSerially();
                     drainWalQueue();
-                    assertSql("count\n1\n", "SELECT count() FROM timer_commit");
+                    assertQuery("SELECT count() FROM timer_commit")
+                            .noLeakCheck()
+                            .returnsOnce("count\n1\n");
                 }, 5);
             }
         });
@@ -647,27 +653,35 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             execute("create table datagram_trigger_reset (ts timestamp, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=2, o3MaxLag=1s");
 
             try (InspectingQwpUdpReceiver receiver = new InspectingQwpUdpReceiver(conf, engine)) {
-                sendSingleRow("datagram_trigger_reset", 1L, 1_000_000L);
+                sendSingleRow(1L, 1_000_000L);
                 drainReceiver(receiver);
                 drainWalQueue();
-                assertSql("count\n0\n", "SELECT count() FROM datagram_trigger_reset");
+                assertQuery("SELECT count() FROM datagram_trigger_reset")
+                        .noLeakCheck()
+                        .returnsOnce("count\n0\n");
                 Assert.assertEquals(1, receiver.getTotalCount());
 
-                sendSingleRow("datagram_trigger_reset", 2L, 2_000_000L);
+                sendSingleRow(2L, 2_000_000L);
                 drainReceiver(receiver);
                 drainWalQueue();
-                assertSql("count\n2\n", "SELECT count() FROM datagram_trigger_reset");
+                assertQuery("SELECT count() FROM datagram_trigger_reset")
+                        .noLeakCheck()
+                        .returnsOnce("count\n2\n");
                 Assert.assertEquals(0, receiver.getTotalCount());
 
-                sendSingleRow("datagram_trigger_reset", 3L, 3_000_000L);
+                sendSingleRow(3L, 3_000_000L);
                 drainReceiver(receiver);
                 drainWalQueue();
-                assertSql("count\n2\n", "SELECT count() FROM datagram_trigger_reset");
+                assertQuery("SELECT count() FROM datagram_trigger_reset")
+                        .noLeakCheck()
+                        .returnsOnce("count\n2\n");
                 Assert.assertEquals(1, receiver.getTotalCount());
             }
 
             drainWalQueue();
-            assertSql("count\n3\n", "SELECT count() FROM datagram_trigger_reset");
+            assertQuery("SELECT count() FROM datagram_trigger_reset")
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
         });
     }
 
@@ -687,10 +701,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "ts\n1970-01-01T00:00:01.000000Z\n",
-                    "SELECT * FROM qwp_udp_array_deferred_schema_mismatch"
-            );
+            assertQuery("SELECT * FROM qwp_udp_array_deferred_schema_mismatch")
+                    .noLeakCheck()
+                    .returnsOnce("ts\n1970-01-01T00:00:01.000000Z\n");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -703,10 +716,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "arr\nnull\n[1.0,2.0]\n",
-                    "SELECT arr FROM qwp_udp_array_deferred_schema_mismatch ORDER BY ts"
-            );
+            assertQuery("SELECT arr FROM qwp_udp_array_deferred_schema_mismatch ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("arr\nnull\n[1.0,2.0]\n");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -719,11 +731,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql("count\n2\n", "SELECT count() FROM qwp_udp_array_deferred_schema_mismatch");
-            assertSql(
-                    "arr\nnull\n[1.0,2.0]\n",
-                    "SELECT arr FROM qwp_udp_array_deferred_schema_mismatch ORDER BY ts"
-            );
+            assertQuery("SELECT count() FROM qwp_udp_array_deferred_schema_mismatch")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
+            assertQuery("SELECT arr FROM qwp_udp_array_deferred_schema_mismatch ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("arr\nnull\n[1.0,2.0]\n");
         });
     }
 
@@ -743,11 +756,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql("count\n0\n", "SELECT count() FROM qwp_udp_array_schema_mismatch");
-            assertSql(
-                    "column\narr\nts\n",
-                    "SELECT \"column\" FROM table_columns('qwp_udp_array_schema_mismatch') ORDER BY \"column\""
-            );
+            assertQuery("SELECT count() FROM qwp_udp_array_schema_mismatch")
+                    .noLeakCheck()
+                    .returnsOnce("count\n0\n");
+            assertQuery("SELECT \"column\" FROM table_columns('qwp_udp_array_schema_mismatch') ORDER BY \"column\"")
+                    .noLeakCheck()
+                    .returnsOnce("column\narr\nts\n");
         });
     }
 
@@ -767,10 +781,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\tsum\n20\t190\n",
-                    "SELECT count(), sum(v) FROM low_commit"
-            );
+            assertQuery("SELECT count(), sum(v) FROM low_commit")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n20\t190\n");
         });
     }
 
@@ -793,16 +806,21 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql("count\n0\n", "SELECT count() FROM qwp_udp_array_mixed_dims");
-            assertSql(
-                    """
-                            column
-                            ts
-                            """,
+            assertQuery("SELECT count() FROM qwp_udp_array_mixed_dims")
+                    .noLeakCheck()
+                    .returnsOnce("count\n0\n");
+            assertQuery(
                     """
                             SELECT "column" FROM table_columns('qwp_udp_array_mixed_dims') ORDER BY "column"
                             """
-            );
+            )
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    column
+                                    ts
+                                    """
+                    );
         });
     }
 
@@ -823,10 +841,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
-                    "SELECT arr FROM qwp_udp_array_mixed_batch_new_table ORDER BY timestamp"
-            );
+            assertQuery("SELECT arr FROM qwp_udp_array_mixed_batch_new_table ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n");
         });
     }
 
@@ -849,10 +866,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
-                    "SELECT arr FROM qwp_udp_array_mixed_batch_existing ORDER BY ts"
-            );
+            assertQuery("SELECT arr FROM qwp_udp_array_mixed_batch_existing ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n");
         });
     }
 
@@ -872,10 +888,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\tsum\n10\t450\n",
-                    "SELECT count(), sum(value) FROM multi_row"
-            );
+            assertQuery("SELECT count(), sum(value) FROM multi_row")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n10\t450\n");
         });
     }
 
@@ -900,14 +915,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n3\n",
-                    "SELECT count() FROM table_a"
-            );
-            assertSql(
-                    "count\n5\n",
-                    "SELECT count() FROM table_b"
-            );
+            assertQuery("SELECT count() FROM table_a")
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
+            assertQuery("SELECT count() FROM table_b")
+                    .noLeakCheck()
+                    .returnsOnce("count\n5\n");
         });
     }
 
@@ -930,20 +943,22 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            region\ttemp
-                            us-east\t22.5
-                            """,
-                    "SELECT region, temp FROM schema_a"
-            );
-            assertSql(
-                    """
-                            count\tlabel
-                            42\talpha
-                            """,
-                    "SELECT count, label FROM schema_b"
-            );
+            assertQuery("SELECT region, temp FROM schema_a")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    region\ttemp
+                                    us-east\t22.5
+                                    """
+                    );
+            assertQuery("SELECT count, label FROM schema_b")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    count\tlabel
+                                    42\talpha
+                                    """
+                    );
         });
     }
 
@@ -970,22 +985,24 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            x
-                            1
-                            2
-                            """,
-                    "SELECT x FROM interleave_a ORDER BY timestamp"
-            );
-            assertSql(
-                    """
-                            y
-                            10
-                            20
-                            """,
-                    "SELECT y FROM interleave_b ORDER BY timestamp"
-            );
+            assertQuery("SELECT x FROM interleave_a ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    x
+                                    1
+                                    2
+                                    """
+                    );
+            assertQuery("SELECT y FROM interleave_b ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    y
+                                    10
+                                    20
+                                    """
+                    );
         });
     }
 
@@ -1014,14 +1031,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\tsum\n2\t3\n",
-                    "SELECT count(), sum(v) FROM sep_flush_a"
-            );
-            assertSql(
-                    "count\tsum\n2\t30\n",
-                    "SELECT count(), sum(v) FROM sep_flush_b"
-            );
+            assertQuery("SELECT count(), sum(v) FROM sep_flush_a")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n2\t3\n");
+            assertQuery("SELECT count(), sum(v) FROM sep_flush_b")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n2\t30\n");
         });
     }
 
@@ -1046,18 +1061,18 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            x
-                            1
-                            2
-                            """,
-                    "SELECT x FROM switchback_a ORDER BY timestamp"
-            );
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM switchback_b"
-            );
+            assertQuery("SELECT x FROM switchback_a ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    x
+                                    1
+                                    2
+                                    """
+                    );
+            assertQuery("SELECT count() FROM switchback_b")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -1088,10 +1103,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\tsum\n3\t6\n",
-                    "SELECT count(), sum(v) FROM multi_dgram"
-            );
+            assertQuery("SELECT count(), sum(v) FROM multi_dgram")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n3\t6\n");
         });
     }
 
@@ -1109,10 +1123,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "timestamp\n1970-01-01T00:00:01.000000Z\n",
-                    "SELECT * FROM qwp_udp_array_new_table_deferred"
-            );
+            assertQuery("SELECT * FROM qwp_udp_array_new_table_deferred")
+                    .noLeakCheck()
+                    .returnsOnce("timestamp\n1970-01-01T00:00:01.000000Z\n");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -1125,10 +1138,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
-                    "SELECT arr FROM qwp_udp_array_new_table_deferred ORDER BY timestamp"
-            );
+            assertQuery("SELECT arr FROM qwp_udp_array_new_table_deferred ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n");
         });
     }
 
@@ -1148,10 +1160,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "ts\n1970-01-01T00:00:01.000000Z\n",
-                    "SELECT * FROM qwp_udp_array_deferred"
-            );
+            assertQuery("SELECT * FROM qwp_udp_array_deferred")
+                    .noLeakCheck()
+                    .returnsOnce("ts\n1970-01-01T00:00:01.000000Z\n");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -1164,10 +1175,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
-                    "SELECT arr FROM qwp_udp_array_deferred ORDER BY ts"
-            );
+            assertQuery("SELECT arr FROM qwp_udp_array_deferred ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n");
         });
     }
 
@@ -1196,15 +1206,16 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            id\tnote
-                            1\thello
-                            2\t
-                            3\tworld
-                            """,
-                    "SELECT id, note FROM nullable_test ORDER BY timestamp"
-            );
+            assertQuery("SELECT id, note FROM nullable_test ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    id\tnote
+                                    1\thello
+                                    2\t
+                                    3\tworld
+                                    """
+                    );
         });
     }
 
@@ -1230,15 +1241,16 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            id\ttemperature
-                            1\t36.6
-                            2\tnull
-                            3\t38.1
-                            """,
-                    "SELECT id, temperature FROM nullable_double ORDER BY timestamp"
-            );
+            assertQuery("SELECT id, temperature FROM nullable_double ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    id\ttemperature
+                                    1\t36.6
+                                    2\tnull
+                                    3\t38.1
+                                    """
+                    );
         });
     }
 
@@ -1264,15 +1276,16 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            id\tcount
-                            1\t100
-                            2\tnull
-                            3\t300
-                            """,
-                    "SELECT id, count FROM nullable_long ORDER BY timestamp"
-            );
+            assertQuery("SELECT id, count FROM nullable_long ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    id\tcount
+                                    1\t100
+                                    2\tnull
+                                    3\t300
+                                    """
+                    );
         });
     }
 
@@ -1291,13 +1304,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            host\tusage\ttimestamp
-                            srv-1\t73.2\t1970-01-01T00:00:01.000000Z
-                            """,
-                    "SELECT * FROM single_row"
-            );
+            assertQuery("SELECT * FROM single_row")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    host\tusage\ttimestamp
+                                    srv-1\t73.2\t1970-01-01T00:00:01.000000Z
+                                    """
+                    );
         });
     }
 
@@ -1318,14 +1332,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n5\n",
-                    "SELECT count() FROM sym_trip"
-            );
-            assertSql(
-                    "count_distinct\n5\n",
-                    "SELECT count_distinct(region) AS count_distinct FROM sym_trip"
-            );
+            assertQuery("SELECT count() FROM sym_trip")
+                    .noLeakCheck()
+                    .returnsOnce("count\n5\n");
+            assertQuery("SELECT count_distinct(region) AS count_distinct FROM sym_trip")
+                    .noLeakCheck()
+                    .returnsOnce("count_distinct\n5\n");
         });
     }
 
@@ -1346,10 +1358,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                     // Drain and assert switch_a arrived before any explicit flush
                     drainReceiver(receiver);
                     drainWalQueue();
-                    assertSql(
-                            "count\tsum\n3\t3\n",
-                            "SELECT count(), sum(x) FROM switch_a"
-                    );
+                    assertQuery("SELECT count(), sum(x) FROM switch_a")
+                            .noLeakCheck()
+                            .returnsOnce("count\tsum\n3\t3\n");
 
                     // Now complete switch_b and flush it separately
                     sender.longColumn("y", 100L)
@@ -1360,10 +1371,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM switch_b"
-            );
+            assertQuery("SELECT count() FROM switch_b")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -1403,9 +1413,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         return new QwpUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 0);
     }
 
-    private static void sendSingleRow(String table, long value, long timestampMicros) {
+    private static void sendSingleRow(long value, long timestampMicros) {
         try (QwpUdpSender sender = newSender()) {
-            sender.table(table)
+            sender.table("datagram_trigger_reset")
                     .longColumn("v", value)
                     .at(timestampMicros, ChronoUnit.MICROS);
             sender.flush();

@@ -33,6 +33,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -46,6 +48,7 @@ import java.util.concurrent.Callable;
 public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportRequestTask> implements Closeable {
     private static final Log LOG = LogFactory.getLog(CopyExportRequestJob.class);
     private final CopyExportContext copyContext;
+    private final CairoEngine engine;
     private final @NotNull MicrosecondClock microsecondClock;
     @TestOnly
     private @Nullable Callable<Exception> callback;
@@ -54,6 +57,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
 
     public CopyExportRequestJob(final CairoEngine engine) {
         super(engine.getMessageBus().getCopyExportRequestQueue(), engine.getMessageBus().getCopyExportRequestSubSeq());
+        this.engine = engine;
         microsecondClock = engine.getConfiguration().getMicrosecondClock();
         localTaskCopy = new CopyExportRequestTask();
         try {
@@ -72,13 +76,27 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     }
 
     @Override
+    public io.questdb.mp.Job cloneInstance() {
+        return new CopyExportRequestJob(engine);
+    }
+
+    @Override
     public void close() {
         this.serialExporter = Misc.free(serialExporter);
         this.localTaskCopy = Misc.free(localTaskCopy);
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    public void closeInstance() {
+        // cloneInstance() mints a fresh job per generation, so the pool frees
+        // each instance's native resources through this hook at halt. Misc.free
+        // nulls the fields, keeping the call idempotent.
+        close();
+    }
+
+    @Override
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
+        final int carrierId = workerContext.carrierId();
         try {
             CopyExportRequestTask task = queue.get(cursor);
             // Transfer ownership of selectFactory and createOp out of the
@@ -129,8 +147,9 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
         }
 
         CopyExportContext.ExportTaskEntry entry = localTaskCopy.getEntry();
+        MemoryTracker memoryTracker = null;
         try {
-            entry.setStartTime(microsecondClock.getTicks(), workerId);
+            entry.setStartTime(microsecondClock.getTicks(), carrierId);
             SqlExecutionCircuitBreaker circuitBreaker = localTaskCopy.getCircuitBreaker();
             CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.WAITING;
 
@@ -148,6 +167,12 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         0,
                         localTaskCopy.getTableName(),
                         localTaskCopy.getCopyID());
+                memoryTracker = engine.getMemoryTrackerProvider().acquire(
+                        localTaskCopy.getSecurityContext(),
+                        localTaskCopy.getCopyID(),
+                        MemoryTrackerWorkload.QUERY
+                );
+                localTaskCopy.setMemoryTracker(memoryTracker);
                 serialExporter.of(localTaskCopy);
                 phase = serialExporter.process(); // throws CopyExportException
 
@@ -165,7 +190,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             } catch (CopyExportException e) {
                 copyContext.updateStatus(
                         e.getPhase(),
-                        circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
+                        CopyExportRequestTask.classifyFailureStatus(circuitBreaker),
                         null,
                         Numbers.INT_NULL,
                         e.getFlyweightMessage(),
@@ -176,7 +201,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             } catch (Throwable e) {
                 copyContext.updateStatus(
                         phase,
-                        circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
+                        CopyExportRequestTask.classifyFailureStatus(circuitBreaker),
                         null,
                         Numbers.INT_NULL,
                         e.getMessage(),
@@ -185,7 +210,12 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         localTaskCopy.getCopyID()
                 );
             } finally {
-                localTaskCopy.clear();
+                try {
+                    localTaskCopy.clear();
+                } finally {
+                    serialExporter.clearMemoryTracker();
+                    Misc.free(memoryTracker);
+                }
             }
         } finally {
             copyContext.releaseEntry(entry);

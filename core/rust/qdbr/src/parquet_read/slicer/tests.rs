@@ -28,6 +28,161 @@ impl ByteSink for TestSink {
 }
 
 #[test]
+fn test_delta_slicers_empty_buffer_construct_without_panic() {
+    // An all-null DELTA varlen page can arrive with an empty values buffer (no
+    // delta header) from a foreign encoder via read_parquet(). Both slicers must
+    // construct cleanly so the page's definition levels can drive push_null.
+    // Without the empty-buffer guard the vendored parquet2 delta decoder divides
+    // block_size/num_mini_blocks = 0/0 and panics, which aborts the JVM across the
+    // JNI boundary (that panic would fail this test).
+    assert!(DeltaLengthArraySlicer::try_new(&[], 10, 10).is_ok());
+    assert!(DeltaBytesArraySlicer::try_new(&[], 10, 10).is_ok());
+}
+
+#[test]
+fn test_delta_slicers_empty_buffer_value_request_errors() {
+    // If a value IS requested from an empty-buffer slicer (a corrupt page whose
+    // definition levels claim a non-null), both slicers must return a clean error
+    // rather than indexing out of bounds and aborting the JVM.
+    let mut length_slicer = DeltaLengthArraySlicer::try_new(&[], 10, 10).unwrap();
+    assert!(length_slicer.next().is_err());
+    let mut bytes_slicer = DeltaBytesArraySlicer::try_new(&[], 10, 10).unwrap();
+    assert!(bytes_slicer.next().is_err());
+}
+
+#[test]
+fn test_delta_length_array_slicer_oversized_length_errors() {
+    // Encode one 4-byte value, then drop the 4 trailing data bytes so the decoded
+    // length (4) exceeds the remaining values buffer. next()/next_into() must
+    // return a clean error rather than slicing out of bounds and aborting the JVM.
+    let strings = ["aaaa"];
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+    encoded.truncate(encoded.len() - 4);
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 1, 1).unwrap();
+    assert!(slicer.next().is_err());
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 1, 1).unwrap();
+    let mut sink = TestSink::new();
+    assert!(slicer.next_into(&mut sink).is_err());
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_oversized_suffix_errors() {
+    // Encode one 5-byte value, then drop the 5 trailing data bytes so the decoded
+    // suffix length (5) exceeds the remaining values buffer.
+    let strings: Vec<&[u8]> = vec![b"Hello"];
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(strings.into_iter(), &mut encoded);
+    encoded.truncate(encoded.len() - 5);
+
+    let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, 1, 1).unwrap();
+    assert!(slicer.next().is_err());
+
+    let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, 1, 1).unwrap();
+    let mut sink = TestSink::new();
+    assert!(slicer.next_into(&mut sink).is_err());
+}
+
+#[test]
+fn test_delta_length_array_slicer_negative_length_errors() {
+    // Hand-crafted DELTA_LENGTH header: block_size=128, mini_blocks=1, count=1,
+    // first_value=zigzag(1)=-1. A negative byte length must be rejected at decode.
+    let data = [128u8, 1, 1, 1, 1];
+    assert!(DeltaLengthArraySlicer::try_new(&data, 1, 1).is_err());
+}
+
+#[test]
+fn test_delta_length_array_slicer_out_of_range_length_errors() {
+    // Hand-crafted DELTA_LENGTH header with first_value = 2^31 (> i32::MAX):
+    // zigzag(2^31) = 2^32 -> uleb128 [0x80, 0x80, 0x80, 0x80, 0x10]. A length that
+    // does not fit i32 must be rejected at decode rather than wrapping.
+    let data = [128u8, 1, 1, 1, 0x80, 0x80, 0x80, 0x80, 0x10];
+    assert!(DeltaLengthArraySlicer::try_new(&data, 1, 1).is_err());
+}
+
+#[test]
+fn collect_checked_lengths_rejects_unsatisfiable_count_instead_of_aborting() {
+    // `limit` is the page's row count (num_values, attacker-controlled up to
+    // i32::MAX). A bit-width-0 delta miniblock expands to that many values from
+    // almost no buffer bytes, so the up-front reservation can be multi-gigabyte and
+    // an infallible collect would abort the JVM when the allocator refuses it. A
+    // real i32::MAX request may succeed on a large host, so pin the fallible path
+    // with usize::MAX: try_reserve_exact fails with CapacityOverflow without
+    // attempting (and aborting on) a real allocation. Proves the up-front sizing
+    // surfaces a clean error rather than the process-aborting infallible collect.
+    let empty = std::iter::empty::<Result<i64, ()>>();
+    let err = collect_checked_lengths(empty, usize::MAX, "suffix")
+        .expect_err("an unsatisfiable length count must error, not abort");
+    assert!(
+        err.to_string().contains("cannot allocate"),
+        "unexpected error: {err}"
+    );
+    // Classify OutOfMemory, not Layout: on the write path (a parquet merge under
+    // ApplyWal2TableJob) a Layout error suspends the table, whereas OutOfMemory
+    // backs off and retries -- the correct response to transient memory pressure.
+    assert!(
+        matches!(
+            err.reason(),
+            crate::parquet::error::ParquetErrorReason::OutOfMemory(_)
+        ),
+        "allocation failure must be classified OutOfMemory, not Layout: {err:?}"
+    );
+}
+
+#[test]
+fn collect_checked_lengths_bounds_count_at_limit() {
+    // The suffix collect previously had no take() and materialized every value the
+    // delta stream declared (its own attacker-controlled total_count), independent
+    // of the page's row count. Pin that collect_checked_lengths now caps the count
+    // at `limit`: an iterator yielding far more values than the limit must produce
+    // exactly `limit` entries, leaving the rest unread.
+    let values = (0..1_000_000i64).map(Ok::<i64, ()>);
+    let out = collect_checked_lengths(values, 8, "suffix").unwrap();
+    assert_eq!(out.len(), 8, "count must be bounded by the limit");
+    assert_eq!(out.first().copied(), Some(0));
+    assert_eq!(out.last().copied(), Some(7));
+}
+
+#[test]
+fn test_plain_var_slicer_oversized_length_errors() {
+    // Length prefix claims 100 bytes but only 2 follow. next()/next_into() must
+    // return a clean error rather than slicing out of bounds and aborting the JVM.
+    let mut data = Vec::new();
+    data.extend_from_slice(&100u32.to_le_bytes());
+    data.extend_from_slice(b"ab");
+
+    let mut slicer = PlainVarSlicer::new(&data, 1);
+    assert!(slicer.next().is_err());
+
+    let mut slicer = PlainVarSlicer::new(&data, 1);
+    let mut sink = TestSink::new();
+    assert!(slicer.next_into(&mut sink).is_err());
+}
+
+#[test]
+fn test_plain_var_slicer_truncated_prefix_errors() {
+    // Fewer than 4 bytes: not even a full length prefix. Every method must reject
+    // it; previously next_into()/skip() read past the buffer (undefined behavior)
+    // because only next() checked the prefix bound.
+    let data = [1u8, 2];
+
+    let mut slicer = PlainVarSlicer::new(&data, 1);
+    assert!(slicer.next().is_err());
+
+    let mut slicer = PlainVarSlicer::new(&data, 1);
+    let mut sink = TestSink::new();
+    assert!(slicer.next_into(&mut sink).is_err());
+
+    let mut slicer = PlainVarSlicer::new(&data, 1);
+    assert!(slicer.skip(1).is_err());
+}
+
+#[test]
 fn test_fixed_slicer_next_into() {
     let data: Vec<u8> = vec![1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0];
     let mut slicer = DataPageFixedSlicer::<4>::new(&data, 4);
@@ -235,6 +390,263 @@ fn test_delta_length_array_slicer_skip() {
 }
 
 #[test]
+fn test_delta_length_array_slicer_partial_row_count_skip() {
+    // Partial decode (row_count < the page's total value count, e.g. a LIMIT
+    // query) driven through skip() + next() the way decode_page0 consumes a
+    // page with row_lo > 0. The page spans multiple delta blocks (128 values
+    // each) with varying lengths so the data offset depends on draining the
+    // full lengths block; see test_delta_length_array_slicer_partial_window
+    // for the plain next() variant.
+    let strings: Vec<String> = (0..300).map(|i| "y".repeat(i % 5 + 1)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 10, 10).unwrap();
+    slicer.skip(7).unwrap();
+    assert_eq!(slicer.next().unwrap(), strings[7].as_bytes());
+    assert_eq!(slicer.next().unwrap(), strings[8].as_bytes());
+}
+
+#[test]
+fn test_delta_length_array_slicer_partial_truncated_tail_block_errors() {
+    // The partial-decode drain walks the lengths block past the decoded prefix
+    // to locate the value bytes; a block truncated in that region must surface
+    // a clean error from the drain rather than a bogus data offset.
+    let strings: Vec<String> = (0..300).map(|i| "z".repeat(i % 7 + 1)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    // Locate the end of the lengths block by draining a throwaway decoder,
+    // then cut inside the block's tail, beyond the take(5) prefix.
+    let mut decoder = parquet2::encoding::delta_bitpacked::Decoder::try_new(&encoded).unwrap();
+    assert_eq!(decoder.by_ref().count(), 300);
+    let lengths_end = decoder.consumed_bytes();
+    encoded.truncate(lengths_end - 10);
+
+    assert!(DeltaLengthArraySlicer::try_new(&encoded, 5, 5).is_err());
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_partial_truncated_tail_block_errors() {
+    // DELTA_BYTE_ARRAY variant: a truncation inside the suffix-lengths block,
+    // beyond the decoded prefix, must error out of the suffix drain.
+    let strings: Vec<String> = (0..300).map(|i| format!("prefix_{:05}", i)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut decoder = parquet2::encoding::delta_bitpacked::Decoder::try_new(&encoded).unwrap();
+    assert_eq!(decoder.by_ref().count(), 300);
+    let prefix_end = decoder.consumed_bytes();
+    let mut decoder =
+        parquet2::encoding::delta_bitpacked::Decoder::try_new(&encoded[prefix_end..]).unwrap();
+    assert_eq!(decoder.by_ref().count(), 300);
+    let suffix_end = prefix_end + decoder.consumed_bytes();
+    encoded.truncate(suffix_end - 10);
+
+    assert!(DeltaBytesArraySlicer::try_new(&encoded, 5, 5).is_err());
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_partial_truncated_prefix_block_errors() {
+    // DELTA_BYTE_ARRAY variant: a truncation inside the prefix-lengths block. With
+    // a partial row_count the prefix take() stops early, so locating the suffix
+    // block falls back to delta_stream_byte_len's structural walk of the prefix
+    // stream, which must error on the truncated block rather than panic or parse
+    // the suffix from inside the prefix.
+    let strings: Vec<String> = (0..300).map(|i| format!("prefix_{:05}", i)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut decoder = parquet2::encoding::delta_bitpacked::Decoder::try_new(&encoded).unwrap();
+    assert_eq!(decoder.by_ref().count(), 300);
+    let prefix_end = decoder.consumed_bytes();
+    encoded.truncate(prefix_end - 10);
+
+    assert!(DeltaBytesArraySlicer::try_new(&encoded, 5, 5).is_err());
+}
+
+#[test]
+fn test_delta_slicers_zero_row_count_construct_and_count() {
+    // The empty decode window [x, x) (LimitRecordCursor's sizing pass, LIMIT 0)
+    // reaches the slicers with row_count == 0 over a valid, non-empty values
+    // buffer. Both slicers must construct cleanly and report a zero count without
+    // decoding or panicking.
+    let length_strings = ["alpha", "beta", "gamma"];
+    let mut length_encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        length_strings.iter().map(|s| s.as_bytes()),
+        &mut length_encoded,
+    );
+    let length_slicer = DeltaLengthArraySlicer::try_new(&length_encoded, 0, 0).unwrap();
+    assert_eq!(length_slicer.count(), 0);
+
+    let bytes_strings: Vec<&[u8]> = vec![b"alpha", b"alpine", b"beta"];
+    let mut bytes_encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(bytes_strings.into_iter(), &mut bytes_encoded);
+    let bytes_slicer = DeltaBytesArraySlicer::try_new(&bytes_encoded, 0, 0).unwrap();
+    assert_eq!(bytes_slicer.count(), 0);
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_partial_row_count() {
+    // Partial-decode variant for DELTA_BYTE_ARRAY: the suffix-lengths block
+    // starts after the FULL prefix-lengths block, and the suffix bytes after
+    // the FULL suffix-lengths block. Pre-fix, a partial prefix decode made
+    // try_new parse the suffix block from inside the prefix block.
+    let strings: Vec<String> = (0..300).map(|i| format!("prefix_{:05}", i)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, 5, 5).unwrap();
+    for expected in strings.iter().take(5) {
+        assert_eq!(slicer.next().unwrap(), expected.as_bytes());
+    }
+}
+
+#[test]
+fn test_delta_length_array_slicer_partial_range_constant_len() {
+    // Regression for silent STRING corruption on a partial range read: when
+    // row_count < num_values and the length stream spans more than one delta
+    // block, the data offset must still skip the whole length stream. 200
+    // constant-length values span two blocks; reading only the first 100 used to
+    // start the data slice 2 bytes early (the unread second block's header),
+    // yielding "\0\0v0" instead of "v000".
+    let strings: Vec<String> = (0..200).map(|i| format!("v{i:03}")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 100, 100).unwrap();
+    for expected in strings.iter().take(100) {
+        assert_eq!(slicer.next().unwrap(), expected.as_bytes());
+    }
+}
+
+#[test]
+fn test_delta_length_array_slicer_partial_range_varying_len() {
+    // Same partial range read but with varying lengths, so the delta blocks carry
+    // a non-zero bit width and real miniblock bytes that the offset walk must skip
+    // too. 300 values span three blocks; reading the first 130 cuts inside the
+    // second block, leaving the third block entirely unread.
+    let strings: Vec<String> = (0..300).map(|i| "ab".repeat(1 + (i % 9))).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 130, 130).unwrap();
+    for expected in strings.iter().take(130) {
+        assert_eq!(slicer.next().unwrap(), expected.as_bytes());
+    }
+}
+
+#[test]
+fn test_delta_length_array_slicer_partial_range_multi_miniblock() {
+    // A foreign DELTA_LENGTH_BYTE_ARRAY page with miniblocks_per_block=4 -- a shape
+    // QuestDB never writes (it always emits 1), so parquet2's encoder cannot
+    // produce it and it must be hand-built. The single block's first miniblock holds
+    // all 32 deltas; the 3 trailing miniblocks are unused and carry NON-ZERO garbage
+    // bit-width bytes (the spec permits any value there and writes no body for them).
+    // On a partial range read the value-bytes offset must skip the whole length
+    // stream; get_end_pointer used to add phantom bodies for those unused trailing
+    // miniblocks and start the value slice 12 bytes too late -- returning shifted
+    // bytes (or tripping "exceeds values buffer"). Reverting the get_end_pointer fix
+    // makes this test fail.
+    use parquet2::encoding::{uleb128, zigzag_leb128};
+    fn put_uleb128(buf: &mut Vec<u8>, v: u64) {
+        let mut tmp = [0u8; 10];
+        let n = uleb128::encode(v, &mut tmp);
+        buf.extend_from_slice(&tmp[..n]);
+    }
+    fn put_zigzag(buf: &mut Vec<u8>, v: i64) {
+        let (tmp, n) = zigzag_leb128::encode(v);
+        buf.extend_from_slice(&tmp[..n]);
+    }
+
+    // Length stream: block_size=128, miniblocks=4, value_count=33, first_value=0,
+    // min_delta=0, bit widths [1, 7, 7, 7] (only miniblock 0 is real), then a 4-byte
+    // all-ones body so every delta is 1. The decoded lengths are 0,1,2,3,4,... The
+    // length stream is exactly 14 bytes; the value bytes follow it.
+    let mut data = Vec::new();
+    put_uleb128(&mut data, 128);
+    put_uleb128(&mut data, 4);
+    put_uleb128(&mut data, 33);
+    put_zigzag(&mut data, 0);
+    put_zigzag(&mut data, 0);
+    data.extend_from_slice(&[1, 7, 7, 7]);
+    data.extend_from_slice(&[0xFF; 4]);
+    // Value bytes for lengths 0,1,2,3,4 = 0+1+2+3+4 = 10 bytes, distinct so any
+    // shift is visible.
+    data.extend_from_slice(b"ABCDEFGHIJ");
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&data, 5, 5).unwrap();
+    assert_eq!(slicer.next().unwrap(), &b""[..]); // length 0
+    assert_eq!(slicer.next().unwrap(), &b"A"[..]); // length 1: [0..1]
+    assert_eq!(slicer.next().unwrap(), &b"BC"[..]); // length 2: [1..3]
+    assert_eq!(slicer.next().unwrap(), &b"DEF"[..]); // length 3: [3..6]
+    assert_eq!(slicer.next().unwrap(), &b"GHIJ"[..]); // length 4: [6..10]
+}
+
+#[test]
+fn test_delta_length_array_slicer_full_range_multi_block() {
+    // Full read of a multi-block length stream: row_count == the page's value
+    // count, so the take exhausts the decoder and the data offset comes from
+    // consumed_bytes() (the O(1) path) rather than the structural walk. 300
+    // varying-length values span three blocks with non-zero miniblock bit widths,
+    // so a wrong full-stream byte count would start the data slice inside the
+    // length stream and shift every value -- pins the consumed_bytes() branch for
+    // a multi-block page.
+    let strings: Vec<String> = (0..300).map(|i| "ab".repeat(1 + (i % 9))).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 300, 300).unwrap();
+    for expected in &strings {
+        assert_eq!(slicer.next().unwrap(), expected.as_bytes());
+    }
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_full_range_multi_block() {
+    // DELTA_BYTE_ARRAY counterpart: a full read of a multi-block prefix+suffix
+    // stream takes the consumed_bytes() branch for both stream boundaries. 300
+    // shared-prefix values span multiple blocks; a wrong byte count for either
+    // stream would mislocate the suffix start or the value bytes.
+    let strings: Vec<String> = (0..300).map(|i| format!("item-{i:04}")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, 300, 300).unwrap();
+    for expected in &strings {
+        assert_eq!(slicer.next().unwrap(), expected.as_bytes());
+    }
+}
+
+#[test]
 fn test_delta_bytes_array_slicer_next_into() {
     let strings: Vec<&[u8]> = vec![b"Hello", b"Helicopter", b"Help"];
     let mut encoded = Vec::new();
@@ -275,6 +687,26 @@ fn test_delta_bytes_array_slicer_skip() {
     let mut sink = TestSink::new();
     slicer.next_into(&mut sink).unwrap();
     assert_eq!(sink.into_inner(), b"test3");
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_partial_range_multi_block() {
+    // A partial range read of a DELTA_BYTE_ARRAY page: both the prefix and suffix
+    // length streams span multiple blocks, so the value bytes begin only after
+    // the full prefix and suffix streams. Reading the first 100 of 200 values
+    // must still locate that boundary -- the previous consumed_bytes()-after-take
+    // offset under-counted both streams.
+    let strings: Vec<String> = (0..200).map(|i| format!("item-{i:04}")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, 100, 100).unwrap();
+    for expected in strings.iter().take(100) {
+        assert_eq!(slicer.next().unwrap(), expected.as_bytes());
+    }
 }
 
 struct TestDictDecoder {
@@ -412,4 +844,310 @@ fn test_rle_dictionary_slicer_zero_bit_width() {
 
     slicer.skip(3).unwrap();
     assert_eq!(slicer.next().unwrap(), b"only_value");
+}
+
+#[test]
+fn test_delta_length_slicer_block_size_not_mult_128_errors() {
+    // block_size=1 (not a multiple of 128): foreign/corrupt header. Must return a
+    // clean error rather than panicking in parquet2 (decoder.rs:141) and aborting
+    // the JVM over JNI.
+    assert!(DeltaLengthArraySlicer::try_new(&[1, 1, 1, 0], 1, 1).is_err());
+}
+
+#[test]
+fn test_delta_length_slicer_vpmb_not_mult_8_errors() {
+    // block_size=128, mini_blocks=3 -> values_per_mini_block=42 (not a multiple of
+    // 8): parquet2 decoder.rs:156. Must error, not panic.
+    assert!(DeltaLengthArraySlicer::try_new(&[128, 1, 3, 1, 0], 1, 1).is_err());
+}
+
+#[test]
+fn test_delta_length_slicer_zero_miniblocks_errors() {
+    // block_size=0 (passes %128), mini_blocks=0 -> 0/0 divide at parquet2
+    // decoder.rs:155. Must error, not panic.
+    assert!(DeltaLengthArraySlicer::try_new(&[0, 0, 1, 0], 1, 1).is_err());
+}
+
+#[test]
+fn test_delta_bytes_slicer_block_size_not_mult_128_errors() {
+    // Same malformed header through DeltaBytesArraySlicer's first decoder (:451).
+    assert!(DeltaBytesArraySlicer::try_new(&[1, 1, 1, 0], 1, 1).is_err());
+}
+
+#[test]
+fn test_delta_bytes_slicer_empty_suffix_errors() {
+    // Valid prefix header but an empty suffix region: the second parquet2
+    // decoder would divide 0/0 (zero mini blocks). Must return a clean error
+    // rather than panicking and aborting the JVM.
+    assert!(DeltaBytesArraySlicer::try_new(&[128, 1, 1, 0], 1, 1).is_err());
+}
+
+// A foreign DELTA page whose first miniblock declares a bitwidth wider than the
+// 64-bit values it unpacks into. The vendored parquet2 Block::advance_miniblock
+// builds the first miniblock during Decoder::try_new (total_count >= 2); without
+// its num_bits > 64 guard the bitpacked u64 unpacker hits unreachable!() and
+// aborts the JVM over JNI. Header: block_size=128, mini_blocks=1, total_count=2,
+// first_value=0, min_delta=0, bitwidth=65, then a 1040-byte miniblock.
+fn delta_bitwidth_over_64_page() -> Vec<u8> {
+    let mut data = vec![0x80u8, 0x01, 0x01, 0x02, 0x00, 0x00, 65];
+    data.extend(std::iter::repeat_n(0u8, 1040));
+    data
+}
+
+// A foreign DELTA page with block_size = 2^63: it passes the %128 header guard
+// (2^63 % 128 == 0), so values_per_mini_block = 2^63. Without the checked_mul in
+// advance_miniblock, values_per_mini_block * num_bits overflows usize and aborts
+// the JVM (debug: the multiply; release: a wrapped short miniblock then a panic
+// in the bitpacked decoder). Header: block_size=2^63, mini_blocks=1,
+// total_count=2, first_value=0, min_delta=0, bitwidth=2, then a 64-byte tail.
+fn delta_oversized_block_size_page() -> Vec<u8> {
+    let mut data = vec![
+        0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01, // block_size = 2^63
+        0x01, // num_mini_blocks
+        0x02, // total_count
+        0x00, // first_value
+        0x00, // min_delta
+        0x02, // bitwidth
+    ];
+    data.extend(std::iter::repeat_n(0u8, 64));
+    data
+}
+
+#[test]
+fn test_delta_length_slicer_miniblock_bitwidth_over_64_errors() {
+    assert!(DeltaLengthArraySlicer::try_new(&delta_bitwidth_over_64_page(), 2, 2).is_err());
+}
+
+#[test]
+fn test_delta_length_slicer_oversized_block_size_errors() {
+    assert!(DeltaLengthArraySlicer::try_new(&delta_oversized_block_size_page(), 2, 2).is_err());
+}
+
+#[test]
+fn test_delta_bytes_slicer_miniblock_bitwidth_over_64_errors() {
+    // Same malformed page through DeltaBytesArraySlicer's prefix decoder (:451).
+    assert!(DeltaBytesArraySlicer::try_new(&delta_bitwidth_over_64_page(), 2, 2).is_err());
+}
+
+#[test]
+fn test_delta_bytes_slicer_oversized_block_size_errors() {
+    assert!(DeltaBytesArraySlicer::try_new(&delta_oversized_block_size_page(), 2, 2).is_err());
+}
+
+#[test]
+fn test_delta_bytes_slicer_suffix_bitwidth_over_64_errors() {
+    // A valid prefix block followed by a malformed suffix block drives the SECOND
+    // parquet2 decoder in DeltaBytesArraySlicer::try_new (slicer/mod.rs:461, the
+    // suffix lengths), which the prefix-malformed tests above never reach because
+    // the prefix decoder fails first. The suffix declares miniblock bitwidth 65
+    // and must surface a clean error, not abort the JVM. Prefix: block_size=128,
+    // mini_blocks=1, total_count=1, first_value=0 (one length, no block).
+    let mut data = vec![0x80u8, 0x01, 0x01, 0x01, 0x00];
+    data.extend(delta_bitwidth_over_64_page());
+    assert!(DeltaBytesArraySlicer::try_new(&data, 1, 1).is_err());
+}
+
+#[test]
+fn test_delta_length_array_slicer_skip_beyond_lengths_errors() {
+    // skip() must reject a count that runs past the decoded lengths via its
+    // .get(index..index + count) bound, rather than panicking on the slice.
+    let strings = ["aa", "bb"];
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 2, 2).unwrap();
+    let err = slicer.skip(3).unwrap_err();
+    assert!(
+        format!("{err}").contains("not enough length values to skip"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_delta_length_array_slicer_next_into_beyond_lengths_errors() {
+    // next_into()'s length-index bound must reject a request past the decoded
+    // lengths rather than indexing out of bounds. (next() covers this via the
+    // empty-buffer test; next_into has its own duplicate bound.)
+    let strings = ["aa", "bb"];
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 2, 2).unwrap();
+    let mut sink = TestSink::new();
+    slicer.next_into(&mut sink).unwrap(); // "aa"
+    slicer.next_into(&mut sink).unwrap(); // "bb"
+    let err = slicer.next_into(&mut sink).unwrap_err();
+    assert!(
+        format!("{err}").contains("not enough length values to iterate"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_rle_dictionary_slicer_empty_buffer_errors() {
+    // A foreign/corrupt dictionary page can arrive with an empty values buffer
+    // (no leading bit-width byte) via read_parquet(). try_new must surface a
+    // clean error rather than indexing buffer[0] out of bounds and aborting the
+    // JVM across the JNI boundary.
+    let dict = TestDictDecoder::new(vec![b"zero".to_vec(), b"one".to_vec()]);
+    // .err().unwrap() rather than .unwrap_err(): the Ok type (RleDictionarySlicer)
+    // is not Debug, which unwrap_err() would require.
+    let err = RleDictionarySlicer::try_new(&[], dict, 5, 5).err().unwrap();
+    assert!(
+        format!("{err}").contains("missing the initial byte with bit width"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_rle_dictionary_slicer_bitwidth_over_32_errors() {
+    // A foreign RLE_DICTIONARY page whose index bit width (40) exceeds the 32-bit
+    // u32 the indices unpack into. bitpacked::Decoder::<u32> only generates unpack
+    // arms for 0..=32; a wider width would reach unreachable!("invalid num_bits
+    // 40") and abort the JVM across JNI. next() must surface a clean error
+    // instead. Wire format: [40 = bit width, 0x03 = bitpacked indicator (1 group
+    // of 8 indices), then 40 data bytes = 8 * 40 bits].
+    let dict = TestDictDecoder::new(vec![b"zero".to_vec(), b"one".to_vec()]);
+    let mut encoded = vec![40u8, 0x03];
+    encoded.extend(std::iter::repeat_n(0u8, 40));
+
+    let mut slicer = RleDictionarySlicer::try_new(&encoded, dict, 8, 8).unwrap();
+    let err = slicer.next().unwrap_err();
+    assert!(
+        format!("{err}").contains("exceeds"),
+        "expected a clean bit-width error, got: {err}"
+    );
+}
+
+#[test]
+fn test_fixed_slicer_oversized_read_errors() {
+    // A foreign/corrupt fixed-width page whose element count (driven by the
+    // definition/repetition levels) exceeds the values buffer must surface a
+    // clean error rather than indexing out of bounds and aborting the JVM. Here
+    // the buffer holds 4 bytes but each element is 8.
+    let data = [0u8; 4];
+
+    let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
+    assert!(slicer.next().is_err());
+
+    let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
+    let mut sink = TestSink::new();
+    assert!(slicer.next_into(&mut sink).is_err());
+
+    let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
+    let mut sink = TestSink::new();
+    assert!(slicer.next_slice_into(1, &mut sink).is_err());
+
+    // next_raw_slice signals "cannot provide a borrowed slice" with None rather
+    // than panicking.
+    let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
+    assert!(slicer.next_raw_slice(1).is_none());
+}
+
+#[test]
+fn test_fixed_slicer_exact_buffer_reads_ok() {
+    // Off-by-one guard for the bound above: an exactly-sized buffer (8 bytes,
+    // one 8-byte element) must still read cleanly.
+    let data = [1u8, 2, 3, 4, 5, 6, 7, 8];
+
+    let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
+    assert_eq!(slicer.next().unwrap(), &data[..]);
+
+    let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
+    assert_eq!(slicer.next_raw_slice(1), Some(&data[..]));
+
+    let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
+    let mut sink = TestSink::new();
+    slicer.next_slice_into(1, &mut sink).unwrap();
+    assert_eq!(sink.into_inner(), data.to_vec());
+}
+
+#[test]
+fn test_delta_length_array_slicer_partial_window() {
+    // DELTA_LENGTH_BYTE_ARRAY lays out [all N lengths][concatenated bytes]. A
+    // partial decode window (row_count < N, e.g. a LIMIT-clamped page decode)
+    // must still locate the data start after the FULL lengths block; stopping at
+    // consumed_bytes() mid-block slices garbage for every value.
+    // Enough values to span many delta miniblocks (32 values each): a small input
+    // fits one miniblock, which the decoder consumes whole, masking the bug.
+    let strings: Vec<String> = (0..1000).map(|i| format!("value_{i}")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    for row_count in [1, 7, 33, 130, 1000] {
+        let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, row_count, row_count).unwrap();
+        for s in strings.iter().take(row_count) {
+            assert_eq!(slicer.next().unwrap(), s.as_bytes());
+        }
+    }
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_partial_window() {
+    // DELTA_BYTE_ARRAY lays out [all N prefix lengths][all N suffix lengths]
+    // [concatenated suffix bytes]. A partial decode window must drain both
+    // length blocks to find the suffix-block and data starts.
+    // Enough values to span many delta miniblocks (32 values each): a small input
+    // fits one miniblock, which the decoder consumes whole, masking the bug.
+    let strings: Vec<String> = (0..1000).map(|i| format!("prefix_{i}_suffix")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    for row_count in [1, 7, 33, 130, 1000] {
+        let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, row_count, row_count).unwrap();
+        for s in strings.iter().take(row_count) {
+            assert_eq!(slicer.next().unwrap(), s.as_bytes());
+        }
+    }
+}
+
+#[test]
+fn test_delta_length_array_slicer_window_with_row_lo() {
+    // A clamped page decode skips the leading row_lo rows: the slicer decodes the
+    // first row_hi lengths (row_hi < page rows), drains the rest to find the data
+    // start, then skip(row_lo) advances past the skipped values' bytes. Mirrors the
+    // sliced_row_count < row_count call shape from decode_column_chunk_with_params.
+    let strings: Vec<String> = (0..1000).map(|i| format!("value_{i}")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    for (row_lo, row_hi) in [(130usize, 200usize), (1, 1000), (500, 700)] {
+        let mut slicer =
+            DeltaLengthArraySlicer::try_new(&encoded, row_hi, row_hi - row_lo).unwrap();
+        slicer.skip(row_lo).unwrap();
+        for s in strings.iter().take(row_hi).skip(row_lo) {
+            assert_eq!(slicer.next().unwrap(), s.as_bytes());
+        }
+    }
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_window_with_row_lo() {
+    let strings: Vec<String> = (0..1000).map(|i| format!("prefix_{i}_suffix")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    for (row_lo, row_hi) in [(130usize, 200usize), (1, 1000), (500, 700)] {
+        let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, row_hi, row_hi - row_lo).unwrap();
+        slicer.skip(row_lo).unwrap();
+        for s in strings.iter().take(row_hi).skip(row_lo) {
+            assert_eq!(slicer.next().unwrap(), s.as_bytes());
+        }
+    }
 }

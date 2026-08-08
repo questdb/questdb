@@ -30,48 +30,43 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.BindVariableTestTuple;
+import io.questdb.test.tools.BindVarTuple;
 import org.junit.Test;
 
 public class InUUIDTest extends AbstractCairoTest {
 
     @Test
-    public void testBindVarConstants() throws SqlException {
-        execute("create table MovementLog(\n" +
-                "ts timestamp,\n" +
-                "initParticipantId long,\n" +
-                "initParticipantIdType symbol,\n" +
-                "movementBusinessDate date,\n" +
-                "slotId uuid\n" +
-                ") timestamp(ts) partition by day wal\n");
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testBindVarConstants() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "constants",
                 "participantId\tparticipantIdType\n",
                 bindVariableService -> bindVariableService.setDate(0, 1000L)
         ));
 
-        assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
-                "FROM 'MovementLog'\n" +
-                "WHERE movementBusinessDate=$1 AND slotId IN ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7', " +
-                "'b5b2159a-2356-4217-965d-4c984f0ffa8a', '4cd64b0b-0a34-4f8e-a698-c6c186b7571a')\n" +
-                "ORDER BY participantId\n" +
-                "LIMIT 0,6", tuples);
+        assertQuery("""
+                SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType
+                FROM 'MovementLog'
+                WHERE movementBusinessDate=$1 AND slotId IN ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7', \
+                'b5b2159a-2356-4217-965d-4c984f0ffa8a', '4cd64b0b-0a34-4f8e-a698-c6c186b7571a')
+                ORDER BY participantId
+                LIMIT 0,6""")
+                .ddl("""
+                        create table MovementLog(
+                        ts timestamp,
+                        initParticipantId long,
+                        initParticipantIdType symbol,
+                        movementBusinessDate date,
+                        slotId uuid
+                        ) timestamp(ts) partition by day wal
+                        """)
+                .assertBinds(cases);
     }
 
     @Test
-    public void testBindVarRuntimeConstants() throws SqlException {
-        execute("create table MovementLog(\n" +
-                "ts timestamp,\n" +
-                "initParticipantId long,\n" +
-                "initParticipantIdType symbol,\n" +
-                "movementBusinessDate date,\n" +
-                "slotId uuid\n" +
-                ") timestamp(ts) partition by day wal\n");
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testBindVarRuntimeConstants() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "runtime constants",
                 "participantId\tparticipantIdType\n",
                 bindVariableService -> {
@@ -82,25 +77,36 @@ public class InUUIDTest extends AbstractCairoTest {
                 }
         ));
 
-        assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
-                "FROM 'MovementLog'\n" +
-                "WHERE movementBusinessDate=$1 AND slotId IN ($2, $3, $4)\n" +
-                "ORDER BY participantId\n" +
-                "LIMIT 0,6", tuples);
+        assertQuery("""
+                SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType
+                FROM 'MovementLog'
+                WHERE movementBusinessDate=$1 AND slotId IN ($2, $3, $4)
+                ORDER BY participantId
+                LIMIT 0,6""")
+                .ddl("""
+                        create table MovementLog(
+                        ts timestamp,
+                        initParticipantId long,
+                        initParticipantIdType symbol,
+                        movementBusinessDate date,
+                        slotId uuid
+                        ) timestamp(ts) partition by day wal
+                        """)
+                .assertBinds(cases);
     }
 
     @Test
-    public void testBindVarTypeChange() throws SqlException {
-        execute("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
-
+    public void testBindVarTypeChange() throws Exception {
         // when more than one argument supplied, the function will match exact values from the list
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "simple",
-                "x\ta\n" +
-                        "5\tb5b2159a-2356-4217-965d-4c984f0ffa8a\n" +
-                        "54\t5277ee62-a5a6-49fb-9ff9-7d73fc0c62d0\n" +
-                        "70\ta7a8f4e5-4999-4e46-916e-1efd8bbcecf6\n",
+                """
+                        x\ta
+                        5\tb5b2159a-2356-4217-965d-4c984f0ffa8a
+                        54\t5277ee62-a5a6-49fb-9ff9-7d73fc0c62d0
+                        70\ta7a8f4e5-4999-4e46-916e-1efd8bbcecf6
+                        """,
                 bindVariableService -> {
                     try {
                         bindVariableService.setStr(0, "b5b2159a-2356-4217-965d-4c984f0ffa8a");
@@ -112,150 +118,152 @@ public class InUUIDTest extends AbstractCairoTest {
                 }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.fails(
                 "undefined bind variable",
+                20,
                 "undefined bind variable: 1",
                 bindVariableService -> {
                     bindVariableService.setStr(0, "a1b56c3d-802c-4735-9290-f9bc187b0cd2");
                     bindVariableService.setStr(2, "4cd64b0b-0a34-4f8e-a698-c6c186b7571a");
-                },
-                20
+                }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.fails(
                 "bad type",
+                20,
                 "inconvertible types: INT -> UUID [from=INT, to=UUID]",
                 bindVariableService -> {
                     bindVariableService.setStr(0, "5277ee62-a5a6-49fb-9ff9-7d73fc0c62d0");
                     bindVariableService.setInt(1, 30);
                     bindVariableService.setStr(2, "30d46a3a-4749-441d-ba90-2c77fa1a889c");
-                },
-                20
+                }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.ok(
                 "with nulls",
-                "x\ta\n" +
-                        "2\t\n" +
-                        "4\t\n" +
-                        "11\t\n" +
-                        "14\t\n" +
-                        "18\t\n" +
-                        "19\t\n" +
-                        "22\t\n" +
-                        "25\t\n" +
-                        "26\t\n" +
-                        "34\t\n" +
-                        "36\t\n" +
-                        "44\t\n" +
-                        "45\t\n" +
-                        "46\t\n" +
-                        "47\t\n" +
-                        "48\t\n" +
-                        "53\t\n" +
-                        "68\t\n" +
-                        "69\t\n" +
-                        "72\t\n" +
-                        "74\t\n" +
-                        "75\t\n" +
-                        "76\t\n" +
-                        "79\taa7dc4ec-cb68-446f-b37f-1ec82752c7d7\n" +
-                        "82\t\n" +
-                        "84\taa1896d0-ad34-49d2-910a-a7b6d58506dc\n" +
-                        "85\t\n" +
-                        "86\t\n" +
-                        "88\t\n" +
-                        "92\t\n" +
-                        "94\t\n" +
-                        "98\t\n",
+                """
+                        x\ta
+                        2\t
+                        4\t
+                        11\t
+                        14\t
+                        18\t
+                        19\t
+                        22\t
+                        25\t
+                        26\t
+                        34\t
+                        36\t
+                        44\t
+                        45\t
+                        46\t
+                        47\t
+                        48\t
+                        53\t
+                        68\t
+                        69\t
+                        72\t
+                        74\t
+                        75\t
+                        76\t
+                        79\taa7dc4ec-cb68-446f-b37f-1ec82752c7d7
+                        82\t
+                        84\taa1896d0-ad34-49d2-910a-a7b6d58506dc
+                        85\t
+                        86\t
+                        88\t
+                        92\t
+                        94\t
+                        98\t
+                        """,
                 bindVariableService -> {
                     bindVariableService.setStr(0, "aa7dc4ec-cb68-446f-b37f-1ec82752c7d7");
                     bindVariableService.setStr(1, null);
                     bindVariableService.setStr(2, "aa1896d0-ad34-49d2-910a-a7b6d58506dc");
                 }
         ));
-        assertSql("test where a in ($1,$2,$3)", tuples);
+        assertQuery("test where a in ($1,$2,$3)")
+                .ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test
-    public void testConstAndBindVariableMix() throws SqlException {
-        execute("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testConstAndBindVariableMix() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "mix",
-                "x\ta\n" +
-                        "79\taa7dc4ec-cb68-446f-b37f-1ec82752c7d7\n" +
-                        "84\taa1896d0-ad34-49d2-910a-a7b6d58506dc\n",
+                """
+                        x\ta
+                        79\taa7dc4ec-cb68-446f-b37f-1ec82752c7d7
+                        84\taa1896d0-ad34-49d2-910a-a7b6d58506dc
+                        """,
                 bindVariableService -> bindVariableService.setStr(0, "aa1896d0-ad34-49d2-910a-a7b6d58506dc")
         ));
 
-        assertSql("test where a in ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7', $1)", tuples);
+        assertQuery("test where a in ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7', $1)")
+                .ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test
-    public void testConstAndBindVariableVarcharMix() throws SqlException {
-        execute("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testConstAndBindVariableVarcharMix() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "mix",
-                "x\ta\n" +
-                        "2\t\n" +
-                        "4\t\n" +
-                        "11\t\n" +
-                        "14\t\n" +
-                        "18\t\n" +
-                        "19\t\n" +
-                        "22\t\n" +
-                        "25\t\n" +
-                        "26\t\n" +
-                        "34\t\n" +
-                        "36\t\n" +
-                        "44\t\n" +
-                        "45\t\n" +
-                        "46\t\n" +
-                        "47\t\n" +
-                        "48\t\n" +
-                        "53\t\n" +
-                        "68\t\n" +
-                        "69\t\n" +
-                        "72\t\n" +
-                        "74\t\n" +
-                        "75\t\n" +
-                        "76\t\n" +
-                        "79\taa7dc4ec-cb68-446f-b37f-1ec82752c7d7\n" +
-                        "82\t\n" +
-                        "84\taa1896d0-ad34-49d2-910a-a7b6d58506dc\n" +
-                        "85\t\n" +
-                        "86\t\n" +
-                        "88\t\n" +
-                        "92\t\n" +
-                        "94\t\n" +
-                        "98\t\n",
+                """
+                        x\ta
+                        2\t
+                        4\t
+                        11\t
+                        14\t
+                        18\t
+                        19\t
+                        22\t
+                        25\t
+                        26\t
+                        34\t
+                        36\t
+                        44\t
+                        45\t
+                        46\t
+                        47\t
+                        48\t
+                        53\t
+                        68\t
+                        69\t
+                        72\t
+                        74\t
+                        75\t
+                        76\t
+                        79\taa7dc4ec-cb68-446f-b37f-1ec82752c7d7
+                        82\t
+                        84\taa1896d0-ad34-49d2-910a-a7b6d58506dc
+                        85\t
+                        86\t
+                        88\t
+                        92\t
+                        94\t
+                        98\t
+                        """,
                 bindVariableService -> bindVariableService.setVarchar(0, new Utf8String("aa1896d0-ad34-49d2-910a-a7b6d58506dc"))
         ));
 
-        assertSql("test where a in ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7'::varchar, $1, null::varchar)", tuples);
+        assertQuery("test where a in ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7'::varchar, $1, null::varchar)")
+                .ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test
     public void testConstBadUUID() throws Exception {
         execute("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
-        assertException(
-                "test where a in ('9/12')",
-                17,
-                "invalid UUID value [9/12]"
-        );
+        assertQuery("test where a in ('9/12')")
+                .fails(17, "invalid UUID value [9/12]");
     }
 
     @Test
     public void testConstInvalidType() throws Exception {
         execute("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
-        assertException(
-                "test where a in (0.1323)",
-                17,
-                "cannot compare UUID with type DOUBLE"
-        );
+        assertQuery("test where a in (0.1323)")
+                .fails(17, "cannot compare UUID with type DOUBLE");
     }
 }

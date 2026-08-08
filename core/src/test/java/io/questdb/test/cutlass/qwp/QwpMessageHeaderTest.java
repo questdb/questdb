@@ -299,7 +299,7 @@ public class QwpMessageHeaderTest {
             Assert.assertEquals(QwpParseException.ErrorCode.UNSUPPORTED_VERSION, e.getErrorCode());
         }
 
-        // Version above MAX_SUPPORTED_VERSION
+        // Version 255 (not the single supported version)
         byte[] header255 = createValidHeader(255, 0, 1, 100);
         try {
             h.parse(header255, 0, header255.length);

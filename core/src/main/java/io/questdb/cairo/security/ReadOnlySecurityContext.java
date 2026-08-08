@@ -132,6 +132,11 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableSetFormat(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeAlterTableSetParam(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
@@ -180,6 +185,16 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeLiveViewCreate() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeLiveViewDrop(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeMatViewCreate() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
@@ -196,6 +211,11 @@ public class ReadOnlySecurityContext implements SecurityContext {
 
     @Override
     public void authorizePGWire() {
+    }
+
+    @Override
+    public void authorizeRebaseWal(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
     @Override

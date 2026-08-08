@@ -104,15 +104,22 @@ public final class ParquetRowGroupFilter {
      * @param pushdownFilterConditions the filter conditions to apply
      * @param filterList               reusable buffer for filter descriptors: [encoded(col_idx, count, op), ptr, columnType] per filter
      * @param filterValues             reusable memory buffer for filter values
+     * @param resolveByColumnId        when true, resolve the Parquet column by the condition's
+     *                                 stable writer index (column id); when false, by name.
+     *                                 Native-table partitions pass true so renamed columns map
+     *                                 to the correct Parquet column (its frozen name is stale);
+     *                                 the read_parquet() table function passes false because it
+     *                                 projects external files by name.
      * @return true if filters were prepared successfully and row group pruning should be attempted
      */
     public static boolean prepareFilterList(
             ParquetFileDecoder.Metadata metadata,
             ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
             DirectLongList filterList,
-            MemoryCARWImpl filterValues
+            MemoryCARWImpl filterValues,
+            boolean resolveByColumnId
     ) {
-        return prepareFilterListImpl(metadata, null, pushdownFilterConditions, filterList, filterValues);
+        return prepareFilterListImpl(metadata, null, pushdownFilterConditions, filterList, filterValues, resolveByColumnId);
     }
 
     /**
@@ -122,9 +129,10 @@ public final class ParquetRowGroupFilter {
             ParquetMetaFileReader parquetMetaReader,
             ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
             DirectLongList filterList,
-            MemoryCARWImpl filterValues
+            MemoryCARWImpl filterValues,
+            boolean resolveByColumnId
     ) {
-        return prepareFilterListImpl(null, parquetMetaReader, pushdownFilterConditions, filterList, filterValues);
+        return prepareFilterListImpl(null, parquetMetaReader, pushdownFilterConditions, filterList, filterValues, resolveByColumnId);
     }
 
     private static boolean prepareFilterListImpl(
@@ -132,7 +140,8 @@ public final class ParquetRowGroupFilter {
             ParquetMetaFileReader parquetMetaReader,
             ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
             DirectLongList filterList,
-            MemoryCARWImpl filterValues
+            MemoryCARWImpl filterValues,
+            boolean resolveByColumnId
     ) {
         try {
             if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
@@ -148,10 +157,29 @@ public final class ParquetRowGroupFilter {
                 final ObjList<Function> valueFunctions = condition.getValueFunctions();
                 final int valueCount = valueFunctions.size();
 
-                int columnIndex = legacyMetadata != null
-                        ? legacyMetadata.getColumnIndex(condition.getColumnName())
-                        : parquetMetaReader.getColumnIndex(condition.getColumnName());
+                final int columnIndex;
+                if (resolveByColumnId) {
+                    // The Parquet column name is frozen at write time and goes stale on rename,
+                    // so map the filtered column to the Parquet column by its stable id instead.
+                    // Only native-table partitions resolve by id, and they always supply the
+                    // ParquetMetaFileReader; the legacy read_parquet() overload resolves by name.
+                    assert parquetMetaReader != null;
+                    columnIndex = parquetMetaReader.getColumnIndexById(condition.getColumnWriterIndex());
+                } else {
+                    columnIndex = legacyMetadata != null
+                            ? legacyMetadata.getColumnIndex(condition.getColumnName())
+                            : parquetMetaReader.getColumnIndex(condition.getColumnName());
+                }
                 if (columnIndex < 0) {
+                    continue;
+                }
+
+                // Skip pushdown for type-converted columns -- parquet metadata
+                // (bloom filters, min/max stats, null counts) reflects the old column type.
+                int parquetColumnType = legacyMetadata != null
+                        ? legacyMetadata.getColumnType(columnIndex)
+                        : parquetMetaReader.getColumnType(columnIndex);
+                if (parquetColumnType != condition.getColumnType()) {
                     continue;
                 }
 
@@ -181,12 +209,14 @@ public final class ParquetRowGroupFilter {
                                     filterValues.putInt(f.getChar(null));
                                     break;
                                 case ColumnType.INT:
-                                    filterValues.putInt(f.getInt(null));
-                                    break;
                                 case ColumnType.LONG:
-                                    // Safe truncation: if long exceeds int range, the truncated
-                                    // value won't match any byte bloom filter entry.
-                                    filterValues.putInt((int) f.getLong(null));
+                                    // Read via getLong() so INT arithmetic (Mul/Add/Sub/Neg)
+                                    // returns the long-precise result that the native filter
+                                    // sees after BYTE-to-LONG comparison promotion. Clamp into
+                                    // INT range for the parquet stats slot; values outside that
+                                    // range cannot equal any BYTE row anyway, and the saturated
+                                    // bound preserves the GT/GE/LT/LE result against BYTE stats.
+                                    filterValues.putInt(clampLongToInt(f.getLong(null)));
                                     break;
                                 case ColumnType.FLOAT:
                                 case ColumnType.DOUBLE:
@@ -202,10 +232,8 @@ public final class ParquetRowGroupFilter {
                             Function f = valueFunctions.getQuick(j);
                             switch (f.getType()) {
                                 case ColumnType.INT:
-                                    filterValues.putInt(f.getInt(null));
-                                    break;
                                 case ColumnType.LONG:
-                                    filterValues.putInt((int) f.getLong(null));
+                                    filterValues.putInt(clampLongToInt(f.getLong(null)));
                                     break;
                                 case ColumnType.FLOAT:
                                 case ColumnType.DOUBLE:
@@ -224,9 +252,10 @@ public final class ParquetRowGroupFilter {
                     case ColumnType.INT:
                         for (int j = 0; j < valueCount; j++) {
                             Function f = valueFunctions.getQuick(j);
-                            if (f.getType() == ColumnType.LONG) {
-                                filterValues.putInt((int) f.getLong(null));
-                            } else if (f.getType() == ColumnType.FLOAT || f.getType() == ColumnType.DOUBLE) {
+                            int vType = f.getType();
+                            if (vType == ColumnType.INT || vType == ColumnType.LONG) {
+                                filterValues.putInt(clampLongToInt(f.getLong(null)));
+                            } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
                                 filterValues.putInt((int) f.getDouble(null));
                             } else {
                                 filterValues.putInt(f.getInt(null));
@@ -431,6 +460,21 @@ public final class ParquetRowGroupFilter {
     @TestOnly
     public static void resetRowGroupsSkipped() {
         rowGroupsSkipped.set(0);
+    }
+
+    private static int clampLongToInt(long v) {
+        if (v == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        if (v > Integer.MAX_VALUE) {
+            return Integer.MAX_VALUE;
+        }
+        // Numbers.INT_NULL == Integer.MIN_VALUE, so a non-null value must not collapse
+        // onto the null sentinel after clamping.
+        if (v < Integer.MIN_VALUE) {
+            return Integer.MIN_VALUE + 1;
+        }
+        return (int) v;
     }
 
     private static long encodeColumnCountAndOp(int columnIndex, int count, int op) {

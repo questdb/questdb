@@ -161,7 +161,7 @@ public class MessageBusImpl implements MessageBus {
             this.o3PurgeDiscoverySubSeq = new MCSequence(this.o3PurgeDiscoveryQueue.getCycle());
             this.o3PurgeDiscoveryPubSeq.then(this.o3PurgeDiscoverySubSeq).then(o3PurgeDiscoveryPubSeq);
 
-            this.latestByQueue = new RingQueue<>(LatestByTask::new, configuration.getLatestByQueueCapacity());
+            this.latestByQueue = new RingQueue<>(() -> new LatestByTask(configuration), configuration.getLatestByQueueCapacity());
             this.latestByPubSeq = new MPSequence(latestByQueue.getCycle());
             this.latestBySubSeq = new MCSequence(latestByQueue.getCycle());
             latestByPubSeq.then(latestBySubSeq).then(latestByPubSeq);
@@ -265,6 +265,8 @@ public class MessageBusImpl implements MessageBus {
     @TestOnly
     public void clear() {
         columnPurgeSubSeq.clear();
+        postingSealPurgeSubSeq.clear();
+        groupByLongTopKSubSeq.clear();
         groupByMergeShardSubSeq.clear();
         indexerSubSeq.clear();
         latestBySubSeq.clear();
@@ -279,6 +281,7 @@ public class MessageBusImpl implements MessageBus {
         copyExportRequestSubSeq.clear();
         vectorAggregateSubSeq.clear();
         walTxnNotificationSubSequence.clear();
+        queryCacheEventSubSeq.clear();
         unorderedPageFrameReduceSubSeq.clear();
         for (int i = 0, n = pageFrameReduceSubSeq.length; i < n; i++) {
             pageFrameReduceSubSeq[i].clear();

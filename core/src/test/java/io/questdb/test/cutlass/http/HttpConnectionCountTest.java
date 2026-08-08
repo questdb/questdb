@@ -58,6 +58,7 @@ import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.PropertyKey.*;
@@ -170,8 +171,8 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                 protected Services services() {
                     return new Services() {
                         @Override
-                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool networkSharedPool, int sharedQueryWorkerCount) {
-                            HttpServer server = super.createHttpServer(configuration, cairoEngine, networkSharedPool, sharedQueryWorkerCount);
+                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool networkSharedPool, int sharedQueryWorkerCount, AtomicBoolean acceptOpen) {
+                            HttpServer server = super.createHttpServer(configuration, cairoEngine, networkSharedPool, sharedQueryWorkerCount, acceptOpen);
                             if (server != null) {
                                 server.bind(new HttpRequestHandlerFactory() {
                                     @Override
@@ -313,8 +314,8 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                 protected Services services() {
                     return new Services() {
                         @Override
-                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool networkSharedPool, int sharedQueryWorkerCount) {
-                            HttpServer server = super.createHttpServer(configuration, cairoEngine, networkSharedPool, sharedQueryWorkerCount);
+                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool networkSharedPool, int sharedQueryWorkerCount, AtomicBoolean acceptOpen) {
+                            HttpServer server = super.createHttpServer(configuration, cairoEngine, networkSharedPool, sharedQueryWorkerCount, acceptOpen);
                             if (server != null) {
                                 server.bind(new HttpRequestHandlerFactory() {
                                     @Override

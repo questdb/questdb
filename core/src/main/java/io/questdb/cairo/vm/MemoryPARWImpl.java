@@ -40,6 +40,7 @@ import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -70,6 +71,13 @@ public class MemoryPARWImpl implements MemoryARW {
     private final StringSink utf16Sink = new StringSink();
     private final FlyweightDirectUtf16Sink utf8FloatingSink = new FlyweightDirectUtf16Sink();
     protected int memoryTag;
+    // Per-query native memory tracker bound by the owning factory / function at
+    // cursor or init() time. Null when no per-query limit applies; all
+    // Unsafe.{malloc,free} calls degrade to the global-only overloads in that
+    // case. The class is lazy by design (the constructor does not allocate
+    // native memory), so a setter is enough (no openOnInit knob).
+    @Nullable
+    protected MemoryTracker memoryTracker;
     private long absolutePointer;
     private long appendPointer = -1;
     private long baseOffset = 1;
@@ -499,7 +507,12 @@ public class MemoryPARWImpl implements MemoryARW {
 
     @Override
     public final long putBin(long from, long len) {
-        putLong(len > 0 ? len : TableUtils.NULL_LEN);
+        // len == 0 is a real, empty BINARY value distinct from null (callers
+        // signal null with a negative len, or with putNullBin directly).
+        // Mirrors the MemoryCARW default to keep the two implementations in
+        // sync and to preserve empty BINARY round-trips through the QWP-WS
+        // WAL ingest path.
+        putLong(len >= 0 ? len : TableUtils.NULL_LEN);
         if (len < 1) {
             return getAppendOffset();
         }
@@ -979,6 +992,11 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
+    }
+
+    @Override
     public long size() {
         return getAppendOffset();
     }
@@ -1262,7 +1280,7 @@ public class MemoryPARWImpl implements MemoryARW {
         if (page >= maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
-        return Unsafe.malloc(getExtendSegmentSize(), memoryTag);
+        return Unsafe.malloc(getExtendSegmentSize(), memoryTag, memoryTracker);
     }
 
     protected long cachePageAddress(int index, long address) {
@@ -1303,7 +1321,7 @@ public class MemoryPARWImpl implements MemoryARW {
 
     protected void release(long address) {
         if (address != 0) {
-            Unsafe.free(address, getPageSize(), memoryTag);
+            Unsafe.free(address, getPageSize(), memoryTag, memoryTracker);
         }
     }
 

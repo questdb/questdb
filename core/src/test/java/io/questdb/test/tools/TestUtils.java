@@ -37,6 +37,7 @@ import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.LogRecordSinkAdapter;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -45,6 +46,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.BindVariableService;
@@ -54,6 +56,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -67,6 +70,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
+import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.griffin.engine.ops.Operation;
@@ -99,7 +104,7 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -158,7 +163,7 @@ public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
-    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
 
     private TestUtils() {
     }
@@ -817,6 +822,26 @@ public final class TestUtils {
         Assert.fail("SQL statement should have failed");
     }
 
+    /**
+     * Asserts that the factory tree, walked down the base factories, contains an instance of the
+     * expected class. Pinning the factory keeps a test honest: the reduce phase follows from the
+     * factory the optimizer picks, so a query that quietly moved to a different one would still
+     * run, still pass, and cover nothing.
+     */
+    public static void assertFactoryInTree(RecordCursorFactory factory, Class<?> expected) {
+        assertFactoryInTree(factory, expected, null);
+    }
+
+    public static void assertFactoryInTree(RecordCursorFactory factory, Class<?> expected, @Nullable CharSequence context) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (expected.isInstance(f)) {
+                return;
+            }
+        }
+        Assert.fail("expected " + expected.getSimpleName() + " in the factory tree, but top was "
+                + factory.getClass().getSimpleName() + (context != null ? ": " + context : ""));
+    }
+
     public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
         try (BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
              BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))
@@ -862,6 +887,75 @@ public final class TestUtils {
             } catch (Throwable e) {
                 ignore.skipChecks();
                 throw e;
+            }
+        }
+    }
+
+    /**
+     * Asserts that the first parallel factory in the tree holds no per-worker slots. Call it once
+     * the cursor is closed, so the frame sequence has been awaited and no worker is inside a locked
+     * section. A reducer that acquires a slot and then throws before entering the try that releases
+     * it leaves the slot held forever: {@link io.questdb.griffin.engine.PerWorkerLocks} has no reset
+     * and the atom belongs to the factory, so every later execution of the same cached factory finds
+     * one slot fewer, until the workers spin for a slot nobody will release.
+     * <p>
+     * An atom that holds no locks at all reports -1 and fails here rather than passing for the wrong
+     * reason.
+     *
+     * @param factory the compiled factory, executed at least once and with its cursor closed
+     * @param context what is being asserted, for the failure message
+     */
+    public static void assertNoSlotLeak(RecordCursorFactory factory, CharSequence context) {
+        Assert.assertEquals(
+                "worker slot leaked: " + context,
+                0,
+                findPerWorkerLocks(factory, context).getAcquiredSlotCount()
+        );
+    }
+
+    /**
+     * Compiles the query once and executes the same factory twice. A worker must acquire a slot
+     * before the owner can reduce, and both executions must report the expected memory breach. Each execution verifies exact slot balance after close; the second also observes that the cached
+     * factory remains reusable after the first failure without depending on a concrete factory class.
+     */
+    public static void assertNoSlotLeakOnBreach(
+            SqlCompiler compiler,
+            SqlExecutionContext ctx,
+            String query
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+            final PerWorkerLocks locks = findPerWorkerLocks(factory, query);
+            for (int i = 0; i < 2; i++) {
+                // A fresh latch per execution, so the acquisition it records is this execution's.
+                // An atom that owns no locks never reaches here, which is what stops a plan that
+                // quietly stopped cloning per-worker state from passing.
+                final CountDownLatch acquired = new CountDownLatch(1);
+                locks.setTestAcquireLatch(acquired);
+                try {
+                    try (RecordCursor cursor = factory.getCursor(ctx)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain until breach
+                        }
+                        Assert.fail("expected per-query memory breach for: " + query);
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    }
+                    assertNoSlotLeak(factory, query);
+                    // The latch is the tally: a worker counts it down as it takes a slot, so a
+                    // latch still standing means no worker ever entered the path under test and the
+                    // zero above would be zero for the wrong reason. It also catches a pool trimmed
+                    // below the work-stealing threshold, where the owner reduces every frame itself
+                    // and no worker ever gets a chance to take a slot.
+                    Assert.assertEquals(
+                            "no worker acquired a slot for: " + query,
+                            0,
+                            acquired.getCount()
+                    );
+                } finally {
+                    locks.setTestAcquireLatch(null);
+                }
             }
         }
     }
@@ -984,29 +1078,6 @@ public final class TestUtils {
         if (actHi != actLen - 1) {
             Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
         }
-    }
-
-    public static void assertSql(
-            CairoEngine engine,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence sql,
-            MutableUtf16Sink sink,
-            CharSequence expected
-    ) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            assertSql(compiler, sqlExecutionContext, sql, sink, expected);
-        }
-    }
-
-    public static void assertSql(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence sql,
-            MutableUtf16Sink sink,
-            CharSequence expected
-    ) throws SqlException {
-        printSql(compiler, sqlExecutionContext, sql, sink);
-        assertEquals(expected, sink);
     }
 
     public static void assertSqlCursors(
@@ -1519,7 +1590,7 @@ public final class TestUtils {
     public static void drainWalQueue(CairoEngine engine) {
         try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0)) {
             walApplyJob.drain(0);
-            new CheckWalTransactionsJob(engine).run(0);
+            new CheckWalTransactionsJob(engine).run();
             // run once again as there might be notifications to handle now
             walApplyJob.drain(0);
         }
@@ -1576,7 +1647,7 @@ public final class TestUtils {
                 runnable.run(engine, compiler, sqlExecutionContext);
             } finally {
                 if (pool != null) {
-                    pool.halt();
+                    pool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
                 }
             }
             Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -1602,9 +1673,48 @@ public final class TestUtils {
         }
     }
 
+    /**
+     * Returns the first atom found walking down the factory tree, failing when there is none.
+     */
+    public static StatefulAtom findAtom(RecordCursorFactory factory, CharSequence context) {
+        StatefulAtom atom = null;
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            atom = f.getAtom();
+            if (atom != null) {
+                break;
+            }
+        }
+        Assert.assertNotNull(
+                "no parallel factory with an atom in the tree, top was " + factory.getClass().getSimpleName() + ": " + context,
+                atom
+        );
+        return atom;
+    }
+
+    /**
+     * Returns the per-worker locks of the first atom in the factory tree, failing when the atom
+     * guards no per-worker state. An atom that holds no locks can neither take a slot nor leak one,
+     * so asserting slot balance against it would pass for the wrong reason.
+     */
+    public static PerWorkerLocks findPerWorkerLocks(RecordCursorFactory factory, CharSequence context) {
+        final StatefulAtom atom = findAtom(factory, context);
+        Assert.assertTrue(
+                atom.getClass().getSimpleName() + " owns no per-worker locks, so this query cannot"
+                        + " exercise the slot-leak path: " + context,
+                atom instanceof PerWorkerLockOwner
+        );
+        final PerWorkerLocks locks = ((PerWorkerLockOwner) atom).getPerWorkerLocks();
+        Assert.assertNotNull(
+                atom.getClass().getSimpleName() + " built no per-worker locks, so this query cannot"
+                        + " exercise the slot-leak path: " + context,
+                locks
+        );
+        return locks;
+    }
+
     @NotNull
     public static Rnd generateRandom(Log log) {
-        return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
+        return generateRandom(log, seedOf("fuzz.s0", System.nanoTime()), seedOf("fuzz.s1", System.currentTimeMillis()));
     }
 
     @NotNull
@@ -2028,6 +2138,37 @@ public final class TestUtils {
         }
     }
 
+    /**
+     * Reads the {@code seqTxn} stamped into the footer of the {@code _pm}
+     * snapshot identified by {@code parquetFileSize} (the MVCC version token
+     * from {@code _txn} field 3), opening and mapping the file for the
+     * duration of the call. Returns {@code -1} when the file is missing or
+     * unreadable, when no footer in the chain matches {@code parquetFileSize},
+     * or when the matched footer carries no {@code seqTxn}.
+     */
+    public static long readSeqTxnForVersion(FilesFacade ff, LPSZ path, long parquetFileSize) {
+        final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+        long addr = 0;
+        long size = 0;
+        try {
+            addr = ParquetMetaFileReader.openAndMapRO(ff, path, reader);
+            if (addr == 0) {
+                return -1;
+            }
+            // Capture the mapping size before clear() zeros it; needed for munmap.
+            size = reader.getFileSize();
+            if (!reader.resolveFooter(parquetFileSize)) {
+                return -1;
+            }
+            return reader.getResolvedSeqTxn();
+        } finally {
+            reader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        }
+    }
+
     public static boolean remove(LPSZ lpsz) {
         if (Files.remove(lpsz)) {
             return true;
@@ -2044,10 +2185,21 @@ public final class TestUtils {
             path.of(root);
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             path.slash();
-            if (ff.exists(path.$()) && !Files.rmdir(path, true)) {
-                StringSink dir = new StringSink();
-                dir.put(path.$());
-                Assert.fail("Test dir " + dir + " cleanup error: " + Os.errno());
+            // Eager deletion (haltOnFail=false): some tests intentionally leave background worker threads
+            // running into teardown -- e.g. BackupTest.testBackupShutdownTimeout forces a backup-shutdown
+            // timeout that abandons its native upload/compression threads, "relying on process shutdown". Those
+            // threads race this cleanup and delete tree entries concurrently. haltOnFail=true aborts on the
+            // first already-gone entry (a benign "does not exist", errno 2/3 on Windows) and leaves the rest of
+            // the tree behind; eager mode keeps deleting and only fails if the root cannot ultimately be emptied.
+            if (ff.exists(path.$()) && !Files.rmdir(path, false)) {
+                final int errno = Os.errno();
+                // The racing deleter may have removed the root from under us -- treat "does not exist" as success.
+                // A genuine leak (an open file handle) instead leaves the root non-empty and still surfaces here.
+                if (errno != CairoException.ERRNO_FILE_DOES_NOT_EXIST && errno != CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN) {
+                    StringSink dir = new StringSink();
+                    dir.put(path.$());
+                    Assert.fail("Test dir " + dir + " cleanup error: " + errno);
+                }
             }
 
             path.parent().concat(RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
@@ -2077,6 +2229,7 @@ public final class TestUtils {
             StringSink sink
     ) {
         ObjObjHashMap<String, Long> sizes = findPartitionSizes(root, tableName, engine, sink);
+        ObjObjHashMap<String, Long> seqTxns = findPartitionSeqTxns(root, tableName, engine);
         String[] lines = expected.split("\n");
         sink.clear();
         sink.put(lines[0]).put('\n');
@@ -2089,6 +2242,10 @@ public final class TestUtils {
             SizePrettyFunctionFactory.toSizePretty(auxSink, size);
             line = line.replaceAll("SIZE", String.valueOf(size));
             line = line.replaceAll("HUMAN", auxSink.toString());
+            // no seqTxn (non-WAL/legacy native, or a detached/attachable row absent from the
+            // live _txn) renders null; only a real stamp (> 0) shows a number.
+            Long st = seqTxns.get(nameColumn);
+            line = line.replaceAll("SEQTXN", st != null && st > 0 ? String.valueOf(st) : "null");
             sink.put(line).put('\n');
         }
         return sink.toString();
@@ -2437,6 +2594,50 @@ public final class TestUtils {
         return res;
     }
 
+    // Independent oracle for the SHOW PARTITIONS / table_partitions() seqTxn column: reads
+    // each live partition's seqTxn straight from _txn (native) or the _pm footer (parquet),
+    // never via the factory under test. Keyed by the rendered partition name. Absent names
+    // (detached/attachable rows) resolve to -1 in the substitution loop, matching the factory.
+    private static ObjObjHashMap<String, Long> findPartitionSeqTxns(
+            Utf8Sequence root,
+            String tableName,
+            CairoEngine engine
+    ) {
+        ObjObjHashMap<String, Long> seqTxns = new ObjObjHashMap<>();
+        TableToken tableToken = engine.verifyTableName(tableName);
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        StringSink nameSink = new StringSink();
+        try (
+                TableReader reader = engine.getReader(tableToken);
+                Path path = new Path().of(root).concat(tableToken)
+        ) {
+            int rootLen = path.size();
+            TxReader txReader = reader.getTxFile();
+            int partitionBy = reader.getPartitionedBy();
+            int timestampType = reader.getMetadata().getTimestampType();
+            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
+                long timestamp = txReader.getPartitionTimestampByIndex(i);
+                nameSink.clear();
+                PartitionBy.setSinkForPartition(nameSink, timestampType, partitionBy, timestamp);
+                long seqTxn;
+                if (txReader.isPartitionParquet(i)) {
+                    // _txn field 3 holds the parquet file size; the seqTxn is in the _pm footer.
+                    path.trimTo(rootLen);
+                    TableUtils.setPathForNativePartition(path, timestampType, partitionBy, timestamp, txReader.getPartitionNameTxn(i));
+                    seqTxn = readSeqTxnForVersion(
+                            ff,
+                            path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$(),
+                            txReader.getPartitionParquetFileSize(i)
+                    );
+                } else {
+                    seqTxn = txReader.getNativePartitionSeqTxn(i);
+                }
+                seqTxns.put(nameSink.toString(), seqTxn);
+            }
+        }
+        return seqTxns;
+    }
+
     private static ObjObjHashMap<String, Long> findPartitionSizes(
             Utf8Sequence root,
             String tableName,
@@ -2547,6 +2748,25 @@ public final class TestUtils {
             sink.put(lines[n - i - 1]).put('\n');
         }
         return sink;
+    }
+
+    /**
+     * Reads a seed override off a system property, falling back to the clock-derived
+     * default. A failing fuzz run prints its seeds; passing them back through
+     * {@code -Dfuzz.s0=<s0> -Dfuzz.s1=<s1>} replays the same draw, which is what makes a
+     * CI fuzz failure actionable at all. Without an override the seeds stay clock-derived,
+     * so ordinary runs keep exploring new cases.
+     */
+    private static long seedOf(String propertyName, long defaultSeed) {
+        final String value = System.getProperty(propertyName);
+        if (value == null) {
+            return defaultSeed;
+        }
+        try {
+            return Numbers.parseLong(value);
+        } catch (NumericException e) {
+            throw new IllegalArgumentException("invalid seed override [" + propertyName + "=" + value + ']');
+        }
     }
 
     private static String toHexString(Long256 expected) {
@@ -2669,26 +2889,37 @@ public final class TestUtils {
             // Checks that the same tag used for allocation and freeing native memory
             long memAfter = Unsafe.getMemUsed();
             long memNativeSqlCompilerDiff = 0;
+            long memNativeMemoryTrackerDiff = 0;
             Assert.assertTrue(memAfter > -1);
             if (mem != memAfter) {
                 for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                     long actualMemByTag = Unsafe.getMemUsedByTag(i);
                     if (memoryUsageByTag[i] != actualMemByTag) {
-                        if (i != MemoryTag.NATIVE_SQL_COMPILER) {
+                        if (i == MemoryTag.NATIVE_SQL_COMPILER) {
+                            // SqlCompiler memory is not released immediately as compilers are pooled
+                            Assert.assertTrue(actualMemByTag >= memoryUsageByTag[i]);
+                            memNativeSqlCompilerDiff = actualMemByTag - memoryUsageByTag[i];
+                        } else if (i == MemoryTag.NATIVE_MEMORY_TRACKER) {
+                            // A deficit is legitimate: a nested leak check can baseline a tracker the
+                            // enclosing scope pooled, then the teardown's engine.clear() drains it. A
+                            // surplus, by contrast, is a tracker acquired and never released - a leak.
+                            Assert.assertTrue(
+                                    "Memory usage by tag: " + MemoryTag.nameOf(i)
+                                            + ", difference: " + (actualMemByTag - memoryUsageByTag[i]),
+                                    actualMemByTag <= memoryUsageByTag[i]
+                            );
+                            memNativeMemoryTrackerDiff = actualMemByTag - memoryUsageByTag[i];
+                        } else {
                             Assert.assertEquals(
                                     "Memory usage by tag: " + MemoryTag.nameOf(i)
                                             + ", difference: " + (actualMemByTag - memoryUsageByTag[i]),
                                     memoryUsageByTag[i], actualMemByTag
                             );
                             Assert.assertTrue(actualMemByTag > -1);
-                        } else {
-                            // SqlCompiler memory is not released immediately as compilers are pooled
-                            Assert.assertTrue(actualMemByTag >= memoryUsageByTag[i]);
-                            memNativeSqlCompilerDiff = actualMemByTag - memoryUsageByTag[i];
                         }
                     }
                 }
-                Assert.assertEquals(mem + memNativeSqlCompilerDiff, memAfter);
+                Assert.assertEquals(mem + memNativeSqlCompilerDiff + memNativeMemoryTrackerDiff, memAfter);
             }
 
             int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();

@@ -115,6 +115,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableSetFormat(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeAlterTableSetParam(TableToken tableToken) {
     }
 
@@ -155,6 +159,14 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeLiveViewCreate() {
+    }
+
+    @Override
+    public void authorizeLiveViewDrop(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeMatViewCreate() {
     }
 
@@ -168,6 +180,10 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizePGWire() {
+    }
+
+    @Override
+    public void authorizeRebaseWal(TableToken tableToken) {
     }
 
     @Override
@@ -246,7 +262,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public String getPrincipal() {
+    public CharSequence getPrincipal() {
         return Constants.USER_NAME;
     }
 

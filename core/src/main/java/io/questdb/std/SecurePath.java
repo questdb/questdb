@@ -32,9 +32,9 @@ import io.questdb.std.str.Path;
  * potentially dangerous operations like recursive directory removal.
  */
 public class SecurePath {
-    static final io.questdb.std.ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
+    static final CarrierLocal<Path> PATH = new CarrierLocal<>(Path::new);
 
     public static void clearThreadLocals() {
-        PATH.close();
+        PATH.removeAndFree();
     }
 }

@@ -24,8 +24,10 @@
 
 package io.questdb.test.griffin.engine.orderby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain;
 import io.questdb.std.LongList;
@@ -34,6 +36,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -57,9 +60,11 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     public void before() {
         chain = new LimitedSizeLongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxPages(),
+                configuration.getSqlSortKeyMaxBytes(),
                 configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages()
+                configuration.getSqlSortLightValueMaxBytes(),
+                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
         );
         chain.updateLimits(true, 20);
     }
@@ -118,6 +123,34 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
                         """,
                 3, 2, 5, 1, 4
         );
+    }
+
+    @Test
+    public void testKeyHeapOverflowNamesConfigKey() {
+        // Tiny key-heap budget (one page) with an uncapped value heap: the red-black key heap
+        // overflows and the message must name the sort.key config key. Pins the LimitedSize key
+        // path's (raise ...) hint that no query-level test exercises.
+        chain.close();
+        chain = new LimitedSizeLongTreeChain(
+                64,             // key page >= BLOCK_SIZE; doubling past one page overflows
+                64,             // key heap budget = one page
+                128 * 1024,
+                Long.MAX_VALUE, // value heap uncapped
+                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+        );
+        chain.updateLimits(true, 1_000);
+        final long[] values = new long[256];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i;
+        }
+        try {
+            createTree(values);
+            Assert.fail("expected LimitOverflowException");
+        } catch (LimitOverflowException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(),
+                    "memory exceeded in RedBlackTree (raise cairo.sql.sort.key.max.bytes)");
+        }
     }
 
     // sibling is black and its both children are black (?)
@@ -387,6 +420,34 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
                            R-[Black,7]
                         """
         );
+    }
+
+    @Test
+    public void testValueHeapOverflowNamesConfigKey() {
+        // Tiny value-heap budget (one page) with an uncapped key heap: the rowid value chain
+        // overflows and the message must name the sort.light.value config key. This branch is
+        // otherwise never fired by a test.
+        chain.close();
+        chain = new LimitedSizeLongTreeChain(
+                64,
+                Long.MAX_VALUE, // key heap uncapped
+                16,             // value page >= CHAIN_VALUE_SIZE; doubling past one page overflows
+                16,             // value heap budget = one page
+                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+        );
+        chain.updateLimits(true, 1_000);
+        final long[] values = new long[256];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i;
+        }
+        try {
+            createTree(values);
+            Assert.fail("expected LimitOverflowException");
+        } catch (LimitOverflowException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(),
+                    "memory exceeded in LimitedSizeLongTreeChain (raise cairo.sql.sort.light.value.max.bytes)");
+        }
     }
 
     private void assertTree(String expected, long... values) {

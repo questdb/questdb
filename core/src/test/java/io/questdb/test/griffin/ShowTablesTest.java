@@ -52,53 +52,24 @@ public class ShowTablesTest extends AbstractCairoTest {
         // Background: This is a regression test for an issue where the tables() function
         // returned stale table IDs from cached plans after DROP TABLE + CREATE TABLE operations.
 
-        assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp) timestamp(ts) partition by DAY");
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                CompiledQuery compile = compiler.compile("tables()", sqlExecutionContext);
-
-                // we use a single instance of RecordCursorFactory before and after table drop
-                // this mimic behavior of a query cache.
-                try (RecordCursorFactory recordCursorFactory = compile.getRecordCursorFactory()) {
-                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
-                        assertCursor(
+        // mutateWith() reuses the same cached tables() factory across the drop/recreate,
+        // mimicking a cached query plan; the second result must show the new table ID.
+        assertQuery("tables()")
+                .ddl("create table x (ts timestamp) timestamp(ts) partition by DAY")
+                .noRandomAccess()
+                .expectSize()
+                .sizeMayVary()
+                .mutateWith("drop table x", "create table x (ts timestamp) timestamp(ts) partition by DAY")
+                .returns(
+                        """
+                                id	table_name	designatedTimestamp	partitionBy	walEnabled	dedup	ttlValue	ttlUnit	matView	directoryName	maxUncommittedRows	o3MaxLag	table_suspended	table_type	table_row_count	table_min_timestamp	table_max_timestamp	table_last_write_timestamp	table_txn	table_memory_pressure_level	table_write_amp_count	table_write_amp_p50	table_write_amp_p90	table_write_amp_p99	table_write_amp_max	table_merge_rate_count	table_merge_rate_p50	table_merge_rate_p90	table_merge_rate_p99	table_merge_rate_max	wal_pending_row_count	wal_dedup_row_count_since_start	wal_txn	wal_max_timestamp	wal_tx_count	wal_tx_size_p50	wal_tx_size_p90	wal_tx_size_p99	wal_tx_size_max	replica_batch_count	replica_batch_size_p50	replica_batch_size_p90	replica_batch_size_p99	replica_batch_size_max	replica_more_pending
+                                1	x	ts	DAY	false	false	0	HOUR	false	x~	1000	300000000	false	T	null				null	null	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
+                                """,
+                        """
+                                id	table_name	designatedTimestamp	partitionBy	walEnabled	dedup	ttlValue	ttlUnit	matView	directoryName	maxUncommittedRows	o3MaxLag	table_suspended	table_type	table_row_count	table_min_timestamp	table_max_timestamp	table_last_write_timestamp	table_txn	table_memory_pressure_level	table_write_amp_count	table_write_amp_p50	table_write_amp_p90	table_write_amp_p99	table_write_amp_max	table_merge_rate_count	table_merge_rate_p50	table_merge_rate_p90	table_merge_rate_p99	table_merge_rate_max	wal_pending_row_count	wal_dedup_row_count_since_start	wal_txn	wal_max_timestamp	wal_tx_count	wal_tx_size_p50	wal_tx_size_p90	wal_tx_size_p99	wal_tx_size_max	replica_batch_count	replica_batch_size_p50	replica_batch_size_p90	replica_batch_size_p99	replica_batch_size_max	replica_more_pending
+                                2	x	ts	DAY	false	false	0	HOUR	false	x~	1000	300000000	false	T	null				null	null	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
                                 """
-                                        id	table_name	designatedTimestamp	partitionBy	walEnabled	dedup	ttlValue	ttlUnit	matView	directoryName	maxUncommittedRows	o3MaxLag	table_suspended	table_type	table_row_count	table_min_timestamp	table_max_timestamp	table_last_write_timestamp	table_txn	table_memory_pressure_level	table_write_amp_count	table_write_amp_p50	table_write_amp_p90	table_write_amp_p99	table_write_amp_max	table_merge_rate_count	table_merge_rate_p50	table_merge_rate_p90	table_merge_rate_p99	table_merge_rate_max	wal_pending_row_count	wal_dedup_row_count_since_start	wal_txn	wal_max_timestamp	wal_tx_count	wal_tx_size_p50	wal_tx_size_p90	wal_tx_size_p99	wal_tx_size_max	replica_batch_count	replica_batch_size_p50	replica_batch_size_p90	replica_batch_size_p99	replica_batch_size_max	replica_more_pending
-                                        1	x	ts	DAY	false	false	0	HOUR	false	x~	1000	300000000	false	T	null				null	null	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
-                                        """,
-                                false,
-                                true,
-                                true,
-                                cursor,
-                                recordCursorFactory.getMetadata(),
-                                false
-                        );
-                    }
-
-                    // recreate the same table again
-                    execute("drop table x");
-                    execute("create table x (ts timestamp) timestamp(ts) partition by DAY");
-                    drainWalQueue();
-
-                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
-                        // note the ID is 2 now!
-                        assertCursor(
-                                """
-                                        id	table_name	designatedTimestamp	partitionBy	walEnabled	dedup	ttlValue	ttlUnit	matView	directoryName	maxUncommittedRows	o3MaxLag	table_suspended	table_type	table_row_count	table_min_timestamp	table_max_timestamp	table_last_write_timestamp	table_txn	table_memory_pressure_level	table_write_amp_count	table_write_amp_p50	table_write_amp_p90	table_write_amp_p99	table_write_amp_max	table_merge_rate_count	table_merge_rate_p50	table_merge_rate_p90	table_merge_rate_p99	table_merge_rate_max	wal_pending_row_count	wal_dedup_row_count_since_start	wal_txn	wal_max_timestamp	wal_tx_count	wal_tx_size_p50	wal_tx_size_p90	wal_tx_size_p99	wal_tx_size_max	replica_batch_count	replica_batch_size_p50	replica_batch_size_p90	replica_batch_size_p99	replica_batch_size_max	replica_more_pending
-                                        2	x	ts	DAY	false	false	0	HOUR	false	x~	1000	300000000	false	T	null				null	null	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
-                                        """,
-                                false,
-                                true,
-                                true,
-                                cursor,
-                                recordCursorFactory.getMetadata(),
-                                false
-                        );
-                    }
-                }
-            }
-        });
+                );
     }
 
     @Test
@@ -109,18 +80,16 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("insert into balances values (1, 'a', 1)");
             execute("insert into balances values (2, 'b', 2)");
             execute("insert into balances values (3, 'c', 3)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from table_columns('balances')")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             ccy\tSYMBOL\tfalse\t256\ttrue\t128\t4\tfalse\tfalse\t\t
                             balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "select * from table_columns('balances')",
-                    null,
-                    null,
-                    false
-            );
+                            """);
         });
     }
 
@@ -128,11 +97,8 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowColumnsWithFunctionAndMissingTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertException(
-                    "select * from table_columns('balances2')",
-                    28,
-                    "table does not exist"
-            );
+            assertQuery("select * from table_columns('balances2')")
+                    .fails(28, "table does not exist");
         });
     }
 
@@ -140,11 +106,8 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowColumnsWithMissingTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertException(
-                    "show columns from balances2",
-                    18,
-                    "table does not exist"
-            );
+            assertQuery("show columns from balances2")
+                    .fails(18, "table does not exist");
         });
     }
 
@@ -154,45 +117,46 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create table balances (cust_id int, ccx symbol, ccy symbol, balance double)");
             execute("insert into balances values (1, 'foo', 'bar', 1)");
             execute("insert into balances values (2, 'foo', null, 2)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("show columns from balances")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             ccx\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\t\t
                             ccy\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
                             balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "show columns from balances",
-                    null,
-                    null,
-                    false
-            );
+                            """);
         });
     }
 
     @Test
     public void testShowStandardConformingStrings() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                """
+        assertMemoryLeak(() -> assertQuery("show standard_conforming_strings")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         standard_conforming_strings
                         on
-                        """,
-                "show standard_conforming_strings",
-                null,
-                null,
-                false,
-                true
-        ));
+                        """));
     }
 
     @Test
     public void testShowTablesWithDrop() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertSql("table_name\nbalances\n", "show tables");
+            assertQuery("show tables")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\nbalances\n");
             execute("create table balances2(cust_id int, ccy symbol, balance double)");
             execute("drop table balances");
-            assertSql("table_name\nbalances2\n", "show tables");
+            assertQuery("show tables")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\nbalances2\n");
         });
     }
 
@@ -200,7 +164,10 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowTablesWithFunction() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertSql("table_name\nbalances\n", "select * from all_tables()");
+            assertQuery("select * from all_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\nbalances\n");
         });
     }
 
@@ -208,7 +175,10 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowTablesWithSingleTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertSql("table_name\nbalances\n", "show tables");
+            assertQuery("show tables")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\nbalances\n");
         });
     }
 
@@ -219,7 +189,10 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create table balances(account_no int, currency symbol, amount double)");
             execute("create table accounts(account_no int, currency symbol)");
             execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
-            assertSql("table_name\naccounts\nbalances\ncard_payments\ndeposits\n", "SHOW TABLES");
+            assertQuery("SHOW TABLES")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\naccounts\nbalances\ncard_payments\ndeposits\n");
         });
     }
 
@@ -230,7 +203,10 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create table balances(account_no int, currency symbol, amount double)");
             execute("create table accounts(account_no int, currency symbol)");
             execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
-            assertSql("table_name\naccounts\nbalances\ncard_payments\ndeposits\n", "select * from all_tables()");
+            assertQuery("select * from all_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\naccounts\nbalances\ncard_payments\ndeposits\n");
         });
     }
 
@@ -244,7 +220,10 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("drop table balances");
             execute("create table businesses(name symbol)");
             execute("create table balances2(account_no int, currency symbol, amount double)");
-            assertSql("table_name\naccounts\nbalances2\nbusinesses\ncard_payments\ndeposits\n", "select * from all_tables()");
+            assertQuery("select * from all_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\naccounts\nbalances2\nbusinesses\ncard_payments\ndeposits\n");
         });
     }
 
@@ -258,39 +237,33 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("rename table balances to statement_balances");
             execute("create table businesses(name symbol)");
             execute("create table balances2(account_no int, currency symbol, amount double)");
-            assertSql("table_name\naccounts\nbalances2\nbusinesses\ncard_payments\ndeposits\nstatement_balances\n", "select * from all_tables()");
+            assertQuery("select * from all_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\naccounts\nbalances2\nbusinesses\ncard_payments\ndeposits\nstatement_balances\n");
         });
     }
 
     @Test
     public void testShowTimeZone() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                "TimeZone\nUTC\n",
-                "show time zone",
-                null,
-                false,
-                true
-        ));
+        assertMemoryLeak(() -> assertQuery("show time zone")
+                .noRandomAccess()
+                .expectSize()
+                .returns("TimeZone\nUTC\n"));
     }
 
     @Test
     public void testShowTimeZoneWrongSyntax() throws Exception {
-        assertMemoryLeak(() -> assertException(
-                "show time",
-                9,
-                "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'server_version_num', 'search_path', 'datestyle', or 'time zone'"
-        ));
+        assertMemoryLeak(() -> assertQuery("show time")
+                .fails(9, "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'server_version_num', 'search_path', 'datestyle', or 'time zone'"));
     }
 
     @Test
     public void testSqlSyntax1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertException(
-                    "show",
-                    4,
-                    "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'server_version_num', 'search_path', 'datestyle', or 'time zone'"
-            );
+            assertQuery("show")
+                    .fails(4, "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'server_version_num', 'search_path', 'datestyle', or 'time zone'");
         });
     }
 
@@ -298,11 +271,8 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testSqlSyntax2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertException(
-                    "show columns balances",
-                    13,
-                    "expected 'from'"
-            );
+            assertQuery("show columns balances")
+                    .fails(13, "expected 'from'");
         });
     }
 
@@ -310,11 +280,8 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testSqlSyntax3() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertException(
-                    "show columns from balances where",
-                    27,
-                    "unexpected token [where]"
-            );
+            assertQuery("show columns from balances where")
+                    .fails(27, "unexpected token [where]");
         });
     }
 
@@ -325,15 +292,16 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create materialized view balances_1h as (select ts, max(balance) from balances sample by 1h) partition by week");
             execute("create view balances_view as (select ts, max(balance) from balances sample by 1h)");
             drainWalAndViewQueues();
-            assertSql(
-                    """
+            assertQuery("tables()")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             id	table_name	designatedTimestamp	partitionBy	walEnabled	dedup	ttlValue	ttlUnit	matView	directoryName	maxUncommittedRows	o3MaxLag	table_suspended	table_type	table_row_count	table_min_timestamp	table_max_timestamp	table_last_write_timestamp	table_txn	table_memory_pressure_level	table_write_amp_count	table_write_amp_p50	table_write_amp_p90	table_write_amp_p99	table_write_amp_max	table_merge_rate_count	table_merge_rate_p50	table_merge_rate_p90	table_merge_rate_p99	table_merge_rate_max	wal_pending_row_count	wal_dedup_row_count_since_start	wal_txn	wal_max_timestamp	wal_tx_count	wal_tx_size_p50	wal_tx_size_p90	wal_tx_size_p99	wal_tx_size_max	replica_batch_count	replica_batch_size_p50	replica_batch_size_p90	replica_batch_size_p99	replica_batch_size_max	replica_more_pending
                             1	balances	ts	DAY	true	false	0	HOUR	false	balances~1	1000	300000000	false	T	null				null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
                             2	balances_1h	ts	WEEK	true	false	0	HOUR	true	balances_1h~2	1000	-1	false	M	null				null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
                             3	balances_view	ts	N/A	true	false	0	HOUR	false	balances_view~3	0	0	false	V	null				null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
-                            """,
-                    "tables()"
-            );
+                            """);
         });
     }
 }

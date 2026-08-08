@@ -31,17 +31,33 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 
 public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
+    // floatToIntBits(-0.0f) == INT_NULL, so the default sentinel would make every -0.0f
+    // row collide with the empty slot. floatToIntBits canonicalises NaN to 0x7FC00000,
+    // so 0x7FC00001 is a key it can never produce.
+    private static final int NO_KEY_SENTINEL = 0x7FC00001;
+
     @Override
     public String getSignature() {
         return "cast(Fk)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             final StringSink sink = Misc.getThreadLocalSink();
@@ -54,7 +70,7 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
     private static class Func extends AbstractCastToSymbolFunction {
 
         public Func(Function arg) {
-            super(arg);
+            super(arg, NO_KEY_SENTINEL);
         }
 
         @Override

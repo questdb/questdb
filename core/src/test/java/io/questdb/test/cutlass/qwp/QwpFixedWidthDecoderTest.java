@@ -35,6 +35,7 @@ import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -82,7 +83,7 @@ public class QwpFixedWidthDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(rowCount, nulls, values);
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
@@ -123,7 +124,7 @@ public class QwpFixedWidthDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(QwpConstants.TYPE_DATE, rowCount, values);
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
@@ -160,7 +161,7 @@ public class QwpFixedWidthDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(rowCount, values);
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
@@ -197,7 +198,7 @@ public class QwpFixedWidthDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(rowCount, values);
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
@@ -239,7 +240,7 @@ public class QwpFixedWidthDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(rowCount, nulls, values);
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
@@ -291,7 +292,7 @@ public class QwpFixedWidthDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(rowCount, values);
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
@@ -328,7 +329,7 @@ public class QwpFixedWidthDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(rowCount, values);
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
@@ -368,7 +369,7 @@ public class QwpFixedWidthDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(rowCount, nulls, values);
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
@@ -433,7 +434,7 @@ public class QwpFixedWidthDecoderTest {
 
     @Test
     public void testDecodeIntColumn() throws QwpParseException {
-        int[] values = {1, 65_536, -1, Integer.MAX_VALUE, Integer.MIN_VALUE, 0};
+        int[] values = {1, 65_536, -1, Integer.MAX_VALUE, Integer.MIN_VALUE + 1, 0};
         int rowCount = values.length;
 
         int size = 1 + rowCount * 4; // flag byte + values
@@ -468,7 +469,7 @@ public class QwpFixedWidthDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(rowCount, nulls, values);
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
@@ -577,7 +578,7 @@ public class QwpFixedWidthDecoderTest {
 
     @Test
     public void testDecodeLongColumn() throws QwpParseException {
-        long[] values = {1L, 4_294_967_296L, -1L, Long.MAX_VALUE, Long.MIN_VALUE, 0L};
+        long[] values = {1L, 4_294_967_296L, -1L, Long.MAX_VALUE, Long.MIN_VALUE + 1, 0L};
         int rowCount = values.length;
 
         int size = 1 + rowCount * 8; // flag byte + values
@@ -612,7 +613,7 @@ public class QwpFixedWidthDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(rowCount, nulls, values);
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
@@ -676,7 +677,7 @@ public class QwpFixedWidthDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(rowCount, nulls, values);
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
@@ -712,7 +713,7 @@ public class QwpFixedWidthDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(QwpConstants.TYPE_TIMESTAMP, rowCount, values);
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
@@ -749,7 +750,7 @@ public class QwpFixedWidthDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(rowCount, hiValues, loValues);
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
@@ -802,7 +803,7 @@ public class QwpFixedWidthDecoderTest {
                     buffer.nextRow();
                 }
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
@@ -829,6 +830,291 @@ public class QwpFixedWidthDecoderTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testDecodeDateColumnSentinelNullNoBitmap() throws QwpParseException {
+        long[] values = {1_000L, Numbers.LONG_NULL, -2_000L};
+        assertLongSentinelNull(values, TYPE_DATE);
+    }
+
+    @Test
+    public void testDecodeDoubleColumnSentinelNullNoBitmap() throws QwpParseException {
+        double[] values = {1.5, Double.NaN, -2.5};
+        int rowCount = values.length;
+        int size = 1 + rowCount * 8;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
+            for (int i = 0; i < rowCount; i++) {
+                Unsafe.putDouble(address + 1 + (long) i * 8, values[i]);
+            }
+
+            QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+            cursor.of(address, size, rowCount, TYPE_DOUBLE);
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+            Assert.assertEquals(1.5, cursor.getDouble(), 0.0);
+
+            cursor.advanceRow();
+            Assert.assertTrue("NaN must be reported as NULL when no bitmap is present", cursor.isNull());
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+            Assert.assertEquals(-2.5, cursor.getDouble(), 0.0);
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testDecodeFloatColumnSentinelNullNoBitmap() throws QwpParseException {
+        float[] values = {1.5f, Float.NaN, -2.5f};
+        int rowCount = values.length;
+        int size = 1 + rowCount * 4;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
+            for (int i = 0; i < rowCount; i++) {
+                Unsafe.putFloat(address + 1 + (long) i * 4, values[i]);
+            }
+
+            QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+            cursor.of(address, size, rowCount, TYPE_FLOAT);
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+            Assert.assertEquals(1.5f, (float) cursor.getDouble(), 0.0f);
+
+            cursor.advanceRow();
+            Assert.assertTrue("NaN must be reported as NULL when no bitmap is present", cursor.isNull());
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+            Assert.assertEquals(-2.5f, (float) cursor.getDouble(), 0.0f);
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testDecodeIntColumnExplicitSentinelWithBitmap() throws QwpParseException {
+        int rowCount = 1;
+        int size = 1 + 1 + 4;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(address, (byte) 1);          // bitmap present
+            Unsafe.putByte(address + 1, (byte) 0);      // bitmap: row 0 NOT null
+            Unsafe.putInt(address + 2, Numbers.INT_NULL);
+
+            QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+            cursor.of(address, size, rowCount, TYPE_INT);
+
+            cursor.advanceRow();
+            Assert.assertFalse("bitmap-marked non-null must not be sentinel-detected", cursor.isNull());
+            Assert.assertEquals(Numbers.INT_NULL, (int) cursor.getLong());
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testDecodeIPv4ColumnSentinelNullNoBitmap() throws QwpParseException {
+        // QwpTableBuffer.addIPv4 javadoc: "The bit pattern 0 (i.e. 0.0.0.0) is
+        // reserved by QuestDB as the IPv4 NULL sentinel and surfaces as NULL
+        // on read regardless of the null bitmap." The encoder writes 0 inline
+        // as a value when there are no bitmap-tagged nulls; the cursor's
+        // sentinel switch is the protocol-intended null detector for this case.
+        int[] values = {0x0A000001, Numbers.IPv4_NULL, 0xFFFFFFFF};
+        int rowCount = values.length;
+        int size = 1 + rowCount * 4;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
+            for (int i = 0; i < rowCount; i++) {
+                Unsafe.putInt(address + 1 + (long) i * 4, values[i]);
+            }
+
+            QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+            cursor.of(address, size, rowCount, TYPE_IPV4);
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+            Assert.assertEquals(0x0A000001, (int) cursor.getLong());
+
+            cursor.advanceRow();
+            Assert.assertTrue("IPv4_NULL must be reported as NULL when no bitmap is present", cursor.isNull());
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+            Assert.assertEquals(0xFFFFFFFF, (int) cursor.getLong());
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testDecodeIntColumnSentinelNullNoBitmap() throws QwpParseException {
+        int[] values = {42, Numbers.INT_NULL, -1};
+        int rowCount = values.length;
+        int size = 1 + rowCount * 4;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
+            for (int i = 0; i < rowCount; i++) {
+                Unsafe.putInt(address + 1 + (long) i * 4, values[i]);
+            }
+
+            QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+            cursor.of(address, size, rowCount, TYPE_INT);
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+            Assert.assertEquals(42, (int) cursor.getLong());
+
+            cursor.advanceRow();
+            Assert.assertTrue("INT_NULL must be reported as NULL when no bitmap is present", cursor.isNull());
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+            Assert.assertEquals(-1, (int) cursor.getLong());
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testDecodeLong256ColumnSentinelNullNoBitmap() throws QwpParseException {
+        // LONG256 NULL = (LONG_NULL, LONG_NULL, LONG_NULL, LONG_NULL) per
+        // Long256Impl.NULL_LONG256. With no bitmap the cursor must classify
+        // that bit pattern as NULL or downstream consumers (e.g. the
+        // LONG256->String type-conversion path) will format it as a
+        // non-null Long256 value.
+        long[][] values = {
+                {0x1L, 0x2L, 0x3L, 0x4L},
+                {Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL},
+                {-1L, -1L, -1L, -1L}
+        };
+        int rowCount = values.length;
+        int size = 1 + rowCount * 32;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
+            for (int i = 0; i < rowCount; i++) {
+                long base = address + 1 + (long) i * 32;
+                Unsafe.putLong(base, values[i][0]);
+                Unsafe.putLong(base + 8, values[i][1]);
+                Unsafe.putLong(base + 16, values[i][2]);
+                Unsafe.putLong(base + 24, values[i][3]);
+            }
+
+            QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+            cursor.of(address, size, rowCount, TYPE_LONG256);
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+
+            cursor.advanceRow();
+            Assert.assertTrue("LONG256 NULL_LONG256 must be reported as NULL when no bitmap is present",
+                    cursor.isNull());
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testDecodeLongColumnSentinelNullNoBitmap() throws QwpParseException {
+        long[] values = {42L, Numbers.LONG_NULL, -1L};
+        assertLongSentinelNull(values, TYPE_LONG);
+    }
+
+    @Test
+    public void testDecodeTimestampColumnSentinelNullNoBitmap() throws QwpParseException {
+        long[] values = {1_000_000L, Numbers.LONG_NULL, -1L};
+        assertLongSentinelNull(values, TYPE_TIMESTAMP);
+    }
+
+    @Test
+    public void testDecodeTimestampNanosColumnSentinelNullNoBitmap() throws QwpParseException {
+        long[] values = {1_000_000_000L, Numbers.LONG_NULL, -1L};
+        assertLongSentinelNull(values, TYPE_TIMESTAMP_NANOS);
+    }
+
+    @Test
+    public void testDecodeUuidColumnSentinelNullNoBitmap() throws QwpParseException {
+        // UUID NULL = (LONG_NULL, LONG_NULL) per Uuid.isNull(lo, hi). With no
+        // bitmap the cursor must classify that bit pattern as NULL or the
+        // UUID->String type-conversion path (WalColumnarRowAppender
+        // putFixedOtherToStringColumn / putFixedOtherToVarcharColumn ->
+        // formatFixedOtherValue) formats it as a non-null Uuid value.
+        // Layout per QwpFixedWidthColumnCursor.readCurrentValue: lo first,
+        // hi second.
+        long[][] values = {
+                {0x1234L, 0x5678L},
+                {Numbers.LONG_NULL, Numbers.LONG_NULL},
+                {-1L, -1L}
+        };
+        int rowCount = values.length;
+        int size = 1 + rowCount * 16;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
+            for (int i = 0; i < rowCount; i++) {
+                long base = address + 1 + (long) i * 16;
+                Unsafe.putLong(base, values[i][0]);       // lo
+                Unsafe.putLong(base + 8, values[i][1]);   // hi
+            }
+
+            QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+            cursor.of(address, size, rowCount, TYPE_UUID);
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+
+            cursor.advanceRow();
+            Assert.assertTrue("UUID NULL must be reported as NULL when no bitmap is present",
+                    cursor.isNull());
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void assertLongSentinelNull(long[] values, byte typeCode) throws QwpParseException {
+        int rowCount = values.length;
+        int size = 1 + rowCount * 8;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
+            for (int i = 0; i < rowCount; i++) {
+                Unsafe.putLong(address + 1 + (long) i * 8, values[i]);
+            }
+
+            QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+            cursor.of(address, size, rowCount, typeCode);
+
+            for (int i = 0; i < rowCount; i++) {
+                cursor.advanceRow();
+                if (values[i] == Numbers.LONG_NULL) {
+                    Assert.assertTrue(
+                            "row " + i + " (" + QwpConstants.getTypeName(typeCode)
+                                    + ") LONG_NULL must be reported as NULL when no bitmap is present",
+                            cursor.isNull()
+                    );
+                } else {
+                    Assert.assertFalse("row " + i + " must not be NULL", cursor.isNull());
+                    Assert.assertEquals(values[i], cursor.getLong());
+                }
+            }
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private static int findColumnIndex(QwpTableBlockCursor table, byte typeCode) {

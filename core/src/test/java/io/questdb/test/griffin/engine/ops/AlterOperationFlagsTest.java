@@ -25,7 +25,14 @@
 package io.questdb.test.griffin.engine.ops;
 
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.std.MemoryTag;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -56,6 +63,75 @@ public class AlterOperationFlagsTest {
                         dedup, AlterOperation.decodeIsDedupKey(flags));
             }
         }
+    }
+
+    @Test
+    public void testSetTableFormatRoundTrip() throws Exception {
+        // Opcode 27 (SET_TABLE_FORMAT) carries a single long in extraInfo: the
+        // target table format (TABLE_FORMAT_NATIVE / TABLE_FORMAT_PARQUET).
+        // The WAL sequencer relies on serializeBody/deserializeBody (via
+        // BinaryAlterSerializer) round-tripping the command opcode and the
+        // tableFormat payload byte-for-byte, otherwise apply() would silently
+        // hand setMetaTableFormat() a wrong value on the apply side. This test
+        // exercises the same path that the WAL sequencer uses, plus a second
+        // serialize from the deserialized op to catch any asymmetry between
+        // the write and read sides.
+        TestUtils.assertMemoryLeak(() -> {
+            final TableToken tableToken = new TableToken(
+                    "fmt_table", "fmt_table~1", null, 17, false, false, false
+            );
+            final int tableNamePosition = 42;
+            final int tableFormat = TableUtils.TABLE_FORMAT_PARQUET;
+
+            AlterOperationBuilder builder = new AlterOperationBuilder();
+            AlterOperation src = builder
+                    .ofSetTableFormat(tableNamePosition, tableToken, tableToken.getTableId(), tableFormat)
+                    .build();
+            try (
+                    MemoryCARW sink1 = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW sink2 = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                src.serializeBody(sink1);
+                long size1 = sink1.getAppendOffset();
+
+                // Serialized layout (see AlterOperation.serializeBody):
+                //   short command           @ offset 0
+                //   int   tableNamePosition @ offset 2
+                //   int   longSize          @ offset 6
+                //   long  extraInfo[0..n)   @ offset 10
+                //   int   strSize           after the longs
+                //   ... strings ...
+                Assert.assertEquals(AlterOperation.SET_TABLE_FORMAT, sink1.getShort(0));
+                Assert.assertEquals(tableNamePosition, sink1.getInt(2));
+                Assert.assertEquals("SET_TABLE_FORMAT must serialize exactly one long",
+                        1, sink1.getInt(6));
+                Assert.assertEquals("tableFormat long must survive serialize",
+                        tableFormat, sink1.getLong(10));
+                Assert.assertEquals("SET_TABLE_FORMAT must serialize zero strings",
+                        0, sink1.getInt(18));
+
+                AlterOperation dst = new AlterOperation();
+                dst.deserializeBody(sink1, 0L, size1);
+
+                Assert.assertEquals("opcode must round-trip",
+                        AlterOperation.SET_TABLE_FORMAT, dst.getCommand());
+                Assert.assertEquals("tableNamePosition must round-trip",
+                        tableNamePosition, dst.getTableNamePosition());
+
+                // Re-serialize the deserialized op and assert byte-for-byte
+                // equality with the original. This catches any asymmetry
+                // between serializeBody and deserializeBody that would
+                // otherwise corrupt downstream WAL replay.
+                dst.serializeBody(sink2);
+                long size2 = sink2.getAppendOffset();
+                Assert.assertEquals("re-serialized payload must match original size",
+                        size1, size2);
+                for (long i = 0; i < size1; i++) {
+                    Assert.assertEquals("re-serialized payload must match original byte at offset " + i,
+                            sink1.getByte(i), sink2.getByte(i));
+                }
+            }
+        });
     }
 
     @Test

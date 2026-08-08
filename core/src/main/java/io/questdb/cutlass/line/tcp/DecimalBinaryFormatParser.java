@@ -28,7 +28,7 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -198,7 +198,7 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
     }
 
     public static class ParseException extends Exception {
-        private static final ThreadLocal<ParseException> tlException = new ThreadLocal<>(ParseException::new);
+        private static final CarrierLocal<ParseException> tlException = new CarrierLocal<>(ParseException::new);
         private LineTcpParser.ErrorCode errorCode;
 
         public static @NotNull ParseException invalidScale() {

@@ -74,11 +74,8 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
 
     @Test
     public void testGreatestNumericFunctionFactoryDecimalOverflow() throws Exception {
-        assertException(
-                "select greatest(123.456::decimal(76,73), 99999::int)",
-                46,
-                "inconvertible value: 99999 [INT -> DECIMAL(76,73)]"
-        );
+        assertQuery("select greatest(123.456::decimal(76,73), 99999::int)")
+                .fails(46, "inconvertible value: 99999 [INT -> DECIMAL(76,73)]");
     }
 
     @Test
@@ -164,8 +161,8 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
 
     @Test
     public void testGreatestNumericFunctionFactoryUnsupportedTypes() throws Exception {
-        assertException("select greatest(5, 5.2, 'abc', 2)", 24, "unsupported type");
-        assertException("select greatest(5, 5.2, 'abc'::varchar, 2)", 29, "unsupported type");
+        assertQuery("select greatest(5, 5.2, 'abc', 2)").fails(24, "unsupported type");
+        assertQuery("select greatest(5, 5.2, 'abc'::varchar, 2)").fails(29, "unsupported type");
     }
 
     @Test
@@ -208,7 +205,7 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
 
     @Test
     public void testGreatestNumericFunctionFactoryWithNoArgs() throws Exception {
-        assertException("select greatest();", 7, "at least one argument is required ");
+        assertQuery("select greatest();").fails(7, "at least one argument is required ");
     }
 
     @Test
@@ -223,14 +220,13 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
                             "('2021-10-05T14:31:35.878Z', 'AAPL', 250, 123.0);"
             );
 
-            assertQuery(
-                    "greatest\tgreatest1\n" +
+            assertQuery("select greatest(price, 247), greatest(amount, 123.2) from x")
+                    .expectSize()
+                    .returns("greatest\tgreatest1\n" +
                             "247.0\t123.4\n" +
                             "247.0\t123.3\n" +
                             "250.0\t123.2\n" +
-                            "250.0\t123.2\n",
-                    "select greatest(price, 247), greatest(amount, 123.2) from x"
-            );
+                            "250.0\t123.2\n");
         });
     }
 

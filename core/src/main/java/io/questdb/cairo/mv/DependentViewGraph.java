@@ -1,0 +1,380 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.mv;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.view.ViewDependencyList;
+import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.CarrierLocal;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
+
+import java.util.ArrayDeque;
+import java.util.function.BiFunction;
+import java.util.function.Function;
+
+/**
+ * Holds mat view definitions and the dependency list shared across mat views and
+ * live views. The class is named for its broader responsibility: ordering
+ * dependents (mat views, live views) before their base tables for snapshot and
+ * recovery flows. Mat-view-specific storage ({@link MatViewDefinition} cache)
+ * still lives here; the same {@code dependentViewsByTableName} map is
+ * generic-by-{@link TableToken}, so live views participate in ordering without
+ * additional graph state.
+ * <p>
+ * This object is always in-use, even when mat views are disabled or the node is
+ * a read-only replica.
+ */
+public class DependentViewGraph implements Mutable {
+    private static final CarrierLocal<MatViewDefinition> tlDefinitionTask = new CarrierLocal<>();
+    private static final CarrierLocal<LowerCaseCharSequenceHashSet> tlSeen = new CarrierLocal<>(LowerCaseCharSequenceHashSet::new);
+    private static final CarrierLocal<ArrayDeque<CharSequence>> tlStack = new CarrierLocal<>(ArrayDeque::new);
+    private final Function<CharSequence, ViewDependencyList> createDependencyList;
+    private final ConcurrentHashMap<MatViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
+    // Note: this map is grow-only, i.e. keys are never removed.
+    private final ConcurrentHashMap<ViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
+    private final BiFunction<CharSequence, MatViewDefinition, MatViewDefinition> updateDefinitionRef;
+
+    public DependentViewGraph() {
+        this.createDependencyList = name -> new ViewDependencyList();
+        this.updateDefinitionRef = this::updateDefinition;
+    }
+
+    /**
+     * Registers a live view as a dependent of {@code baseTableName} so
+     * {@link #orderByDependentViews} sees the LV when ordering tables for
+     * checkpoint/snapshot flows. Unlike {@link #addView(MatViewDefinition)},
+     * this does not cache a definition - LV definitions live in
+     * {@code LiveViewRegistry}. The graph only needs the LV's token to honor
+     * the "dependents-before-bases" ordering rule.
+     * <p>
+     * Rejects circular dependencies via {@link #hasDependencyLoop} - the same
+     * walk used for mat views, so a mixed mat/live chain catches loops that
+     * cross view types.
+     */
+    public boolean addLiveView(@NotNull TableToken liveViewToken, @NotNull CharSequence baseTableName) {
+        synchronized (this) {
+            if (hasDependencyLoop(baseTableName, liveViewToken)) {
+                throw CairoException.critical(0)
+                        .put("circular dependency detected for live view [view=").put(liveViewToken.getTableName())
+                        .put(", baseTable=").put(baseTableName)
+                        .put(']');
+            }
+            final ViewDependencyList list = getOrCreateDependentViews(baseTableName);
+            final ObjList<TableToken> dependents = list.lockForWrite();
+            try {
+                // Idempotent, like addView's putIfAbsent: CREATE, the boot loader and the
+                // replica's reconstructLiveViewFiles all reach this for the same view.
+                // removeLiveView drops the first match only, so a duplicate entry would
+                // outlive the drop and keep the dead view in orderByDependentViews forever.
+                for (int i = 0, n = dependents.size(); i < n; i++) {
+                    if (Chars.equalsIgnoreCase(dependents.getQuick(i).getDirName(), liveViewToken.getDirName())) {
+                        return false;
+                    }
+                }
+                dependents.add(liveViewToken);
+            } finally {
+                list.unlockAfterWrite();
+            }
+        }
+        return true;
+    }
+
+    public boolean addView(MatViewDefinition viewDefinition) {
+        final TableToken viewToken = viewDefinition.getMatViewToken();
+        final MatViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(viewToken.getDirName(), viewDefinition);
+        // WAL table directories are unique, so we don't expect previous value
+        if (prevDefinition != null) {
+            return false;
+        }
+
+        synchronized (this) {
+            if (hasDependencyLoop(viewDefinition.getBaseTableName(), viewToken)) {
+                throw CairoException.critical(0)
+                        .put("circular dependency detected for materialized view [view=").put(viewToken.getTableName())
+                        .put(", baseTable=").put(viewDefinition.getBaseTableName())
+                        .put(']');
+            }
+            final ViewDependencyList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
+            final ObjList<TableToken> matViews = list.lockForWrite();
+            try {
+                matViews.add(viewToken);
+            } finally {
+                list.unlockAfterWrite();
+            }
+        }
+        return true;
+    }
+
+    @TestOnly
+    @Override
+    public void clear() {
+        definitionsByTableDirName.clear();
+        dependentViewsByTableName.clear();
+    }
+
+    public void getDependentViews(TableToken baseTableToken, ObjList<TableToken> sink) {
+        final ViewDependencyList list = getOrCreateDependentViews(baseTableToken.getTableName());
+        final ReadOnlyObjList<TableToken> matViews = list.lockForRead();
+        try {
+            sink.addAll(matViews);
+        } finally {
+            list.unlockAfterRead();
+        }
+    }
+
+    public MatViewDefinition getViewDefinition(TableToken matViewToken) {
+        return definitionsByTableDirName.get(matViewToken.getDirName());
+    }
+
+    public void getViews(ObjList<TableToken> sink) {
+        for (MatViewDefinition viewDefinition : definitionsByTableDirName.values()) {
+            sink.add(viewDefinition.getMatViewToken());
+        }
+    }
+
+    /**
+     * Writes all table tokens to the destination list in order, so that dependent materialized views
+     * go first followed by their base tables (or materialized views).
+     * <p>
+     * This is used for checkpoints: we want to first take a snapshot of a mat view and only then
+     * take a snapshot its base table. That's to prevent situation when a checkpoint contains
+     * mat view refreshed with "ghost" base table data that is newer than what's in the checkpoint.
+     *
+     * @param tables      source set of all table tokens
+     * @param orderedSink destination list
+     */
+    public void orderByDependentViews(ObjHashSet<TableToken> tables, ObjList<TableToken> orderedSink) {
+        orderedSink.clear();
+        ObjHashSet<TableToken> seen = new ObjHashSet<>();
+        ArrayDeque<TableToken> stack = new ArrayDeque<>();
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            TableToken token = tables.get(i);
+            if (!seen.contains(token)) {
+                orderByDependentViews(token, seen, stack, orderedSink);
+            }
+        }
+    }
+
+    /**
+     * Removes a live view from its base's dependent list. Idempotent - a
+     * missing entry is silently ignored, mirroring the mat-view path.
+     */
+    public void removeLiveView(@NotNull TableToken liveViewToken, @NotNull CharSequence baseTableName) {
+        final ViewDependencyList dependents = dependentViewsByTableName.get(baseTableName);
+        if (dependents == null) {
+            return;
+        }
+        final ObjList<TableToken> list = dependents.lockForWrite();
+        try {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                if (list.get(i).equals(liveViewToken)) {
+                    list.remove(i);
+                    break;
+                }
+            }
+        } finally {
+            dependents.unlockAfterWrite();
+        }
+    }
+
+    public void removeView(TableToken viewToken) {
+        final MatViewDefinition viewDefinition = definitionsByTableDirName.remove(viewToken.getDirName());
+        if (viewDefinition != null) {
+            final CharSequence baseTableName = viewDefinition.getBaseTableName();
+            final ViewDependencyList dependentViews = dependentViewsByTableName.get(baseTableName);
+            if (dependentViews != null) {
+                final ObjList<TableToken> matViews = dependentViews.lockForWrite();
+                try {
+                    for (int i = 0, n = matViews.size(); i < n; i++) {
+                        final TableToken matView = matViews.get(i);
+                        if (matView.equals(viewToken)) {
+                            matViews.remove(i);
+                            break;
+                        }
+                    }
+                } finally {
+                    dependentViews.unlockAfterWrite();
+                }
+            }
+        }
+    }
+
+    /**
+     * Swaps a renamed live view's token in its base's dependent list. The graph caches no LV
+     * definition (see {@link #addLiveView}), so the base table name comes from the caller.
+     * {@link TableToken#equals} compares the table name too, so a list entry left on the old
+     * name would make {@link #removeLiveView} silently miss on a later drop and leave the LV
+     * dangling in {@link #orderByDependentViews} forever. Idempotent - a missing entry is
+     * ignored, mirroring the mat-view path.
+     */
+    public void updateLiveViewToken(@NotNull TableToken updatedToken, @NotNull CharSequence baseTableName) {
+        final ViewDependencyList dependents = dependentViewsByTableName.get(baseTableName);
+        if (dependents == null) {
+            return;
+        }
+        final ObjList<TableToken> list = dependents.lockForWrite();
+        try {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                if (Chars.equalsIgnoreCase(list.get(i).getDirName(), updatedToken.getDirName())) {
+                    list.set(i, updatedToken);
+                    return;
+                }
+            }
+        } finally {
+            dependents.unlockAfterWrite();
+        }
+    }
+
+    public void updateToken(TableToken updatedToken) {
+        final MatViewDefinition viewDefinition = definitionsByTableDirName.get(updatedToken.getDirName());
+        if (viewDefinition != null) {
+            viewDefinition.updateToken(updatedToken);
+            ViewDependencyList viewList = dependentViewsByTableName.get(viewDefinition.getBaseTableName());
+            if (viewList != null) {
+                var matViews = viewList.lockForWrite();
+                try {
+                    for (int i = 0, n = matViews.size(); i < n; i++) {
+                        if (Chars.equalsIgnoreCase(matViews.get(i).getDirName(), updatedToken.getDirName())) {
+                            matViews.set(i, updatedToken);
+                            return;
+                        }
+                    }
+                } finally {
+                    viewList.unlockAfterWrite();
+                }
+            }
+        }
+    }
+
+    public void updateViewDefinition(@NotNull TableToken viewToken, @NotNull MatViewDefinition newDefinition) {
+        tlDefinitionTask.set(newDefinition);
+        if (definitionsByTableDirName.computeIfPresent(viewToken.getDirName(), updateDefinitionRef) == null) {
+            throw CairoException.nonCritical().put("previous view definition was not found: ").put(viewToken.getTableName());
+        }
+    }
+
+    @NotNull
+    private ViewDependencyList getOrCreateDependentViews(CharSequence baseTableName) {
+        return dependentViewsByTableName.computeIfAbsent(baseTableName, createDependencyList);
+    }
+
+    private boolean hasDependencyLoop(CharSequence baseTableName, TableToken newMatViewToken) {
+        LowerCaseCharSequenceHashSet seen = tlSeen.get();
+        ArrayDeque<CharSequence> stack = tlStack.get();
+
+        seen.clear();
+        stack.clear();
+
+        if (Chars.equalsIgnoreCase(baseTableName, newMatViewToken.getTableName())) {
+            return true; // Self-loop
+        }
+
+        stack.push(newMatViewToken.getTableName());
+
+        while (!stack.isEmpty()) {
+            CharSequence currentTableName = stack.pop();
+            if (!seen.add(currentTableName)) {
+                continue;
+            }
+
+            ViewDependencyList dependentViews = dependentViewsByTableName.get(currentTableName);
+            if (dependentViews != null) {
+                ReadOnlyObjList<TableToken> matViews = dependentViews.lockForRead();
+                try {
+                    for (int i = 0, n = matViews.size(); i < n; i++) {
+                        TableToken matView = matViews.get(i);
+                        if (Chars.equalsIgnoreCase(matView.getTableName(), baseTableName)) {
+                            return true; // Cycle detected
+                        }
+                        stack.push(matView.getTableName());
+                    }
+                } finally {
+                    dependentViews.unlockAfterRead();
+                }
+            }
+        }
+        return false;
+    }
+
+    private void orderByDependentViews(
+            TableToken current,
+            ObjHashSet<TableToken> seen,
+            ArrayDeque<TableToken> stack,
+            ObjList<TableToken> sink
+    ) {
+        stack.push(current);
+        while (!stack.isEmpty()) {
+            TableToken top = stack.peek();
+            if (!seen.contains(top)) {
+                ViewDependencyList list = dependentViewsByTableName.get(top.getTableName());
+                if (list == null) {
+                    sink.add(top);
+                    seen.add(top);
+                    stack.pop();
+                } else {
+                    boolean allDependentSeen = true;
+                    ReadOnlyObjList<TableToken> views = list.lockForRead();
+                    try {
+                        for (int i = 0, n = views.size(); i < n; i++) {
+                            TableToken view = views.get(i);
+                            if (!seen.contains(view)) {
+                                stack.push(view);
+                                allDependentSeen = false;
+                            }
+                        }
+                    } finally {
+                        list.unlockAfterRead();
+                    }
+                    if (allDependentSeen) {
+                        sink.add(top);
+                        seen.add(top);
+                        stack.pop();
+                    }
+                }
+            } else {
+                stack.pop();
+            }
+        }
+    }
+
+    private MatViewDefinition updateDefinition(CharSequence tableDirName, MatViewDefinition existingDefinition) {
+        if (existingDefinition == null) {
+            return null;
+        }
+        MatViewDefinition newDefinition = tlDefinitionTask.get();
+        assert newDefinition != null;
+        // no, this won't produce a mem leak since we don't spawn short-lived threads in runtime
+        tlDefinitionTask.set(null);
+        return newDefinition;
+    }
+}

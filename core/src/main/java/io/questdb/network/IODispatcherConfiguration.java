@@ -121,8 +121,6 @@ public interface IODispatcherConfiguration {
     // user-land buffer size
     int getSendBufferSize();
 
-    int getTestConnectionBufferSize();
-
     long getTimeout();
 
     Counter listenerStateChangeCounter();

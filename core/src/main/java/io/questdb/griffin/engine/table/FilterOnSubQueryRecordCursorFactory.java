@@ -25,9 +25,11 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -50,14 +52,15 @@ import org.jetbrains.annotations.Nullable;
 
 public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final int columnIndex;
-    private final PageFrameRecordCursorWrapper cursor;
     private final ObjList<RowCursorFactory> cursorFactories;
     private final int[] cursorFactoriesIdx;
     private final IntObjHashMap<RowCursorFactory> factoriesA = new IntObjHashMap<>(64, 0.5, -5);
     private final IntObjHashMap<RowCursorFactory> factoriesB = new IntObjHashMap<>(64, 0.5, -5);
-    private final Function filter;
     private final Record.CharSequenceFunction func;
-    private final RecordCursorFactory recordCursorFactory;
+    private PageFrameRecordCursorWrapper cursor;
+    private Function filter;
+    private RecordCursorFactory recordCursorFactory;
+    private HeapRowCursorFactory rowCursorFactory;
 
     public FilterOnSubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -77,10 +80,11 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
         this.func = func;
         cursorFactories = new ObjList<>();
         cursorFactoriesIdx = new int[]{0};
+        rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
         final PageFrameRecordCursorImpl pageFrameRecordCursor = new PageFrameRecordCursorImpl(
                 configuration,
                 metadata,
-                new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx),
+                rowCursorFactory,
                 false,
                 filter
         );
@@ -108,12 +112,27 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(filter);
-        Misc.free(cursor);
-        recordCursorFactory.close();
+        final PageFrameRecordCursorWrapper cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final RecordCursorFactory recordCursorFactory = this.recordCursorFactory;
+        this.recordCursorFactory = null;
+        final HeapRowCursorFactory rowCursorFactory = this.rowCursorFactory;
+        this.rowCursorFactory = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, rowCursorFactory);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, recordCursorFactory);
         factoriesA.clear();
         factoriesB.clear();
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -215,18 +234,23 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
         }
 
         @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            delegate.setParquetDecodeHint(hint);
+        }
+
+        @Override
         public long size() {
             return delegate.size();
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             if (baseCursor != null) {
                 buildFactories();
                 baseCursor = Misc.free(baseCursor);
             }
 
-            delegate.skipRows(rowCount);
+            delegate.skipRows(rowCount, maxRowsAfterSkip);
         }
 
         @Override

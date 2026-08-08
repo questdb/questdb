@@ -659,6 +659,41 @@ public class MemoryCARWImplTest {
     }
 
     @Test
+    public void testJumpToZeroKeepsAllocation() {
+        final int pageSize = 256;
+        final int sz = 256 * 3;
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, 3, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < sz; i++) {
+                mem.putByte(i, (byte) i);
+            }
+            Assert.assertEquals(sz, mem.size());
+            final long address = mem.getPageAddress(0);
+
+            // Rewinding keeps every page the buffer grew to, so a caller that
+            // rewinds and refills each cycle reallocates nothing and writes into
+            // pages that are already mapped. Callers rely on this: see
+            // WindowFunction.onCheckpointRestoreBegin().
+            mem.jumpTo(0);
+            Assert.assertEquals(sz, mem.size());
+            Assert.assertEquals(0, mem.getAppendOffset());
+            Assert.assertEquals(address, mem.getPageAddress(0));
+
+            for (int i = 0; i < sz; i++) {
+                mem.putByte(i, (byte) (i + 1));
+            }
+            Assert.assertEquals(sz, mem.size());
+            Assert.assertEquals(address, mem.getPageAddress(0));
+            for (int i = 0; i < sz; i++) {
+                Assert.assertEquals((byte) (i + 1), mem.getByte(i));
+            }
+
+            // truncate(), by contrast, hands all but the first page back.
+            mem.truncate();
+            Assert.assertEquals(pageSize, mem.size());
+        }
+    }
+
+    @Test
     public void testLong256() {
         try (MemoryARW mem = new MemoryCARWImpl(256, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
@@ -1170,6 +1205,7 @@ public class MemoryCARWImplTest {
         }
     }
 
+
     private void testStrRnd(long offset, long pageSize) {
         Rnd rnd = new Rnd();
         int N = 1000;
@@ -1352,15 +1388,25 @@ public class MemoryCARWImplTest {
         final byte[] buf = new byte[0];
         binarySequence.of(buf);
         mem.putBin(null);
+        // putBin(from, len) with len == 0 writes an empty (non-null) BINARY
+        // entry. Callers signal null via putNullBin() or a negative len.
+        long emptyOff = mem.getAppendOffset();
         mem.putBin(0, 0);
-        long o1 = mem.putBin(binarySequence);
+        long emptyOff2 = mem.getAppendOffset();
+        mem.putBin(binarySequence);
+        long nullOff1 = mem.getAppendOffset();
         mem.putNullBin();
+        long nullOff2 = mem.getAppendOffset();
+        mem.putBin(0L, -1L);
 
         assertNull(mem.getBin(0));
-        assertNull(mem.getBin(8));
-        BinarySequence bsview = mem.getBin(16);
-        assertNotNull(bsview);
-        assertEquals(0, bsview.length());
-        assertNull(mem.getBin(o1));
+        BinarySequence empty1 = mem.getBin(emptyOff);
+        assertNotNull(empty1);
+        assertEquals(0, empty1.length());
+        BinarySequence empty2 = mem.getBin(emptyOff2);
+        assertNotNull(empty2);
+        assertEquals(0, empty2.length());
+        assertNull(mem.getBin(nullOff1));
+        assertNull(mem.getBin(nullOff2));
     }
 }

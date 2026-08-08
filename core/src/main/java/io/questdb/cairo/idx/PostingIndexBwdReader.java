@@ -56,6 +56,22 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
     }
 
+    public PostingIndexBwdReader(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            long partitionTxn,
+            long columnTop,
+            RecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp,
+            long pinnedTableTxn
+    ) {
+        setPinnedTableTxn(pinnedTableTxn);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+    }
+
     @Override
     public void close() {
         super.close();
@@ -76,7 +92,15 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
+        stampOperatingThread();
         reloadConditionally();
+
+        // See PostingIndexFwdReader.getCursor: clamp the index-walked
+        // upper bound to the picked chain entry's MAX_VALUE so dirty
+        // (key, rowId) entries in .pv past the entry's coverage are
+        // not surfaced. Implicit nulls (rows before columnTop) stay
+        // clamped by columnTop only.
+        long indexMaxValue = entryMaxValue >= 0 ? Math.min(maxValue, entryMaxValue) : maxValue;
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
             NullCursor nc;
@@ -86,9 +110,20 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             } else {
                 nc = new NullCursor();
             }
-            nc.of(key, minValue, maxValue);
+            // of() can throw (e.g. OOM growing the block buffer). The cursor has
+            // been popped from the pool (or freshly created) but is not yet owned
+            // by the caller, so release its retained native buffers on failure;
+            // the reader's close() only drains freeNullCursors and would never
+            // reclaim a cursor stranded mid-of().
+            try {
+                nc.of(key, minValue, indexMaxValue);
+            } catch (Throwable th) {
+                nc.releaseResources();
+                throw th;
+            }
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nc.nullCount = Math.min(columnTop, hi);
+            nc.nullPos = nc.nullCount;
             return nc;
         }
 
@@ -101,7 +136,74 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             } else {
                 c = new Cursor();
             }
-            c.of(key, minValue, maxValue);
+            // See the NullCursor branch above: release the cursor's native buffers
+            // if of() throws so a mid-of() failure cannot strand them.
+            try {
+                c.of(key, minValue, indexMaxValue);
+            } catch (Throwable th) {
+                c.releaseResources();
+                throw th;
+            }
+            return c;
+        }
+
+        return EmptyRowCursor.INSTANCE;
+    }
+
+    /**
+     * Backward-iteration peer of
+     * {@link PostingIndexFwdReader#getDetachedCursor(int, long, long, int[])}.
+     * Constructs a fresh, single-worker-owned cursor that never draws from or
+     * returns to the shared freeCursors pool; its {@link Cursor#close()} frees
+     * its own native scratch directly. Positioning is identical to
+     * {@link #getCursor(int, long, long, int[])}; only the construct/close
+     * lifecycle differs. The reader's shared state must have been made
+     * read-only first via
+     * {@link AbstractPostingIndexReader#warmForKeys} for concurrent use to be
+     * safe. Does NOT stamp the operating-thread tripwire (detached cursors run
+     * off the reader's owning thread by design).
+     * <p>
+     * Provided for API symmetry with the forward reader. The covered parallel-decode
+     * pipeline reads each frame forward (even DESC frames are decoded ascending; the
+     * cheap selectKthMatch partitioning is forward-only), so this backward variant is
+     * not currently exercised by that pipeline — it is internally correct but untested
+     * in the concurrent path.
+     */
+    public RowCursor getDetachedCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
+        reloadConditionally();
+
+        // Mirror getCursor's clamp of the index-walked upper bound to the
+        // picked chain entry's MAX_VALUE.
+        long indexMaxValue = entryMaxValue >= 0 ? Math.min(maxValue, entryMaxValue) : maxValue;
+
+        if (key == 0 && columnTop > 0 && minValue < columnTop) {
+            NullCursor nc = new NullCursor();
+            nc.isDetached = true;
+            // of() can throw (e.g. OOM growing the block buffer). A detached cursor is
+            // never in the reader's free list, so nothing else would reclaim it; release
+            // its native scratch on a mid-of() failure (mirrors getCursor).
+            try {
+                nc.of(key, minValue, indexMaxValue);
+            } catch (Throwable th) {
+                nc.releaseResources();
+                throw th;
+            }
+            final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
+            nc.nullCount = Math.min(columnTop, hi);
+            nc.nullPos = nc.nullCount;
+            return nc;
+        }
+
+        if (key < keyCount) {
+            openRequiredSidecars(requiredCoverColumns);
+            Cursor c = new Cursor();
+            c.isDetached = true;
+            try {
+                c.of(key, minValue, indexMaxValue);
+            } catch (Throwable th) {
+                c.releaseResources();
+                throw th;
+            }
             return c;
         }
 
@@ -115,7 +217,11 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         protected long maxValue;
         protected long minValue;
         protected long next;
-        boolean isPooled;
+        // Set for cursors handed out by getDetachedCursor: a single worker owns
+        // this cursor and it was never drawn from freeCursors, so close() must
+        // free its native scratch directly and never push it back to the pool
+        // (which is racy under the concurrent same-reader decode this enables).
+        boolean isDetached;
         private long blockBufferAddr = 0;
         private int blockBufferCapacity = 0;
         private int blockBufferPos;
@@ -153,7 +259,24 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
-            if (!isPooled && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            // Detached cursors are owned by a single worker thread that is, by
+            // design, NOT the reader's owning thread; they never touch the
+            // shared freeCursors pool. releaseResources() frees the block buffer,
+            // the EF rank directory, and all covering scratch -- the same native
+            // state the pool branch frees -- so skip both the operating-thread
+            // gate and the pool-push.
+            if (isDetached) {
+                releaseResources();
+                return;
+            }
+            // Re-pool only while the owning reader is still open (the pool retains
+            // blockBufferAddr, NATIVE_INDEX_READER, and only the reader's close()
+            // drains freeCursors to reclaim it) and on the reader's operating
+            // thread; off-thread closes fall through to releaseResources(), which
+            // frees only cursor-local buffers and is safe from any thread. See
+            // AbstractPostingIndexReader.isOperatingThread() for the full
+            // rationale and the gate's limits.
+            if (canRepool(freeCursors.size())) {
                 isPooled = true;
                 closeCoveringResources();
                 if (efRankDirAddr != 0) {
@@ -305,7 +428,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 }
                 currentGen--;
             }
-            if (!isCacheReplayMode && requestedKey >= 0) {
+            // A detached (per-worker) cursor must NEVER mutate the shared reader's genLookup cache
+            // (see PostingIndexFwdReader): the dispatch-thread warm populates it before freeze; a
+            // detached cursor that reaches here re-walked read-only and must not race on the write.
+            if (!isCacheReplayMode && requestedKey >= 0 && !isDetached) {
                 builderEntries.reverse();
                 genLookup.putCacheEntries(requestedKey, builderEntries);
             }
@@ -439,6 +565,9 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private void loadDenseGenerationCached(int gen) {
             this.isCurrentGenDense = true;
             this.bufferRangeChecked = false;
+            // See loadSparseGenByPrefixSum: clear the EF flag so a previous
+            // gen's EF mode cannot leak past this gen's empty early returns.
+            this.isEFMode = false;
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
@@ -450,7 +579,17 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            valueMem.extend(genFileOffset + genDataSize);
+            // Invariant: valueMem is pre-extended to its full published size
+            // (valueMemSize) by the synchronous read setup (of -> mapValueMem /
+            // reloadConditionally -> changeSize) and, for the parallel-decode
+            // path, once up front by warmForKeys. No gen load may therefore need
+            // to grow valueMem here; if it could, a worker decode would trigger a
+            // remap and invalidate raw page addresses held by sibling cursors.
+            assert genFileOffset + genDataSize <= valueMem.size()
+                    : "covering gen exceeds pre-extended valueMem: off=" + genFileOffset + " len=" + genDataSize + " size=" + valueMem.size();
+            if (genFileOffset + genDataSize > valueMem.size()) {
+                throw CairoException.critical(0).put("covering gen data exceeds mapped valueMem [off=").put(genFileOffset).put(", len=").put(genDataSize).put(", size=").put(valueMem.size()).put(']');
+            }
             Unsafe.loadFence();
             long genAddr = valueMem.addressOf(genFileOffset);
 
@@ -593,13 +732,33 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private void loadSparseGenByPrefixSum(int gen) {
             this.isCurrentGenDense = false;
             this.bufferRangeChecked = false;
+            // Clear the EF flag up front so a previous gen's EF mode never
+            // survives into this gen's load. The early-return "no data for this
+            // key" paths below reset encodedBlockCount and isFlatMode but not
+            // isEFMode; without this, a stale isEFMode makes the build-mode
+            // cache-add guard (hasNext -> advanceToPrevRelevantGen) record a
+            // bogus (gen, posInGen) entry for a gen that has no values for the
+            // key. Replaying that entry then reads the wrong key's posting list
+            // (or an out-of-bounds offset). readDeltaBlockMetadata sets the flag
+            // correctly when this gen actually has data.
+            this.isEFMode = false;
             computePerColumnSidecarOffsets(gen);
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
             int activeKeyCount = -genKeyCount;
 
-            valueMem.extend(genFileOffset + genDataSize);
+            // Invariant: valueMem is pre-extended to its full published size
+            // (valueMemSize) by the synchronous read setup (of -> mapValueMem /
+            // reloadConditionally -> changeSize) and, for the parallel-decode
+            // path, once up front by warmForKeys. No gen load may therefore need
+            // to grow valueMem here; if it could, a worker decode would trigger a
+            // remap and invalidate raw page addresses held by sibling cursors.
+            assert genFileOffset + genDataSize <= valueMem.size()
+                    : "covering gen exceeds pre-extended valueMem: off=" + genFileOffset + " len=" + genDataSize + " size=" + valueMem.size();
+            if (genFileOffset + genDataSize > valueMem.size()) {
+                throw CairoException.critical(0).put("covering gen data exceeds mapped valueMem [off=").put(genFileOffset).put(", len=").put(genDataSize).put(", size=").put(valueMem.size()).put(']');
+            }
             Unsafe.loadFence();
             long genAddr = valueMem.addressOf(genFileOffset);
 
@@ -659,13 +818,27 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private void loadSparseGenDirect(int gen, int idx) {
             this.isCurrentGenDense = false;
             this.bufferRangeChecked = false;
+            // See loadSparseGenByPrefixSum: clear the EF flag so a previous
+            // gen's EF mode cannot leak past this gen's empty (totalValueCount
+            // == 0) early return and make hasNext re-decode the prior gen.
+            this.isEFMode = false;
             computePerColumnSidecarOffsets(gen);
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
             int activeKeyCount = -genKeyCount;
 
-            valueMem.extend(genFileOffset + genDataSize);
+            // Invariant: valueMem is pre-extended to its full published size
+            // (valueMemSize) by the synchronous read setup (of -> mapValueMem /
+            // reloadConditionally -> changeSize) and, for the parallel-decode
+            // path, once up front by warmForKeys. No gen load may therefore need
+            // to grow valueMem here; if it could, a worker decode would trigger a
+            // remap and invalidate raw page addresses held by sibling cursors.
+            assert genFileOffset + genDataSize <= valueMem.size()
+                    : "covering gen exceeds pre-extended valueMem: off=" + genFileOffset + " len=" + genDataSize + " size=" + valueMem.size();
+            if (genFileOffset + genDataSize > valueMem.size()) {
+                throw CairoException.critical(0).put("covering gen data exceeds mapped valueMem [off=").put(genFileOffset).put(", len=").put(genDataSize).put(", size=").put(valueMem.size()).put(']');
+            }
             Unsafe.loadFence();
             long genAddr = valueMem.addressOf(genFileOffset);
 
@@ -875,10 +1048,19 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
     private class NullCursor extends Cursor {
         private long nullCount;
+        private long nullPos;
 
         @Override
         public void close() {
-            if (!isPooled && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            // See Cursor.close(): detached cursors bypass the operating-thread
+            // gate and the pool, freeing their own native scratch directly.
+            if (isDetached) {
+                releaseResources();
+                return;
+            }
+            // See Cursor.close(): re-pool only while the reader is open and on the
+            // reader's operating thread; otherwise release directly.
+            if (canRepool(freeNullCursors.size())) {
                 isPooled = true;
                 closeCoveringResources();
                 if (efRankDirAddr != 0) {
@@ -898,8 +1080,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             if (super.hasNext()) {
                 return true;
             }
-            if (--nullCount >= minValue) {
-                next = nullCount;
+            if (--nullPos >= minValue) {
+                next = nullPos;
                 return true;
             }
             return false;
@@ -907,10 +1089,12 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         @Override
         public long size() {
-            long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
-            long nullLimit = Math.min(columnTop, hi);
-            long nulls = Math.max(0L, nullLimit - minValue);
-            return super.size() + nulls;
+            // nullCount is set in getCursor from the unclamped caller maxValue
+            // and never mutates during iteration; using it directly avoids the
+            // Cursor.maxValue field, which now holds the entryMaxValue-clamped
+            // bound and would under-count nulls when entryMaxValue < columnTop.
+            long indexSize = super.size();
+            return indexSize < 0 ? -1 : indexSize + Math.max(0L, nullCount - minValue);
         }
     }
 }

@@ -48,6 +48,7 @@ import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.CompiledQueryImpl;
+import io.questdb.griffin.ReadOnlyStatementGate;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -64,7 +65,6 @@ import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.FlyweightMessageContainer;
@@ -96,13 +96,18 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.locks.Lock;
 import java.util.function.Consumer;
 
 import static io.questdb.cutlass.pgwire.PGConnectionContext.*;
 import static io.questdb.cutlass.pgwire.PGOids.*;
+import static io.questdb.cutlass.pgwire.PGUtils.NUMERIC_NEG;
+import static io.questdb.cutlass.pgwire.PGUtils.NUMERIC_POS;
 import static io.questdb.cutlass.pgwire.PGUtils.calculateColumnBinSize;
 import static io.questdb.cutlass.pgwire.PGUtils.estimateColumnTxtSize;
+import static io.questdb.cutlass.pgwire.PGUtils.outColBinDecimal;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
@@ -112,10 +117,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public static final int SYNC_DESC_NONE = 0;
     public static final int SYNC_DESC_PARAMETER_DESCRIPTION = 2;
     public static final int SYNC_DESC_ROW_DESCRIPTION = 1;
+    // message type + message length + column count
+    private static final int DATA_ROW_HEADER_SIZE = Byte.BYTES + Integer.BYTES + Short.BYTES;
     private static final int ERROR_TAIL_MAX_SIZE = 23;
     private static final Log LOG = LogFactory.getLog(PGPipelineEntry.class);
-    private static final short NUMERIC_NEG = 0x4000;
-    private static final short NUMERIC_POS = 0x0000;
     // tableOid + column number + type + type size + type modifier + format code
     private static final int ROW_DESCRIPTION_COLUMN_RECORD_FIXED_SIZE = 3 * Short.BYTES + 3 * Integer.BYTES;
     private static final int SYNC_BIND = 1;
@@ -126,6 +131,23 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private static final int SYNC_DESCRIBE = 2;
     private static final int SYNC_DONE = 5;
     private static final int SYNC_PARSE = 0;
+    // Test seam: when non-null, fireParkedUpdateMintObserver() runs this hook just before the parked-writer
+    // UPDATE branch (index < 0) externalizes via commit() + apply(), i.e. inside the role-switch read-lock
+    // hold once the fence below is in place. This branch never reaches OperationDispatcher, so the
+    // dispatcher pre-apply hook cannot pause it; this hook is its counterpart. A test installs a hook that
+    // pauses there so a concurrent PRIMARY-to-REPLICA demote either blocks behind the read hold or expires
+    // its tryLock budget, exercising the demote race deterministically without host load. Null in
+    // production (the default): the fire-site is a single static volatile read with no side effect.
+    @TestOnly
+    private static volatile Runnable parkedUpdateMintObserver;
+    // Test seam: when non-null, fireSyncCommitObserver() runs this hook at the top of commit(), just before
+    // the parked-writer flush that externalizes an autocommit INSERT on the implicit commit at SYNC. A test
+    // installs a hook that pauses there so a concurrent PRIMARY-to-REPLICA demote can settle before the
+    // read-only refusal runs, exercising the implicit-commit-at-SYNC demote race deterministically without
+    // host load. Null in production (the default): the fire-site is a single static volatile read with no
+    // side effect.
+    @TestOnly
+    private static volatile Runnable syncCommitObserver;
     private final ObjectPool<PGNonNullBinaryArrayView> arrayViewPool = new ObjectPool<>(PGNonNullBinaryArrayView::new, 1);
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
@@ -361,22 +383,67 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws PGMessageProcessingException {
-        try {
-            for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
-                final TableWriterAPI w = pendingWriter.value;
-                if (w != null) {
-                    w.commit();
-                }
-                // We rely on the fact that writer will roll back itself when it is returned to the pool.
-                // The pool will also handle a case, when rollback fails. This will release the writer object
-                // fully and force next writer to load its state from disk.
-                pendingWriter.value = Misc.free(w);
-            }
-            pendingWriters.clear();
-        } catch (Throwable th) {
-            // free remaining writers
+        // Demote write-fence, mirrored from the ILP twin TableUpdateDetails.commit. A BEGIN; INSERT
+        // parks a WalWriter in pendingWriters -- invisible to drainWriterPool, which counts the non-WAL
+        // writerPool only by design -- so the demote drain can complete while a transaction is still
+        // open. Without this fence the later COMMIT (or the implicit commit on SYNC / on a pipelined
+        // SELECT) would append a local seqTxn on the already-settled replica and acknowledge it to the
+        // client: an acked-but-unreplicated write plus replica divergence. The flush is the only
+        // pg-wire path that materializes parked writes, so the fence belongs here, covering the COMMIT
+        // case, the implicit-commit-before-SELECT path, and the SYNC implicit-commit path at once.
+        //
+        // Nothing parked means nothing to fence: an empty pendingWriters is the common SELECT-only /
+        // read-only session case (the implicit commit on SYNC and before a pipelined SELECT both reach
+        // here with an empty map). Returning early keeps a read-only replica's read traffic working and
+        // mirrors the ILP twin, which only fences when getUncommittedRowCount() > 0.
+        if (pendingWriters.size() == 0) {
+            return;
+        }
+        fireSyncCommitObserver();
+        // Cheap early-out: if the node is already read-only before we attempt to acquire the lock, skip
+        // the lock entirely. This is NOT the authoritative refusal -- the in-lock re-check below is.
+        if (engine.isReadOnlyMode()) {
             rollback(pendingWriters);
-            throw kaput().put(th);
+            throw kaput().put((Throwable) CairoException.readOnlyAccess());
+        }
+        // Hold the role-switch READ lock across the authoritative re-check and the actual commit. The
+        // role-flip path in EntCairoEngine acquires the WRITE side of this lock around the REPLICA flag
+        // publish, so either (a) the flip runs first: we see REPLICA on the in-lock re-check and refuse
+        // without committing; or (b) we run first: we commit as PRIMARY and the flip's write acquire
+        // waits for this read hold to release. This closes the TOCTOU window between the gate-read and
+        // writerAPI.commit(), while concurrent commits on other protocols share the read side.
+        final Lock lock = engine.getRoleSwitchReadLock();
+        lock.lock();
+        try {
+            // Authoritative in-lock re-check. The refusal is thrown wrapped as a processing exception (via
+            // kaput()) carrying the standard read-only authorization message, so the implicit-commit-at-SYNC
+            // path -- whose catch handles only the processing exception type -- delivers it to the client as a
+            // clean read-only error with the connection kept open, rather than escaping to the connection's
+            // last-resort catch and force-disconnecting. The COMMIT-arm path has its own catch and is
+            // unaffected. The parked writers are rolled back so nothing lands on the demoting node.
+            if (engine.isReadOnlyMode()) {
+                rollback(pendingWriters);
+                throw kaput().put((Throwable) CairoException.readOnlyAccess());
+            }
+            try {
+                for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
+                    final TableWriterAPI w = pendingWriter.value;
+                    if (w != null) {
+                        w.commit();
+                    }
+                    // We rely on the fact that writer will roll back itself when it is returned to the pool.
+                    // The pool will also handle a case, when rollback fails. This will release the writer object
+                    // fully and force next writer to load its state from disk.
+                    pendingWriter.value = Misc.free(w);
+                }
+                pendingWriters.clear();
+            } catch (Throwable th) {
+                // free remaining writers
+                rollback(pendingWriters);
+                throw kaput().put(th);
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -623,6 +690,22 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         sqlExecutionContext.containsSecret(sqlTextHasSecret);
         try {
             populateBindingServiceForExec(sqlExecutionContext, bindVariableCharacterStore, directUtf8String, binarySequenceParamsPool);
+            // Read-only boundary gate (mirrors QwpIngressProcessorState): engine.isReadOnlyMode()
+            // flips to true as the FIRST step of an in-place PRIMARY->REPLICA switch cascade,
+            // before the security-context factory swaps to the replica side. A write on a
+            // connection whose SecurityContext was resolved while the node was still PRIMARY would
+            // otherwise be authorized and land on a node that is already demoting (its WAL uploader
+            // may have closed), losing the write once the node settles as a replica. Re-checking the
+            // live engine state per statement closes that window for pg-wire, the same way the QWP
+            // ingress path consults isReadOnlyMode() per batch. The statement-type classification
+            // (and the parquet-export temp-table DROP exemption) lives in ReadOnlyStatementGate so the
+            // HTTP /exec gate in JsonQueryProcessor and this one cannot drift apart -- COMMIT is not in
+            // that set; the transaction-flush fence inside commit() is the authoritative refusal for a
+            // BEGIN/INSERT that parks a writer and straddles the demote.
+            if (engine.isReadOnlyMode()
+                    && ReadOnlyStatementGate.isRefusedOnReadOnly(this.sqlType, operation, engine.getConfiguration())) {
+                throw CairoException.readOnlyAccess();
+            }
             switch (this.sqlType) {
                 case CompiledQuery.EXPLAIN:
                 case CompiledQuery.SELECT:
@@ -654,35 +737,36 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     rollback(pendingWriters);
                     return IMPLICIT_TRANSACTION;
                 case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                    engine.getMetrics().pgWireMetrics().markStart();
-                    try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
-                        fut.await();
-                        sqlAffectedRowCount = fut.getAffectedRowsCount();
-                    } finally {
-                        engine.getMetrics().pgWireMetrics().markComplete();
-                    }
+                    sqlAffectedRowCount = executeDdlFenced(sqlExecutionContext, tempSequence, true);
                     break;
                 case CompiledQuery.CREATE_TABLE:
                     // fall-through
                 case CompiledQuery.CREATE_MAT_VIEW:
                     // fall-through
+                case CompiledQuery.CREATE_LIVE_VIEW:
+                    // fall-through
                 case CompiledQuery.DROP:
-                    engine.getMetrics().pgWireMetrics().markStart();
-                    try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
-                        fut.await();
-                    } finally {
-                        engine.getMetrics().pgWireMetrics().markComplete();
-                    }
+                    executeDdlFenced(sqlExecutionContext, tempSequence, false);
                     break;
                 default:
                     // execute statements that either have not been parse-executed
                     // or we are re-executing it from a prepared statement
                     if (!empty) {
-                        engine.getMetrics().pgWireMetrics().markStart();
-                        try {
-                            engine.execute(sqlText, sqlExecutionContext);
-                        } finally {
-                            engine.getMetrics().pgWireMetrics().markComplete();
+                        // Default-arm statements with no compiled Operation re-execute via
+                        // engine.execute(sqlText). Route refused-set types (TRUNCATE, RENAME_TABLE,
+                        // CREATE_VIEW, ALTER_VIEW, ALTER_STORAGE_POLICY, REFRESH_MAT_VIEW) through the
+                        // demote fence so the gate set and the fence set cannot drift apart -- the routing
+                        // decision consults the shared ReadOnlyStatementGate predicate, not a second
+                        // hand-built case list.
+                        if (ReadOnlyStatementGate.isRefusedOnReadOnly(this.sqlType, operation, engine.getConfiguration())) {
+                            executeFenced(sqlExecutionContext);
+                        } else {
+                            engine.getMetrics().pgWireMetrics().markStart();
+                            try {
+                                engine.execute(sqlText, sqlExecutionContext);
+                            } finally {
+                                engine.getMetrics().pgWireMetrics().markComplete();
+                            }
                         }
                     }
                     break;
@@ -1025,6 +1109,42 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.stateParse = stateParse;
     }
 
+    /**
+     * Test seam: installs a hook the parked-writer UPDATE branch fires just before it externalizes via
+     * commit() + apply(). Pass null to uninstall. The hook is shared across pipeline entries, so an
+     * installer must scope its own pause to the statement under test. Never set outside tests -- the field
+     * defaults to null and the fire-site is a no-op then.
+     */
+    @TestOnly
+    public static void setParkedUpdateMintObserver(Runnable observer) {
+        parkedUpdateMintObserver = observer;
+    }
+
+    /**
+     * Test seam: installs a hook commit() fires at the top, just before it flushes the parked writers on the
+     * implicit commit at SYNC. Pass null to uninstall. The hook is shared across pipeline entries, so an
+     * installer must scope its own pause to the statement under test. Never set outside tests -- the field
+     * defaults to null and the fire-site is a no-op then.
+     */
+    @TestOnly
+    public static void setSyncCommitObserver(Runnable observer) {
+        syncCommitObserver = observer;
+    }
+
+    private static void fireParkedUpdateMintObserver() {
+        final Runnable observer = parkedUpdateMintObserver;
+        if (observer != null) {
+            observer.run();
+        }
+    }
+
+    private static void fireSyncCommitObserver() {
+        final Runnable observer = syncCommitObserver;
+        if (observer != null) {
+            observer.run();
+        }
+    }
+
     private static void outBindComplete(PGResponseSink utf8Sink) {
         outSimpleMsg(utf8Sink, MESSAGE_TYPE_BIND_COMPLETE);
     }
@@ -1063,6 +1183,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private long calculateRecordTailSize(
+            SqlExecutionContext sqlExecutionContext,
             Record record,
             int columnCount,
             long maxBlobSize,
@@ -1086,6 +1207,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
             final int columnValueSize = calculateColumnBinSize(
                     this,
+                    sqlExecutionContext,
                     record,
                     i,
                     columnType,
@@ -1283,10 +1405,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 .put(']');
     }
 
-    // Used to estimate required column size (or full record size in case of text format)
-    // to be reported to the user in the insufficient send buffer size case.
-    private long estimateRecordSize(Record record, int columnCount) throws PGMessageProcessingException {
-        long recordSize = 0;
+    // Used to estimate the size of the whole DataRow message, header included, to be reported to the
+    // user in the insufficient send buffer size case. The number must be a send buffer size the row
+    // actually fits into, so it covers the header outRecord() writes before the first column value.
+    private long estimateRecordSize(
+            SqlExecutionContext sqlExecutionContext,
+            Record record,
+            int columnCount
+    ) throws PGMessageProcessingException {
+        long recordSize = DATA_ROW_HEADER_SIZE;
         for (int i = 0; i < columnCount; i++) {
             final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
             final int typeTag = ColumnType.tagOf(columnType);
@@ -1298,9 +1425,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             final long columnValueSize;
             // if column is not variable size and format code is text, we can't calculate size
             if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
-                columnValueSize = estimateColumnTxtSize(record, i, typeTag);
+                columnValueSize = estimateColumnTxtSize(record, i, columnType);
             } else {
-                columnValueSize = calculateColumnBinSize(this, record, i, columnType, geohashSize, Long.MAX_VALUE, -1);
+                columnValueSize = calculateColumnBinSize(
+                        this,
+                        sqlExecutionContext,
+                        record,
+                        i,
+                        columnType,
+                        geohashSize,
+                        Long.MAX_VALUE,
+                        -1
+                );
             }
 
             if (columnValueSize < 0) {
@@ -1310,6 +1446,92 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             recordSize += columnValueSize;
         }
         return recordSize;
+    }
+
+    /**
+     * Demote write-fence for the pg-wire CTAS/CREATE/DROP arms. These operations execute outside the
+     * pendingWriters funnel that {@link #commit} fences, so the pre-execution gate in msgExecute is
+     * their only read-only check -- and that gate read is check-then-act: the operation can begin while
+     * the node is still PRIMARY and externalize its effect (a fresh table, a CTAS data commit, a drop)
+     * on a node that flips to REPLICA mid-execute, acknowledging success for a change no uploader will
+     * replicate. Holding the role-switch lock across the in-lock re-check AND the execute serializes the
+     * whole operation against the flip: either the flip ran first (we see REPLICA and refuse without
+     * executing) or the operation runs fully as PRIMARY and the flip's flag publish waits behind it.
+     * <p>
+     * This takes the role-switch READ lock the ILP and pg-wire commit fences take, held across the
+     * in-lock re-check AND operation.execute() because the DDL externalizes inside execute() with no
+     * separable commit chokepoint. The READ side lets concurrent commits on other tables/protocols run
+     * in parallel with this DDL; only the role flip (which takes the WRITE side) is excluded from it.
+     * <p>
+     * Both refusal checks consult the SAME ReadOnlyStatementGate predicate the pre-execution gate in
+     * msgExecute uses -- NOT a blanket isReadOnlyMode() refusal -- because the gate carries the one
+     * DDL exemption a read-only replica must keep: the admin's DROP of the HTTP parquet exporter's
+     * leftover temp table (the only DROP a replica permits; see ReadOnlyStatementGate). A blanket
+     * refusal here would refuse the exempted DROP the pre-gate just allowed through.
+     */
+    private long executeDdlFenced(
+            SqlExecutionContext sqlExecutionContext,
+            SCSequence tempSequence,
+            boolean reportAffectedRows
+    ) throws SqlException {
+        if (engine.isReadOnlyMode()
+                && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
+            throw CairoException.readOnlyAccess();
+        }
+        long affectedRowCount = 0;
+        engine.getMetrics().pgWireMetrics().markStart();
+        final Lock lock = engine.getRoleSwitchReadLock();
+        lock.lock();
+        try {
+            // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
+            // lock around the REPLICA flag publish. The execute runs inside the read hold so the flip
+            // cannot interleave (its write acquire waits), while other commits share the read side.
+            if (engine.isReadOnlyMode()
+                    && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
+                throw CairoException.readOnlyAccess();
+            }
+            try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
+                fut.await();
+                if (reportAffectedRows) {
+                    affectedRowCount = fut.getAffectedRowsCount();
+                }
+            }
+        } finally {
+            lock.unlock();
+            engine.getMetrics().pgWireMetrics().markComplete();
+        }
+        return affectedRowCount;
+    }
+
+    /**
+     * Demote write-fence for the default-arm statements that carry no compiled Operation and so
+     * re-execute via engine.execute(sqlText) -- TRUNCATE, RENAME_TABLE, CREATE_VIEW, ALTER_VIEW,
+     * ALTER_STORAGE_POLICY, REFRESH_MAT_VIEW. Like executeDdlFenced, these externalize during execute()
+     * with no separable commit chokepoint, so the pre-execution gate in msgExecute is check-then-act: a
+     * flip landing after that gate but during the re-compile/execute would otherwise run unfenced. Some
+     * of these types have an eager EntCairoEngine acquire-gate backstop (getTableWriterAPI/rename/
+     * replaceViewDefinition), but ALTER_STORAGE_POLICY and REFRESH_MAT_VIEW do not, so the fence set must
+     * match the ReadOnlyStatementGate refusal set rather than a hand-built subset.
+     * <p>
+     * The same reasoning executeDdlFenced documents applies: the role-switch read lock held across the
+     * in-lock re-check AND engine.execute() serializes the statement against the flip (which takes the
+     * write side), and the in-lock re-check consults the shared ReadOnlyStatementGate predicate -- not a
+     * blanket isReadOnlyMode() -- so the gate set and fence set cannot drift apart.
+     */
+    private void executeFenced(SqlExecutionContext sqlExecutionContext) throws SqlException {
+        engine.getMetrics().pgWireMetrics().markStart();
+        final Lock lock = engine.getRoleSwitchReadLock();
+        lock.lock();
+        try {
+            if (engine.isReadOnlyMode()
+                    && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
+                throw CairoException.readOnlyAccess();
+            }
+            engine.execute(sqlText, sqlExecutionContext);
+        } finally {
+            lock.unlock();
+            engine.getMetrics().pgWireMetrics().markComplete();
+        }
     }
 
     private short getPgResultSetColumnFormatCode(int columnIndex) {
@@ -1515,9 +1737,33 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             // cached writers to remain in the list until transaction end
                             @SuppressWarnings("resource")
                             TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
-                            // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
-                            tableWriterAPI.commit();
-                            sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
+                            // Demote write-fence for the parked-writer UPDATE, mirroring the sibling
+                            // commit(pendingWriters) fence. The UPDATE implicitly commits the parked
+                            // writer mid-transaction (commit() + apply() below) -- so the explicit COMMIT
+                            // fence never sees these writes. Acquire the writer was done while PRIMARY; a
+                            // demote landing before commit()/apply() would externalize an unreplicated
+                            // change the drain never waited on. Hold the role-switch READ lock across an
+                            // authoritative in-lock re-check and the commit()/apply(): either the flip ran
+                            // first (we see read-only and refuse, rolling back the parked writers) or this
+                            // runs fully as PRIMARY while the flip's write acquire waits for the read hold.
+                            if (engine.isReadOnlyMode()) {
+                                rollback(pendingWriters);
+                                throw CairoException.readOnlyAccess();
+                            }
+                            final Lock lock = engine.getRoleSwitchReadLock();
+                            lock.lock();
+                            try {
+                                if (engine.isReadOnlyMode()) {
+                                    rollback(pendingWriters);
+                                    throw CairoException.readOnlyAccess();
+                                }
+                                // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
+                                fireParkedUpdateMintObserver();
+                                tableWriterAPI.commit();
+                                sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
+                            } finally {
+                                lock.unlock();
+                            }
                         } else {
                             try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
                                 fut.await();
@@ -1718,250 +1964,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         } else {
             utf8Sink.setNullValue();
         }
-    }
-
-    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal256 decimal256, int type) {
-        if (decimal256.isNull()) {
-            utf8Sink.setNullValue();
-            return;
-        }
-
-        final int precision = ColumnType.getDecimalPrecision(type);
-        final int scale = ColumnType.getDecimalScale(type);
-
-        short sign = NUMERIC_POS;
-        if (decimal256.isNegative()) {
-            sign = NUMERIC_NEG;
-            decimal256.negate();
-        }
-
-        // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
-        // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
-        // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
-        // be encoded as an array of 2 shorts: [12, 3400].
-
-        long startAddress = utf8Sink.getSendBufferPtr();
-        utf8Sink.putNetworkInt(4 * Short.BYTES); // type size, defaults to a zero value, we will came back later to rewrite it
-
-        utf8Sink.putNetworkShort((short) 0); // ndigits, same
-        utf8Sink.putNetworkShort((short) 0); // weight, same
-        utf8Sink.putNetworkShort(sign); // sign
-        utf8Sink.putNetworkShort((short) scale); // dscale
-
-        if (decimal256.isZero()) {
-            return;
-        }
-
-        boolean writing = false;
-        int digit = 0;
-        int weight = 0;
-        int pow = precision;
-
-        // We start with the whole part of the decimal
-        final int wholePartPrecision = precision - scale;
-        for (int i = wholePartPrecision - 1; i >= 0; i--) {
-            final int mul = decimal256.getDigitAtPowerOfTen(--pow);
-            digit = digit * 10 + mul;
-            decimal256.subtractPowerOfTenMultiple(pow, mul);
-            if (i % 4 == 0 && (writing || digit != 0)) {
-                if (!writing) {
-                    writing = true;
-                    weight = (i + 3) / 4;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-                digit = 0;
-            }
-        }
-
-        // And then the decimal part
-        for (int i = 0, n = (scale + 3) / 4; i < n; i++) {
-            digit = 0;
-            for (int j = 0; j < 4; j++) {
-                final int mul = pow > 0 ? decimal256.getDigitAtPowerOfTen(--pow) : 0;
-                digit = digit * 10 + mul;
-                decimal256.subtractPowerOfTenMultiple(pow, mul);
-            }
-            if (writing || digit != 0) {
-                if (!writing) {
-                    writing = true;
-                    weight = -i - 1;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-            }
-        }
-
-        // We now need to fix previous values
-        long endAddress = utf8Sink.getSendBufferPtr();
-        final int typeLen = (int) (endAddress - startAddress - Integer.BYTES);
-        // Patching the whole type len
-        utf8Sink.putNetworkInt(startAddress, typeLen);
-        // Patching the number of digits (remove the static attributes first)
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES, (short) ((typeLen - 4 * Short.BYTES) / Short.BYTES));
-        // Patching the weight
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
-    }
-
-    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal128 decimal128, int type) {
-        if (decimal128.isNull()) {
-            utf8Sink.setNullValue();
-            return;
-        }
-
-        final int precision = ColumnType.getDecimalPrecision(type);
-        final int scale = ColumnType.getDecimalScale(type);
-
-        short sign = NUMERIC_POS;
-        if (decimal128.isNegative()) {
-            sign = NUMERIC_NEG;
-            decimal128.negate();
-        }
-
-        // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
-        // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
-        // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
-        // be encoded as an array of 2 shorts: [12, 3400].
-
-        long startAddress = utf8Sink.getSendBufferPtr();
-        utf8Sink.putNetworkInt(4 * Short.BYTES); // type size, defaults to a zero value, we will came back later to rewrite it
-
-        utf8Sink.putNetworkShort((short) 0); // ndigits, same
-        utf8Sink.putNetworkShort((short) 0); // weight, same
-        utf8Sink.putNetworkShort(sign); // sign
-        utf8Sink.putNetworkShort((short) scale); // dscale
-
-        if (decimal128.isZero()) {
-            return;
-        }
-
-        boolean writing = false;
-        int digit = 0;
-        int weight = 0;
-        int pow = precision;
-
-        // We start with the whole part of the decimal
-        final int wholePartPrecision = precision - scale;
-        for (int i = wholePartPrecision - 1; i >= 0; i--) {
-            final int mul = decimal128.getDigitAtPowerOfTen(--pow);
-            digit = digit * 10 + mul;
-            decimal128.subtractPowerOfTenMultiple(pow, mul);
-            if (i % 4 == 0 && (writing || digit != 0)) {
-                if (!writing) {
-                    writing = true;
-                    weight = (i + 3) / 4;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-                digit = 0;
-            }
-        }
-
-        // And then the decimal part
-        for (int i = 0, n = (scale + 3) / 4; i < n; i++) {
-            digit = 0;
-            for (int j = 0; j < 4; j++) {
-                final int mul = pow > 0 ? decimal128.getDigitAtPowerOfTen(--pow) : 0;
-                digit = digit * 10 + mul;
-                decimal128.subtractPowerOfTenMultiple(pow, mul);
-            }
-            if (writing || digit != 0) {
-                if (!writing) {
-                    writing = true;
-                    weight = -i - 1;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-            }
-        }
-
-        // We now need to fix previous values
-        long endAddress = utf8Sink.getSendBufferPtr();
-        final int typeLen = (int) (endAddress - startAddress - Integer.BYTES);
-        // Patching the whole type len
-        utf8Sink.putNetworkInt(startAddress, typeLen);
-        // Patching the number of digits (remove the static attributes first)
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES, (short) ((typeLen - 4 * Short.BYTES) / Short.BYTES));
-        // Patching the weight
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
-    }
-
-    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal64 decimal64, int type) {
-        if (decimal64.isNull()) {
-            utf8Sink.setNullValue();
-            return;
-        }
-
-        final int precision = ColumnType.getDecimalPrecision(type);
-        final int scale = ColumnType.getDecimalScale(type);
-
-        short sign = NUMERIC_POS;
-        if (decimal64.isNegative()) {
-            sign = NUMERIC_NEG;
-            decimal64.negate();
-        }
-
-        // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
-        // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
-        // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
-        // be encoded as an array of 2 shorts: [12, 3400].
-
-        long startAddress = utf8Sink.getSendBufferPtr();
-        utf8Sink.putNetworkInt(4 * Short.BYTES); // type size, defaults to a zero value, we will came back later to rewrite it
-
-        utf8Sink.putNetworkShort((short) 0); // ndigits, same
-        utf8Sink.putNetworkShort((short) 0); // weight, same
-        utf8Sink.putNetworkShort(sign); // sign
-        utf8Sink.putNetworkShort((short) scale); // dscale
-
-        if (decimal64.isZero()) {
-            return;
-        }
-
-        boolean writing = false;
-        int digit = 0;
-        int weight = 0;
-        int pow = precision;
-
-
-        // We start with the whole part of the decimal
-        final int wholePartPrecision = precision - scale;
-        for (int i = wholePartPrecision - 1; i >= 0; i--) {
-            final int mul = decimal64.getDigitAtPowerOfTen(--pow);
-            digit = digit * 10 + mul;
-            decimal64.subtractPowerOfTenMultiple(pow, mul);
-            if (i % 4 == 0 && (writing || digit != 0)) {
-                if (!writing) {
-                    writing = true;
-                    weight = (i + 3) / 4;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-                digit = 0;
-            }
-        }
-
-        // And then the decimal part
-        for (int i = 0, n = (scale + 3) / 4; i < n; i++) {
-            digit = 0;
-            for (int j = 0; j < 4; j++) {
-                final int mul = pow > 0 ? decimal64.getDigitAtPowerOfTen(--pow) : 0;
-                digit = digit * 10 + mul;
-                decimal64.subtractPowerOfTenMultiple(pow, mul);
-            }
-            if (writing || digit != 0) {
-                if (!writing) {
-                    writing = true;
-                    weight = -i - 1;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-            }
-        }
-
-        // We now need to fix previous values
-        long endAddress = utf8Sink.getSendBufferPtr();
-        final int typeLen = (int) (endAddress - startAddress - Integer.BYTES);
-        // Patching the whole type len
-        utf8Sink.putNetworkInt(startAddress, typeLen);
-        // Patching the number of digits (remove the static attributes first)
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES, (short) ((typeLen - 4 * Short.BYTES) / Short.BYTES));
-        // Patching the weight
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
     }
 
     private void outColBinDouble(PGResponseSink utf8Sink, Record record, int columnIndex) {
@@ -2731,7 +2733,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 if (utf8Sink.getWrittenBytes() == 0) {
                     // We had nothing but the record in the send buffer,
                     // so we can estimate the required size to be reported to the user.
-                    final long estimatedSize = estimateRecordSize(record, columnCount);
+                    final long estimatedSize = estimateRecordSize(sqlExecutionContext, record, columnCount);
                     e.setBytesRequired(estimatedSize);
                 }
             } else {
@@ -2741,6 +2743,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     assert sizeInBuffer > 0;
                     try {
                         final long recordTailSize = calculateRecordTailSize(
+                                sqlExecutionContext,
                                 record,
                                 columnCount,
                                 utf8Sink.getMaxBlobSize(),
@@ -2755,7 +2758,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             if (utf8Sink.getWrittenBytes() == 0) {
                                 // We had nothing but the record in the send buffer,
                                 // so we can estimate the required size to be reported to the user.
-                                e.setBytesRequired(estimateRecordSize(record, columnCount));
+                                e.setBytesRequired(estimateRecordSize(sqlExecutionContext, record, columnCount));
                             }
                         }
                     } catch (PGMessageProcessingException bpe) {
@@ -3226,6 +3229,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // fall-through
             case CompiledQuery.CREATE_MAT_VIEW:
                 // fall-through
+            case CompiledQuery.CREATE_LIVE_VIEW:
+                // fall-through
             case CompiledQuery.CREATE_TABLE:
                 operation = cq.getOperation();
                 sqlTag = TAG_OK;
@@ -3393,6 +3398,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    /**
+     * Resets per-iteration state so the entry can serve another execution.
+     * Intentionally does NOT touch {@code stateSuspended} or {@code cursor}:
+     * a suspended named portal must keep both alive across iterations so the
+     * next Execute can resume the same cursor. Callers that mean to discard
+     * the suspended cursor must invoke {@link #closeSuspendedCursor()} first.
+     */
     void clearState() {
         error = false;
         stalePlanError = false;

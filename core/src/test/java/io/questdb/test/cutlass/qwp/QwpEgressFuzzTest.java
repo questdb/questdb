@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.qwp;
 
-import io.questdb.PropertyKey;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
@@ -76,7 +75,7 @@ import org.junit.Test;
  *       {@code CREATE TABLE} column type.</li>
  * </ul>
  */
-public class QwpEgressFuzzTest extends AbstractBootstrapTest {
+public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
 
     private static final ColumnGenerator[] GENERATORS = {
             new LongGenerator(),
@@ -129,10 +128,8 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         // Exercises per-connection state that survives across queries: the conn
         // symbol dict (dedup map + bytes heap + packed entries), the conn dict
         // reset by resetForNewQuery, schema registry, Gorilla decoder state.
-        int chunk = pickChunk();
-        LOG.info().$("=== back-to-back: chunk=").$(chunk).$();
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain server = startFragmented(chunk)) {
+            try (TestServerMain server = startFragmented()) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";" + pickCompression())) {
                     client.connect();
@@ -147,10 +144,8 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     @Test
     public void testRandomSchemaRoundtrip() throws Exception {
         // Main sweep: fresh connection per case so state pollution can't mask a bug.
-        int chunk = pickChunk();
-        LOG.info().$("=== random schema: chunk=").$(chunk).$();
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain server = startFragmented(chunk)) {
+            try (TestServerMain server = startFragmented()) {
                 for (int i = 0; i < 15; i++) {
                     try (QwpQueryClient client = QwpQueryClient.fromConfig(
                             "ws::addr=127.0.0.1:" + HTTP_PORT + ";" + pickCompression())) {
@@ -280,10 +275,8 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     public void testWideTables() throws Exception {
         // 10-16 columns stresses the batch buffer's per-column state arrays and
         // the schema block encoder.
-        int chunk = pickChunk();
-        LOG.info().$("=== wide: chunk=").$(chunk).$();
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain server = startFragmented(chunk)) {
+            try (TestServerMain server = startFragmented()) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";" + pickCompression())) {
                     client.connect();
@@ -682,16 +675,6 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     }
 
     /**
-     * Random send+recv fragmentation chunk size. Lower bound 10 exercises the
-     * park-resume path on every WS frame (handshake included, since the
-     * onRequestComplete/resumeSend split handles partial handshake writes);
-     * upper bound keeps small-result iterations fast.
-     */
-    private int pickChunk() {
-        return 1 + random.nextInt(500);
-    }
-
-    /**
      * Random compression settings for the fuzz client. Mixes raw, zstd at
      * varied levels, and the {@code auto} default so every path gets hit
      * across iterations:
@@ -843,13 +826,6 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         });
 
         server.execute("DROP TABLE " + table);
-    }
-
-    private TestServerMain startFragmented(int chunk) {
-        return startWithEnvVariables(
-                PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(chunk),
-                PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(chunk)
-        );
     }
 
     /**

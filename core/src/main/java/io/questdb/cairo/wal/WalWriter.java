@@ -114,6 +114,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private static final int MEM_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
     private static final Runnable NOOP = () -> {
     };
+    // Number of empty seed transactions ALTER TABLE ... REBASE WAL commits on the new table. Coupled to
+    // the replication uploader's rebase_new path, which skips seqTxn 1 and starts at seqTxn 2: keep this
+    // >= 2 so an idle rebased table still has a seqTxn 2 to settle on instead of busy-spinning the
+    // uploader. See commitRebaseSeed().
+    private static final int REBASE_SEED_TXN_COUNT = 2;
 
     private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
@@ -254,6 +259,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         apply(alterOp, true);
     }
 
+    public long appendCustomEvent(byte txnType, WalEventPayloadWriter payload) {
+        if (!WalTxnType.isDownstreamType(txnType)) {
+            throw new IllegalArgumentException(
+                    "custom event types must be in reserved range 64..127, got: " + txnType
+            );
+        }
+        try {
+            // A custom event is an ordering barrier. Publish any rows appended before it as a
+            // DATA transaction first; otherwise the custom event would receive the earlier
+            // seqTxn and a later commit would make those rows overtake their call-site order.
+            commit();
+            lastSegmentTxn = events.appendCustomEvent(txnType, payload);
+            return getSequencerTxn();
+        } catch (Throwable th) {
+            distressed = true;
+            throw th;
+        }
+    }
+
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         alterOp.authorize();
@@ -338,6 +362,59 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 lastPeriodHi,
                 lastReplaceRangeLowTs,
                 lastReplaceRangeHiTs,
+                WAL_DEDUP_MODE_REPLACE_RANGE
+        );
+    }
+
+    /**
+     * Commits the live view's WAL block with the highest base sequencer txn whose
+     * rows the block reflects. {@code ApplyWal2TableJob} uses this value to advance
+     * {@code lvConsumedSeqTxn} only when the block has been applied to the live view's
+     * own table, satisfying the "applied to the LV's own on-disk tier" rule for
+     * base-WAL retention.
+     */
+    public void commitLiveView(long maxBaseSeqTxnInBlock) {
+        commit0(
+                WalTxnType.LIVE_VIEW_DATA,
+                maxBaseSeqTxnInBlock,
+                WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                WAL_DEFAULT_LAST_PERIOD_HI,
+                0,
+                0,
+                WAL_DEDUP_MODE_DEFAULT
+        );
+    }
+
+    /**
+     * Commits a live view's WAL block that replaces the live view's previously
+     * applied output rows in the {@code [lowTs, hiTs)} timestamp range with the
+     * rows just emitted into this transaction. Used by the refresh worker's
+     * O3-replay path: after restoring window state (head-hit) or resetting it
+     * (head-miss), the worker re-feeds base rows in ts order and emits replay
+     * output as a single REPLACE_RANGE commit, so {@code TableWriter}'s apply
+     * step rewrites the affected partitions transactionally.
+     *
+     * @param maxBaseSeqTxnInBlock highest base sequencer txn whose rows this
+     *                             block reflects; advances {@code lvConsumedSeqTxn}
+     *                             only after the block is applied (same rule as
+     *                             {@link #commitLiveView(long)}).
+     * @param lowTs                inclusive low boundary of the replaced range
+     * @param hiTs                 exclusive high boundary of the replaced range;
+     *                             must be strictly greater than {@code lowTs} and
+     *                             cover every {@code (ts, ...)} row written in
+     *                             the current transaction.
+     */
+    public void commitLiveViewWithReplaceRange(long maxBaseSeqTxnInBlock, long lowTs, long hiTs) {
+        assert lowTs < hiTs;
+        assert txnMinTimestamp >= lowTs;
+        assert txnMaxTimestamp <= hiTs;
+        commit0(
+                WalTxnType.LIVE_VIEW_DATA,
+                maxBaseSeqTxnInBlock,
+                WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                WAL_DEFAULT_LAST_PERIOD_HI,
+                lowTs,
+                hiTs,
                 WAL_DEDUP_MODE_REPLACE_RANGE
         );
     }
@@ -607,6 +684,49 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 "name=" + walName +
                 ", table=" + tableToken.getTableName() +
                 '}';
+    }
+
+    /**
+     * Commits two empty (0-row) DATA transactions as the first transactions (seqTxn 1 and seqTxn 2) of a
+     * table created by ALTER TABLE ... REBASE WAL, so real data starts at seqTxn 3. The replication
+     * uploader skips seqTxn 1 and records seqTxn 2 as the table's first available txn (first_txn=2) in
+     * the replication index, leaving the replica unable to apply onto the empty table until a physical
+     * copy arrives.
+     * <p>
+     * Two seeds, not one: the uploader's rebase_new path starts at seqTxn 2, so the sequencer's max_txn
+     * must be at least 2 the instant the rebase completes - otherwise a rebased table left idle (no data
+     * written afterwards) would have max_txn=1 with nothing at seqTxn 2 to advance onto. The uploader
+     * would then never record the table in the index and would busy-spin re-reading an empty txn range on
+     * every poll (100% CPU, log/JNI flood) until data finally reaches seqTxn 2. The second empty seed
+     * gives the uploader a no-op transaction to settle on (records first_txn=2, last_txn=2), so an idle
+     * rebased table parks instead of spinning.
+     */
+    public void commitRebaseSeed() {
+        try {
+            // Each appendData + getSequencerTxn pair is one sequencer transaction (segment_txn 0 and 1 ->
+            // seqTxn 1 and 2). Both seeds are identical 0-row commits, so no per-txn state needs resetting
+            // in between (currentTxnStartRowNum and segmentRowCount both stay 0).
+            for (int i = 0; i < REBASE_SEED_TXN_COUNT; i++) {
+                lastSegmentTxn = events.appendData(
+                        WalTxnType.DATA,
+                        0,
+                        0,
+                        0,
+                        0,
+                        false,
+                        WAL_DEFAULT_BASE_TABLE_TXN,
+                        WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                        WAL_DEFAULT_LAST_PERIOD_HI,
+                        0,
+                        0,
+                        WAL_DEDUP_MODE_DEFAULT
+                );
+                getSequencerTxn();
+            }
+        } catch (Throwable th) {
+            rollback0();
+            throw th;
+        }
     }
 
     @Override

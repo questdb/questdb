@@ -28,6 +28,7 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.Utf16Sink;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -38,6 +39,11 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     private long address;
     private long capacity;
     private long limit;
+    // Per-query native memory tracker bound by the owning cursor before the
+    // backing array is (re)allocated. Null when no per-query limit applies;
+    // all Unsafe.{malloc,realloc,free} calls degrade to the global-only overloads.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private long pos;
 
     /**
@@ -60,7 +66,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         final long capacityBytes = capacity * Long.BYTES;
         this.initialCapacity = capacityBytes;
         if (!keepClosed) {
-            this.address = capacityBytes > 0 ? Unsafe.malloc(capacityBytes, memoryTag) : 0;
+            this.address = capacityBytes > 0 ? Unsafe.malloc(capacityBytes, memoryTag, memoryTracker) : 0;
             this.capacity = capacityBytes;
             this.pos = address;
             this.limit = pos + capacityBytes;
@@ -100,7 +106,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     @Override
     public void close() {
         if (address != 0) {
-            address = Unsafe.free(address, capacity, memoryTag);
+            address = Unsafe.free(address, capacity, memoryTag, memoryTracker);
             limit = 0;
             pos = 0;
             capacity = 0;
@@ -174,6 +180,10 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         setCapacityBytes(capacity << 3);
     }
 
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
+    }
+
     public void setPos(long p) {
         assert p * Long.BYTES <= capacity;
         pos = address + (p << 3);
@@ -226,7 +236,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         if (this.capacity != capacity) {
             final long oldCapacity = this.capacity;
             final long oldSize = this.pos - this.address;
-            final long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
+            final long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag, memoryTracker);
             this.capacity = capacity;
             this.address = address;
             this.limit = address + capacity;

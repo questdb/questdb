@@ -30,60 +30,50 @@ import org.junit.Test;
 public class SecondOfMinuteFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNull() throws Exception {
-        assertQuery(
-                "second\n" +
-                        "null\n",
-                "select second(null)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select second(null)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        second
+                        null
+                        """);
     }
 
     @Test
     public void testPreEpoch() throws Exception {
-        assertQuery(
-                "second\n" +
-                        "21\n",
-                "select second('1901-07-11T22:00:21.555998Z'::timestamp)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select second('1901-07-11T22:00:21.555998Z'::timestamp)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        second
+                        21
+                        """);
 
-        assertQuery(
-                "second\n" +
-                        "21\n",
-                "select second('1901-07-11T22:00:21.555998123Z')",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select second('1901-07-11T22:00:21.555998123Z')")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        second
+                        21
+                        """);
     }
 
     @Test
     public void testVanilla() throws Exception {
-        assertQuery(
-                "second\n" +
-                        "30\n",
-                "select second('1997-04-11T22:00:30.555555Z'::timestamp)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select second('1997-04-11T22:00:30.555555Z'::timestamp)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        second
+                        30
+                        """);
 
-        assertQuery(
-                "second\n" +
-                        "30\n",
-                "select second('1997-04-11T22:00:30.555555123Z'::timestamp_ns)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select second('1997-04-11T22:00:30.555555123Z'::timestamp_ns)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        second
+                        30
+                        """);
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.std.IntList;
 import io.questdb.cairo.view.ViewDefinition;
@@ -43,6 +44,10 @@ public interface TableStructure {
         return 0;
     }
 
+    default LiveViewDefinition getLiveViewDefinition() {
+        return null;
+    }
+
     default MatViewDefinition getMatViewDefinition() {
         return null;
     }
@@ -56,6 +61,15 @@ public interface TableStructure {
     boolean getSymbolCacheFlag(int columnIndex);
 
     int getSymbolCapacity(int columnIndex);
+
+    /**
+     * Returns the default storage format for new partitions.
+     * {@link TableUtils#TABLE_FORMAT_NATIVE} (default) or
+     * {@link TableUtils#TABLE_FORMAT_PARQUET}.
+     */
+    default int getTableFormat() {
+        return TableUtils.TABLE_FORMAT_NATIVE;
+    }
 
     CharSequence getTableName();
 
@@ -103,6 +117,10 @@ public interface TableStructure {
 
     default boolean isIndexed(int columnIndex) {
         return IndexType.isIndexed(getIndexType(columnIndex));
+    }
+
+    default boolean isLiveView() {
+        return false;
     }
 
     default boolean isMatView() {

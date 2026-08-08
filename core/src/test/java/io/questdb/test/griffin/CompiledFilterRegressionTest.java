@@ -528,6 +528,91 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantOverflowFoldOnByteColumn() throws Exception {
+        // Constant arithmetic subtree whose long-precision value overflows
+        // INT must produce the same result whether the JIT is off, scalar,
+        // or vectorized. The CompiledFilterIRSerializer folds the subtree
+        // to a single i64 IMM in the IR, mirroring FunctionParser's
+        // LongConstant fold for the Java filter.
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " cast(x - 100 as byte) i8" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            // -286452 * (-952151 * -382988) = -1.04e17 (long); BYTE values are
+            // all > -1.04e17 so every row passes.
+            assertQueryNotNullNoLeakCheck("x where i8 > -286452 * (-952151 * -382988)");
+            // Symmetric upper-bound case: huge positive constant fails for every BYTE.
+            assertQueryNullableNoLeakCheck("x where i8 > 286452 * (952151 * 382988)");
+        });
+    }
+
+    @Test
+    public void testConstantOverflowFoldOnIntColumn() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " cast(x - 100 as int) i32" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            assertQueryNotNullNoLeakCheck("x where i32 > -286452 * (-952151 * -382988)");
+            assertQueryNullableNoLeakCheck("x where i32 > 286452 * (952151 * 382988)");
+        });
+    }
+
+    @Test
+    public void testConstantOverflowFoldOnLongColumn() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " (x - 100) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            assertQueryNotNullNoLeakCheck("x where i64 > -286452 * (-952151 * -382988)");
+            assertQueryNullableNoLeakCheck("x where i64 > 286452 * (952151 * 382988)");
+        });
+    }
+
+    @Test
+    public void testConstantOverflowFoldOnShortColumn() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " cast(x - 100 as short) i16" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            assertQueryNotNullNoLeakCheck("x where i16 > -286452 * (-952151 * -382988)");
+            assertQueryNullableNoLeakCheck("x where i16 > 286452 * (952151 * 382988)");
+        });
+    }
+
+    @Test
+    public void testConstantOverflowFoldVariousOps() throws Exception {
+        // The fold path covers +, -, *, /, and unary minus uniformly.
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " cast(x - 100 as byte) i8," +
+                " (x - 100) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            // i64 values lie in [-99, 414]; the four constants all evaluate to a
+            // value below every i64 row, so > matches every row and exercises
+            // the fold path uniformly across all four operators.
+            assertQueryNotNullNoLeakCheck("x where i64 > -5000000000 + -5000000000");
+            assertQueryNotNullNoLeakCheck("x where i64 > -5000000000 - 5000000000");
+            assertQueryNotNullNoLeakCheck("x where i64 > -100000 * 100000");
+            assertQueryNotNullNoLeakCheck("x where i64 > -1000000000000 / 1");
+            // Unary minus in front of an overflowing product.
+            assertQueryNotNullNoLeakCheck("x where i64 > -(286452 * (-952151 * -382988))");
+            // Same overflow constants on a BYTE column exercise the scalar
+            // mode path that the fold's markArithmetic call forces.
+            assertQueryNotNullNoLeakCheck("x where i8 > -(286452 * (-952151 * -382988))");
+        });
+    }
+
+    @Test
     public void testCount() throws Exception {
         final String query = "select count() from x where price > 0 and sym = 'HBC'";
         final String ddl = "create table x as " +
@@ -973,6 +1058,34 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_int() i32" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testNarrowIntArithUnderLongWithFloat() throws Exception {
+        // A narrow INT arithmetic subtree (c8 * -776782) that overflows int32
+        // and feeds a LONG-width multiply diverged between the JIT and the Java
+        // filter when a FLOAT comparison suppressed the narrow-to-i64 widening:
+        // the JIT wrapped the inner product mod 2^32 while the Java filter read
+        // it at long width via MulInt#getLong. The serializer now sign-extends
+        // exactly the narrow leaves under the LONG-width subtree, so the JIT
+        // stays on and both paths agree.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c0 LONG, c2 SHORT, c8 INT, c9 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT rnd_long(-1000000, 1000000, 8), rnd_short(), " +
+                    "rnd_int(-1000000, 1000000, 8), rnd_float(8), " +
+                    "timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1800000000L) " +
+                    "FROM long_sequence(122)");
+
+            // Previously diverging shapes: still JIT-compiled, now correct.
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= ((c0 - c2) * (c8 * -776782))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * (c8 * -776782))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 + (c8 * -776782))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * (c8 + 2000000000))", true);
+            // Control shapes that were always correct under JIT.
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c8 * -776782)", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * c8)", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE (c8 * -776782) > 0", true);
+        });
     }
 
     @Test
@@ -1436,6 +1549,35 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertGeneratedQuery(ddl, gen, false);
     }
 
+    /**
+     * Runs {@code query} with JIT disabled and with JIT enabled and asserts the
+     * two cursors produce identical output. {@code expectJit} pins whether the
+     * JIT-enabled run is expected to compile a filter (true) or fall back to the
+     * Java filter (false), guarding against both the divergence and over-eager
+     * fallback.
+     */
+    private void assertJitMatchesJava(CharSequence query, boolean expectJit) throws SqlException {
+        StringSink javaSink = new StringSink();
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        try (RecordCursorFactory factory = select(query)) {
+            Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                CursorPrinter.println(cursor, factory.getMetadata(), javaSink);
+            }
+        }
+
+        StringSink jit = new StringSink();
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        try (RecordCursorFactory factory = select(query)) {
+            Assert.assertEquals("unexpected compiled-filter usage for query: " + query,
+                    expectJit, factory.usesCompiledFilter());
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                CursorPrinter.println(cursor, factory.getMetadata(), jit);
+            }
+        }
+        TestUtils.assertEquals("JIT vs Java result mismatch for query: " + query, javaSink, jit);
+    }
+
     private void assertJitCountQuery(CharSequence countQuery, long expectedCount) throws SqlException {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
         long actualCount = runJitCountQuery(countQuery);
@@ -1499,8 +1641,32 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Same checks as {@link #assertQueryNotNull} but without a surrounding
+     * {@code assertMemoryLeak} - call this from inside a single
+     * {@code assertMemoryLeak} when running multiple queries against shared
+     * DDL.
+     */
+    private void assertQueryNotNullNoLeakCheck(CharSequence query) throws SqlException {
+        long count = runQuery(query);
+        Assert.assertTrue("query is expected to return rows", count > 0);
+        assertJitQuery(query, false);
+        assertJitCountQuery("select count() from " + query, count);
+    }
+
     private void assertQueryNullable(CharSequence query, CharSequence ddl) throws Exception {
         assertQuery(query, ddl, true);
+    }
+
+    /**
+     * No-leak-check counterpart of {@link #assertQueryNullable}; intended for
+     * sharing a single DDL across multiple query assertions inside one
+     * {@code assertMemoryLeak} block.
+     */
+    private void assertQueryNullableNoLeakCheck(CharSequence query) throws SqlException {
+        long count = runQuery(query);
+        assertJitQuery(query, true);
+        assertJitCountQuery("select count() from " + query, count);
     }
 
     private long runJitCountQuery(CharSequence countQuery) throws SqlException {

@@ -125,8 +125,8 @@ public class ConcurrentViewCycleTest extends AbstractViewTest {
                     String expected = """
                             QUERY PLAN
                             PageFrame
-                            &nbsp;&nbsp;&nbsp;&nbsp;Row forward scan
-                            &nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: table1
+                                Row forward scan
+                                Frame forward scan on: table1
                             """;
                     StringSink sink = new StringSink();
                     while (!done.get() && error.get() == null) {
@@ -169,16 +169,16 @@ public class ConcurrentViewCycleTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // Verify views are still queryable (no corrupted state)
-            assertSql(
-                    """
+            assertQuery("SHOW COLUMNS FROM " + VIEW1)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
                             k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             k2\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             v\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "SHOW COLUMNS FROM " + VIEW1
-            );
+                            """);
 
             LOG.info().$("Cycles detected: ").$(cycleDetectedCount.get())
                     .$(", queries executed: ").$(queryCount.get()).$();

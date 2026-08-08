@@ -69,6 +69,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_chunkPageBuffersSizeOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkBuffers, page_buffers_size)
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_chunkAuxPtrOffset(
     _env: JNIEnv,
     _class: JClass,
@@ -82,4 +90,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
     _class: JClass,
 ) -> usize {
     offset_of!(ColumnChunkBuffers, aux_size)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_chunkColumnTopOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkBuffers, column_top)
 }

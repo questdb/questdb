@@ -62,19 +62,40 @@ public class PostingGenLookup implements Closeable {
     // observable state.
     private final Snapshot bufA = new Snapshot();
     private final Snapshot bufB = new Snapshot();
-    private final DirectLongList cacheEntries = new DirectLongList(CACHE_ENTRIES_INITIAL_CAPACITY, MemoryTag.NATIVE_INDEX_READER);
-    private final DirectIntLongHashMap keyToCacheSlot = new DirectIntLongHashMap(
-            KEY_TO_SLOT_INITIAL_CAPACITY,
-            KEY_TO_SLOT_LOAD_FACTOR,
-            NO_ENTRY_KEY,
-            CACHE_NOT_PRESENT,
-            MemoryTag.NATIVE_INDEX_READER
-    );
+    private final DirectLongList cacheEntries;
+    private final DirectIntLongHashMap keyToCacheSlot;
     private Snapshot active = bufA;
     private long cacheBudget = DEFAULT_CACHE_BUDGET;
     private long cacheUsedBytes;
     private long cacheVersion;
+    // Set by the owning reader's setFrozen during parallel decode. While frozen the cache is
+    // strictly read-only (workers replay it concurrently); putCacheEntries asserts on a write.
+    private boolean frozen;
     private Snapshot staging = bufB;
+
+    public PostingGenLookup() {
+        DirectLongList cacheEntries = null;
+        DirectIntLongHashMap keyToCacheSlot = null;
+        try {
+            cacheEntries = new DirectLongList(CACHE_ENTRIES_INITIAL_CAPACITY, MemoryTag.NATIVE_INDEX_READER);
+            keyToCacheSlot = new DirectIntLongHashMap(
+                    KEY_TO_SLOT_INITIAL_CAPACITY,
+                    KEY_TO_SLOT_LOAD_FACTOR,
+                    NO_ENTRY_KEY,
+                    CACHE_NOT_PRESENT,
+                    MemoryTag.NATIVE_INDEX_READER
+            );
+        } catch (Throwable th) {
+            // Free whichever buffer was allocated before the failure: a half-built
+            // PostingGenLookup is never assigned to the reader, so close() can't
+            // reach these.
+            Misc.free(cacheEntries);
+            Misc.free(keyToCacheSlot);
+            throw th;
+        }
+        this.cacheEntries = cacheEntries;
+        this.keyToCacheSlot = keyToCacheSlot;
+    }
 
     public static long packCacheEntry(int gen, int posInGen) {
         return ((long) gen << 32) | (posInGen & 0xFFFFFFFFL);
@@ -94,6 +115,16 @@ public class PostingGenLookup implements Closeable {
 
     public static int unpackEntryStart(long packedSlot) {
         return (int) (packedSlot >>> 32);
+    }
+
+    /**
+     * True iff the active snapshot has at least one sparse gen. Mirrors the gate
+     * {@link #cacheLookup} and {@link #putCacheEntries} apply: when no sparse gen
+     * exists the cache can never hold an entry, so callers (e.g. the O(genCount)
+     * cache-warm primitive) can skip the walk entirely.
+     */
+    public boolean anySparseGen() {
+        return active.anySparseGen;
     }
 
     public long cacheEntryAt(int idx) {
@@ -149,6 +180,10 @@ public class PostingGenLookup implements Closeable {
         return active.genMaxKeys.getQuick(gen);
     }
 
+    public long getGenMaxValue(int gen) {
+        return active.genMaxValues.getQuick(gen);
+    }
+
     public int getGenMinKey(int gen) {
         return active.genMinKeys.getQuick(gen);
     }
@@ -166,6 +201,10 @@ public class PostingGenLookup implements Closeable {
                 - PostingIndexUtils.SPARSE_SBBF_NUM_BLOCKS_FOOTER_SIZE
                 - (long) sbbfNumBlocks * SplitBlockBloomFilter.BLOCK_SIZE
                 - (long) (keyRange + 2) * Integer.BYTES;
+    }
+
+    public long getGenTxnAtSeal(int gen) {
+        return active.genTxnAtSeals.getQuick(gen);
     }
 
     public void invalidateCache() {
@@ -209,6 +248,10 @@ public class PostingGenLookup implements Closeable {
         if (cacheUsedBytes + bytesNeeded > cacheBudget) {
             return;
         }
+        // Defence-in-depth: a frozen reader's cache is read-only — workers replay it concurrently,
+        // so any write here would be an unsynchronised mutation under concurrent readers. Detached
+        // worker cursors skip this call entirely (see Posting*Reader); this catches any other path.
+        assert !frozen : "genLookup cache written while frozen (key=" + key + ")";
         long newSize = cacheEntries.size() + count;
         assert newSize <= Integer.MAX_VALUE : "cache pool overflow: " + newSize;
         int startIdx = (int) cacheEntries.size();
@@ -225,6 +268,14 @@ public class PostingGenLookup implements Closeable {
         cacheEntries.reopen();
         cacheUsedBytes = 0;
         cacheVersion++;
+        // Self-healing: a re-initialised (pooled) lookup starts unfrozen so a reused reader
+        // can never inherit a stale freeze if setFrozen(false) was skipped. Mirrors the
+        // frozen reset in AbstractPostingIndexReader.of(), which is this method's only caller.
+        frozen = false;
+    }
+
+    public void setFrozen(boolean frozen) {
+        this.frozen = frozen;
     }
 
     public void setCacheMemoryBudget(long budget) {
@@ -246,16 +297,12 @@ public class PostingGenLookup implements Closeable {
      *                    the gen-dir starts at
      *                    {@code entryOffset + V2_ENTRY_HEADER_SIZE}.
      */
-    public void snapshotMetadata(MemoryMR keyMem, int genCount, long entryOffset) {
+    public void snapshotMetadata(MemoryMR keyMem, int genCount, long entryOffset, int coveringFormat, int coverCount) {
         Snapshot s = staging;
-        s.genFileOffsets.clear();
-        s.genDataSizes.clear();
-        s.genKeyCounts.clear();
-        s.genMinKeys.clear();
-        s.genMaxKeys.clear();
-        s.anySparseGen = false;
+        s.clear();
+        long prevTxnAtSeal = Long.MIN_VALUE;
         for (int i = 0; i < genCount; i++) {
-            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryOffset, i);
+            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryOffset, i, coveringFormat, coverCount);
             s.genFileOffsets.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
             s.genDataSizes.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE));
             int kc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
@@ -265,6 +312,11 @@ public class PostingGenLookup implements Closeable {
             }
             s.genMinKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY));
             s.genMaxKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY));
+            s.genMaxValues.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE));
+            long txnAtSeal = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+            assert txnAtSeal >= prevTxnAtSeal;
+            prevTxnAtSeal = txnAtSeal;
+            s.genTxnAtSeals.add(txnAtSeal);
         }
     }
 
@@ -294,7 +346,9 @@ public class PostingGenLookup implements Closeable {
         final LongList genFileOffsets = new LongList();
         final IntList genKeyCounts = new IntList(); // negative = sparse
         final IntList genMaxKeys = new IntList();
+        final LongList genMaxValues = new LongList();
         final IntList genMinKeys = new IntList();
+        final LongList genTxnAtSeals = new LongList();
         boolean anySparseGen;
 
         void clear() {
@@ -303,6 +357,8 @@ public class PostingGenLookup implements Closeable {
             genKeyCounts.clear();
             genMinKeys.clear();
             genMaxKeys.clear();
+            genMaxValues.clear();
+            genTxnAtSeals.clear();
             anySparseGen = false;
         }
     }

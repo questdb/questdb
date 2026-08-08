@@ -402,6 +402,7 @@ public class LineUdpLexer implements Mutable, Closeable {
     }
 
     private class ArrayBackedUtf16Sink implements Utf16Sink {
+        private int[] ryuE10;
 
         @Override
         public Utf16Sink put(char c) {
@@ -410,6 +411,14 @@ public class LineUdpLexer implements Mutable, Closeable {
             }
             Unsafe.putChar(dstPos, c);
             return this;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
 
         private void extend() {

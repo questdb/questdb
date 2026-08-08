@@ -66,6 +66,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
     private final CairoConfiguration configuration;
     private final MessageBus messageBus;
+    // Borrowed non-group-by views into recordFunctions; the factory owns and closes the functions.
+    private final ObjList<Function> nonGroupByFunctions;
     private final AtomicBooleanCircuitBreaker postAggregationCircuitBreaker; // used to signal cancellation to merge shard workers
     private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
     private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
@@ -89,10 +91,15 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         this.configuration = engine.getConfiguration();
         this.messageBus = messageBus;
         this.recordFunctions = recordFunctions;
+        this.nonGroupByFunctions = GroupByUtils.extractNonGroupByFunctions(recordFunctions);
         recordA = new VirtualRecord(recordFunctions);
         recordB = new VirtualRecord(recordFunctions);
         postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
-        isOpen = true;
+        // Start closed so the first of() runs atom.reopen(), which opens the lazy
+        // (openOnInit=false) allocators and binds the per-query tracker before any
+        // allocation. Skipping reopen() on the first cursor would leave the allocator's
+        // chunk index unallocated.
+        isOpen = false;
     }
 
     @Override
@@ -190,8 +197,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     private void buildMap() {
+        // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
 
         final AsyncGroupByAtom atom = frameSequence.getAtom();
@@ -248,7 +257,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 while (true) {
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
                         if (workStealingStrategy.shouldSteal(processedCount)) {
                             final Map shard = atom.getDestShards().getQuick(shardIndex);
@@ -333,7 +342,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         LOG.debug().$("parallel long top K done [total=").$(total)
                 .$(", ownCount=").$(ownCount)
                 .$(", reclaimed=").$(reclaimed)
-                .$(", queuedCount=").$(queuedCount).I$();
+                .$(", queuedCount=").$(queuedCount)
+                .I$();
     }
 
     private void throwTimeoutException() {
@@ -374,13 +384,20 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     void of(UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncGroupByAtom atom = frameSequence.getAtom();
+        // Assign before reopen() so close() can drain a partially reopened atom on a breach.
+        this.frameSequence = frameSequence;
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
         }
-        this.frameSequence = frameSequence;
         this.circuitBreaker = executionContext.getCircuitBreaker();
-        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
+        // Skip the group by functions: the atom initializes them in init(), before any frame is
+        // dispatched, and donates the owner state to the per-worker clones. Re-initializing them
+        // here would re-run stateful initialization, such as a cursor comparison re-executing its
+        // scalar sub-query, and could diverge from the state the workers observe. The constructor
+        // pre-filters the non-group-by functions once, so cached re-executions skip the
+        // per-function classification scan.
+        Function.init(nonGroupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isDataMapBuilt = false;
     }
 }
