@@ -83,6 +83,23 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
     @Nullable
     ObjList<PushdownFilterExtractor.PushdownFilterCondition> getPushdownFilterConditions();
 
+    /**
+     * Fail-safe determinism contract mirroring {@code RecordCursorFactory#isNonDeterministic()}:
+     * returns {@code true} unless the factory can prove that two cursor opens see the same
+     * partition frames (for example an interval factory whose interval model is stable).
+     */
+    default boolean isNonDeterministic() {
+        return true;
+    }
+
+    /**
+     * Returns {@code true} if repeated cursor opens within one query execution produce the same
+     * partition frames. Unknown implementations inherit the fail-safe determinism-derived default.
+     */
+    default boolean isStableWithinExecution() {
+        return !isNonDeterministic();
+    }
+
     TableToken getTableToken();
 
     /**
