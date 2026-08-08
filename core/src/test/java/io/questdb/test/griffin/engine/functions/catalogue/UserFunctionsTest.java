@@ -56,8 +56,15 @@ public class UserFunctionsTest extends AbstractCairoTest {
                     final CountingSecurityContext securityContext = new CountingSecurityContext("alice");
                     ((SqlExecutionContextImpl) executionContext).with(securityContext);
 
+                    // The per-row "x > 0" conjunct (true for every row) is load-bearing: current_user()
+                    // and session_user() are runtime constants, so a WHERE built only from them is a
+                    // whole-predicate runtime constant and collapses to a single per-execution gate
+                    // (RuntimeConstGateRecordCursorFactory) that never opens a parallel filter. Anchoring
+                    // the predicate to a column keeps the optimizer on the async filter, which is where the
+                    // point holds: the thread-safe user functions are shared across all 4 workers -- one
+                    // filter instance, one identity resolution -- rather than copied per worker.
                     final String filterQuery = "SELECT x FROM users "
-                            + "WHERE current_user() = 'alice' AND session_user() = 'alice'";
+                            + "WHERE x > 0 AND current_user() = 'alice' AND session_user() = 'alice'";
                     assertQuery(filterQuery)
                             .withEngine(engine)
                             .withContext(executionContext)
