@@ -64,10 +64,11 @@ public class WalReader implements Closeable {
     private final CairoConfiguration configuration;
     private final WalDataCursor dataCursor = new WalDataCursor();
     private final FilesFacade ff;
-    // The deduped, in-range column set openSegmentColumns() actually maps when a projection
-    // is active: the caller's projection minus out-of-range entries, plus the designated
-    // timestamp. Recomputed per bind (O(projection^2) over a handful of entries) rather than
-    // cached, so it can never go stale against a changed column count or timestamp index.
+    // The deduped, in-range column set openSegmentColumns() maps and openSymbolMaps folds
+    // when a projection is active: the caller's projection minus out-of-range entries, plus
+    // the designated timestamp. Recomputed per bind (O(projection^2) over a handful of
+    // entries) rather than cached, so it can never go stale against a changed column count or
+    // timestamp index.
     private final IntList mappedColumns = new IntList();
     private final SequencerMetadata metadata;
     private final Path path = new Path();
@@ -270,10 +271,18 @@ public class WalReader implements Closeable {
      * projected indexes, never through {@link #getDataCursor()}, whose record can be asked
      * for any column.
      * <p>
-     * The projection narrows the column mmaps only. Symbol maps are still built for every
-     * column carrying a diff, because {@link #openSymbolMaps} folds the segment's whole
-     * {@code _event} stream; that cost is bounded per segment rather than per commit, so it
-     * is not what this projection exists to cut.
+     * The projection narrows the symbol maps as well: {@link #openSymbolMaps} folds a
+     * {@code SymbolMapDiff} only for a column the projection reaches, and leaves every other
+     * column's map empty. A projected bind is therefore independent of symbol columns the
+     * caller never reads - their clean-band files sit at the WAL directory level, shared
+     * across segments, and {@code WalWriter.removeSymbolFiles} deletes them the moment the
+     * writer applies a DROP COLUMN, while segments already written keep emitting diffs for
+     * the column. Any rebind that CHANGES the projection - narrowing it as much as widening it -
+     * re-folds from the start of the event file, because a changed projection fails the
+     * same-segment test below. Narrowing takes that same full clear + refold, and that is what
+     * makes a map the new projection no longer reaches read as EMPTY rather than STALE: the clear
+     * drops what the previous, wider bind folded and the refold skips the column, so no leftover
+     * keys survive into the narrower bind.
      * <p>
      * This matters because a rebind is not cheap: {@code MemoryCMRImpl.of()} munmaps, closes
      * the fd, re-opens and re-mmaps (it does not remap in place), and the live-view drain
@@ -345,6 +354,9 @@ public class WalReader implements Closeable {
 
             metadata.open(path.slash().put(segmentId), rootLen, tableToken);
             columnCount = metadata.getColumnCount();
+            // After metadata.open: columnCount and the timestamp index are the segment's own.
+            // Ahead of openSymbolMaps, which folds only the columns this set names.
+            buildMappedColumns();
             LOG.debug().$("open [table=").$(tableToken).I$();
             int pathLen = path.size();
             walEventCursor = walEventReader.of(path.slash().put(segmentId), -1);
@@ -393,8 +405,6 @@ public class WalReader implements Closeable {
                     }
                 }
             }
-            // After metadata.open: columnCount and the timestamp index are the segment's own.
-            buildMappedColumns();
             // Same segment: keep the column list intact. dataCursor.of() below runs
             // openSegment() -> loadColumnAt() for every column, and openOrCreateMemory
             // remaps each retained mmap in place at the current rowCount.
@@ -537,10 +547,11 @@ public class WalReader implements Closeable {
      * same-segment bind). When {@code clear} is true the maps are reset first (a full
      * rebuild from the header for a new segment / column-count change); when false the
      * caller has already positioned {@code eventCursor} at the saved resume offset and
-     * only newly-appended events are folded. Folding is append-only and idempotent
-     * within a segment (local symbol keys are never remapped), and the clean-dictionary
-     * band is loaded once via the {@code size() == 0} guard below, so an incremental
-     * fold produces the same clean-band resolution as a full rebuild.
+     * only newly-appended events are folded. Under a projection this folds only the
+     * columns {@link #buildMappedColumns()} names; see {@link #of} for why. Folding is
+     * append-only and idempotent within a segment (local symbol keys are never remapped),
+     * and the clean-dictionary band is loaded once via the {@code size() == 0} guard below,
+     * so an incremental fold produces the same clean-band resolution as a full rebuild.
      */
     private long openSymbolMaps(WalEventCursor eventCursor, CairoConfiguration configuration, boolean clear) {
         if (clear) {
@@ -558,8 +569,19 @@ public class WalReader implements Closeable {
                 WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                 SymbolMapDiff symbolDiff = dataInfo.nextSymbolMapDiff();
                 while (symbolDiff != null) {
-                    int cleanSymbolCount = symbolDiff.getCleanSymbolCount();
                     int columnIndex = symbolDiff.getColumnIndex();
+                    if (hasProjection && !mappedColumns.contains(columnIndex)) {
+                        // The caller cannot reach this column - getSymbolValue/getSymbolKey
+                        // serve projected indexes only, and getDataCursor() rejects a
+                        // projected reader - so folding its diff buys nothing and couples
+                        // the bind to a clean-band file a concurrent DROP COLUMN deletes.
+                        // drain() steps the shared event cursor past this diff's entries so
+                        // the next diff reads from the right offset.
+                        symbolDiff.drain();
+                        symbolDiff = dataInfo.nextSymbolMapDiff();
+                        continue;
+                    }
+                    int cleanSymbolCount = symbolDiff.getCleanSymbolCount();
                     DirectSymbolMap symbolMap = columnIndex < symbolMaps.size() ? symbolMaps.getQuick(columnIndex) : null;
 
                     if (symbolMap == null) {

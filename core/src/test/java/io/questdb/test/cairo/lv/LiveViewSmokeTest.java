@@ -281,6 +281,28 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
     }
 
+    // Names the base table's WAL directory that currently holds the WAL-level symbol dictionary of
+    // the given column, or null when no WAL directory does. Every already-written segment of that
+    // WAL resolves its clean symbol band through those files, so this is the artifact a symbol
+    // capacity rebuild strands.
+    private static String walDirHoldingSymbolDictionary(TableToken token, String columnName) {
+        for (int i = 1; i < 16; i++) {
+            final String walName = WalUtils.WAL_NAME_BASE + i;
+            if (walSymbolOffsetFileExists(token, walName, columnName)) {
+                return walName;
+            }
+        }
+        return null;
+    }
+
+    private static boolean walSymbolOffsetFileExists(TableToken token, String walName, String columnName) {
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).concat(walName);
+            TableUtils.offsetFileName(path, columnName, TableUtils.COLUMN_NAME_TXN_NONE);
+            return engine.getConfiguration().getFilesFacade().exists(path.$());
+        }
+    }
+
     // Drives a partitioned bounded-frame avg(DECIMAL) live view: asserts the
     // windowed average is correct (also proving CREATE-accept), then performs a
     // byte-exact snapshot/restore round-trip of the function's partition state
@@ -2499,6 +2521,310 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "2026-04-01T00:00:05.000000Z\t50\t5\n" +
                     "2026-04-01T00:00:06.000000Z\t60\t6\n" +
                     "2026-04-01T00:00:07.000000Z\t70\t7\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRederiveAfterWalLossRefusesWhenAReferencedColumnRetyped() throws Exception {
+        // The correctness boundary of testRederiveAfterWalLossSurvivesBaseSymbolCapacityDrift, which
+        // shares this test's stranding setup. Recompiling the re-derive's plan is
+        // only safe while the view's referenced column set survives the drift by NAME and TYPE. A
+        // recompile across a retyped referenced column would silently adopt the new schema and turn
+        // a loud, correct invalidation into wrong data, so the re-derive must refuse it and name the
+        // offending column - the same contract
+        // LiveViewBaseDdlTest#testInvalidationReasonNamesOffendingColumn holds for the apply-side
+        // invalidation.
+        //
+        // ApplyWal2TableJob applies the metadata change to the writer BEFORE it calls
+        // invalidateLiveViewsForBaseSchemaChange, so a refresh worker can reach the re-derive over a
+        // retyped referenced column while the invalidation is still in flight. The registry clear
+        // below reproduces that window deterministically: with no registered instance the
+        // apply-side invalidation has nothing to mark, and buildViewGraphs reloads the view - still
+        // VALID, still carrying the dependency types it compiled against.
+        final AtomicBoolean failWalSymbolRelink = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                if (failWalSymbolRelink.get()
+                        && Utf8s.containsAscii(hardLink, WalUtils.WAL_NAME_BASE)
+                        && Utf8s.endsWithAscii(hardLink, "sym.o")) {
+                    return -1;
+                }
+                return super.hardLink(src, hardLink);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('2026-04-01T00:00:00.000000Z', 10, 'a'),
+                    ('2026-04-01T00:00:01.000000Z', 20, 'b')""");
+            drainWalQueue();
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, x, sym, count(*) OVER (PARTITION BY sym ORDER BY ts
+                                                      ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn
+                    FROM base""");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+            }
+
+            engine.releaseInactive();
+            final TableToken baseToken = engine.verifyTableName("base");
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 30, 'a')");
+            drainWalQueue();
+            final String walName = walDirHoldingSymbolDictionary(baseToken, "sym");
+            Assert.assertNotNull("the lagging segment must resolve its symbols through a WAL dictionary", walName);
+
+            // The view is not registered while the retype applies, so the apply-side invalidation
+            // finds nothing to mark and the reloaded view comes back VALID over drifted metadata.
+            engine.getLiveViewRegistry().clear();
+            execute("ALTER TABLE base ALTER COLUMN x TYPE LONG");
+            drainWalQueue();
+            engine.buildViewGraphs();
+
+            // Same stranding as testRederiveAfterWalLossSurvivesBaseSymbolCapacityDrift: a capacity
+            // bump plus a failing re-link empties the WAL dictionary the lagging segment reads
+            // through.
+            execute("ALTER TABLE base ALTER COLUMN sym SYMBOL CAPACITY 512");
+            drainWalQueue();
+            failWalSymbolRelink.set(true);
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:03.000000Z', 40, 'b')");
+            failWalSymbolRelink.set(false);
+            drainWalQueue();
+            Assert.assertFalse(
+                    "the segment roll must have stranded the WAL symbol dictionary",
+                    walSymbolOffsetFileExists(baseToken, walName, "sym")
+            );
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertFalse("the reloaded view must start out valid", instance.isInvalid());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            Assert.assertTrue(
+                    "a retyped referenced column must still invalidate the view",
+                    instance.isInvalid()
+            );
+            TestUtils.assertContains(instance.getInvalidationReason(), "[column=x]");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRederiveAfterWalLossRefusesWhenAReferencedColumnRetypedUnderAStaleFactory() throws Exception {
+        // Same refusal as testRederiveAfterWalLossRefusesWhenAReferencedColumnRetyped, but against an
+        // instance that never reloaded: it still holds the factory it compiled against the base's OLD
+        // schema, and the capacity ALTER below bumps the base metadata version, so that factory is
+        // stale and the re-derive's replay is headed straight for TableReferenceOutOfDateException and
+        // the recompile that follows it. The refusal must win over that recompile, which would adopt
+        // the retyped column, REPLACE_RANGE-rewrite the whole on-disk tier from rows the view's query
+        // was never created against, and report success.
+        //
+        // removeView / registerView reproduce the ApplyWal2TableJob window without dropping the
+        // compiled factory: the apply-side invalidation walks the registry's base-table fan-out, so an
+        // unregistered instance is invisible to it - as every instance is during the interval between
+        // ApplyWal2TableJob applying the structural change to the writer and its call to
+        // invalidateLiveViewsForBaseSchemaChange.
+        //
+        // What this test does NOT cover, and why no test here does: the sub-window in which the
+        // re-derive's ENTRY check reads intact metadata and the breaking change lands before the
+        // replay opens its reader, so that only the check inside the drift catch can refuse. Both
+        // checks read the same applied base metadata, so nothing but a concurrent apply landing
+        // mid-method separates them; the job exposes no hook to drive one, and a thread racing the
+        // drive would decide the outcome by timing. An injected base _meta read failure does not
+        // stand in for it either: TableReaderMetadata.load retries through
+        // TableUtils.handleMetadataLoadException, so a bounded injected failure never surfaces, and
+        // an unbounded one also breaks the replay's own reader open. So this test pins the hazard
+        // class - a refusal must win over a recompile - at the entry check, and the in-catch check
+        // that closes the same hazard on the drift path carries no test of its own.
+        final AtomicBoolean failWalSymbolRelink = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                if (failWalSymbolRelink.get()
+                        && Utf8s.containsAscii(hardLink, WalUtils.WAL_NAME_BASE)
+                        && Utf8s.endsWithAscii(hardLink, "sym.o")) {
+                    return -1;
+                }
+                return super.hardLink(src, hardLink);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('2026-04-01T00:00:00.000000Z', 10, 'a'),
+                    ('2026-04-01T00:00:01.000000Z', 20, 'b')""");
+            drainWalQueue();
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, x, sym, count(*) OVER (PARTITION BY sym ORDER BY ts
+                                                      ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn
+                    FROM base""");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+            }
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertFalse(instance.isInvalid());
+
+            engine.releaseInactive();
+            final TableToken baseToken = engine.verifyTableName("base");
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 30, 'a')");
+            drainWalQueue();
+            final String walName = walDirHoldingSymbolDictionary(baseToken, "sym");
+            Assert.assertNotNull("the lagging segment must resolve its symbols through a WAL dictionary", walName);
+
+            // Same stranding as testRederiveAfterWalLossSurvivesBaseSymbolCapacityDrift: a capacity
+            // bump plus a failing re-link empties the WAL dictionary the lagging segment reads
+            // through. The bump is also what leaves the retained factory stale.
+            execute("ALTER TABLE base ALTER COLUMN sym SYMBOL CAPACITY 512");
+            drainWalQueue();
+            failWalSymbolRelink.set(true);
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:03.000000Z', 40, 'b')");
+            failWalSymbolRelink.set(false);
+            drainWalQueue();
+            Assert.assertFalse(
+                    "the segment roll must have stranded the WAL symbol dictionary",
+                    walSymbolOffsetFileExists(baseToken, walName, "sym")
+            );
+
+            // The retype applies while the instance is off the fan-out index, so nothing marks it -
+            // and, unlike a registry clear plus buildViewGraphs, it keeps the very instance that holds
+            // the factory compiled against x INT.
+            Assert.assertSame(instance, engine.getLiveViewRegistry().removeView("lv"));
+            execute("ALTER TABLE base ALTER COLUMN x TYPE LONG");
+            drainWalQueue();
+            engine.getLiveViewRegistry().registerView(instance);
+            Assert.assertFalse("the apply-side invalidation must have missed the unregistered view", instance.isInvalid());
+            Assert.assertFalse(
+                    "the retype must not have re-linked the stranded WAL symbol dictionary",
+                    walSymbolOffsetFileExists(baseToken, walName, "sym")
+            );
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            Assert.assertTrue(
+                    "a retyped referenced column must still invalidate the view",
+                    instance.isInvalid()
+            );
+            TestUtils.assertContains(instance.getInvalidationReason(), "[column=x]");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRederiveAfterWalLossSurvivesBaseSymbolCapacityDrift() throws Exception {
+        // ALTER TABLE ... ALTER COLUMN sym SYMBOL CAPACITY N is transparent to a dependent live view
+        // by contract, even when the view REFERENCES the symbol column
+        // (LiveViewBaseDdlTest#testNonStructuralAlterIsTransparentToLiveView). It nonetheless strands
+        // the WAL-level symbol dictionary of a LAGGING view: TableWriter.changeSymbolCapacity mints a
+        // new columnNameTxn, so the WAL writer's next segment roll deletes <wal>/sym.{o,c,k,v} - the
+        // dictionary every already-written, not-yet-drained segment of that WAL resolves its clean
+        // symbol band through - and re-links it. The re-link is a raw link(2) with no copy fallback
+        // and its failure is swallowed into configureEmptySymbol, so ENOSPC, EMLINK, EPERM, EXDEV,
+        // Windows ACCESS_DENIED, or a plain ENOENT when a concurrent name-txn bump purges the link
+        // source all leave the older segment with no dictionary at all.
+        //
+        // The drain then faults with 'SymbolMap does not exist', spends the flush-retry budget and
+        // lands on the applied-base re-derive - which is exactly where such a view belongs, because
+        // every row it owes itself is already in the applied base table. But the same ALTER bumped
+        // the base metadata version, so the re-derive's cached plan was stale and
+        // LiveViewRefreshSqlExecutionContext.getReader refused it with
+        // TableReferenceOutOfDateException: the last-resort recovery returned false and the view went
+        // permanently invalid with 'flush retry budget exhausted', over a healthy base table and a
+        // column that was never dropped. The re-derive now recompiles once and retries.
+        final AtomicBoolean failWalSymbolRelink = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                // Only the WAL-directory dictionary link; the table-level link the capacity rebuild
+                // itself takes carries the column name txn suffix and must succeed.
+                if (failWalSymbolRelink.get()
+                        && Utf8s.containsAscii(hardLink, WalUtils.WAL_NAME_BASE)
+                        && Utf8s.endsWithAscii(hardLink, "sym.o")) {
+                    return -1;
+                }
+                return super.hardLink(src, hardLink);
+            }
+        };
+        // One row per segment, so the commit that follows the capacity ALTER rolls a segment and
+        // runs refreshSymbolWatermarks.
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('2026-04-01T00:00:00.000000Z', 10, 'a'),
+                    ('2026-04-01T00:00:01.000000Z', 20, 'b')""");
+            drainWalQueue();
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, x, sym, count(*) OVER (PARTITION BY sym ORDER BY ts
+                                                      ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn
+                    FROM base""");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+            }
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertFalse(instance.isInvalid());
+
+            // A fresh WAL writer links the applied dictionary (two symbols) into its WAL directory,
+            // so the commit below carries a non-empty clean symbol band.
+            engine.releaseInactive();
+            final TableToken baseToken = engine.verifyTableName("base");
+            // The lagging commit: applied to the base TABLE, never drained by the view.
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 30, 'a')");
+            drainWalQueue();
+            final String walName = walDirHoldingSymbolDictionary(baseToken, "sym");
+            Assert.assertNotNull("the lagging segment must resolve its symbols through a WAL dictionary", walName);
+
+            execute("ALTER TABLE base ALTER COLUMN sym SYMBOL CAPACITY 512");
+            drainWalQueue();
+
+            // The segment roll: removeSymbolFiles deletes the dictionary, the re-link fails, and
+            // configureSymbolMapWriter degrades to an empty symbol map with an INFO log.
+            failWalSymbolRelink.set(true);
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:03.000000Z', 40, 'b')");
+            failWalSymbolRelink.set(false);
+            drainWalQueue();
+            Assert.assertFalse(
+                    "the segment roll must have stranded the WAL symbol dictionary",
+                    walSymbolOffsetFileExists(baseToken, walName, "sym")
+            );
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            Assert.assertFalse(
+                    "a symbol-capacity ALTER must not permanently invalidate a lagging view: reason="
+                            + instance.getInvalidationReason(),
+                    instance.isInvalid()
+            );
+            assertQuery("SELECT ts, x, sym, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    ts\tx\tsym\trn
+                    2026-04-01T00:00:00.000000Z\t10\ta\t1
+                    2026-04-01T00:00:01.000000Z\t20\tb\t1
+                    2026-04-01T00:00:02.000000Z\t30\ta\t2
+                    2026-04-01T00:00:03.000000Z\t40\tb\t2
+                    """);
 
             execute("DROP LIVE VIEW lv");
         });
