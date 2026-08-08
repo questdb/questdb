@@ -2088,6 +2088,7 @@ public final class TableUtils {
                         bloomFilterColumnCount,
                         fpp,
                         minCompressionRatio,
+                        configuration.isPartitionEncoderParquetFailOnInvalidUtf16(),
                         Files.toOsFd(parquetMetaFd),
                         squashTracker,
                         seqTxn
@@ -2254,6 +2255,7 @@ public final class TableUtils {
                     dataPageSize,
                     bloomFilterFpp,
                     minCompressionRatio,
+                    configuration.isPartitionEncoderParquetFailOnInvalidUtf16(),
                     adoptedParquetMetaFdOs,
                     0,
                     0,

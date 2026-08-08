@@ -167,6 +167,10 @@ pub struct ParquetUpdater {
     // Columns missing from the map at end() (no old entry and no
     // set_target_schema seeding) resolve to `false` via unwrap_or(false).
     varchar_all_ascii: RapidHashMap<i32, bool>,
+    // When true, the writer fails loudly on unpaired UTF-16 surrogates in
+    // STRING / SYMBOL column data. When false (default), they are substituted
+    // with U+FFFD. See WriteOptions.strict_utf16 for the full rationale.
+    strict_utf16: bool,
     /// Deterministic work counters used by resource/performance regression
     /// tests. They also make hybrid-rewrite behavior observable without a
     /// timing-sensitive wall-clock assertion.
@@ -222,6 +226,7 @@ impl ParquetUpdater {
         data_page_size: Option<usize>,
         bloom_filter_fpp: f64,
         min_compression_ratio: f64,
+        strict_utf16: bool,
         parquet_meta_fd: Option<File>,
         parquet_meta_file_size: u64,
         append_base: u64,
@@ -475,6 +480,7 @@ impl ParquetUpdater {
             result_parquet_meta_size: -1,
             seq_txn,
             varchar_all_ascii,
+            strict_utf16,
             hybrid_copied_column_chunks: 0,
             hybrid_encoded_column_chunks: 0,
         })
@@ -1691,6 +1697,7 @@ impl ParquetUpdater {
             raw_array_encoding: self.raw_array_encoding,
             bloom_filter_fpp: self.parquet_file.options().bloom_filter_fpp,
             min_compression_ratio: self.min_compression_ratio,
+            strict_utf16: self.strict_utf16,
         }
     }
 }
@@ -2351,6 +2358,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             Some(pm.reopen()?),
             0,
             0,
@@ -2649,6 +2657,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -2925,6 +2934,7 @@ mod tests {
             raw_array_encoding: false,
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
             min_compression_ratio: 0.0,
+            strict_utf16: false,
         };
         let bloom_filter_columns = HashSet::new();
 
@@ -3074,6 +3084,7 @@ mod tests {
                 None,                           // data_page_size
                 DEFAULT_BLOOM_FILTER_FPP,       // bloom_filter_fpp
                 100.0,                          // min_compression_ratio (impossibly high)
+                false,                          // strict_utf16
                 None,                           // parquet_meta_fd
                 0,                              // parquet_meta_file_size
                 0,                              // append_base
@@ -3135,11 +3146,12 @@ mod tests {
                 None,
                 None,
                 DEFAULT_BLOOM_FILTER_FPP,
-                0.5,  // min_compression_ratio: ratio check active but easily met
-                None, // parquet_meta_fd
-                0,    // parquet_meta_file_size
-                0,    // append_base
-                -1,   // existing_parquet_file_size
+                0.5,   // min_compression_ratio: ratio check active but easily met
+                false, // strict_utf16
+                None,  // parquet_meta_fd
+                0,     // parquet_meta_file_size
+                0,     // append_base
+                -1,    // existing_parquet_file_size
                 SeqTxn::UNSET,
             )?;
 
@@ -3200,11 +3212,12 @@ mod tests {
             None, // row_group_size
             None, // data_page_size
             DEFAULT_BLOOM_FILTER_FPP,
-            0.0,  // min_compression_ratio
-            None, // parquet_meta_fd
-            0,    // parquet_meta_file_size
-            0,
-            -1, // existing_parquet_file_size
+            0.0,   // min_compression_ratio
+            false, // strict_utf16
+            None,  // parquet_meta_fd
+            0,     // parquet_meta_file_size
+            0,     // append_base
+            -1,    // existing_parquet_file_size
             SeqTxn::UNSET,
         )?;
 
@@ -3286,6 +3299,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -3512,6 +3526,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -3578,6 +3593,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -3637,6 +3653,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -3704,6 +3721,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -3771,6 +3789,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -3834,6 +3853,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -3913,6 +3933,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -3992,6 +4013,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -4053,6 +4075,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -4200,6 +4223,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,  // parquet_meta_file_size
             0,  // append_base
@@ -4279,6 +4303,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -4340,6 +4365,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -4414,6 +4440,7 @@ mod tests {
             raw_array_encoding: false,
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
             min_compression_ratio: 0.0,
+            strict_utf16: false,
         };
 
         let options = write::WriteOptions {
@@ -4713,6 +4740,7 @@ mod tests {
             raw_array_encoding: false,
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
             min_compression_ratio: 0.0,
+            strict_utf16: false,
         };
         let bloom_filter_columns: HashSet<usize> = HashSet::new();
         let compressions: Vec<Option<CompressionOptions>> = vec![None];
@@ -4900,6 +4928,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,  // parquet_meta_file_size
             0,  // append_base
@@ -5064,6 +5093,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -5161,6 +5191,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -5258,6 +5289,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -5369,6 +5401,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -5456,6 +5489,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -5552,6 +5586,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             None,
             0,
             0,
@@ -5635,6 +5670,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false,              // strict_utf16
             Some(pm.reopen()?), // real _pm fd exercises the id-resolution path
             0,
             0,
@@ -5745,6 +5781,7 @@ mod tests {
             None,
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
+            false, // strict_utf16
             Some(pm.reopen()?),
             0,
             0,

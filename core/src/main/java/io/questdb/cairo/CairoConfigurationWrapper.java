@@ -1745,6 +1745,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isParquetExportFailOnInvalidUtf16() {
+        return getDelegate().isParquetExportFailOnInvalidUtf16();
+    }
+
+    @Override
     public boolean isParquetExportRawArrayEncoding() {
         return getDelegate().isParquetExportRawArrayEncoding();
     }
@@ -1752,6 +1757,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isParquetExportStatisticsEnabled() {
         return getDelegate().isParquetExportStatisticsEnabled();
+    }
+
+    @Override
+    public boolean isPartitionEncoderParquetFailOnInvalidUtf16() {
+        return getDelegate().isPartitionEncoderParquetFailOnInvalidUtf16();
     }
 
     @Override

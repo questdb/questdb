@@ -1853,6 +1853,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                             long dataPageSize,
                             double bloomFilterFpp,
                             double minCompressionRatio,
+                            boolean failOnInvalidUtf16,
                             int parquetMetaFd,
                             long parquetMetaFileSize,
                             long appendBase,
