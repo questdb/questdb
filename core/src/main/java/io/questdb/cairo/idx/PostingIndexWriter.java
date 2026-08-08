@@ -455,6 +455,29 @@ public class PostingIndexWriter implements IndexWriter {
                     // regionLimit equals the entry region base which equals
                     // KEY_FILE_RESERVED.
                     long liveSize = chain.getRegionLimit();
+                    // chain.getRegionLimit() is THIS instance's cached
+                    // high-water, snapshotted when this instance last published.
+                    // It can lag the file: more than one PostingIndexWriter can
+                    // be open on the same .pk -- the O3 copy path opens its own
+                    // instance via openFromO3Context and frees it in a finally,
+                    // alongside the TableWriter's own indexer -- so another
+                    // instance may have appended or extended a chain entry since.
+                    // Truncating to the stale cached value lops off the tail of
+                    // the most recently published entry (typically its last
+                    // 44-byte gen-dir slot). The lost bytes read back as zeros,
+                    // so that gen's TXN_AT_SEAL regresses to 0 behind a real txn
+                    // and every reader then sees a non-monotonic gen-dir with a
+                    // silently empty generation.
+                    //
+                    // The header's regionLimit is the authoritative live
+                    // high-water: it is published under the chain-header seqlock
+                    // by whichever instance extended the region last. Never trim
+                    // below it. This mirrors of(), which already refuses to trust
+                    // the reported file length for the same reason.
+                    long publishedRegionLimit = chain.peekRegionLimit(keyMem);
+                    if (publishedRegionLimit > liveSize) {
+                        liveSize = publishedRegionLimit;
+                    }
                     if (liveSize < KEY_FILE_RESERVED) {
                         liveSize = KEY_FILE_RESERVED;
                     }
@@ -4423,6 +4446,34 @@ public class PostingIndexWriter implements IndexWriter {
         }
         long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex, writeFormat, writeCoverCount);
         long slotTxnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
+        // The gen-dir's TXN_AT_SEAL sequence must never regress: readers use it
+        // both as the per-gen visibility gate (gen visible when
+        // txnAtSeal <= pinnedTxn) and as the publish-completion marker, and
+        // trimInFlightTailGens walks the tail assuming it is non-decreasing.
+        // Two callers can otherwise drive it backwards:
+        //   - the pendingTxnAtSeal<0 fallback above tags the slot 0, which is
+        //     BELOW every real txn. close() resets the field to -1, so any
+        //     extend on a REOPENED writer whose caller did not re-arm
+        //     setNextTxnAtSeal lands here and buries a 0 after a real txn.
+        //   - callers legitimately disagree by one: the O3/seal paths tag
+        //     getTxn()+1 while the WAL fast-lag path tags getTxn().
+        // Clamping up to the predecessor is the conservative repair: a later
+        // gen must never become visible EARLIER than an earlier one, so the
+        // predecessor's txn is the lowest value this slot may legally carry.
+        if (overrideGenIndex > 0) {
+            long prevSlotOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex - 1, writeFormat, writeCoverCount);
+            long prevSlotTxnAtSeal = keyMem.getLong(prevSlotOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+            if (slotTxnAtSeal < prevSlotTxnAtSeal) {
+                LOG.info()
+                        .$("posting index clamped a regressing gen txnAtSeal [index=").$safe(indexName)
+                        .$(", gen=").$(overrideGenIndex)
+                        .$(", from=").$(slotTxnAtSeal)
+                        .$(", to=").$(prevSlotTxnAtSeal)
+                        .$(", pendingTxnAtSeal=").$(pendingTxnAtSeal)
+                        .$(']').$();
+                slotTxnAtSeal = prevSlotTxnAtSeal;
+            }
+        }
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
         keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, overrideKeyCount);
@@ -4494,6 +4545,42 @@ public class PostingIndexWriter implements IndexWriter {
             );
         } else {
             chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch, headStoredCoveringFormat());
+        }
+        assertGenDirPublished(newGenCount, entryBase, writeFormat, writeCoverCount, overrideGenIndex);
+    }
+
+    /**
+     * Post-condition for every chain publish: the entry's gen-dir TXN_AT_SEAL
+     * sequence must be non-decreasing across all {@code newGenCount} slots we
+     * just made visible. publishToChain writes exactly ONE slot per call and
+     * then publishes a GEN_COUNT covering all of them, so it relies on slots
+     * {@code [0, overrideGenIndex)} already being fully published. This check
+     * makes any writer that breaks that assumption fail loudly, with its own
+     * stack, instead of surfacing later as an unrelated reader tripping over
+     * the same entry.
+     */
+    private void assertGenDirPublished(int newGenCount, long entryBase, int writeFormat, int writeCoverCount, int overrideGenIndex) {
+        long prev = Long.MIN_VALUE;
+        for (int i = 0; i < newGenCount; i++) {
+            long off = PostingIndexChainEntry.resolveGenDirOffset(entryBase, i, writeFormat, writeCoverCount);
+            long txnAtSeal = keyMem.getLong(off + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+            if (txnAtSeal < prev) {
+                LOG.critical()
+                        .$("posting index published a non-monotonic gen-dir [index=").$safe(indexName)
+                        .$(", entryOffset=").$(entryBase)
+                        .$(", genCount=").$(newGenCount)
+                        .$(", badGen=").$(i)
+                        .$(", txnAtSeal=").$(txnAtSeal)
+                        .$(", prevTxnAtSeal=").$(prev)
+                        .$(", writtenGen=").$(overrideGenIndex)
+                        .$(", sealTxn=").$(sealTxn)
+                        .$(']').$();
+                assert false : "posting index published a non-monotonic gen-dir [index=" + indexName
+                        + ", entryOffset=" + entryBase + ", genCount=" + newGenCount + ", badGen=" + i
+                        + ", txnAtSeal=" + txnAtSeal + ", prevTxnAtSeal=" + prev + ']';
+                return;
+            }
+            prev = txnAtSeal;
         }
     }
 

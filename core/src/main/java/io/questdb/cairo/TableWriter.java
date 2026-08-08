@@ -14360,6 +14360,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         boolean lastPartitionSquashed = false;
+        // Whether the squash target is the partition this writer currently holds
+        // open. Captured before the append: the column append memories we may have
+        // to re-sync afterwards are the ones positioned at this point.
+        final boolean targetIsOpenPartition = lastOpenPartitionTs == targetPartition && !copyTargetFrame;
         int squashCount = Math.min(partitionIndexHi - targetPartitionIndex - 1, partitionIndexHi - partitionIndexLo - optimalPartitionCount);
 
         if (squashCount <= 0) {
@@ -14472,6 +14476,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (lastPartitionSquashed) {
+            openLastPartition();
+        } else if (targetIsOpenPartition) {
+            // The squash appended into the very partition this writer still holds
+            // open, through the frame's own file descriptors. Our column append
+            // memories were positioned before the append, so they now describe a
+            // SHORTER file than what is on disk. Nothing re-syncs them here: the
+            // lastPartitionSquashed branch above is the only existing refresh, and
+            // it only fires when the SOURCE being squashed is the last partition.
+            //
+            // Left stale, the next truncating close (doClose -> freeColumns ->
+            // closeAppendMemoryTruncate -> MemoryMA.close(true)) trims every .d
+            // back to ceilPageSize(staleAppendOffset), physically discarding the
+            // bytes the squash just wrote. A later append memory then re-extends
+            // the file zero-filled, so the tail of the last squashed value reads
+            // back as zeros while the aux vector still points past it -- e.g. a
+            // NULL BINARY whose 8-byte -1 marker is cut mid-way, surfacing as
+            // "binary is outside of file boundary".
+            //
+            // Drop the stale view the same way the lastPartitionSquashed branch
+            // does -- close WITHOUT truncating, so nothing can trim to the stale
+            // offset -- and re-open the active partition so the writer resumes
+            // from sizes that match what is on disk.
+            closeActivePartition(false);
             openLastPartition();
         }
 
