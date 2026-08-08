@@ -118,7 +118,14 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
         if (hit != null) {
             return hit;
         }
-        if (cache.size() >= MAX_CACHED_PRINCIPALS) {
+        // Gate on the primitive reservation counter, not cache.size(): size() sums ConcurrentHashMap's striped
+        // counter cells (O(number of cores)), and a burst of first-time authentications -- distinct principals
+        // populating those cells -- is exactly what drives this miss path hardest, so the costly size() and the
+        // hot case coincide. principalContextCacheCount is a single volatile read, and it is the same value the
+        // hard cap CASes against in newCachedPrincipalContext, so the fast-path gate and the real cap now agree
+        // on "full". It is >= size() (a reservation precedes its entry), so it can only ever trip the gate a
+        // hair early while a construction is in flight -- which the recheck below absorbs.
+        if (principalContextCacheCount >= MAX_CACHED_PRINCIPALS) {
             // Another caller may have filled the final slot with this same principal after our first get().
             // Recheck before taking the uncached overflow path so callers racing for that slot still converge
             // on the admitted context rather than some of them receiving throwaway duplicates.
