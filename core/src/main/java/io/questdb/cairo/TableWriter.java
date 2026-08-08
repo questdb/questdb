@@ -15333,6 +15333,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * writer is not part-way through a structural change. See the call site in advanceDurableEpoch().
      */
     private boolean symbolStateMatchesMetadata() {
+        // A VIEW gets no symbol map writers at all -- configureSymbolTable() gates their creation on
+        // `!tableToken.isView()` -- so its dense list is empty however many symbol columns _meta declares,
+        // and the two counts are simply not comparable. Comparing them anyway suppressed EVERY view epoch,
+        // which surfaced far from here as failing view-state and checkpoint-restore assertions.
+        //
+        // Nothing is lost by exempting views: the skew this guards against is created by a symbol map writer
+        // that exists before _meta names its column, and a view never creates one.
+        if (tableToken.isView()) {
+            return true;
+        }
         return denseSymbolMapWriters.size() == countLiveSymbolColumns();
     }
 
