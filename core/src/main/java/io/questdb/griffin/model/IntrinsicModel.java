@@ -157,6 +157,9 @@ public class IntrinsicModel implements Mutable {
 
     public void mergeIntervalModel(RuntimeIntervalModel model, long loOffset, long hiOffset) {
         runtimeIntervalBuilder.merge(model, loOffset, hiOffset);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     /**
@@ -165,6 +168,9 @@ public class IntrinsicModel implements Mutable {
      */
     public void mergeIntervalModelWithAddMethod(IntrinsicModel other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
         runtimeIntervalBuilder.mergeWithAddMethod(other.runtimeIntervalBuilder, addMethod, offset);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void of(int timestampType, int partitionBy, CairoConfiguration configuration) {
@@ -173,10 +179,16 @@ public class IntrinsicModel implements Mutable {
 
     public void setBetweenBoundary(long timestamp) {
         runtimeIntervalBuilder.setBetweenBoundary(timestamp);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void setBetweenBoundary(Function timestamp, int functionPosition) {
         runtimeIntervalBuilder.setBetweenBoundary(timestamp, functionPosition);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void setBetweenNegated(boolean isNegated) {

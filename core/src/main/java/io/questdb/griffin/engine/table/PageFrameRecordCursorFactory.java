@@ -102,6 +102,40 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         return followsOrderByAdvice;
     }
 
+    // Provably deterministic only for a plain (entity, non-indexed) scan of a deterministic frame
+    // set with a deterministic (or absent) filter. Index-driven row cursors may embed value
+    // functions (for example a deferred symbol lookup) that this factory cannot inspect, so they
+    // stay fail-safe.
+    @Override
+    public boolean isNonDeterministic() {
+        if (!rowCursorFactory.isEntity() || rowCursorFactory.isUsingIndex()) {
+            return true;
+        }
+        final Function filter = this.filter;
+        if (filter != null && filter.isNonDeterministic()) {
+            return true;
+        }
+        return partitionFrameCursorFactory.isNonDeterministic();
+    }
+
+    // Compose the weaker within-execution property from every value source. The row-cursor factory
+    // is the single authority on its own selecting values (index key(s) plus any inner filter): a
+    // plain entity scan reports stable, index cursors report stable only when their key/filter
+    // functions are (fixed literals and bind variables are, rnd_* is not). Unknown shapes keep the
+    // fail-safe default (unstable). This lets a provably-stable indexed symbol lookup used as a
+    // scalar sub-query timestamp bound prune to an interval scan instead of a full outer scan.
+    @Override
+    public boolean isStableWithinExecution() {
+        if (!rowCursorFactory.isStableWithinExecution()) {
+            return false;
+        }
+        final Function filter = this.filter;
+        if (filter != null && !filter.isStableWithinExecution()) {
+            return false;
+        }
+        return partitionFrameCursorFactory.isStableWithinExecution();
+    }
+
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         if (framingSupported) {
