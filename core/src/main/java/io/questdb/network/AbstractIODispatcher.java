@@ -113,15 +113,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.listenerStateChangeCounter = configuration.listenerStateChangeCounter();
         this.nf = configuration.getNetworkFacade();
 
-        final String oomResponse = configuration.getOomResponse();
-        if (oomResponse != null) {
-            this.oomResponseBufLen = oomResponse.length();
-            this.oomResponseBuf = Unsafe.malloc(oomResponseBufLen, MemoryTag.NATIVE_DEFAULT);
-            Utf8s.strCpyAscii(oomResponse, oomResponseBuf);
-        } else {
-            this.oomResponseBufLen = 0;
-        }
-
         this.interestQueue = new RingQueue<>(IOEvent::new, configuration.getInterestQueueCapacity());
         this.interestPubSeq = new MPSequence(interestQueue.getCycle());
         this.interestSubSeq = new SCSequence();
@@ -146,7 +137,16 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.port = 0;
         this.heartbeatIntervalMs = configuration.getHeartbeatInterval() > 0 ? configuration.getHeartbeatInterval() : Long.MIN_VALUE;
 
+        // Allocate last, immediately before the guarded region: close() frees this buffer, so
+        // anything that can throw between the malloc and the try below would leak it.
+        final String oomResponse = configuration.getOomResponse();
+        this.oomResponseBufLen = oomResponse != null ? oomResponse.length() : 0;
+
         try {
+            if (oomResponse != null) {
+                this.oomResponseBuf = Unsafe.malloc(oomResponseBufLen, MemoryTag.NATIVE_DEFAULT);
+                Utf8s.strCpyAscii(oomResponse, oomResponseBuf);
+            }
             createListenerFd();
         } catch (Throwable th) {
             close();

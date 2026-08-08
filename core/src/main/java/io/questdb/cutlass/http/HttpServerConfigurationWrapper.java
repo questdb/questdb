@@ -231,6 +231,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
+    public String getOomResponse() {
+        return getDelegate().getOomResponse();
+    }
+
+    @Override
     public String getPassword() {
         return getDelegate().getPassword();
     }

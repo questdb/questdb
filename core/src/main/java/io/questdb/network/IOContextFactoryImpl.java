@@ -89,7 +89,13 @@ public class IOContextFactoryImpl<C extends IOContext<C>> implements IOContextFa
         try {
             contextPool.get();
         } catch (CairoException e) {
-            LOG.critical().$("context pool pre-fill failed, will retry lazily [e=").$((Throwable) e).I$();
+            // Only OOM is worth surviving: memory may free up, and newInstance() re-runs the
+            // pool supplier on the next connection. Any other failure is permanent, so let it
+            // escape instead of starting a server that rejects every connection in silence.
+            if (!CairoException.isCairoOomError(e)) {
+                throw e;
+            }
+            LOG.critical().$("context pool pre-fill failed on OOM, will retry lazily [e=").$((Throwable) e).I$();
         }
     }
 }

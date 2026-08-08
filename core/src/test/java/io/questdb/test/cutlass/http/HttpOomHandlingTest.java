@@ -25,13 +25,13 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.ServerMain;
-import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Before;
 import org.junit.Test;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.Socket;
@@ -42,12 +42,6 @@ import static io.questdb.PropertyKey.HTTP_WORKER_COUNT;
 import static org.junit.Assert.assertEquals;
 
 public class HttpOomHandlingTest extends AbstractBootstrapTest {
-
-    @Override
-    @Before
-    public void setUp() {
-        super.setUp();
-    }
 
     @Test
     public void testOomDuringAcceptReturns503() throws Exception {
@@ -61,15 +55,18 @@ public class HttpOomHandlingTest extends AbstractBootstrapTest {
             int port = serverMain.getHttpServerPort();
 
             // verify the server is functional
-            HttpURLConnection conn = (HttpURLConnection) new URL("http://localhost:" + port + "/ping").openConnection();
-            conn.setRequestMethod("GET");
-            assertEquals(204, conn.getResponseCode());
-            conn.disconnect();
+            assertPingSucceeds(port);
 
             // open a socket to hold the only pooled context
             try (Socket holder = new Socket("localhost", port)) {
-                // give the dispatcher time to accept and assign the context
-                Os.sleep(500);
+                // drive a request to completion on the holder rather than sleeping: a served
+                // response proves the dispatcher accepted the connection and handed it the one
+                // pooled context, which is the precondition the probe below depends on. The
+                // keep-alive connection then holds that context until the socket closes.
+                holder.setSoTimeout(30_000);
+                holder.getOutputStream().write("GET /ping HTTP/1.1\r\nHost: localhost\r\n\r\n".getBytes());
+                holder.getOutputStream().flush();
+                TestUtils.assertContains(readUntil(holder.getInputStream(), "\r\n\r\n"), "204");
 
                 // set an RSS limit just above current usage so new context allocation fails.
                 // 16 KiB of slack absorbs incidental allocations (JIT, logging, GC bookkeeping)
@@ -81,31 +78,54 @@ public class HttpOomHandlingTest extends AbstractBootstrapTest {
                     // open a second connection - pool is empty, context creation triggers OOM
                     // the dispatcher should send a pre-allocated HTTP 503 response
                     try (Socket probe = new Socket("localhost", port)) {
-                        probe.setSoTimeout(5_000);
-                        InputStream is = probe.getInputStream();
-                        byte[] buf = new byte[256];
-                        int totalRead = 0;
-                        int n;
-                        // the server sends 503 and closes the fd, so we read until EOF
-                        while ((n = is.read(buf, totalRead, buf.length - totalRead)) > 0) {
-                            totalRead += n;
-                        }
-                        String response = new String(buf, 0, totalRead);
-                        TestUtils.assertContains(response, "503 Service Unavailable");
+                        probe.setSoTimeout(30_000);
+                        TestUtils.assertContains(readUntil(probe.getInputStream(), null), "503 Service Unavailable");
                     }
                 } finally {
                     Unsafe.setRssMemLimit(0);
                 }
             }
 
-            // give the server time to clean up
-            Os.sleep(200);
-
-            // verify the server recovered and still works
-            conn = (HttpURLConnection) new URL("http://localhost:" + port + "/ping").openConnection();
-            conn.setRequestMethod("GET");
-            assertEquals(204, conn.getResponseCode());
-            conn.disconnect();
+            // verify the server recovered and still works. The holder's context returns to the pool
+            // asynchronously, so retry rather than sleep on a fixed guess.
+            TestUtils.assertEventually(() -> assertPingSucceeds(port));
         }
+    }
+
+    /**
+     * Reports a failed ping as an {@link AssertionError}, including the transport failures, so that
+     * {@link TestUtils#assertEventually} retries them - it only retries assertion failures, and a
+     * server that has not finished reclaiming the previous connection refuses rather than 500s.
+     */
+    private static void assertPingSucceeds(int port) {
+        try {
+            HttpURLConnection conn = (HttpURLConnection) new URL("http://localhost:" + port + "/ping").openConnection();
+            try {
+                conn.setRequestMethod("GET");
+                assertEquals(204, conn.getResponseCode());
+            } finally {
+                conn.disconnect();
+            }
+        } catch (IOException e) {
+            throw new AssertionError("ping failed: " + e, e);
+        }
+    }
+
+    /**
+     * Reads until {@code terminator} appears, or to EOF when it is null. Grows the sink instead of
+     * reading into a fixed buffer: a bounded read stops silently once the buffer fills, which would
+     * turn a longer-than-expected response into a passing assertion against a truncated string.
+     */
+    private static String readUntil(InputStream is, String terminator) throws Exception {
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        byte[] chunk = new byte[256];
+        int n;
+        while ((n = is.read(chunk)) > 0) {
+            sink.write(chunk, 0, n);
+            if (terminator != null && sink.toString().contains(terminator)) {
+                break;
+            }
+        }
+        return sink.toString();
     }
 }
