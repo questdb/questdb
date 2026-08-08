@@ -125,7 +125,7 @@ public class TlsProxyStopTest {
             // per-iteration assertion: the acceptor reaches the backend in only some iterations
             // (measured 12-14 of 20), so a per-iteration check would be flaky by construction.
             Assert.assertTrue("the acceptor never dialled the backend across " + ITERATIONS
-                    + " iterations, so the test no longer exercises the monitor window it targets",
+                            + " iterations, so the test no longer exercises the monitor window it targets",
                     backendDials.get() > 0);
         }
     }
